@@ -46,6 +46,10 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
+  // CR 903.8: "for each time you've cast your commander from the command zone this game"
+  if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
+  // CR 702.40a: "for each other spell that was cast before it this turn"
+  if (/^other spell that was cast before (?:it|~) this turn$/.test(t)) return { kind: 'cast_before', of: b.it ?? { ref: 'self' } };
   const counter = /^(\S+) counter on (.+)$/.exec(t);
   if (counter) {
     const of = parseObjectRef(counter[2]!, b.clone(), 'static');

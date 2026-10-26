@@ -160,7 +160,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -230,6 +230,13 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'event':
       // "that much", "that many": how much the trigger event was.
       return ctx.trigger?.amount ?? 0;
+    case 'commander_casts':
+      return Object.entries(g.commanderCasts).reduce((n, [id, k]) => n + (g.objects[id]?.owner === ctx.controller ? k : 0), 0);
+    case 'cast_before': {
+      // Counted as it was cast, so spells cast in response don't add to it (CR 702.40a).
+      const o = e.of.ref === 'self' ? ctx.source : refObjects(ctx, e.of)[0];
+      return o?.cast?.before ?? 0;
+    }
     default:
       return 0;
   }

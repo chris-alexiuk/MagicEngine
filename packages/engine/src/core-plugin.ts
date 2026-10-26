@@ -11,10 +11,13 @@ import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
 import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
+import { copySpell } from './spell-copies.js';
+import { chooseTargets, targetPrompts } from './targets.js';
+import { announceTargets } from './triggers.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { battlefieldZcc, drawCard, livePlayers, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 
 /**
@@ -640,6 +643,50 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return { expand: ((yes ? node.effects : node.else) as EffectNode[] | undefined) ?? [] };
   },
 
+  // CR 707.10: "copy target instant or sorcery spell", "copy that spell", storm's "copy it for each …".
+  copy_spell(node, ctx) {
+    const g = ctx.g;
+    if (!ctx.memo.made) {
+      const n = amountOf(ctx, node.amount ?? 1);
+      const what = ref(node, 'what');
+      const spells = what.ref === 'self' ? (ctx.source?.zone === 'stack' ? [ctx.source] : []) : refObjects(ctx, what).filter((o) => o.zone === 'stack');
+      const made: string[] = [];
+      for (const spell of spells) {
+        const entry = g.stack.find((s) => s.kind === 'spell' && s.object === spell.id);
+        if (entry?.kind !== 'spell') continue;
+        for (let i = 0; i < n; i++) made.push(copySpell(g, entry, ctx.controller, ctx.events));
+      }
+      ctx.memo.made = made;
+      ctx.memo.index = 0;
+    }
+    const made = ctx.memo.made as string[];
+    const entryOf = (id: string) => g.stack.find((s): s is Extract<typeof s, { kind: 'spell' }> => s.kind === 'spell' && s.object === id);
+    const answer = answerOf(ctx, 'copy_targets');
+    if (answer) {
+      const id = made[ctx.memo.index as number]!;
+      const entry = entryOf(id);
+      // CR 707.10c: new targets must be legal; keeping them needn't be.
+      if (entry?.program && answer.targets) entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, g.objects[id] ?? null);
+      ctx.memo.index = (ctx.memo.index as number) + 1;
+    }
+    if (node.newTargets) {
+      for (; (ctx.memo.index as number) < made.length; ctx.memo.index = (ctx.memo.index as number) + 1) {
+        const id = made[ctx.memo.index as number]!;
+        const entry = entryOf(id);
+        if (!entry?.program?.specs.length) continue;
+        const current = entry.targets.map((list) => list.map((t): Target => (t.kind === 'player' ? { kind: 'player', player: t.player } : { kind: 'object', object: t.id })));
+        return {
+          ask: { kind: 'copy_targets', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: nameOf(g, g.objects[id]!), prompts: targetPrompts(g, ctx.controller, entry.program.specs, g.objects[id]!), current },
+        };
+      }
+    }
+    for (const id of made) {
+      const entry = entryOf(id);
+      if (entry) announceTargets(entry, ctx.events);
+    }
+    return true;
+  },
+
   // CR 114.1: "You get an emblem with "…"".
   emblem(node, ctx) {
     const face: FaceDef = {
@@ -696,6 +743,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       effects: node.effects as EffectNode[],
       targets: ctx.targets,
       ...(ctx.trigger || ctx.resolution?.created ? { info: { ...ctx.trigger, ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}) } } : {}),
+      ...(node.on ? { on: node.on as { who: 'you'; filter: ObjectFilter } } : {}),
     });
     return true;
   },
@@ -1022,6 +1070,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   cast(t, check) {
     const e = check.event;
     if (e.type !== 'cast' || check.sourceLeft) return [];
+    // "When you cast this spell" (it triggers from the stack).
+    if (t.self) return e.object === check.source.id ? [{ object: refTo(check.source), player: e.player }] : [];
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
     if (t.who === 'enchanted' && e.player !== check.source.attachedToPlayer) return [];

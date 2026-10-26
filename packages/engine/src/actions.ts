@@ -173,6 +173,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'sacrifice':
     case 'proliferate':
     case 'choose_objects':
+    case 'copy_targets':
       // A choice made while a spell or ability resolves: carry on resolving with it.
       if (!g.resolving) throw new RulesError('Nothing is resolving.');
       g.pending = null;
@@ -360,7 +361,9 @@ function cast(
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   if (flashback) o.exileOnLeave = true;
-  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : fromExile ? 'exile' : 'hand', ...(kicked ? { kicked: true as const } : {}) };
+  // CR 702.40a: storm counts the spells cast before this one this turn.
+  const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
+  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : fromExile ? 'exile' : 'hand', before, ...(kicked ? { kicked: true as const } : {}) };
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);

@@ -1,4 +1,4 @@
-import type { AbilityNode, AsEntersNode, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AsEntersNode, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
@@ -114,7 +114,13 @@ export interface GameObject {
   /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. */
   exileOnLeave?: true;
   /** How it was cast, kept as the spell becomes a permanent ("if it was kicked", "if you cast it"). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true };
+  /**
+   * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
+   * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
+   */
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true };
+  /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
+  spellCopy?: true;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
@@ -271,6 +277,8 @@ export interface DelayedTrigger {
   /** CR 603.7c: it affects the same objects the original ability did. */
   targets: TargetRef[][];
   info?: TriggerInfo;
+  /** "When you next cast an instant or sorcery spell this turn": fires on that event instead of a step. */
+  on?: { who: 'you'; filter: ObjectFilter };
 }
 
 /** CR 615: a prevention effect from a resolved spell or ability, this turn only. */
@@ -348,6 +356,8 @@ export type PendingChoice =
   | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
   | { kind: 'discard'; player: PlayerId; count: number }
   | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
+  /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */
+  | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][] }
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
@@ -385,6 +395,7 @@ export type ChoiceAnswer =
   | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
   | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
   | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][] }
+  | { kind: 'copy_targets'; targets?: Target[][] }
   /** CR 701.22a: cards to keep on top (first = top) and to put on the bottom. */
   | { kind: 'scry'; top: ObjectId[]; bottom: ObjectId[] }
   /** CR 701.25a: cards to keep on top (first = top) and to put into the graveyard. */
@@ -479,6 +490,7 @@ export type GameEvent =
   | { type: 'created'; object: ObjectId; controller: PlayerId }
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
+  | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   | { type: 'countered'; object: ObjectId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */

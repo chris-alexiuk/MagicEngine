@@ -164,6 +164,11 @@ export function continueResolution(g: GameState, events: GameEvent[], answer?: C
 }
 
 function resolvePermanentSpell(g: GameState, entry: StackEntry & { kind: 'spell' }, o: GameObject, events: GameEvent[]): void {
+  // CR 608.3f / 707.10f: a copy of a permanent spell becomes a token as it enters.
+  if (o.spellCopy) {
+    delete o.spellCopy;
+    o.token = true;
+  }
   if (entry.program?.specs.length) {
     // CR 608.3b: a permanent spell with a target (an Aura) checks it; if it's illegal, the spell doesn't resolve.
     const targets = recheckTargets(g, entry);
@@ -208,6 +213,11 @@ export function completeManualResolution(g: GameState, events: GameEvent[]): voi
 }
 
 function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEvent[]): void {
+  // CR 707.10a: a copy of a spell that leaves the stack ceases to exist.
+  if (o.spellCopy) {
+    removeObjectEntirely(g, o.id);
+    return;
+  }
   // CR 608.2n: as the final part of an instant or sorcery's resolution, it goes to its owner's graveyard.
   moveObject(g, o.id, 'graveyard', events);
 }
@@ -425,6 +435,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       for (const o of Object.values(g.objects)) {
         // CR 704.5d: a token outside the battlefield ceases to exist.
         if (o.token && o.zone !== 'battlefield') vanish.push(o.id);
+        // CR 704.5e: so does a copy of a spell off the stack.
+        else if (o.spellCopy && o.zone !== 'stack') vanish.push(o.id);
       }
 
       for (const id of g.zones.battlefield) {

@@ -100,6 +100,18 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // "each Fungus and Saproling you control": either subtype.
   rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) === a && subtypeOf(z) === z ? `${a} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
+  // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
+  // describe every alternative.
+  let lead = 0;
+  if (parts.length > 1) {
+    const words = parts[0]!.split(' ');
+    const kind = categoryOf(parts[parts.length - 1]!.split(' ')[0]!);
+    if (words.length > 1 && kind && categoryOf(words[words.length - 1]!) === kind && parts.slice(1, -1).every((p) => !p.includes(' '))) {
+      parts[0] = words[words.length - 1]!;
+      parts[parts.length - 1] = `${words.slice(0, -1).join(' ')} ${parts[parts.length - 1]}`;
+      lead = words.length - 1;
+    }
+  }
   const last = parts[parts.length - 1]!;
   const base: ObjectFilter = { ...f };
   const head = parseHeadPhrase(last, f);
@@ -107,7 +119,7 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   if (parts.length > 1) {
     // "artifact or enchantment", "red or green creature", "instant or sorcery spell":
     // the earlier words stand in for the first word of the last part.
-    const first = last.split(' ')[0]!;
+    const first = last.split(' ')[lead]!;
     const cat = categoryOf(first);
     const simple = cat && parts.slice(0, -1).every((alt) => !alt.includes(' ') && categoryOf(alt) === cat);
     if (simple) {

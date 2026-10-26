@@ -115,6 +115,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // CR 707.10c: "You may choose new targets for the copy."
+      if (/^(?:If the spell has any targets, )?[Yy]ou may choose (?:a )?new targets? for (?:the|any of the) cop(?:y|ies)$/.test(s)) {
+        const copyIn = (list: EffectNode[]): EffectNode | null => {
+          for (const x of [...list].reverse()) {
+            if (x.type === 'copy_spell') return x;
+            for (const k of ['then', 'effects', 'else']) {
+              const found = Array.isArray(x[k]) ? copyIn(x[k] as EffectNode[]) : null;
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        const last = copyIn(out.slice(-1));
+        if (!last) return null;
+        last.newTargets = true;
+        continue;
+      }
       // "Create a 1/1 Eldrazi Scion creature token. It has "Sacrifice this token: Add {C}."" — the token's own text.
       const tokenHas = /^(?:It|They) (?:has|have) (.+)$/.exec(s);
       const made = out[out.length - 1];
@@ -122,6 +139,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const face = addTokenText(made.token as FaceDef, tokenHas[1]!, b);
         if (!face) return null;
         made.token = face;
+        continue;
+      }
+      // CR 603.7: "When you next cast an instant or sorcery spell this turn, copy that spell."
+      const nextCast = /^When you next cast (?:a|an) (.+?) this turn, (.+)$/.exec(s);
+      if (nextCast) {
+        const spell = parseFilter(nextCast[1]!, b);
+        if (!spell || spell.plural || spell.filter.zone !== 'stack') return null;
+        const { zone: _z, ...filter } = spell.filter;
+        const inner = attempt(b, (b) => {
+          const it = b.it;
+          b.it = { ref: 'trigger_object' };
+          const r = parseSentence(capitalise(nextCast[2]!), b);
+          b.it = it;
+          return r;
+        });
+        if (!inner) return null;
+        out.push({ type: 'delayed', on: { who: 'you', filter }, effects: inner });
         continue;
       }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
@@ -256,6 +290,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (may) {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
+  }
+  // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …".
+  const copy = /^[Cc]opy (.+?)(?: (twice|three times)| for each (.+))?$/.exec(s);
+  if (copy && !/ ability$/.test(copy[1]!)) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(copy[1]!, b);
+      if (!what || what.plural) return null;
+      // Only spells: a target on the stack, the spell that triggered it, or this spell.
+      if (what.ref.ref === 'target' && b.targets[what.ref.index]?.filter?.zone !== 'stack') return null;
+      if (!['target', 'trigger_object', 'self'].includes(what.ref.ref)) return null;
+      const amount = copy[2] ? (copy[2] === 'twice' ? 2 : 3) : copy[3] ? parseForEach(copy[3], b) : 1;
+      if (!amount) return null;
+      return [{ type: 'copy_spell', what: what.ref, ...(amount !== 1 ? { amount } : {}) }];
+    });
+    if (r) return r;
   }
   // CR 114.1: "You get an emblem with "…"" (planeswalkers' ultimates).
   const emblem = /^[Yy]ou get an emblem with (.+)$/.exec(s);

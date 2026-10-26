@@ -389,6 +389,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
 
+  // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
+  if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
   const cast = /^(you|an opponent|a player|enchanted player) casts? (?:a|an) (.+)$/.exec(t);
   if (cast) {
     const spell = cast[2] === 'spell' ? { filter: {}, plural: false } : parseFilter(cast[2]!, b);
@@ -453,6 +455,10 @@ export const triggeredRule: GrammarRule = {
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
         if (r.oncePerTurn) node.oncePerTurn = true;
         if (r.zone) node.zone = r.zone;
+        if (node.trigger.type === 'cast' && node.trigger.self) {
+          if (node.zone) return null;
+          node.zone = 'stack';
+        }
         if (r.condition) node.condition = r.condition;
         return node;
       }

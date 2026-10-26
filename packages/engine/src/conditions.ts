@@ -65,7 +65,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // CR 702.33d: the spell (or the permanent it became) was kicked.
       return Boolean(source?.cast?.kicked);
     case 'cast_by_you':
-      return source?.cast?.by === controller && (!cond.fromHand || source.cast.from === 'hand');
+      return !source?.cast?.copy && source?.cast?.by === controller && (!cond.fromHand || source.cast.from === 'hand');
     case 'self_tapped':
       return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);
     case 'your_turn':

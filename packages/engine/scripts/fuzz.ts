@@ -138,6 +138,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'manual_resolution', done: true } };
     case 'may':
       return { player: me, answer: { kind: 'may', yes: rnd() < 0.7 } };
+    case 'copy_targets': {
+      // Keep the targets, or pick new ones where there are enough candidates.
+      const fresh = p.prompts.map((pr) => pr.candidates.slice().sort(() => rnd() - 0.5).slice(0, pr.count));
+      const ok = p.prompts.every((pr, i) => fresh[i]!.length === pr.count || (pr.upTo && fresh[i]!.length <= pr.count));
+      return { player: me, answer: { kind: 'copy_targets', ...(ok && rnd() < 0.5 ? { targets: fresh } : {}) } };
+    }
     case 'pay':
       // Try to pay half the time; the main loop falls back to declining if it can't be paid.
       return { player: me, answer: { kind: 'pay', pay: rnd() < 0.5 } };

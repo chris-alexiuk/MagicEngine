@@ -477,3 +477,23 @@ describe('quoted abilities (CR 113.1a)', () => {
     });
   });
 });
+
+describe('copies of spells (CR 707.10)', () => {
+  it('"Copy target instant or sorcery spell. You may choose new targets for the copy."', () => {
+    expect(one('Copy target instant or sorcery spell you control. You may choose new targets for the copy.', 'Instant')).toMatchObject({
+      targets: [{ filter: { zone: 'stack', types: ['Instant', 'Sorcery'], controller: 'you' } }],
+      effects: [{ type: 'copy_spell', what: { ref: 'target', index: 0 }, newTargets: true }],
+    });
+    expect(one('Whenever you cast an instant or sorcery spell, copy that spell twice.', 'Creature — Wizard')).toMatchObject({
+      effects: [{ type: 'copy_spell', what: { ref: 'trigger_object' }, amount: 2 }],
+    });
+  });
+
+  it('"When you cast this spell" works on the stack; storm from its definition', () => {
+    expect(one('When you cast this spell, draw a card.', 'Creature — Eldrazi')).toMatchObject({ trigger: { type: 'cast', self: true }, zone: 'stack' });
+    const storm = parse('Storm', 'Sorcery', 'Brain Freeze').keywords[0]!;
+    expect(storm.abilities).toMatchObject([
+      { trigger: { type: 'cast', self: true }, zone: 'stack', effects: [{ type: 'copy_spell', what: { ref: 'self' }, amount: { kind: 'cast_before' }, newTargets: true }] },
+    ]);
+  });
+});

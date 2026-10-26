@@ -169,8 +169,11 @@ export interface TriggeredAbility extends AbilityBase, Program {
   oncePerTurn?: true;
   /** CR 603.4: an intervening "if" — checked as it triggers and again as it resolves. */
   condition?: ConditionNode;
-  /** CR 113.6m: it triggers from this zone, not the battlefield ("return ~ from your graveyard to the battlefield"). */
-  zone?: 'graveyard';
+  /**
+   * CR 113.6m: it triggers from this zone, not the battlefield ("return ~ from your graveyard to the battlefield");
+   * "When you cast this spell" works on the stack (storm, CR 702.40a).
+   */
+  zone?: 'graveyard' | 'stack';
 }
 
 export interface StaticAbility extends AbilityBase {
@@ -335,6 +338,10 @@ export type AmountExpr = (
   | { kind: 'x' }
   /** "that much" / "that many": the amount of the event that triggered the ability. */
   | { kind: 'event' }
+  /** CR 702.40a (storm): spells cast before that spell this turn. */
+  | { kind: 'cast_before'; of: Ref }
+  /** CR 903.8: times you've cast your commander from the command zone this game. */
+  | { kind: 'commander_casts' }
 ) & { times?: number; plus?: number };
 
 /**
@@ -552,7 +559,7 @@ export const CORE_NODES = {
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
-    'players_do', 'emblem',
+    'players_do', 'emblem', 'copy_spell',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -566,7 +573,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

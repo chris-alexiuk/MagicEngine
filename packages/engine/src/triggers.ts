@@ -1,6 +1,6 @@
 import { copyChoicePending } from './as-enters.js';
 import type { TriggeredAbility } from '@mtg/schema';
-import { abilitiesOf, printedAbilities, withCharsCache } from './characteristics.js';
+import { abilitiesOf, matchesFilter, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
@@ -87,7 +87,12 @@ function collect(g: GameState, events: GameEvent[]): void {
       if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'graveyard')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
     }
   }
-  const candidates = [...present, ...left.values(), ...inGraveyards];
+  // CR 702.40a etc.: "When you cast this spell" — abilities that work while the spell is on the stack.
+  const onStack: Candidate[] = g.stack.flatMap((s) => {
+    const o = s.kind === 'spell' ? g.objects[s.object] : undefined;
+    return o && !o.spellCopy ? [{ o, controller: s.controller, face: o.face, left: false }] : [];
+  });
+  const candidates = [...present, ...left.values(), ...inGraveyards, ...onStack];
 
   // Each candidate's triggered abilities: printed and from keywords (granted ones too, while it's on the battlefield).
   const withAbilities = candidates.flatMap((c) => {
@@ -307,10 +312,31 @@ export function triggerContext(g: GameState, controller: PlayerId, source: GameO
 
 /** CR 603.7b: delayed triggers fire the next time their moment comes, once. */
 function collectDelayed(g: GameState, batch: GameEvent[]): void {
+  // "this turn" ones that didn't fire are gone.
+  if (g.delayed.some((d) => d.on && d.createdTurn !== g.turn)) g.delayed = g.delayed.filter((d) => !d.on || d.createdTurn === g.turn);
   for (const e of batch) {
+    if (e.type === 'cast') {
+      // "When you next cast an instant or sorcery spell this turn, copy that spell."
+      for (const d of [...g.delayed]) {
+        if (!d.on || e.player !== d.controller) continue;
+        const spell = g.objects[e.object];
+        if (!spell || !matchesFilter(g, spell, { ...d.on.filter, zone: 'stack' }, { controller: d.controller })) continue;
+        g.delayed = g.delayed.filter((x) => x.id !== d.id);
+        g.triggers.push({
+          id: `t${g.nextId++}`,
+          controller: d.controller,
+          source: d.source,
+          sourceName: d.sourceName,
+          ability: { kind: 'triggered', text: d.text, trigger: { type: 'cast', who: 'you' }, effects: d.effects },
+          info: { ...d.info, object: { id: spell.id, zcc: spell.zcc }, player: e.player },
+          boundTargets: d.targets,
+        });
+      }
+      continue;
+    }
     if (e.type !== 'step') continue;
     for (const d of [...g.delayed]) {
-      if (d.step !== e.step) continue;
+      if (d.on || d.step !== e.step) continue;
       // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
       if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === 'end') continue;
       g.delayed = g.delayed.filter((x) => x.id !== d.id);
