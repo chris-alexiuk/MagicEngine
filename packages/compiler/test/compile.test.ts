@@ -82,7 +82,7 @@ describe('compileCards', () => {
 
 describe('the compiler/engine contract', () => {
   it('emits only node tags the engine core handles (schema CORE_NODES)', () => {
-    const seen = { effects: new Set<string>(), statics: new Set<string>(), triggers: new Set<string>(), costs: new Set<string>(), conditions: new Set<string>() };
+    const seen = { effects: new Set<string>(), statics: new Set<string>(), triggers: new Set<string>(), costs: new Set<string>(), conditions: new Set<string>(), amounts: new Set<string>() };
     for (const card of [...db.cards, ...db.tokens]) {
       for (const face of card.faces) {
         for (const a of faceAbilities(face)) {

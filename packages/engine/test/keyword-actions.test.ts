@@ -12,6 +12,7 @@ const CARDS = [
   make('Regal Ambition', 'Sorcery', 'Target player becomes the monarch.'),
   make('Courtly Seer', 'Creature — Human Wizard', 'As long as you’re the monarch, this creature gets +2/+2.', '1'),
   make('Banishing Light', 'Enchantment', 'When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.'),
+  make('Fiend Hunter', 'Creature — Human Cleric', 'When this creature enters, you may exile another target creature.\nWhen this creature leaves the battlefield, return the exiled card to the battlefield under its owner’s control.', '1'),
   make('Vizier of the Top', 'Creature — Human Wizard', 'You may look at the top card of your library any time.', '1'),
 ];
 
@@ -126,5 +127,35 @@ describe('CR 610.3: exile until ~ leaves the battlefield', () => {
     g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: light, to: 'graveyard' } });
     g = passRound(g);
     expect(g.objects[theirs]!.zone).toBe('battlefield');
+  });
+});
+
+describe('CR 607.2a: linked abilities — “the exiled card”', () => {
+  it('Fiend Hunter returns what it exiled when it leaves', () => {
+    let g = setup();
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    const hunter = give(g, 'alice', 'Fiend Hunter', 'hand');
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: hunter, autoTap: true }));
+    // The only other creature is the target (chosen automatically).
+    expect(g.stack).toMatchObject([{ kind: 'ability', sourceName: 'Fiend Hunter', targets: [[{ id: theirs }]] }]);
+    g = passRound(g);
+    if (g.pending?.kind === 'may') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    expect(g.objects[theirs]!.zone).toBe('exile');
+    g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: hunter, to: 'graveyard' } });
+    g = passRound(g);
+    expect(g.objects[theirs]).toMatchObject({ zone: 'battlefield', controller: 'bob' });
+  });
+
+  it('if it leaves before its enters ability resolves, the creature stays exiled', () => {
+    let g = setup();
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    const hunter = give(g, 'alice', 'Fiend Hunter', 'hand');
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: hunter, autoTap: true }));
+    // In response, the Hunter leaves; its leaves ability resolves first, with nothing to return.
+    g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: hunter, to: 'graveyard' } });
+    g = passRound(g);
+    g = passRound(g);
+    if (g.pending?.kind === 'may') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    expect(g.objects[theirs]!.zone).toBe('exile');
   });
 });

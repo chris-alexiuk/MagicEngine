@@ -39,7 +39,7 @@ for (const c of [...next.cards, ...next.tokens]) {
   for (const f of c.faces) {
     for (const a of faceAbilities(f)) {
       const tags = nodeTags(a);
-      for (const k of ['effects', 'statics', 'triggers', 'costs', 'conditions'] as const) {
+      for (const k of ['effects', 'statics', 'triggers', 'costs', 'conditions', 'amounts'] as const) {
         for (const t of tags[k]) if (!(CORE_NODES[k] as readonly string[]).includes(t)) strays.set(`${k}:${t}`, (strays.get(`${k}:${t}`) ?? 0) + 1);
       }
     }

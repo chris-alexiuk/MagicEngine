@@ -310,3 +310,28 @@ describe('CR 614.12: choices made as a permanent enters', () => {
     expect([elf, bears].map((id) => power(g, g.objects[id]!))).toEqual([2, 2]);
   });
 });
+
+describe('more rules for players', () => {
+  const mk = (name: string, oracle_text: string) => makeCard({ name, type_line: 'Enchantment', oracle_text, mana_cost: '{G}' });
+  const EXTRA = [...CARDS, mk('Leyline Lite', 'You have hexproof.'), mk('Erebos Lite', "Your opponents can't gain life."), mk('Platinum Lite', "You don't lose the game for having 0 or less life.")];
+  const base = () => toStep(start({ extra: EXTRA }), 'main1');
+
+  it('CR 702.11c: a player with hexproof can’t be targeted by opponents', () => {
+    let g = base();
+    give(g, 'bob', 'Leyline Lite', 'battlefield');
+    g.players.alice!.pool.R = 2;
+    const bolt = give(g, 'alice', 'Lightning Bolt', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bolt, targets: [[{ kind: 'player', player: 'bob' }]] })).toMatch(/target/);
+    g = act(g, { type: 'cast', player: 'alice', object: bolt, targets: [[{ kind: 'player', player: 'alice' }]] });
+    expect(g.stack).toHaveLength(1);
+  });
+
+  it('“Your opponents can’t gain life.” and “You don’t lose the game for having 0 or less life.”', () => {
+    let g = base();
+    give(g, 'alice', 'Erebos Lite', 'battlefield');
+    give(g, 'bob', 'Platinum Lite', 'battlefield');
+    g.players.bob!.life = 0;
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.players.bob!.lost).toBe(false);
+  });
+});

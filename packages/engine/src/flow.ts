@@ -110,7 +110,8 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
   const entry = g.stack[g.stack.length - 1];
   if (!entry) return;
 
-  if (entry.kind === 'ability' && !entry.program) {
+  // Nothing compiled, or a mode chosen that the compiler couldn't read: its controller resolves it by hand.
+  if (entry.kind === 'ability' && (!entry.program || entry.program.manual)) {
     g.pending = { kind: 'manual_resolution', player: entry.controller, text: entry.text, sourceName: entry.sourceName };
     return;
   }
@@ -122,7 +123,7 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
       resolvePermanentSpell(g, entry, o, events);
       return;
     }
-    if (!entry.program) {
+    if (!entry.program || entry.program.manual) {
       g.pending = { kind: 'manual_resolution', player: entry.controller, text: face.oracle, sourceName: face.name };
       return;
     }
@@ -376,8 +377,13 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
 
     for (const p of livePlayers(g)) {
       const ps = g.players[p]!;
-      // CR 704.5a: 0 or less life loses.
-      if (ps.life <= 0) losers.push({ player: p, reason: 'life total 0 or less' });
+      // "You can't lose the game." (CR 104.3a: conceding still works.)
+      if (playerRule(g, p, 'cant_lose')) {
+        ps.drewFromEmptyLibrary = false;
+        continue;
+      }
+      // CR 704.5a: 0 or less life loses (unless "you don't lose the game for having 0 or less life").
+      if (ps.life <= 0 && !playerRule(g, p, 'no_lose_for_life')) losers.push({ player: p, reason: 'life total 0 or less' });
       // CR 704.5b: attempted to draw from an empty library.
       else if (ps.drewFromEmptyLibrary) losers.push({ player: p, reason: 'drew from an empty library' });
       // CR 704.5c: ten or more poison counters.

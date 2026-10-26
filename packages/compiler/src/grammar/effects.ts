@@ -1,5 +1,6 @@
 import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
+import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
@@ -38,8 +39,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
       }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
-      // Mana the engine can pay as a resolution-time cost: no {X}, energy, snow or Phyrexian symbols.
-      const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+      // Mana the engine can pay as a resolution-time cost (no {X}, snow or Phyrexian symbols), or energy (CR 107.14).
+      const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
       const then = sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && then) {
         const inner = parseSentence(capitalise(then[1]!), b);
@@ -104,7 +105,59 @@ function capitalise(s: string): string {
   return s.replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** "draws cards equal to …" → "draws X cards" plus what X is (then bound with bindX). */
+const EQUAL_TO: [RegExp, (m: RegExpExecArray) => [string, string]][] = [
+  [/^(.*?\bdeals?) damage equal to (.+?) to (.+)$/i, (m) => [`${m[1]} X damage to ${m[3]}`, m[2]!]],
+  [/^(.*?\b(?:gains?|loses?)) life equal to (.+)$/i, (m) => [`${m[1]} X life`, m[2]!]],
+  [/^(.*?\b(?:draws?|mills?|discards?)) cards equal to (.+)$/i, (m) => [`${m[1]} X cards`, m[2]!]],
+  [/^(.*?\bputs?) a number of (\S+) counters on (.+?) equal to (.+)$/i, (m) => [`${m[1]} X ${m[2]} counters on ${m[3]}`, m[4]!]],
+  [/^(.*?\bscry) equal to (.+)$/i, (m) => [`${m[1]} X`, m[2]!]],
+];
+
+/** Numbers the game counts: "for each …", "equal to …" (CR 608.2h: counted as the effect happens). */
+function parseCounted(s: string, b: Binder): EffectNode[] | null {
+  const at = s.indexOf(' for each ');
+  if (at > 0) {
+    const tail = s.slice(at + ' for each '.length);
+    // "gets +1/+1 for each creature you control until end of turn": the duration stays with the effect.
+    const suffix = / until end of turn$/.exec(tail);
+    const options: [string, string][] = [[tail, '']];
+    if (suffix) options.unshift([tail.slice(0, suffix.index), suffix[0]]);
+    for (const [what, rest] of options) {
+      const r = attempt(b, (b) => {
+        const expr = parseForEach(what, b);
+        const inner = expr && parseSentence(s.slice(0, at) + rest, b);
+        return inner && expr ? scaleBy(inner, expr) : null;
+      });
+      if (r) return r;
+    }
+  }
+  if (/ equal to /.test(s)) {
+    for (const [re, rewrite] of EQUAL_TO) {
+      const m = re.exec(s);
+      if (!m) continue;
+      const [text, what] = rewrite(m);
+      const r = attempt(b, (b) => {
+        const expr = parseCount(what, b);
+        const inner = expr && parseSentence(text, b);
+        return inner && expr ? bindX(inner, expr) : null;
+      });
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // "…, where X is the number of creatures you control." (CR 107.3a: X defined by the text)
+  const where = /^(.+), where X is (.+)$/.exec(s);
+  if (where) {
+    return attempt(b, (b) => {
+      const expr = parseCount(where[2]!, b);
+      const inner = expr && parseSentence(where[1]!, b);
+      return inner && expr ? bindX(inner, expr) : null;
+    });
+  }
   // CR 118.12a: "[Do something] unless [a player] pays [cost]."
   const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
   if (unless) {
@@ -124,6 +177,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
 
   const whole = attempt(b, (b) => parseClause(s, b, null));
   if (whole) return whole.effects;
+  const counted = parseCounted(s, b);
+  if (counted) return counted;
 
   // Try each conjunction as the split point; a clause without a subject reuses the previous one's.
   const joints = [...s.matchAll(/, then | and then | and |, /g)];
@@ -265,12 +320,12 @@ const VERBS: Record<string, VerbHandler> = {
   },
   return(args, who, b, imperative) {
     if (!imperative) return null;
-    const hand = /^(.+?) to (?:its owner's|their owners'|your|its owners') hands?$/.exec(args);
+    const hand = /^(.+?) to (?:its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {
       const what = parseObjectRef(hand[1]!, b);
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
-    const field = /^(.+?) to the battlefield( tapped)?( under (?:your|its owner's|their owners') control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
@@ -391,6 +446,14 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(explore[1]!, b);
     return what && !what.plural ? [{ type: 'explore', what: what.ref }] : null;
   }
+  // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
+  const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);
+  const experience = /^(.+?) gets? (an?|one|two|three) (experience|rad) counters?$/i.exec(c);
+  if (energy || experience) {
+    const who = parsePlayerRef((energy ?? experience)![1]!, b);
+    const amount = energy ? energy[2]!.length / 3 : parseAmount(experience![2]!);
+    return who && typeof amount === 'number' ? [{ type: 'get_counters', who, counter: energy ? 'energy' : experience![3]!, amount }] : null;
+  }
   // CR 725.1: "you become the monarch", "target player becomes the monarch".
   const monarch = /^(.+?) becomes? the monarch$/i.exec(c);
   if (monarch) {
@@ -440,7 +503,7 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   const m = /^(~|[Ii]t) deals (\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
-    if (m[1] !== '~' && b.it?.ref !== 'self') return null;
+    if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object')) return null;
     const amount = parseAmount(m[2]!);
     if (amount === null) return null;
     const out: EffectNode[] = [];

@@ -17,6 +17,7 @@ export function flatten(programs: Program[], modes: number[] | undefined): Compi
     effects.push(...list.map((e) => shiftTargets(e, offset)));
   };
   let usedModes = false;
+  let manual = false;
   for (const p of programs) {
     if (p.modes) {
       // CR 700.2a / CR 700.2d: the chosen modes, each at most once, followed in printed order.
@@ -30,11 +31,12 @@ export function flatten(programs: Program[], modes: number[] | undefined): Compi
         throw new RulesError('Choose each mode at most once.');
       }
       for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);
+      if (chosen.some((m) => p.modes!.options[m]!.manual)) manual = true;
     }
     add(p.targets, p.effects);
   }
   if (modes?.length && !usedModes) throw new RulesError('That isn’t modal.');
-  return { specs, effects };
+  return { specs, effects, ...(manual ? { manual: true as const } : {}) };
 }
 
 function shiftTargets<T>(node: T, offset: number): T {

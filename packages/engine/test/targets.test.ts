@@ -12,6 +12,7 @@ const giantGrowth = card('Giant Growth', 'Instant', 'Target creature gets +3/+3 
 const twoShot = card('Twin Bolt', 'Instant', 'Twin Bolt deals 2 damage to each of two target creatures.');
 const upTo = card('Scatter', 'Sorcery', "Return up to two target creatures to their owners' hands.");
 const charm = card('Test Charm', 'Instant', 'Choose one —\n• Target player draws two cards.\n• Target creature gets -2/-2 until end of turn.');
+const oddCharm = card('Odd Charm', 'Instant', 'Choose one —\n• Target player draws two cards.\n• Learn.');
 const hexBear = card('Hexproof Bear', 'Creature — Bear', 'Hexproof', { power: '2', toughness: '2' });
 const shroudBear = card('Shroud Bear', 'Creature — Bear', 'Shroud', { power: '2', toughness: '2' });
 const proBear = card('Pro-Red Bear', 'Creature — Bear', 'Protection from red', { power: '2', toughness: '2' });
@@ -19,7 +20,7 @@ const blackBear = makeCard({ name: 'Black Bear', type_line: 'Creature — Bear',
 const flashBear = card('Flash Bear', 'Creature — Bear', 'Flash', { power: '2', toughness: '2' });
 const stubborn = card('Stubborn Bear', 'Creature — Bear', "Flash\nThis spell can't be countered.", { power: '2', toughness: '2' });
 const pacifism = card('Pacifism', 'Enchantment — Aura', 'Enchant creature\nEnchanted creature can’t attack or block.'.replace(/’/g, "'"));
-const EXTRA = [mountain, doomBlade, giantGrowth, twoShot, upTo, charm, hexBear, shroudBear, proBear, blackBear, pacifism, flashBear, stubborn];
+const EXTRA = [mountain, doomBlade, giantGrowth, twoShot, upTo, charm, oddCharm, hexBear, shroudBear, proBear, blackBear, pacifism, flashBear, stubborn];
 
 function setup(): GameState {
   const g = toStep(start({ extra: EXTRA }), 'main1');
@@ -162,6 +163,23 @@ describe('choosing targets (CR 115, CR 601.2c)', () => {
     g = act(g, { type: 'cast', player: 'alice', object: second, autoTap: true, modes: [0], targets: [[player('alice')]] });
     g = passRound(g);
     expect(g.zones.hand.alice!.length).toBe(hand + 2);
+  });
+});
+
+describe('modes the compiler can’t read', () => {
+  it('the readable mode runs; the other one is resolved by hand', () => {
+    let g = setup();
+    const hand = g.zones.hand.alice!.length;
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Odd Charm', 'hand'), autoTap: true, modes: [0], targets: [[player('alice')]] }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 2);
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Odd Charm', 'hand'), autoTap: true, modes: [1], targets: [] }));
+    expect(g.pending).toMatchObject({ kind: 'manual_resolution', sourceName: 'Odd Charm' });
+  });
+
+  it('the default choice prefers modes the engine runs', () => {
+    const g = setup();
+    const charm = give(g, 'alice', 'Odd Charm', 'hand');
+    expect(legalActions(g, 'alice')).toContainEqual(expect.objectContaining({ type: 'cast', object: charm, modes: [0] }));
   });
 });
 

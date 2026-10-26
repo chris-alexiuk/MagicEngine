@@ -28,6 +28,8 @@ export class Binder {
   named: Record<string, Ref> = {};
   /** Set when the text moves this object out of a zone ("return ~ from your graveyard"): the ability works there (CR 113.6m). */
   selfZone: 'graveyard' | null = null;
+  /** "it" is this object even though it has left the battlefield ("When ~ dies, it deals damage …"). */
+  itIsSource = false;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -38,6 +40,7 @@ export class Binder {
     b.player = this.player;
     b.named = this.named;
     b.selfZone = this.selfZone;
+    b.itIsSource = this.itIsSource;
     return b;
   }
 
@@ -47,6 +50,7 @@ export class Binder {
     this.player = other.player;
     this.named = other.named;
     this.selfZone = other.selfZone;
+    this.itIsSource = other.itIsSource;
   }
 
   addTarget(spec: TargetSpec): Ref {

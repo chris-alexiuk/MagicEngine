@@ -1,5 +1,5 @@
 import type { Automation, CardDB, CardDef, Color, FaceDef, LegalityCode } from '@mtg/schema';
-import { COLORS, keywordSupported, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
+import { COLORS, keywordSupported, manualModes, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
 import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
@@ -156,7 +156,7 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
 }
 
 function automationOf(faces: FaceDef[]): Automation {
-  const unparsed = faces.reduce((n, f) => n + f.unparsed.length + (f.manualKeywords?.length ?? 0), 0);
+  const unparsed = faces.reduce((n, f) => n + f.unparsed.length + (f.manualKeywords?.length ?? 0) + manualModes(f).length, 0);
   if (unparsed === 0) return 'full';
   // Reminder-only lines describe rules the engine applies anyway (a shockland's
   // intrinsic mana ability from its land types, saga lore counters), so they count as handled.

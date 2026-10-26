@@ -233,6 +233,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
     if (named) return set(b, { ref: named, plural: false, targeted: false });
+    // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
+    const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
+    if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });
     // "return ~ from your graveyard to your hand": the ability functions from the graveyard (CR 113.6m).
     if (t === '~ from your graveyard') {
       b.selfZone = 'graveyard';

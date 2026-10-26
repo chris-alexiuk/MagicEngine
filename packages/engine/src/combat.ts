@@ -12,6 +12,7 @@ import {
   type ObjectId,
   type PlayerId,
 } from './types.js';
+import { playerRule } from './player-rules.js';
 import { faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
@@ -531,6 +532,7 @@ function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent
   }
   for (const [player, amount] of lifeGain) {
     const ps = g.players[player]!;
+    if (playerRule(g, player, 'cant_gain_life')) continue;
     ps.life += amount;
     events.push({ type: 'life', player, delta: amount, life: ps.life });
   }

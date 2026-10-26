@@ -33,8 +33,9 @@ import {
   type PlayerId,
   type Target,
 } from './types.js';
-import { landsAllowed } from './player-rules.js';
+import { landsAllowed, playerRule } from './player-rules.js';
 import { answerAsEnters } from './as-enters.js';
+import { applyCostModifiers } from './costs.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 
 /**
@@ -302,7 +303,7 @@ function cast(
 
   // CR 117.1a: instants any time you have priority; anything else during your main phase with an empty stack.
   // CR 702.8a: flash lets a card be cast any time you could cast an instant.
-  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
   if (!instantSpeed) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
       throw new RulesError(`${face.name} can only be cast during your main phase while the stack is empty.`);
@@ -329,6 +330,8 @@ function cast(
     if (!kicker) throw new RulesError(`${face.name} has no kicker cost the engine can pay.`);
     addCost(cost, parseManaCost(kicker.cost!));
   }
+  // CR 601.2f: then increases and reductions.
+  applyCostModifiers(g, player, o, face, cost);
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }

@@ -1,9 +1,9 @@
-import type { Amount, Ref } from '@mtg/schema';
-import { matchesFilter } from './characteristics.js';
+import type { Amount, AmountExpr, Ref } from '@mtg/schema';
+import { chars, matchesFilter } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
-import { livePlayers, nextPlayer } from './zones.js';
+import { battlefieldZcc, faceOf, livePlayers, nextPlayer } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // References: who and what an effect acts on
@@ -71,6 +71,13 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         .map((id) => g.objects[id]!)
         .filter((o) => o && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
     }
+    case 'exiled_with': {
+      // CR 607.2a: cards in exile that this object's linked ability put there.
+      const s = ctx.source;
+      if (!s) return [];
+      const zcc = battlefieldZcc(g, s);
+      return g.zones.exile.map((id) => g.objects[id]!).filter((o) => o.exiledBy?.id === s.id && o.exiledBy.zcc === zcc);
+    }
     default:
       return [];
   }
@@ -127,9 +134,87 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
   return [...players, ...objects];
 }
 
+/** Amount kinds the engine counts (schema CORE_NODES.amounts). */
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x'];
+
+/** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
+function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
+  if (ref.ref === 'target') return (ctx.targets[ref.index] ?? []).flatMap((t) => (t.kind === 'object' ? [{ id: t.id, zcc: t.zcc }] : []));
+  if (ref.ref === 'trigger_object') return ctx.trigger?.object ? [ctx.trigger.object] : [];
+  if (ref.ref === 'self' && ctx.source) return [{ id: ctx.source.id, zcc: ctx.sourceZcc ?? ctx.source.zcc }];
+  return refObjects(ctx, ref).map((o) => ({ id: o.id, zcc: o.zcc }));
+}
+
+/** CR 608.2h: an object's power/toughness now, or as it last existed on the battlefield. */
+function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'mana_value'): number {
+  const { g } = ctx;
+  const [r] = refRefs(ctx, ref);
+  if (!r) return 0;
+  const o = g.objects[r.id];
+  if (stat === 'mana_value') return o ? (g.cards[o.card]?.cmc ?? 0) : 0;
+  if (o && o.zcc === r.zcc && o.zone === 'battlefield') return chars(g, o)[stat];
+  const last = g.lastKnown?.[r.id];
+  // A leaves-the-battlefield trigger points at the new object; the one just before it was on the battlefield.
+  if (last && (last.zcc === r.zcc || (ref.ref === 'trigger_object' && last.zcc === r.zcc - 1))) return last[stat];
+  return o ? chars(g, o)[stat] : 0;
+}
+
+/** CR 700.5: mana symbols of those colors among the mana costs of permanents you control (hybrid counts). */
+function devotion(ctx: EffectContext, colors: string[]): number {
+  let n = 0;
+  for (const id of ctx.g.zones.battlefield) {
+    const o = ctx.g.objects[id]!;
+    if (o.controller !== ctx.controller) continue;
+    for (const m of (faceOf(ctx.g, o).manaCost ?? '').matchAll(/\{([^}]+)\}/g)) {
+      if (m[1]!.split('/').some((c) => colors.includes(c))) n++;
+    }
+  }
+  return n;
+}
+
+function count(ctx: EffectContext, e: AmountExpr): number {
+  const { g } = ctx;
+  const source = ctx.source ?? null;
+  switch (e.kind) {
+    case 'count':
+      return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, e.filter, { controller: ctx.controller, source })).length;
+    case 'cards': {
+      const players = e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
+      const zone = e.zone;
+      const ids = zone === 'exile' ? g.zones.exile : players.flatMap((p) => g.zones[zone][p] ?? []);
+      return ids.filter((id) => {
+        const o = g.objects[id]!;
+        return e.zone !== 'exile' || players.includes(o.owner) ? !e.filter || matchesFilter(g, o, e.filter, { controller: ctx.controller, source, anyZone: true }) : false;
+      }).length;
+    }
+    case 'stat':
+      return statOf(ctx, e.of, e.stat);
+    case 'life':
+      return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
+    case 'counters': {
+      const [o] = refObjects(ctx, e.of);
+      const counters = o?.counters ?? {};
+      return e.counter ? (counters[e.counter] ?? 0) : Object.values(counters).reduce((a, b) => a + b, 0);
+    }
+    case 'players':
+      return livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller).length;
+    case 'devotion':
+      return devotion(ctx, e.colors);
+    case 'x':
+      return ctx.x;
+    default:
+      return 0;
+  }
+}
+
 export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
   if (a === 'X') return ctx.x;
-  return typeof a === 'number' ? a : 0;
+  if (typeof a === 'number') return a;
+  if (a && typeof a === 'object' && 'kind' in a) {
+    const e = a as AmountExpr;
+    return count(ctx, e) * (e.times ?? 1) + (e.plus ?? 0);
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import type { TargetSpec } from '@mtg/schema';
 import { hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type Target, type TargetPrompt, type TargetRef } from './types.js';
+import { playerRule } from './player-rules.js';
 import { livePlayers, nameOf } from './zones.js';
 
 /**
@@ -29,6 +30,10 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   if (!livePlayers(g).includes(player)) return false;
   if (spec.player === 'opponent' && player === controller) return false;
   if (spec.player === 'you' && player !== controller) return false;
+  // CR 702.11c: a player with hexproof can't be the target of spells or abilities their opponents control;
+  // CR 702.18: with shroud, of any spell or ability.
+  if (playerRule(g, player, 'shroud')) return false;
+  if (player !== controller && playerRule(g, player, 'hexproof')) return false;
   return true;
 }
 

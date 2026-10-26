@@ -16,10 +16,12 @@ export function parseAmount(word: string): Amount | null {
   return NUMBER_WORDS[w.toLowerCase()] ?? null;
 }
 
-/** "+2/+0", "-1/-1", "+X/+0" → numbers (X not supported in P/T changes yet). */
-export function parsePT(text: string): { power: number; toughness: number } | null {
-  const m = /^([+-]\d+)\/([+-]\d+)$/.exec(text.replace(/−/g, '-'));
-  return m ? { power: Number(m[1]), toughness: Number(m[2]) } : null;
+/** "+2/+0", "-1/-1", "+X/+0", "-X/-X" → amounts (X is bound later: paid, or "where X is …"). */
+export function parsePT(text: string): { power: Amount; toughness: Amount } | null {
+  const m = /^([+-](?:\d+|X))\/([+-](?:\d+|X))$/.exec(text.replace(/−/g, '-'));
+  if (!m) return null;
+  const one = (v: string): Amount => (v === '+X' ? 'X' : v === '-X' ? { kind: 'x', times: -1 } : Number(v));
+  return { power: one(m[1]!), toughness: one(m[2]!) };
 }
 
 export const COLOR_WORDS: Record<string, Color> = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };

@@ -1,10 +1,15 @@
 import type {
   AbilityNode,
   ActivatedAbility,
+  Amount,
   ConditionNode,
   AsEntersNode,
+  Color,
   ContinuousEffectNode,
   Cost,
+  CostModifierNode,
+  ObjectFilter,
+  PlayerRule,
   PlayerRuleNode,
   EffectNode,
   ModeChoice,
@@ -19,6 +24,7 @@ import type {
 import type { GrammarRule } from '../parser.js';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
+import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
 import { parseEffectText, splitSentences } from './effects.js';
@@ -61,9 +67,11 @@ export function parseProgram(text: string, b: Binder): Program | null {
       const mb = b.clone();
       mb.targets = [];
       const effects = parseEffectText(bullet.slice(2), mb);
-      if (!effects) return null;
-      options.push({ text: bullet.slice(2), ...(mb.targets.length ? { targets: mb.targets } : {}), effects });
+      // A mode the grammar can't read stays manual; the others still run (CR 700.2).
+      if (!effects) options.push({ text: bullet.slice(2), effects: [], manual: true });
+      else options.push({ text: bullet.slice(2), ...(mb.targets.length ? { targets: mb.targets } : {}), effects });
     }
+    if (options.every((o) => o.manual)) return null;
     const { min, max } = modeCount(modal[1]!, options.length);
     if (min > options.length) return null;
     return { effects: [], modes: { min, max, options } };
@@ -131,6 +139,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
+    // CR 107.14: "Pay {E}{E}" removes energy counters from you.
+    else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
     else {
       const life = /^[Pp]ay (\d+) life$/.exec(item);
@@ -335,7 +345,10 @@ export const triggeredRule: GrammarRule = {
         b.player = trig.player;
         // CR 113.6m: "When ~ dies, return ~ from your graveyard…" — the trigger put it there; it's the card that died.
         const selfLeaves = (trig.trigger.type === 'dies' || trig.trigger.type === 'leaves') && (trig.trigger.subject as Ref).ref === 'self';
-        if (selfLeaves) b.named['~ from your graveyard'] = { ref: 'trigger_object' };
+        if (selfLeaves) {
+          b.named['~ from your graveyard'] = { ref: 'trigger_object' };
+          b.itIsSource = true;
+        }
         let effectText = body.slice(comma.index! + 2);
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
@@ -437,8 +450,20 @@ export const continuousRule: GrammarRule = {
 /** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
 function parsePlayerRule(body: string): PlayerRuleNode | null {
   const who = (w: string): PlayerRuleNode['who'] | null =>
-    w === 'You' || w === 'you' ? 'you' : /^each player$/i.test(w) ? 'each' : /^(?:each opponent|your opponents)$/i.test(w) ? 'opponents' : null;
-  const hand = /^(You|Each player|Each opponent|Your opponents) ha(?:s|ve) no maximum hand size$/.exec(body);
+    w === 'You' || w === 'you' ? 'you' : /^(?:each player|players)$/i.test(w) ? 'each' : /^(?:each opponent|your opponents)$/i.test(w) ? 'opponents' : null;
+  const subject = /^(You|Players|Each player|Each opponent|Your opponents) (.+)$/.exec(body);
+  const simple: Record<string, PlayerRule> = {
+    'have hexproof': 'hexproof',
+    'has hexproof': 'hexproof',
+    'have shroud': 'shroud',
+    'has shroud': 'shroud',
+    "can't gain life": 'cant_gain_life',
+    "don't lose the game for having 0 or less life": 'no_lose_for_life',
+    "can't lose the game": 'cant_lose',
+    'may cast spells as though they had flash': 'flash',
+  };
+  if (subject && simple[subject[2]!] && who(subject[1]!)) return { type: 'player_rule', who: who(subject[1]!)!, rule: simple[subject[2]!]! };
+  const hand = /^(You|Players|Each player|Each opponent|Your opponents) ha(?:s|ve) no maximum hand size$/.exec(body);
   if (hand) return { type: 'player_rule', who: who(hand[1]!)!, rule: 'no_max_hand_size' };
   const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
   if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
@@ -451,9 +476,38 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
 
 /** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
+  // "Creatures you control get +X/+X, where X is …" (CR 107.3a)
+  const where = /^(.+), where X is (.+)$/.exec(body);
+  if (where) {
+    const expr = parseCount(where[2]!, b);
+    const inner = expr && parseContinuous(where[1]!, b);
+    return inner && expr ? (bindX([inner], expr)[0] as ContinuousEffectNode) : null;
+  }
   // Layer 2 (CR 613.1b): "You control enchanted creature." (Control Magic).
   const control = /^You control (enchanted (?:creature|permanent|artifact|land|planeswalker))$/.exec(body);
   if (control) return { type: 'continuous', affected: { ref: 'attached' }, control: 'you' };
+  // Layer 7a (CR 604.3): "~'s power and toughness are each equal to the number of creatures you control."
+  const cda = /^~'s (power and toughness are each|power is|toughness is) equal to (.+?)(?: and its toughness is equal to (.+))?$/.exec(body);
+  if (cda) {
+    const first = parseCount(cda[2]!, b);
+    if (!first) return null;
+    const effect: ContinuousEffectNode = { type: 'continuous', affected: { ref: 'self' }, setLayer: '7a' };
+    if (cda[1] !== 'toughness is') effect.setPower = first;
+    if (cda[1] !== 'power is') effect.setToughness = first;
+    if (cda[3]) {
+      if (cda[1] !== 'power is') return null;
+      const second = parseCount(cda[3], b);
+      if (!second) return null;
+      effect.setToughness = second;
+    }
+    return effect;
+  }
+  // Layer 7b: "Enchanted creature has base power and toughness 1/1."
+  const base = /^(.+?) ha(?:s|ve) base power and toughness (\d+)\/(\d+)$/.exec(body);
+  if (base) {
+    const subject = parseObjectRef(base[1]!, b, 'static');
+    return subject ? { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' } : null;
+  }
   // CR 509.1c: "All creatures able to block ~ do so." (lure)
   const lure = /^All creatures able to block (.+) do so$/.exec(body);
   if (lure) {
@@ -468,7 +522,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   const effect: ContinuousEffectNode = { type: 'continuous', affected: subject.ref };
   // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
   for (const part of m[2]!.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |doesn't )/)) {
-    const get = /^gets? (\S+)$/.exec(part);
+    const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     const has = /^ha(?:s|ve) (.+)$/.exec(part);
     const flags = STATIC_FLAGS[part];
     const combat = flags ? null : parseCombatRule(part, b);
@@ -479,10 +533,21 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       if (flags.includes('cant_be_countered') && subject.ref.ref !== 'self') return null;
       effect.rules = [...(effect.rules ?? []), ...flags];
     } else if (get && effect.power === undefined) {
-      const pt = parsePT(get[1]!);
+      // "gets +1/+1 for each other Zombie you control" (counted continuously, CR 611.3a)
+      const each = /^(\S+) for each (.+)$/.exec(get[1]!);
+      const pt = parsePT(each ? each[1]! : get[1]!);
       if (!pt) return null;
       effect.power = pt.power;
       effect.toughness = pt.toughness;
+      if (each) {
+        const expr = parseForEach(each[2]!, b);
+        // "Other Elves get +1/+1 for each other Elf": "other" would mean other than each affected one — not modelled.
+        if (expr?.kind === 'count' && expr.filter.other && subject.ref.ref !== 'self') return null;
+        const scaled = expr && scaleBy([{ type: 'x', power: pt.power, toughness: pt.toughness }], expr);
+        if (!scaled) return null;
+        effect.power = scaled[0]!.power as Amount;
+        effect.toughness = scaled[0]!.toughness as Amount;
+      }
     } else if (has && !effect.keywords) {
       const kws = parseKeywordList(has[1]!, b);
       if (!kws) return null;
@@ -505,6 +570,66 @@ export const deckRule: GrammarRule = {
     if (!m) return null;
     const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'deck_rule' } };
     return node;
+  },
+};
+
+/**
+ * CR 601.2f: "Creature spells you cast cost {1} less to cast.", "Spells your opponents cast cost {1} more
+ * to cast.", "This spell costs {2} less to cast if you control a Wizard.", "… for each artifact you control."
+ */
+export const costModifierRule: GrammarRule = {
+  id: 'cost_modifier',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env || !line.endsWith('.')) return null;
+    const b = new Binder(env);
+    const body = line.slice(0, -1);
+    const amountOf = (sym: string): { amount: Amount; color?: Color } | null => {
+      const m = /^\{(\d+|X|[WUBRG])\}$/.exec(sym);
+      if (!m) return null;
+      if (/^\d+$/.test(m[1]!)) return { amount: Number(m[1]) };
+      if (m[1] === 'X') return { amount: 'X' };
+      return { amount: 1, color: m[1] as Color };
+    };
+    const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| if (.+?)|, where X is (.+?))?$/.exec(body);
+    if (own) {
+      const a = amountOf(own[1]!);
+      if (!a) return null;
+      const node: CostModifierNode = { type: 'cost_modifier', self: true, change: own[2] as 'less' | 'more', ...a };
+      if (own[3]) {
+        const each = parseForEach(own[3], b);
+        if (!each || a.amount === 'X') return null;
+        node.amount = { ...each, times: (each.times ?? 1) * (a.amount as number) };
+      } else if (own[4]) {
+        const cond = parseCondition(own[4], b);
+        if (!cond) return null;
+        node.condition = cond;
+      } else if (own[5]) {
+        const x = parseCount(own[5], b);
+        if (!x || a.amount !== 'X') return null;
+        node.amount = x;
+      } else if (a.amount === 'X') return null;
+      const ability: StaticAbility = { kind: 'static', text: original, effect: node };
+      return ability;
+    }
+    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);
+    if (others) {
+      const a = amountOf(others[3]!);
+      if (!a || a.amount === 'X') return null;
+      const adjectives = others[1]!.trim().replace(/ and /g, ' or ');
+      let filter: ObjectFilter = {};
+      if (adjectives && !/^Spells?$/i.test(adjectives)) {
+        const pf = parseFilter(`${adjectives.replace(/^\w/, (c) => c.toLowerCase())} spells`, b);
+        if (!pf) return null;
+        const { zone: _z, ...rest } = pf.filter;
+        filter = rest;
+      }
+      const who = !others[2] ? 'each' : others[2] === 'you' ? 'you' : 'opponents';
+      const node: CostModifierNode = { type: 'cost_modifier', who, filter, change: others[4]!.toLowerCase() as 'less' | 'more', ...a };
+      const ability: StaticAbility = { kind: 'static', text: original, effect: node };
+      return ability;
+    }
+    return null;
   },
 };
 
@@ -609,6 +734,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   entersTappedUnlessRule,
   asEntersRule,
   deckRule,
+  costModifierRule,
   selfReplacementRule,
   additionalCostRule,
   continuousRule,

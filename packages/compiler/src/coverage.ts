@@ -1,4 +1,4 @@
-import { keywordSupported, type Automation, type CardDB } from '@mtg/schema';
+import { keywordSupported, manualModes, type Automation, type CardDB } from '@mtg/schema';
 import { normaliseSelf, stripAbilityWord } from './parser.js';
 
 export interface TemplateStat {
@@ -47,7 +47,7 @@ export function buildCoverage(db: CardDB, topN = 200): CoverageReport {
         keywordCounts[kw.id] = (keywordCounts[kw.id] ?? 0) + 1;
         if (!keywordSupported(kw)) manualKeywords[kw.id] = (manualKeywords[kw.id] ?? 0) + 1;
       }
-      for (const line of face.unparsed) {
+      for (const line of [...face.unparsed, ...manualModes(face)]) {
         const t = templateOf(line, card.name, face.name);
         const stat = templates.get(t) ?? { template: t, count: 0, examples: [] };
         stat.count++;

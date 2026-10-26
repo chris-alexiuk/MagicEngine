@@ -242,3 +242,81 @@ describe('sacrifice and discard choices (CR 701.21, CR 601.2f)', () => {
     expect(g.objects[theirs]!.zone).toBe('graveyard');
   });
 });
+
+describe('CR 601.2f: cost increases and reductions', () => {
+  const mk = (name: string, type_line: string, oracle_text: string, mana_cost: string, pt?: string) =>
+    makeCard({ name, type_line, oracle_text, mana_cost, ...(pt ? { power: pt, toughness: pt } : {}) });
+  const EXTRA = [
+    mk('Goblin Electromancer', 'Creature — Goblin Wizard', 'Instant and sorcery spells you cast cost {1} less to cast.', '{R}', '2'),
+    mk('Thalia Lite', 'Creature — Human Soldier', 'Noncreature spells cost {1} more to cast.', '{W}', '2'),
+    mk('Frogmite Lite', 'Artifact Creature — Frog', 'This spell costs {1} less to cast for each artifact you control.', '{4}', '2'),
+    mk('Big Sorcery', 'Sorcery', 'Draw two cards.', '{2}{G}'),
+    mk('Clockwork', 'Artifact', '', '{1}'),
+  ];
+  const setup = (forests: number) => {
+    const g = toStep(start({ extra: EXTRA }), 'main1');
+    for (let i = 0; i < forests; i++) give(g, 'alice', 'Forest', 'battlefield');
+    return g;
+  };
+  const castIt = (g: GameState, name: string) => act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', name, 'hand'), autoTap: true });
+
+  it('a reduction from a permanent you control', () => {
+    const g = setup(2);
+    expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Big Sorcery', 'hand'), autoTap: true })).toMatch(/enough/);
+    give(g, 'alice', 'Goblin Electromancer', 'battlefield');
+    castIt(g, 'Big Sorcery');
+  });
+
+  it('an increase for everyone, and reductions can’t go below the colored part', () => {
+    const g = setup(3);
+    give(g, 'bob', 'Thalia Lite', 'battlefield');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Big Sorcery', 'hand'), autoTap: true })).toMatch(/enough/);
+    give(g, 'alice', 'Goblin Electromancer', 'battlefield');
+    castIt(g, 'Big Sorcery'); // +1 −1
+  });
+
+  it('“This spell costs {1} less to cast for each artifact you control” (CR 113.6e)', () => {
+    const g = setup(1);
+    for (let i = 0; i < 3; i++) give(g, 'alice', 'Clockwork', 'battlefield');
+    const r = castIt(g, 'Frogmite Lite');
+    expect(r.zones.battlefield.filter((id) => r.objects[id]!.tapped)).toHaveLength(1);
+    for (let i = 0; i < 2; i++) give(g, 'alice', 'Clockwork', 'battlefield');
+    // Five artifacts: it costs {0} (never less).
+    const free = castIt(g, 'Frogmite Lite');
+    expect(free.zones.battlefield.filter((id) => free.objects[id]!.tapped)).toHaveLength(0);
+  });
+});
+
+describe('CR 107.14: energy', () => {
+  const mk = (name: string, oracle_text: string) => makeCard({ name, type_line: 'Creature — Construct', oracle_text, mana_cost: '{G}', power: '1', toughness: '1' });
+  const EXTRA = [
+    mk('Energy Cell', 'When this creature enters, you get {E}{E}.'),
+    mk('Energy Drinker', '{T}, Pay {E}{E}: Draw a card.'),
+    mk('Charged Striker', 'Whenever this creature attacks, you may pay {E}. If you do, put a +1/+1 counter on it.'),
+  ];
+  it('getting energy, and paying it as a cost', () => {
+    let g = toStep(start({ extra: EXTRA }), 'main1');
+    give(g, 'alice', 'Forest', 'battlefield');
+    const drinker = give(g, 'alice', 'Energy Drinker', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: drinker, ability: 0 })).toMatch(/energy/);
+    g = passRound(passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Energy Cell', 'hand'), autoTap: true })));
+    expect(g.players.alice!.counters).toEqual({ energy: 2 });
+    const hand = g.zones.hand.alice!.length;
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: drinker, ability: 0 }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+    expect(g.players.alice!.counters).toEqual({ energy: 0 });
+  });
+
+  it('“you may pay {E}. If you do, …”', () => {
+    let g = toStep(start({ extra: EXTRA }), 'main1');
+    const striker = give(g, 'alice', 'Charged Striker', 'battlefield');
+    g.players.alice!.counters = { energy: 1 };
+    g = passRound(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: striker, target: { kind: 'player', player: 'bob' } }] } });
+    g = passRound(g);
+    expect(g.pending).toMatchObject({ kind: 'pay', cost: '{E}' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } });
+    expect(g.objects[striker]!.counters['+1/+1']).toBe(1);
+    expect(g.players.alice!.counters!.energy).toBe(0);
+  });
+});

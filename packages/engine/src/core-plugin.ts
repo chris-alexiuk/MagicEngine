@@ -1,6 +1,7 @@
 import type { AddManaEffect, AsEntersNode, CombatRules, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
+import { playerRule } from './player-rules.js';
 import { hasKeyword, hasRule, matchesFilter } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
@@ -12,7 +13,7 @@ import { installPlugin, type EffectContext, type EffectResult, type MechanicPlug
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type ManaColor, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
-import { drawCard, moveObject, nameOf, setTapped, zoneList } from './zones.js';
+import { battlefieldZcc, drawCard, moveObject, nameOf, setTapped, zoneList } from './zones.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -120,6 +121,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // CR 701.13a: exile moves it to the exile zone from wherever it is.
         if (o.zone === 'stack' && o.id !== ctx.source?.id) continue;
         moveObject(ctx.g, o.id, to, ctx.events);
+        // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
+        const src = ctx.source;
+        if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
       }
     }
     return true;
@@ -174,7 +178,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
       controller: ctx.controller,
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
-      ...(typeof node.power === 'number' ? { power: node.power, toughness: Number(node.toughness ?? 0) } : {}),
+      // CR 608.2h: a counted amount ("+1/+1 for each creature you control") is counted once, now.
+      ...(node.power !== undefined ? { power: amountOf(ctx, node.power), toughness: amountOf(ctx, node.toughness ?? 0) } : {}),
       ...(Array.isArray(node.keywords) ? { keywords: node.keywords as KeywordInstance[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
@@ -321,6 +326,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', 1);
     memo.card = top;
     return { ask: { kind: 'may', player, text: `put ${nameOf(ctx.g, ctx.g.objects[top]!)} into your graveyard`, sourceName: sourceName(ctx) } };
+  },
+
+  get_counters(node, ctx) {
+    // CR 122.1: counters on a player ("you get {E}{E}").
+    const n = amountOf(ctx, node.amount);
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      const ps = ctx.g.players[p]!;
+      const counters = (ps.counters ??= {});
+      counters[String(node.counter)] = (counters[String(node.counter)] ?? 0) + n;
+      ctx.events.push({ type: 'player_counters', player: p, counter: String(node.counter), delta: n });
+    }
+    return true;
   },
 
   become_monarch(node, ctx) {
@@ -542,7 +559,8 @@ function feasible(e: EffectNode, ctx: EffectContext): boolean {
 }
 
 function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
-  if (n <= 0) return;
+  // "Players can't gain life."
+  if (n <= 0 || playerRule(ctx.g, p, 'cant_gain_life')) return;
   const ps = ctx.g.players[p]!;
   ps.life += n;
   ctx.events.push({ type: 'life', player: p, delta: n, life: ps.life });
@@ -723,9 +741,9 @@ export const corePlugin: MechanicPlugin = {
   effects,
   triggers,
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
-  // "exile it instead" in moveObject, rules for players in player-rules.ts.
+  // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

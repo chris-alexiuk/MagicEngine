@@ -9,7 +9,7 @@ import { moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -60,6 +60,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
       if (o.zone !== 'graveyard' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your graveyard.`);
+    } else if (c.type === 'pay_energy') {
+      // CR 107.14: paying {E} removes an energy counter from you.
+      if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -92,6 +95,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'exile_self') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
+    } else if (c.type === 'pay_energy') {
+      payEnergy(g, player, Number(c.amount), events);
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       moveObject(g, o.id, 'graveyard', events);
@@ -151,8 +156,20 @@ export function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: numbe
   for (const step of plan) runManaAbility(g, player, step.object, step.ability, step.choice, events);
 }
 
-/** Pays a mana cost as a spell or ability resolves (CR 118.12), tapping automatically. */
+/** CR 107.14: removes energy counters from a player. */
+export function payEnergy(g: GameState, player: PlayerId, n: number, events: GameEvent[]): void {
+  const counters = (g.players[player]!.counters ??= {});
+  if ((counters.energy ?? 0) < n) throw new RulesError(`You don’t have ${n} energy.`);
+  counters.energy = (counters.energy ?? 0) - n;
+  events.push({ type: 'player_counters', player, counter: 'energy', delta: -n });
+}
+
+/** Pays a mana cost (or energy) as a spell or ability resolves (CR 118.12), tapping automatically. */
 export function payDuringResolution(g: GameState, player: PlayerId, mana: string, events: GameEvent[]): void {
+  if (/^(?:\{E\})+$/.test(mana)) {
+    payEnergy(g, player, mana.length / 3, events);
+    return;
+  }
   const cost = parseManaCost(mana);
   if (cost.unsupported.length) throw new RulesError(`Paying ${mana} isn’t supported yet.`);
   if (!payFromPool(g.players[player]!.pool, cost)) autoTap(g, player, cost, 0, events);

@@ -1,6 +1,7 @@
 import type { FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
+import { chars } from './characteristics.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -81,6 +82,11 @@ export function moveObject(
   delete o.exileOnLeave;
   const controllerBefore = o.controller;
   const countersBefore = from === 'battlefield' ? { ...o.counters } : undefined;
+  if (from === 'battlefield') {
+    // CR 608.2h: remember how it last existed on the battlefield ("deals damage equal to its power").
+    const c = chars(g, o);
+    (g.lastKnown ??= {})[id] = { zcc: o.zcc, power: c.power, toughness: c.toughness };
+  }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;
   removeFromCurrentZone(g, o);
@@ -100,6 +106,7 @@ export function moveObject(
   delete o.triggeredTurn;
   delete o.monstrous;
   delete o.chosen;
+  delete o.exiledBy;
   delete o.exileIfDiesTurn;
   delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;
@@ -140,6 +147,13 @@ export function moveObject(
     ...(o.token ? { token: true as const } : {}),
     ...(countersBefore ? { counters: countersBefore } : {}),
   });
+}
+
+/** The zone-change count an object had (or has) on the battlefield: now if it's there, else as it left. */
+export function battlefieldZcc(g: GameState, o: GameObject): number {
+  if (o.zone === 'battlefield') return o.zcc;
+  const last = g.lastKnown?.[o.id];
+  return last && last.zcc === o.zcc - 1 ? last.zcc : o.zcc;
 }
 
 /** Creates a fresh object for a card owned by `owner`, placed in `zone`. */

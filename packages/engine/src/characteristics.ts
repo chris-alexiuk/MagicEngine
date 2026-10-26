@@ -2,6 +2,7 @@ import { SUBTYPES } from '@mtg/schema';
 import type {
   AbilityNode,
   ActivatedAbility,
+  Amount,
   Color,
   CombatRules,
   ConditionNode,
@@ -14,6 +15,7 @@ import type {
   StaticAbility,
 } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
+import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import { faceOf } from './zones.js';
 
@@ -41,8 +43,10 @@ export interface Characteristics {
 /** One continuous effect that might apply, with what's needed to order and scope it. */
 interface ActiveEffect {
   timestamp: number;
-  power?: number;
-  toughness?: number;
+  /** Layer 7c: how much it adds to power and toughness (counted as needed). */
+  pt?: () => [number, number];
+  /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
+  set?: { layer: '7a' | '7b'; pt: () => [number | null, number | null] };
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
@@ -94,6 +98,10 @@ export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
 const checking: [ConditionalNode, string][] = [];
 /** Condition results for the duration of one outermost chars() call, so nested lookups stay linear. */
 let conditionMemo: Map<ConditionalNode, Map<string, boolean>> | null = null;
+/** Counted amounts of static abilities, for the same duration. */
+let amountMemo: Map<object, Map<string, number>> | null = null;
+/** The continuous effects that might apply, for the same duration. */
+let effectsMemo: { g: GameState; list: ActiveEffect[] } | null = null;
 
 /** A static ability's effect that may carry a condition. */
 type ConditionalNode = { condition?: ConditionNode };
@@ -121,6 +129,46 @@ export function staticConditionHolds(g: GameState, e: ConditionalNode, source: G
   return holds;
 }
 
+/** Amounts being counted for static abilities right now (same loop guard as conditions). */
+const counting: [Amount, string][] = [];
+
+/** A static ability's number, counted now ("+1/+1 for each other Zombie you control"); 0 inside its own count. */
+function staticAmount(g: GameState, a: Amount | undefined, source: GameObject): number {
+  if (a === undefined) return 0;
+  if (typeof a === 'number') return a;
+  const key = `${source.id}:${source.zcc}`;
+  const cached = typeof a === 'object' ? amountMemo?.get(a)?.get(key) : undefined;
+  if (cached !== undefined) return cached;
+  if (counting.some(([n, k]) => n === a && k === key)) return 0;
+  counting.push([a, key]);
+  let n: number;
+  try {
+    n = amountOf({ g, controller: source.controller, source, events: [], targets: [], x: 0, memo: {} }, a);
+  } finally {
+    counting.pop();
+  }
+  // Counts of objects, cards and players don't depend on power and toughness, so they can be reused.
+  if (amountMemo && typeof a === 'object' && a.kind !== 'stat') {
+    let m = amountMemo.get(a);
+    if (!m) amountMemo.set(a, (m = new Map()));
+    m.set(key, n);
+  }
+  return n;
+}
+
+/** The P/T parts of a static ability's effect. */
+function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pick<ActiveEffect, 'pt' | 'set'> {
+  const out: Pick<ActiveEffect, 'pt' | 'set'> = {};
+  if (e.power !== undefined || e.toughness !== undefined) out.pt = () => [staticAmount(g, e.power, source), staticAmount(g, e.toughness, source)];
+  if (e.setPower !== undefined || e.setToughness !== undefined) {
+    out.set = {
+      layer: e.setLayer ?? '7b',
+      pt: () => [e.setPower === undefined ? null : staticAmount(g, e.setPower, source), e.setToughness === undefined ? null : staticAmount(g, e.setToughness, source)],
+    };
+  }
+  return out;
+}
+
 /** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3). */
 function staticEffects(g: GameState): ActiveEffect[] {
   const out: ActiveEffect[] = [];
@@ -134,7 +182,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
       out.push({
         // CR 613.7a: a static ability's effect has the timestamp of the object it's on.
         timestamp: source.timestamp,
-        ...(e.power !== undefined ? { power: e.power, toughness: e.toughness ?? 0 } : {}),
+        ...ptParts(g, e, source),
         ...(e.keywords ? { keywords: e.keywords } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
         ...(e.combat ? { combat: e.combat } : {}),
@@ -162,7 +210,7 @@ function affectedBy(g: GameState, ref: Ref, source: GameObject, o: GameObject, c
 function resolvedEffects(g: GameState): ActiveEffect[] {
   return g.effects.map((e) => ({
     timestamp: e.timestamp,
-    ...(e.power !== undefined ? { power: e.power, toughness: e.toughness ?? 0 } : {}),
+    ...(e.power !== undefined ? { pt: (): [number, number] => [e.power ?? 0, e.toughness ?? 0] } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
@@ -174,16 +222,31 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
 /**
  * An object's current characteristics. Printed values, then continuous effects
  * layer by layer (CR 613.1), each layer in timestamp order (CR 613.7).
- * Implemented so far: layer 6 (abilities), 7c (P/T changes and counters).
- * Layers 1–5, 7a, 7b, 7d and dependency (rule 613.8) arrive with the effects that need them.
+ * Implemented so far: layer 6 (abilities), 7a (characteristic-defining P/T), 7b (P/T setting),
+ * 7c (P/T changes and counters). Layers 1–5, 7d and dependency (rule 613.8) arrive with the
+ * effects that need them.
  */
 export function chars(g: GameState, o: GameObject): Characteristics {
-  if (charsDepth === 0) conditionMemo = new Map();
+  return withCharsCache(() => layered(g, o));
+}
+
+/**
+ * Runs `fn` with characteristics lookups sharing their intermediate results (the effects list,
+ * conditions, counts). Only for code that doesn't change the state meanwhile.
+ */
+export function withCharsCache<T>(fn: () => T): T {
+  if (charsDepth === 0) {
+    conditionMemo = new Map();
+    amountMemo = new Map();
+  }
   charsDepth++;
   try {
-    return layered(g, o);
+    return fn();
   } finally {
-    if (--charsDepth === 0) conditionMemo = null;
+    if (--charsDepth === 0) {
+      conditionMemo = amountMemo = null;
+      effectsMemo = null;
+    }
   }
 }
 
@@ -195,11 +258,22 @@ function layered(g: GameState, o: GameObject): Characteristics {
       const e = a.kind === 'static' && a.effect.type === 'continuous' ? (a.effect as ContinuousEffectNode) : null;
       if (e && e.affected.ref === 'self') for (const r of e.rules ?? []) c.rules.add(r);
     }
+    applyOwnCDA(g, o, c);
     return c;
   }
-  if (o.zone !== 'battlefield') return withCounters(c, o);
+  if (o.zone !== 'battlefield') {
+    applyOwnCDA(g, o, c);
+    return withCounters(c, o);
+  }
 
-  const effects = [...staticEffects(g), ...resolvedEffects(g)].sort((a, b) => a.timestamp - b.timestamp);
+  // The state doesn't change while characteristics are computed, so nested lookups share one list
+  // (and the memoised conditions and counts belong to this state only).
+  if (!effectsMemo || effectsMemo.g !== g) {
+    conditionMemo?.clear();
+    amountMemo?.clear();
+    effectsMemo = { g, list: [...staticEffects(g), ...resolvedEffects(g)].sort((a, b) => a.timestamp - b.timestamp) };
+  }
+  const effects = effectsMemo.list;
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
   const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat) && e.applies(o, c));
   for (const e of inLayer6) {
@@ -207,13 +281,34 @@ function layered(g: GameState, o: GameObject): Characteristics {
     for (const r of e.rules ?? []) c.rules.add(r);
     if (e.combat) c.combat.push(e.combat);
   }
+  // CR 613.4a / 613.4b: layer 7a (characteristic-defining abilities), then 7b (effects that set P/T).
+  for (const layer of ['7a', '7b'] as const) {
+    for (const e of effects) {
+      if (e.set?.layer !== layer || !e.applies(o, c)) continue;
+      const [p, t] = e.set.pt();
+      if (p !== null) c.power = p;
+      if (t !== null) c.toughness = t;
+    }
+  }
   // CR 613.4c: layer 7c — effects and counters that modify power and toughness.
   for (const e of effects) {
-    if (e.power === undefined || !e.applies(o, c)) continue;
-    c.power += e.power;
-    c.toughness += e.toughness ?? 0;
+    if (!e.pt || !e.applies(o, c)) continue;
+    const [p, t] = e.pt();
+    c.power += p;
+    c.toughness += t;
   }
   return withCounters(c, o);
+}
+
+/** CR 604.3 / CR 113.6a: a characteristic-defining ability works in every zone. */
+function applyOwnCDA(g: GameState, o: GameObject, c: Characteristics): void {
+  for (const a of printedAbilities(faceOf(g, o))) {
+    if (a.kind !== 'static' || a.effect.type !== 'continuous') continue;
+    const e = a.effect as ContinuousEffectNode;
+    if (e.setLayer !== '7a' || e.affected.ref !== 'self') continue;
+    if (e.setPower !== undefined) c.power = staticAmount(g, e.setPower, o);
+    if (e.setToughness !== undefined) c.toughness = staticAmount(g, e.setToughness, o);
+  }
 }
 
 function withCounters(c: Characteristics, o: GameObject): Characteristics {

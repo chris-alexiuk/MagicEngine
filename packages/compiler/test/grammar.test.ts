@@ -92,8 +92,12 @@ describe('effects', () => {
   });
 
   it('is all-or-nothing', () => {
-    expect(parse('Draw a card for each creature you control.').unparsed).toHaveLength(1);
-    expect(parse('Choose one —\n• Destroy target artifact.\n• Exile the top card of your library. You may play it this turn.').unparsed).toHaveLength(3);
+    expect(parse('Draw a card for each creature card with a name sticker on it.').unparsed).toHaveLength(1);
+    // A modal spell keeps the modes it can read; the others are left to players (CR 700.2).
+    const modal = parse('Choose one —\n• Destroy target artifact.\n• Exile the top card of your library. You may play it this turn.');
+    expect(modal.unparsed).toEqual([]);
+    expect(modal.abilities[0]).toMatchObject({ modes: { options: [{ effects: [{ type: 'destroy' }] }, { manual: true, effects: [] }] } });
+    expect(parse('Choose one —\n• Exile the top card of your library. You may play it this turn.\n• Learn.').unparsed).toHaveLength(3);
     // Bare instructions only make sense on instants and sorceries.
     expect(parse('Draw a card.', 'Creature — Elf').unparsed).toEqual(['Draw a card.']);
   });
@@ -292,6 +296,41 @@ describe('effects, slice 3', () => {
   it('CR 610.3: exile until ~ leaves the battlefield', () => {
     expect(one('When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.', 'Enchantment')).toMatchObject({
       effects: [{ type: 'move', to: 'exile', until: 'source_leaves' }],
+    });
+  });
+});
+
+describe('counted amounts (CR 107.3, CR 608.2h)', () => {
+  const count = (filter: object) => ({ kind: 'count', filter });
+  it('"for each", "equal to", "where X is"', () => {
+    expect(one('Draw a card for each creature you control.')).toMatchObject({
+      effects: [{ type: 'draw', amount: { ...count({ types: ['Creature'], controller: 'you' }), times: 1 } }],
+    });
+    expect(one('Target creature gets +1/+1 until end of turn for each creature you control.')).toMatchObject({
+      effects: [{ type: 'modify', power: { kind: 'count', times: 1 }, toughness: { kind: 'count', times: 1 }, until: 'eot' }],
+    });
+    expect(one('You gain life equal to your devotion to white.')).toMatchObject({ effects: [{ type: 'gain_life', amount: { kind: 'devotion', colors: ['W'] } }] });
+    expect(one('Target creature gets -X/-X until end of turn, where X is the number of Swamps you control.')).toMatchObject({
+      effects: [{ type: 'modify', power: { kind: 'count', filter: { subtypes: ['Swamp'] }, times: -1 } }],
+    });
+    expect(one('Draw cards equal to the number of cards in your hand.')).toMatchObject({ effects: [{ type: 'draw', amount: { kind: 'cards', zone: 'hand', who: 'you' } }] });
+    expect(one('Destroy target creature. You gain life equal to its toughness.')).toMatchObject({
+      effects: [{ type: 'destroy' }, { type: 'gain_life', amount: { kind: 'stat', stat: 'toughness', of: { ref: 'target', index: 0 } } }],
+    });
+    expect(one('When this creature dies, it deals damage equal to its power to any target.', 'Creature — Zombie')).toMatchObject({
+      effects: [{ type: 'deal_damage', amount: { kind: 'stat', stat: 'power', of: { ref: 'trigger_object' } } }],
+    });
+  });
+
+  it('CR 604.3: characteristic-defining P/T, and counted lords', () => {
+    expect(one("This creature's power and toughness are each equal to the number of creature cards in your graveyard.", 'Creature — Lhurgoyf')).toMatchObject({
+      effect: { setLayer: '7a', setPower: { kind: 'cards', zone: 'graveyard', who: 'you', filter: { types: ['Creature'] } } },
+    });
+    expect(one('This creature gets +1/+1 for each other creature you control.', 'Creature — Soldier')).toMatchObject({
+      effect: { power: { kind: 'count', filter: { types: ['Creature'], other: true } } },
+    });
+    expect(one('Enchanted creature has base power and toughness 1/1.', 'Enchantment — Aura')).toMatchObject({
+      effect: { affected: { ref: 'attached' }, setPower: 1, setToughness: 1, setLayer: '7b' },
     });
   });
 });

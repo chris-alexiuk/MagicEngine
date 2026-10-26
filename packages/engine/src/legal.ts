@@ -1,13 +1,14 @@
 import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
+import { canUseTapAbilities, isPermanentCard, manaAbilities, withCharsCache } from './characteristics.js';
 import { manaOption, parseManaCost } from './mana.js';
 import { additionalCosts, flashbackCost } from './actions.js';
 import { discardCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
-import { landsAllowed } from './player-rules.js';
+import { applyCostModifiers } from './costs.js';
+import { landsAllowed, playerRule } from './player-rules.js';
 import { faceOf, zoneList } from './zones.js';
 
 /**
@@ -19,6 +20,11 @@ import { faceOf, zoneList } from './zones.js';
  * pending choice and the UI cover those.
  */
 export function legalActions(g: GameState, player: PlayerId): Action[] {
+  // Read-only: characteristics can be shared across the whole listing.
+  return withCharsCache(() => listLegalActions(g, player));
+}
+
+function listLegalActions(g: GameState, player: PlayerId): Action[] {
   if (g.over || g.pending || g.priority !== player) return [];
   const out: Action[] = [{ type: 'pass', player }];
   const mainPhaseEmptyStack = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
@@ -34,9 +40,10 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
         }
         return;
       }
-      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
       if (!instantSpeed && !mainPhaseEmptyStack) return;
       const cost = parseManaCost(face.manaCost);
+      applyCostModifiers(g, player, o, face, cost);
       if (cost.unsupported.length || cost.x > 0) return; // X spells need a value; the UI asks for one
       if (!planAutoTap(g, player, cost)) return;
       const choice = defaultSpellChoice(g, player, o, face);
@@ -54,7 +61,9 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
     if (!fb) continue;
     const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (!instantSpeed && !mainPhaseEmptyStack) continue;
-    if (!planAutoTap(g, player, parseManaCost(fb))) continue;
+    const fbCost = parseManaCost(fb);
+    applyCostModifiers(g, player, o, face, fbCost);
+    if (!planAutoTap(g, player, fbCost)) continue;
     const choice = defaultSpellChoice(g, player, o, face);
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
     if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
@@ -137,7 +146,8 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       const pick = discardCandidates(g, player, source).filter((id) => !discard.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       discard.push(...pick);
-    }
+    } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
+    else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
   }
   return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}) };
 }
@@ -149,6 +159,9 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
   const modeSets: (number[] | undefined)[] = modal
     ? modal.modes!.options.map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => i + k)).filter((m) => m.every((i) => i < modal.modes!.options.length))
     : [undefined];
+  // Modes the engine runs come first; one it can't read is still a legal choice.
+  const manual = (modes: number[] | undefined) => (modes ?? []).some((i) => modal!.modes!.options[i]!.manual);
+  modeSets.sort((a, b) => Number(manual(a)) - Number(manual(b)));
   for (const modes of modeSets) {
     let program: CompiledProgram;
     try {

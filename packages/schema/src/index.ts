@@ -134,6 +134,8 @@ export interface ModeOption {
   text: string;
   targets?: TargetSpec[];
   effects: EffectNode[];
+  /** The compiler couldn't read this mode: choosing it means players resolve the whole thing by hand. */
+  manual?: true;
 }
 
 export interface ActivatedAbility extends AbilityBase, Program {
@@ -283,10 +285,34 @@ export type Ref =
   | { ref: 'you' }
   | { ref: 'players'; who: 'each' | 'opponents' }
   | { ref: 'controller_of'; of: Ref }
-  | { ref: 'owner_of'; of: Ref };
+  | { ref: 'owner_of'; of: Ref }
+  /** CR 607.2a: "the exiled card", "cards exiled with ~" — what this object's linked ability exiled. */
+  | { ref: 'exiled_with' };
 
-/** A number, or X as paid when casting. */
-export type Amount = number | 'X';
+/** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
+export type Amount = number | 'X' | AmountExpr;
+
+/**
+ * A number counted as it's needed: "the number of creatures you control", "its power",
+ * "for each card in your hand". `times` and `plus` scale it ("twice", "2 plus").
+ * One-shot effects count once, as they resolve (CR 608.2h); static abilities count continuously.
+ */
+export type AmountExpr = (
+  /** Permanents on the battlefield matching a filter (from the controller's point of view). */
+  | { kind: 'count'; filter: ObjectFilter }
+  /** Cards in hands, graveyards or libraries. */
+  | { kind: 'cards'; zone: 'hand' | 'graveyard' | 'library' | 'exile'; who: 'you' | 'opponents' | 'each'; filter?: ObjectFilter }
+  /** An object's power, toughness or mana value (last known if it left, CR 608.2h). */
+  | { kind: 'stat'; stat: 'power' | 'toughness' | 'mana_value'; of: Ref }
+  | { kind: 'life'; who: Ref }
+  | { kind: 'counters'; of: Ref; counter?: string }
+  /** Players: "for each opponent". */
+  | { kind: 'players'; who: 'opponents' | 'each' }
+  /** CR 700.5: devotion to one or more colors. */
+  | { kind: 'devotion'; colors: Color[] }
+  /** X as paid (CR 107.3m), when it needs scaling ("-X/-X"). */
+  | { kind: 'x' }
+) & { times?: number; plus?: number };
 
 /**
  * Rules-meaningful restrictions and requirements carried by continuous effects.
@@ -343,8 +369,16 @@ export interface CombatRules {
 export interface ContinuousEffectNode extends EffectNode {
   type: 'continuous';
   affected: Ref;
-  power?: number;
-  toughness?: number;
+  /** Layer 7c: "gets +1/+1", "gets +1/+1 for each other Zombie you control". */
+  power?: Amount;
+  toughness?: Amount;
+  /**
+   * Layer 7a (characteristic-defining, CR 604.3: "~'s power and toughness are each equal to …") or
+   * 7b ("has base power and toughness 1/1"): power and toughness set to a value.
+   */
+  setPower?: Amount;
+  setToughness?: Amount;
+  setLayer?: '7a' | '7b';
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
   /** Blocking restrictions and requirements. */
@@ -372,9 +406,35 @@ export interface AsEntersNode extends EffectNode {
   tapped?: true;
 }
 
+/**
+ * CR 601.2f: cost increases and reductions. On a permanent: "Creature spells you cast cost {1} less
+ * to cast." On the spell itself (`self`): "This spell costs {1} less to cast for each artifact you control."
+ */
+export interface CostModifierNode extends EffectNode {
+  type: 'cost_modifier';
+  /** The spell's own cost (works wherever it's cast from, CR 113.6e). */
+  self?: true;
+  /** Whose spells, from the point of view of the permanent's controller. */
+  who?: 'you' | 'opponents' | 'each';
+  /** Which spells ("creature spells", "instant and sorcery spells"). */
+  filter?: ObjectFilter;
+  /** Generic mana (or one colored symbol, `color`) per unit. */
+  amount: Amount;
+  color?: Color;
+  change: 'less' | 'more';
+  condition?: ConditionNode;
+}
+
 /** Rules changes for players (CR 402.2, CR 305.2, CR 614.10): "You have no maximum hand size." */
-/** look_at_top: the player may look at their library's top card any time; top_revealed: everyone sees it. */
-export const PLAYER_RULES = ['no_max_hand_size', 'extra_lands', 'skip_draw', 'look_at_top', 'top_revealed'] as const;
+/**
+ * look_at_top: the player may look at their library's top card any time; top_revealed: everyone sees it;
+ * hexproof / shroud: CR 702.11c / 702.18; cant_gain_life; no_lose_for_life: "You don't lose the game for
+ * having 0 or less life"; cant_lose: "You can't lose the game"; flash: "You may cast spells as though they had flash".
+ */
+export const PLAYER_RULES = [
+  'no_max_hand_size', 'extra_lands', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
+  'no_lose_for_life', 'cant_lose', 'flash',
+] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
 export interface PlayerRuleNode extends EffectNode {
@@ -401,18 +461,20 @@ export const CORE_NODES = {
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'destroy', 'move', 'counter', 'tap', 'untap',
     'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
-    'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch',
+    'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch',
   ],
-  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule'],
+  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier'],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy'],
+  /** Counted amounts (AmountExpr kinds). */
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -436,14 +498,25 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   return true;
 }
 
+/** Modes of a face's modal abilities that players resolve by hand, as "• text" lines. */
+export function manualModes(face: FaceDef): string[] {
+  return face.abilities.flatMap((a) => (a.kind === 'static' ? [] : (a.modes?.options ?? []).filter((m) => m.manual).map((m) => `• ${m.text}`)));
+}
+
 /** A face's abilities, including those its keywords stand for. */
 export function faceAbilities(face: FaceDef): AbilityNode[] {
   return [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])];
 }
 
 /** Every node tag used by one ability, by kind — for checking the CORE_NODES invariant. */
-export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]; triggers: string[]; costs: string[]; conditions: string[] } {
-  const out = { effects: [] as string[], statics: [] as string[], triggers: [] as string[], costs: [] as string[], conditions: [] as string[] };
+export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]; triggers: string[]; costs: string[]; conditions: string[]; amounts: string[] } {
+  const out = { effects: [] as string[], statics: [] as string[], triggers: [] as string[], costs: [] as string[], conditions: [] as string[], amounts: [] as string[] };
+  // Counted amounts sit in an effect's own fields ("amount", "power"…).
+  const amounts = (e: EffectNode) => {
+    for (const v of Object.values(e)) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { kind?: unknown }).kind === 'string') out.amounts.push((v as { kind: string }).kind);
+    }
+  };
   const cond = (c: ConditionNode) => {
     out.conditions.push(c.type);
     if (c.type === 'and') for (const part of c.all as ConditionNode[]) cond(part);
@@ -451,6 +524,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
   const visit = (list: EffectNode[] | undefined) => {
     for (const e of list ?? []) {
       out.effects.push(e.type);
+      amounts(e);
       for (const key of ['effects', 'then', 'else']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
       if (e.cond) cond(e.cond as ConditionNode);
     }
@@ -458,6 +532,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
   if (a.kind === 'triggered' && a.condition) cond(a.condition);
   if (a.kind === 'static') {
     out.statics.push(a.effect.type);
+    amounts(a.effect);
     if (a.effect.condition) cond(a.effect.condition as ConditionNode);
     if (a.effect.unless) cond(a.effect.unless as ConditionNode);
     if (a.effect.type === 'additional_cost') out.costs.push((a.effect.cost as EffectNode).type);

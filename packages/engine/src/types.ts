@@ -57,6 +57,8 @@ export interface PlayerState {
   name: string;
   life: number;
   poison: number;
+  /** CR 122.1: other counters a player can have — energy (CR 107.14), experience, rad. */
+  counters?: Record<string, number>;
   pool: ManaPool;
   landsPlayedThisTurn: number;
   /** Set when the player attempted to draw from an empty library since the last SBA check. */
@@ -111,6 +113,8 @@ export interface GameObject {
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
   exileIfDiesTurn?: number;
+  /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
+  exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
   chosen?: { color?: Color; creatureType?: string };
 }
@@ -172,6 +176,8 @@ export type TargetRef = { kind: 'player'; player: PlayerId } | { kind: 'object';
 export interface CompiledProgram {
   specs: TargetSpec[];
   effects: EffectNode[];
+  /** A chosen mode the compiler couldn't read: players resolve it by hand. */
+  manual?: true;
 }
 
 /** What a trigger event was about, for "that creature" / "that player" (CR 603.10). */
@@ -448,6 +454,7 @@ export type GameEvent =
   | { type: 'revealed'; player: PlayerId; objects: ObjectId[] }
   /** CR 614.12: a choice made as a permanent entered. */
   | { type: 'chosen'; object: ObjectId; choice: string }
+  | { type: 'player_counters'; player: PlayerId; counter: string; delta: number }
   /** CR 725.3: a player became the monarch. */
   | { type: 'monarch'; player: PlayerId }
   /** CR 701.44b: a permanent explored. */
@@ -519,6 +526,8 @@ export interface GameState {
   prevention: PreventionShield[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
+  /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number }>;
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
