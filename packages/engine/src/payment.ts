@@ -9,7 +9,7 @@ import { moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -42,6 +42,11 @@ function checkChosen(chosen: ObjectId[] | undefined, candidates: ObjectId[], n: 
 }
 
 /** Non-mana costs (CR 118): checked before anything is paid, paid together with the rest (CR 601.2h). */
+/** Other cards in your graveyard that could be exiled to pay a cost. */
+export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject): ObjectId[] {
+  return zoneList(g, 'graveyard', player).filter((id) => id !== o.id);
+}
+
 export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, cost: Cost, choices: CostChoices = {}): void {
   // Two costs can't both use the same chosen object.
   let sacUsed = 0;
@@ -71,6 +76,11 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     } else if (c.type === 'pay_energy') {
       // CR 107.14: paying {E} removes an energy counter from you.
       if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
+    } else if (c.type === 'exile_cards') {
+      const n = Number(c.amount ?? 1);
+      const ok = exileCostCandidates(g, player, o);
+      const chosen = choices.exile ?? [];
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your graveyard to exile.`);
     } else if (c.type === 'crew') {
       // CR 702.122a: untapped creatures you control (not this one) with total power N or greater.
       const chosen = choices.crew ?? [];
@@ -114,6 +124,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       payEnergy(g, player, Number(c.amount), events);
     } else if (c.type === 'crew') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
+    } else if (c.type === 'exile_cards') {
+      for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       moveObject(g, o.id, 'graveyard', events);

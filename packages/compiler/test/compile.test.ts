@@ -74,9 +74,9 @@ describe('compileCards', () => {
     expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
     expect(byName('Kinnan, Bonder Prodigy').automation).toBe('manual'); // mana-ability triggers aren't compiled yet
     expect(byName('Breeding Pool').automation).toBe('full'); // intrinsic mana, and the shock clause (CR 614.12)
-    // Escape is recorded but not applied yet, and the other lines are unparsed.
-    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('manual');
-    expect(byName('Uro, Titan of Nature\'s Wrath').faces[0]!.manualKeywords).toEqual(['Escape—{G}{G}{U}{U}, Exile five other cards from your graveyard.']);
+    // Escape is applied (CR 702.138a); the other lines are unparsed.
+    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('partial');
+    expect(byName('Uro, Titan of Nature\'s Wrath').faces[0]!.manualKeywords ?? []).toEqual([]);
   });
 });
 

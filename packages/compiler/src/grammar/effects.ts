@@ -459,8 +459,11 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // Specific objects: "sacrifice ~", "sacrifice it".
     const what = parseObjectRef(args, b);
-    if (!what || what.targeted || what.ref.ref === 'all' || who.ref !== 'you') return null;
-    return [{ type: 'sacrifice', what: what.ref }];
+    if (!what || what.targeted || what.ref.ref === 'all') return null;
+    // "its controller sacrifices it" (evoke, CR 702.74a): the one who controls it does.
+    const own = who.ref === 'controller_of' && JSON.stringify(who.of) === JSON.stringify(what.ref);
+    if (who.ref !== 'you' && !own) return null;
+    return [{ type: 'sacrifice', what: what.ref, ...(own ? { byController: true } : {}) }];
   },
   put(args, who, b, imperative) {
     if (!imperative) return null;

@@ -1,4 +1,5 @@
 import type {
+  CastOptionNode,
   AbilityNode,
   ActivatedAbility,
   Amount,
@@ -151,6 +152,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
+    // Escape's "Exile five other cards from your graveyard" (CR 702.138a).
+    else if (/^[Ee]xile (\w+) other cards? from your graveyard$/.test(item) && typeof parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) === 'number') {
+      (cost.other ??= []).push({ type: 'exile_cards', amount: parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) as number, other: true });
+    }
     // CR 702.122a (crew): "Tap any number of other untapped creatures you control with total power N or greater".
     else if (/^[Tt]ap any number of (?:other )?untapped creatures you control with total power (\d+) or greater$/.test(item)) {
       (cost.other ??= []).push({ type: 'crew', power: Number(/power (\d+)/.exec(item)![1]) });
@@ -940,6 +945,79 @@ export const entersWithCountersRule: GrammarRule = {
 };
 
 /** "As an additional cost to cast this spell, sacrifice a creature." — CR 601.2f / CR 118.8. */
+/**
+ * CR 118.9 / CR 601.2b: "You may cast this card by paying [cost] rather than paying its mana cost"
+ * (evoke, dash), "…from your graveyard…" (escape), "You may pay [cost] rather than pay this spell's
+ * mana cost [if …]" (spectacle, and plain alternative costs), "You may pay an additional [cost] as you
+ * cast this spell" (buyback), entwine.
+ */
+export const castOptionRule: GrammarRule = {
+  id: 'cast_option',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env || !line.endsWith('.')) return null;
+    const t = line.slice(0, -1);
+    const b = new Binder(env);
+    const make = (kind: CastOptionNode['kind'], costText: string, extra: Partial<CastOptionNode> = {}): StaticAbility | null => {
+      const cost = parseCost(costText.replace(/^an? /, ''), false, b);
+      if (!cost || cost.tap || cost.untap || cost.loyalty !== undefined) return null;
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind, cost, ...extra } as CastOptionNode };
+    };
+    const byPaying = /^You may cast ~( from your graveyard)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);
+    if (byPaying) return make('alternative', byPaying[2]!, byPaying[1] ? { zone: 'graveyard' } : {});
+    const ratherThan = /^(?:If (.+?), )?[Yy]ou may (?:choose to )?pay (.+?) rather than pay ~'s mana cost(?: if (.+))?$/.exec(t);
+    if (ratherThan) {
+      const when = ratherThan[1] ?? ratherThan[3];
+      const condition = when ? parseCondition(when, b) : undefined;
+      if (when && !condition) return null;
+      return make('alternative', ratherThan[2]!, condition ? { condition } : {});
+    }
+    const additional = /^You may pay an additional (.+?) as you cast ~$/.exec(t);
+    if (additional) return make('additional', additional[1]!);
+    // CR 702.42a: "You may choose all modes of this spell instead of just the number specified. If you do, you pay an additional [cost]."
+    const entwine = /^You may choose all modes of ~ instead of just the number specified\. If you do, you pay an additional (.+)$/.exec(t);
+    if (entwine) return make('additional', entwine[1]!, { allModes: true });
+    return null;
+  },
+};
+
+/** CR 702.27a (buyback): "If the buyback cost was paid, put this spell into its owner's hand instead of into that player's graveyard as it resolves." */
+export const resolveToHandRule: GrammarRule = {
+  id: 'resolve_to_hand',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^If (.+?), put ~ into its owner's hand instead of into that player's graveyard as it resolves\.$/.exec(line);
+    if (!env || !m) return null;
+    const condition = parseCondition(m[1]!, new Binder(env));
+    if (!condition) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'resolve_to_hand', condition } };
+    return node;
+  },
+};
+
+/**
+ * CR 702.109a (dash): "If this spell's dash cost was paid, return the permanent this spell becomes to its
+ * owner's hand at the beginning of the next end step" — read as a trigger on entering.
+ */
+export const returnIfPaidRule: GrammarRule = {
+  id: 'return_if_paid',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^If (.+?), return the permanent ~ becomes to its owner's hand at the beginning of the next end step\.$/.exec(line);
+    if (!env || !m) return null;
+    const condition = parseCondition(m[1]!, new Binder(env));
+    if (!condition) return null;
+    const node: TriggeredAbility = {
+      kind: 'triggered',
+      text: original,
+      trigger: { type: 'enters', subject: { ref: 'self' } },
+      condition,
+      effects: [{ type: 'delayed', step: 'end', effects: [{ type: 'move', what: { ref: 'self' }, to: 'hand' }] }],
+    };
+    return node;
+  },
+};
+
 export const additionalCostRule: GrammarRule = {
   id: 'additional_cost',
   parse(line, original, ctx) {
@@ -964,6 +1042,9 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   quantityReplacementRule,
   exileInsteadRule,
   selfReplacementRule,
+  castOptionRule,
+  resolveToHandRule,
+  returnIfPaidRule,
   additionalCostRule,
   continuousRule,
   triggeredRule,

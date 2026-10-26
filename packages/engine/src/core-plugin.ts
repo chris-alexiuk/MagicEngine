@@ -312,7 +312,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   sacrifice(node, ctx) {
-    for (const o of refObjects(ctx, ref(node, 'what'))) sacrifice(ctx.g, o, ctx.controller, ctx.events);
+    // "its controller sacrifices it": whoever controls it now (CR 701.21a: only a permanent you control).
+    for (const o of refObjects(ctx, ref(node, 'what'))) sacrifice(ctx.g, o, node.byController ? o.controller : ctx.controller, ctx.events);
     return true;
   },
 
@@ -1089,7 +1090,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

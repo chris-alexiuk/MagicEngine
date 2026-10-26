@@ -1,7 +1,8 @@
 import { auraTargetSpec } from './permanents.js';
-import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef } from '@mtg/schema';
+import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
+import { printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -88,7 +89,7 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'play_land':
       return playLand(g, a.player, a.object, a.face ?? 0, events);
     case 'cast':
-      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false);
+      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? []);
     case 'activate':
       return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes, costs: a.costs ?? {} }, events);
     case 'activate_manual':
@@ -246,7 +247,7 @@ const CASTABLE_ALT_FACES = new Set(['split', 'modal_dfc', 'adventure']);
  * What a spell will do and target. Instants and sorceries whose every line compiled run
  * automatically; an Aura targets what it can enchant (CR 303.4a). Anything else is resolved by hand.
  */
-function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: ConditionNode) => boolean): CompiledProgram | null {
+function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: ConditionNode) => boolean, allModes = false): CompiledProgram | null {
   if (isPermanentCard(face)) {
     const aura = auraTargetSpec(face);
     if (modes?.length) throw new RulesError(`${face.name} isn’t modal.`);
@@ -257,7 +258,7 @@ function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: Co
     if (modes?.length) throw new RulesError(`${face.name} is resolved by hand; choose its modes as it resolves.`);
     return null;
   }
-  return flatten(programs, modes, holds);
+  return flatten(programs, modes, holds, allModes);
 }
 
 function addCost(into: ManaCost, extra: ManaCost): void {
@@ -271,6 +272,11 @@ function addCost(into: ManaCost, extra: ManaCost): void {
 /** A face's additional costs to cast (CR 601.2f), from its "As an additional cost…" lines. */
 export function additionalCosts(face: FaceDef): EffectNode[] {
   return face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'additional_cost' ? [a.effect.cost as EffectNode] : []));
+}
+
+/** CR 118.9 / 601.2f: the alternative and optional additional costs a face offers as it's cast. */
+export function castOptions(face: FaceDef): CastOptionNode[] {
+  return printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
 }
 
 /** The flashback cost, if the face has flashback with a mana cost the engine can pay. */
@@ -291,19 +297,43 @@ function cast(
   events: GameEvent[],
   costChoices: CostChoices,
   kicked: boolean,
+  altId?: string,
+  extras: string[] = [],
 ): void {
   const o = obj(g, id);
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
+  // CR 118.9 / 601.2b: an alternative cost and optional additional costs, announced as it's cast.
+  const options = castOptions(face);
+  const alt = altId ? options.find((x) => x.kind === 'alternative' && x.id === altId) : undefined;
+  if (altId && !alt) throw new RulesError(`${face.name} has no “${altId}” cost.`);
+  const added = extras.map((x) => {
+    const opt = options.find((y) => y.kind === 'additional' && y.id === x);
+    if (!opt) throw new RulesError(`${face.name} has no optional “${x}” cost.`);
+    return opt;
+  });
+  if (new Set(extras).size !== extras.length) throw new RulesError('Each optional cost can be paid once.');
+  if (alt?.condition && !evalCondition(alt.condition, { g, controller: player, source: o, events: [], targets: [], x, memo: {} })) {
+    throw new RulesError(`${face.name} can’t be cast for that cost now.`);
+  }
+  // CR 702.42a: entwine chooses every mode.
+  if (added.some((a) => a.allModes)) {
+    const modal = face.abilities.find((a): a is SpellAbility => a.kind === 'spell' && Boolean(a.modes));
+    const n = modal?.modes?.options.length ?? 0;
+    modes = Array.from({ length: n }, (_, i) => i);
+  }
   // CR 903.8: a player may cast a commander they own from the command zone.
   const fromCommandZone = o.zone === 'command' && o.commander === true && o.owner === player;
   // CR 702.34a: flashback — cast from your graveyard by paying the flashback cost instead.
-  const flashback = o.zone === 'graveyard' && o.owner === player ? flashbackCost(face) : null;
+  // CR 702.138a: escape — likewise, with its own cost.
+  const escape = o.zone === 'graveyard' && o.owner === player && alt?.zone === 'graveyard';
+  const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCost(face) : null;
   // "Until the end of your next turn, you may play that card."
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!fromCommandZone && !flashback && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!fromCommandZone && !flashback && !escape && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 305.9: a land can't be cast as a spell.
@@ -321,7 +351,7 @@ function cast(
 
   // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
   // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
-  const program = spellProgram(face, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }));
+  const program = spellProgram(face, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }), added.some((a) => a.allModes));
   const targets = program
     ? chooseTargets(g, player, program.specs, chosenTargets, o)
     : chosenTargets?.some((t) => t.length)
@@ -331,7 +361,8 @@ function cast(
       : [];
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
-  const cost = parseManaCost(flashback ?? face.manaCost);
+  const cost = parseManaCost(flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost));
+  for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (kicked) {
@@ -346,7 +377,7 @@ function cast(
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
-  const additional: Cost = { other: additionalCosts(face) };
+  const additional: Cost = { other: [...additionalCosts(face), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
   checkOtherCosts(g, player, o, additional, costChoices);
   if (wantsAutoTap) autoTap(g, player, cost, x, events);
 
@@ -363,7 +394,14 @@ function cast(
   if (flashback) o.exileOnLeave = true;
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
-  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : fromExile ? 'exile' : 'hand', before, ...(kicked ? { kicked: true as const } : {}) };
+  const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
+  o.cast = {
+    by: player,
+    from: fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile ? 'exile' : 'hand',
+    before,
+    ...(kicked ? { kicked: true as const } : {}),
+    ...(paid.length ? { paid } : {}),
+  };
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);

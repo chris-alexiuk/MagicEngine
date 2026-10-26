@@ -118,7 +118,7 @@ export interface GameObject {
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true; paid?: string[] };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
@@ -423,6 +423,8 @@ export interface CostChoices {
   discard?: ObjectId[];
   /** CR 702.122a: the creatures tapped to crew a Vehicle. */
   crew?: ObjectId[];
+  /** Cards exiled to pay a cost ("Exile five other cards from your graveyard", escape). */
+  exile?: ObjectId[];
 }
 
 export type Action =
@@ -439,6 +441,10 @@ export type Action =
       autoTap?: boolean;
       /** CR 702.33a: pay the kicker cost too. */
       kicked?: boolean;
+      /** CR 118.9: an alternative cost to cast it with, by id ("evoke", "dash", "escape", "alt"). */
+      alt?: string;
+      /** CR 601.2f: optional additional costs paid, by id ("buyback", "entwine"). */
+      extras?: string[];
       /** One list per target the spell asks for (CR 601.2c). */
       targets?: Target[][];
       /** Chosen modes of a modal spell, by index (CR 700.2a). */

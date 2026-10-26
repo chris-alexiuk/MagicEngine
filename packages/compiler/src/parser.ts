@@ -197,6 +197,8 @@ export class ParserRegistry {
       const node = text === null ? null : this.parseBlock([text], env, printed);
       if (!node) return null;
       if (def.zone && node.kind === 'activated') node.zone = def.zone;
+      // "Evoke [cost]": the option is named after its keyword, for "if its evoke cost was paid".
+      if (node.kind === 'static' && node.effect.type === 'cast_option') node.effect.id = kw.id;
       out.push(node);
     }
     return out;

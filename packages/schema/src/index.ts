@@ -399,6 +399,25 @@ export interface CombatRules {
 
 /** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
 /**
+ * CR 118.9 / CR 601.2b, 601.2f: a cost chosen as the spell is cast. An alternative cost replaces
+ * the mana cost ("You may cast this card by paying [cost] rather than paying its mana cost": evoke,
+ * dash, escape); an additional one is paid on top ("You may pay an additional [cost] as you cast
+ * this spell": buyback). `id` names it for "if its evoke cost was paid" (the keyword, or "alt").
+ */
+export interface CastOptionNode extends EffectNode {
+  type: 'cast_option';
+  id: string;
+  kind: 'alternative' | 'additional';
+  cost: Cost;
+  /** Escape: cast from your graveyard this way (CR 702.138a). */
+  zone?: 'graveyard';
+  /** Spectacle: "if an opponent lost life this turn" (CR 702.137a). */
+  condition?: ConditionNode;
+  /** Entwine: all modes are chosen (CR 702.42a). */
+  allModes?: true;
+}
+
+/**
  * CR 707.9: "…a copy of …, except …" — exceptions that become part of the copy's copiable values.
  * Applied in layer 1 along with the copy itself.
  */
@@ -563,15 +582,18 @@ export const CORE_NODES = {
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid',
   ],
-  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead'],
+  statics: [
+    'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand',
+  ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */

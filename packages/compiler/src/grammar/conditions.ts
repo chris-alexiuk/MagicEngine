@@ -59,6 +59,9 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
+  const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t);
+  if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
   const cast = /^you cast it( from your hand)?$/.exec(t);
@@ -164,6 +167,7 @@ export function conditionSubject(c: ConditionNode): Ref | null {
     case 'self_tapped':
     case 'has_attached':
     case 'monstrous':
+    case 'paid':
       return { ref: 'self' };
     case 'is':
     case 'counters':

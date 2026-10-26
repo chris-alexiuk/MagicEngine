@@ -3,11 +3,11 @@ import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { additionalCosts, flashbackCost } from './actions.js';
-import { crewCandidates, discardCandidates, sacrificeCandidates } from './payment.js';
+import { additionalCosts, castOptions, flashbackCost } from './actions.js';
+import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
-import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
+import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { mayPlayFrom, playableFromExile } from './permissions.js';
@@ -56,7 +56,11 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (!choice || !costs) return;
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(costs) });
     });
+    // CR 118.9 / 601.2f: the same spell for an alternative cost, or with an optional additional one.
+    if (o.zone === 'hand') out.push(...optionCasts(g, player, o, mainPhaseEmptyStack, false));
   }
+  // CR 702.138a: escape from the graveyard.
+  for (const id of zoneList(g, 'graveyard', player)) out.push(...optionCasts(g, player, g.objects[id]!, mainPhaseEmptyStack, true));
 
   // CR 702.34a: flashback spells in the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) {
@@ -139,10 +143,54 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
 type Choice = { targets?: Target[][]; modes?: number[]; costs?: CostChoices };
 
 /** A default way to pay sacrifice/discard costs (the first candidates), or null if they can't be paid. */
+/** Cast actions using an alternative cost or adding one optional cost (from the hand; escape from the graveyard). */
+function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed: boolean, fromGraveyard: boolean): Action[] {
+  const face = g.cards[o.card]!.faces[0]!;
+  const options = castOptions(face);
+  if (!options.length || face.types.includes('Land')) return [];
+  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
+  if (!instantSpeed && !sorcerySpeed) return [];
+  const out: Action[] = [];
+  for (const opt of options) {
+    if ((opt.zone === 'graveyard') !== fromGraveyard) continue;
+    if (opt.kind === 'additional' && fromGraveyard) continue;
+    if (opt.condition && !evalCondition(opt.condition, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) continue;
+    const cost = parseManaCost(opt.kind === 'alternative' ? (opt.cost.mana ?? '') : face.manaCost);
+    if (opt.kind === 'additional') {
+      const extra = parseManaCost(opt.cost.mana ?? '');
+      cost.generic += extra.generic;
+      cost.hybrid.push(...extra.hybrid);
+      for (const [k, n] of Object.entries(extra.specific)) cost.specific[k as ManaColor] = (cost.specific[k as ManaColor] ?? 0) + (n ?? 0);
+      cost.unsupported.push(...extra.unsupported);
+      cost.x += extra.x;
+    }
+    applyCostModifiers(g, player, o, face, cost);
+    if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost)) continue;
+    // Entwine casts it with every mode; otherwise the default choices.
+    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, face);
+    const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])]);
+    if (!choice || !costs) continue;
+    out.push({ type: 'cast', player, object: o.id, autoTap: true, ...choice, ...withCosts(costs), ...(opt.kind === 'alternative' ? { alt: opt.id } : { extras: [opt.id] }) });
+  }
+  return out;
+}
+
+/** Every mode, with default targets — or null when some mode has none. */
+function defaultEntwined(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): Choice | null {
+  const programs = spellPrograms(face);
+  const modal = programs?.find((p) => p.modes);
+  if (!programs || !modal?.modes) return null;
+  const modes = modal.modes.options.map((_, i) => i);
+  const flat = flatten(programs, modes, undefined, true);
+  const targets = defaultTargets(g, player, flat.specs, o);
+  return targets ? { modes, ...(flat.specs.length ? { targets } : {}) } : null;
+}
+
 function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, other: EffectNode[]): CostChoices | null {
   const sacrifice: ObjectId[] = [];
   const discard: ObjectId[] = [];
   const crew: ObjectId[] = [];
+  const exile: ObjectId[] = [];
   for (const c of other) {
     const n = Number(c.amount ?? 1);
     if (c.type === 'sacrifice') {
@@ -153,6 +201,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       const pick = discardCandidates(g, player, source).filter((id) => !discard.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       discard.push(...pick);
+    } else if (c.type === 'exile_cards') {
+      const pick = exileCostCandidates(g, player, source).filter((id) => !exile.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      exile.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     else if (c.type === 'crew') {
@@ -167,10 +219,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile ? { costs } : {});
 
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
   const modal = programs.find((p) => p.modes);

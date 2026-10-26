@@ -497,3 +497,30 @@ describe('copies of spells (CR 707.10)', () => {
     ]);
   });
 });
+
+describe('costs chosen as a spell is cast (CR 118.9, CR 601.2f)', () => {
+  it('evoke, dash and escape compile from their definitions', () => {
+    const evoke = parse('Evoke {2}{U}', 'Creature — Elemental', 'Mulldrifter').keywords[0]!;
+    expect(evoke.abilities).toMatchObject([
+      { effect: { type: 'cast_option', id: 'evoke', kind: 'alternative', cost: { mana: '{2}{U}' } } },
+      { kind: 'triggered', trigger: { type: 'enters' }, condition: { type: 'paid', cost: 'evoke' }, effects: [{ type: 'sacrifice', byController: true }] },
+    ]);
+    const dash = parse('Dash {2}{R}', 'Creature — Goblin', 'Goblin').keywords[0]!;
+    expect(dash.abilities).toMatchObject([
+      { effect: { type: 'cast_option', id: 'dash' } },
+      { kind: 'triggered', condition: { type: 'paid', cost: 'dash' }, effects: [{ type: 'delayed', effects: [{ type: 'move', to: 'hand' }] }] },
+      { effect: { type: 'continuous', condition: { type: 'paid', cost: 'dash' }, keywords: [{ id: 'haste' }] } },
+    ]);
+    const escape = parse('Escape—{G}{G}{U}{U}, Exile five other cards from your graveyard.', 'Creature — Elk', 'Uro').keywords[0]!;
+    expect(escape.abilities).toMatchObject([{ effect: { id: 'escape', zone: 'graveyard', cost: { mana: '{G}{G}{U}{U}', other: [{ type: 'exile_cards', amount: 5 }] } } }]);
+  });
+
+  it('buyback, entwine and plain alternative costs', () => {
+    expect(parse('Buyback {3}', 'Instant', 'Capsize').keywords[0]!.abilities).toMatchObject([
+      { effect: { type: 'cast_option', id: 'buyback', kind: 'additional' } },
+      { effect: { type: 'resolve_to_hand', condition: { type: 'paid', cost: 'buyback' } } },
+    ]);
+    expect(parse('Entwine {2}', 'Sorcery', 'Tooth and Claw').keywords[0]!.abilities).toMatchObject([{ effect: { id: 'entwine', allModes: true } }]);
+    expect(one("You may pay {R} rather than pay this spell's mana cost.", 'Instant')).toMatchObject({ effect: { type: 'cast_option', id: 'alt', kind: 'alternative' } });
+  });
+});

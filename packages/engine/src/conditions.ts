@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -64,6 +64,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'kicked':
       // CR 702.33d: the spell (or the permanent it became) was kicked.
       return Boolean(source?.cast?.kicked);
+    case 'paid':
+      // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
+      return Boolean(source?.cast?.paid?.includes(String(cond.cost)));
     case 'cast_by_you':
       return !source?.cast?.copy && source?.cast?.by === controller && (!cond.fromHand || source.cast.from === 'hand');
     case 'self_tapped':

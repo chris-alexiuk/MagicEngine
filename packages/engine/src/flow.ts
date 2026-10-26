@@ -1,4 +1,5 @@
-import { hasRule, hasType, isPermanentCard, hasKeyword, toughness, withCharsCache } from './characteristics.js';
+import type { ConditionNode } from '@mtg/schema';
+import { hasRule, hasType, isPermanentCard, hasKeyword, printedAbilities, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
@@ -218,8 +219,12 @@ function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEven
     removeObjectEntirely(g, o.id);
     return;
   }
+  // CR 702.27a (buyback): "put this spell into its owner's hand instead of into that player's graveyard".
+  const toHand = printedAbilities(faceOf(g, o)).some(
+    (a) => a.kind === 'static' && a.effect.type === 'resolve_to_hand' && evalCondition(a.effect.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }),
+  );
   // CR 608.2n: as the final part of an instant or sorcery's resolution, it goes to its owner's graveyard.
-  moveObject(g, o.id, 'graveyard', events);
+  moveObject(g, o.id, toHand ? 'hand' : 'graveyard', events);
 }
 
 const sameEntry = (a: StackEntry, b: StackEntry) =>
