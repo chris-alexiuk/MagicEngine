@@ -5,7 +5,7 @@ import { buildTrace, compareRuleIds, findCitations, traceMarkdown } from '../src
 // A miniature file in the real format: CRLF line endings, a BOM, a contents
 // list that repeats the headings, wrapped examples, glossary and credits.
 const SAMPLE = [
-  '﻿Magic: The Gathering Comprehensive Rules',
+  '\uFEFFMagic: The Gathering Comprehensive Rules',
   '',
   'These rules are effective as of September 25, 2026.',
   '',
@@ -32,6 +32,10 @@ const SAMPLE = [
   '100.1a A two-player game is a game that begins with only two players.',
   '',
   '100.1b A multiplayer game is a game that begins with more than two players.',
+  '',
+  '100.1c. A subrule with a stray period, as in the real file.',
+  '',
+  '100.2 A rule missing its period, with an inline\u2028separator.',
   '',
   '101. The Magic Golden Rules',
   '',
@@ -75,12 +79,17 @@ describe('parseComprehensiveRules', () => {
   });
 
   it('links rules, subrules and sections', () => {
-    expect(doc.rules['100']).toMatchObject({ text: 'General', children: ['100.1'] });
-    expect(doc.rules['100.1']).toMatchObject({ parent: '100', children: ['100.1a', '100.1b'] });
+    expect(doc.rules['100']).toMatchObject({ text: 'General', children: ['100.1', '100.2'] });
+    expect(doc.rules['100.1']).toMatchObject({ parent: '100', children: ['100.1a', '100.1b', '100.1c'] });
     expect(doc.rules['100.1b']).toMatchObject({
       parent: '100.1',
       text: 'A multiplayer game is a game that begins with more than two players.',
     });
+  });
+
+  it('tolerates the real file’s numbering quirks', () => {
+    expect(doc.rules['100.1c']!.text).toBe('A subrule with a stray period, as in the real file.');
+    expect(doc.rules['100.2']!.text).toBe('A rule missing its period, with an inline separator.');
   });
 
   it('attaches examples, joining wrapped lines', () => {
@@ -115,7 +124,7 @@ describe('trace', () => {
     ]);
     expect(report.unknown.map((c) => c.rule)).toEqual(['999.9']);
     expect(report.rows).toHaveLength(1);
-    expect(report.bySection).toEqual([{ section: '100', title: 'General', total: 3, implemented: 1, tested: 1 }]);
+    expect(report.bySection).toEqual([{ section: '100', title: 'General', total: 5, implemented: 1, tested: 1 }]);
     expect(traceMarkdown(report, doc)).toContain('| 100.1a | A two-player game');
   });
 

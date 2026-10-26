@@ -32,14 +32,20 @@ export interface RulesDoc {
   glossary: Record<string, string>;
 }
 
+// The real file is inconsistent: a few rules omit the period after the number
+// ("606.5 If…") or add one after a subrule letter ("119.1d. In…").
 const CHAPTER = /^(\d)\. (.+)$/;
 const SECTION = /^(\d{3})\. (.+)$/;
-const RULE = /^(\d{3}\.\d+)\.\s+(.*)$/;
-const SUBRULE = /^(\d{3}\.\d+[a-z]+)\s+(.*)$/;
+const RULE = /^(\d{3}\.\d+)\.?\s+(.*)$/;
+const SUBRULE = /^(\d{3}\.\d+[a-z]+)\.?\s+(.*)$/;
 const EXAMPLE = /^Example:\s*(.*)$/;
 
+/** Strips the BOM, normalises line endings, and turns Unicode line/paragraph separators into spaces. */
 export function normaliseText(raw: string): string {
-  return raw.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  return raw
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u2028\u2029]/g, ' ');
 }
 
 function lastIndexOfLine(lines: string[], value: string): number {

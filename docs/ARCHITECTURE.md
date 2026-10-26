@@ -34,16 +34,22 @@ AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords 
 - **Fallback:** if an image is slow or blocked, a text proxy of the card shows instead.
 - **Scryfall image rules:** never cover, crop or distort the artist/copyright line.
 
-## Engine contract (milestone 2)
+## Engine
 
 - Pure, deterministic TypeScript (seeded RNG, no DOM). Runs in a Web Worker and in Node.
-- `apply(state, action) → { state, events }`. The event log serves as replay, network protocol and bug report.
-- When a player must decide, the engine returns a `PendingChoice`. UI and remote players answer the same way.
+- `createGame()` sets up; `apply(state, action) → { state, events }` is the only way state changes. An illegal action returns an error and leaves the state untouched (CR 733.1).
+- When a player must decide, `state.pending` says who and what. UI and remote players answer the same way.
+- `viewFor(state, player)` is what the server sends each client: hidden zones become counts.
+- Anything the engine can't run goes through manual resolution: the spell or ability waits on the stack while its controller makes logged manual moves, then confirms.
+- Every implemented rule is cited as `CR x.y` in code and tests; [docs/rules/TRACE.md](rules/TRACE.md) shows coverage by section. See [docs/rules/README.md](rules/README.md).
 
 ## Milestones
 
 1. ✅ Card pipeline, image cache, card browser
-2. Engine core, 2-player same-screen: turns, priority, stack, mana, casting, combat, state-based actions
+2. Engine core, 2-player same-screen
+   - ✅ Setup and London mulligan, turn structure, priority, stack, land plays, mana abilities, casting and resolution, state-based actions, cleanup, manual resolution, player views
+   - Combat (attackers, blockers, damage, combat keywords)
+   - Same-screen table UI
 3. Effects system: triggers, statics and layers, replacement effects; parser v1
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers

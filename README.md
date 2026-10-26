@@ -2,7 +2,7 @@
 
 A browser-based Magic: The Gathering rules engine for 2–4 player games, Commander first. Cards are compiled from Scryfall data without hand-scripting; anything the engine can't run yet is still playable by resolving it manually.
 
-Status: milestone 1 of 6 (card pipeline, image cache, card browser). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Status: milestone 2 of 6 in progress. The engine runs turns, priority, the stack, mana, casting and state-based actions; combat and the table UI are next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [rules trace](docs/rules/TRACE.md).
 
 ## Quick start
 
@@ -24,15 +24,16 @@ pnpm dev             # http://localhost:5173
 |---|---|
 | `packages/schema` | Compiled card format and ability AST, shared by everything |
 | `packages/compiler` | Scryfall JSON → compiled card DB + coverage report |
-| `packages/engine` | Rules engine (milestone 2) |
+| `packages/rules` | Comprehensive Rules parser and the rule-citation trace |
+| `packages/engine` | Rules engine |
 | `apps/web` | Browser client: card browser now, game table and deck editor later |
 | `apps/server` | Authoritative game server (milestone 4) |
 
 ## Scripts
 
-`pnpm test` · `pnpm typecheck` · `pnpm build`
+`pnpm test` · `pnpm typecheck` · `pnpm build` · `pnpm rules:trace` (regenerates the rules trace) · `pnpm rules:check`
 
-The **Card database** workflow rebuilds the full DB weekly and on demand (Actions → Card database → Run workflow) and attaches it as a build artifact.
+The **Reference data** workflow refreshes the Comprehensive Rules and rebuilds the full card DB weekly, on demand, and whenever the parsers change. The card DB and coverage report land on the `reports` branch.
 
 ## Data
 

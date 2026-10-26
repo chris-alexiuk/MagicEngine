@@ -68,6 +68,10 @@ importers:
       '@mtg/schema':
         specifier: workspace:*
         version: link:../schema
+    devDependencies:
+      '@mtg/compiler':
+        specifier: workspace:*
+        version: link:../compiler
 
   packages/rules: {}
 

@@ -71,7 +71,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Download and compile every card
-        run: pnpm cards:build
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          set -o pipefail
+          pnpm cards:build 2>&1 | tee /tmp/cards-build.log
       - name: Coverage summary
         run: cat apps/web/public/coverage.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -84,10 +88,15 @@ jobs:
             apps/web/public/coverage.md
           retention-days: 30
       - name: Publish to the reports branch
+        # Runs on failure too, so the build log is readable without access to the Actions UI.
+        if: always()
         run: |
-          mkdir /tmp/reports
-          cp apps/web/public/cards.json.gz apps/web/public/cards.meta.json \
-             apps/web/public/coverage.json apps/web/public/coverage.md /tmp/reports/
+          mkdir -p /tmp/reports
+          for f in cards.json.gz cards.meta.json coverage.json coverage.md; do
+            [ -f "apps/web/public/$f" ] && cp "apps/web/public/$f" /tmp/reports/
+          done
+          [ -f /tmp/cards-build.log ] && tail -c 200000 /tmp/cards-build.log > /tmp/reports/build.log
+          echo "${{ job.status }}" > /tmp/reports/status.txt
           cd /tmp/reports
           git init -q -b reports
           git config user.name "github-actions[bot]"

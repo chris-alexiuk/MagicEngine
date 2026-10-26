@@ -1,0 +1,96 @@
+import type { ManaColor, ManaPool } from './types.js';
+
+export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
+
+export function emptyPool(): ManaPool {
+  return { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+}
+
+export function poolTotal(pool: ManaPool): number {
+  return MANA_COLORS.reduce((n, c) => n + pool[c], 0);
+}
+
+/** A mana cost broken into what the payment algorithm needs. */
+export interface ManaCost {
+  generic: number;
+  /** Colored and colorless ({C}) symbols that need that exact type. */
+  specific: Partial<Record<ManaColor, number>>;
+  /** Hybrid symbols: each entry lists the ways it can be paid (a color, or "2" for two generic). */
+  hybrid: string[][];
+  /** Number of {X} symbols. */
+  x: number;
+  /** Symbols this version can't pay automatically (Phyrexian, snow…). */
+  unsupported: string[];
+}
+
+/** CR 107.4: parses "{2}{G}{G}", "{X}{R}", "{G/U}", "{2/W}". */
+export function parseManaCost(cost: string): ManaCost {
+  const out: ManaCost = { generic: 0, specific: {}, hybrid: [], x: 0, unsupported: [] };
+  for (const m of cost.matchAll(/\{([^}]+)\}/g)) {
+    const sym = m[1]!;
+    if (/^\d+$/.test(sym)) out.generic += Number(sym); // CR 107.4b
+    else if (sym === 'X') out.x++;
+    else if (/^[WUBRGC]$/.test(sym)) {
+      const c = sym as ManaColor;
+      out.specific[c] = (out.specific[c] ?? 0) + 1;
+    } else if (/^([WUBRGC2])\/([WUBRG])$/.test(sym)) {
+      // CR 107.4e: either half pays; "2" means two mana of any type.
+      out.hybrid.push(sym.split('/'));
+    } else out.unsupported.push(sym);
+  }
+  return out;
+}
+
+/**
+ * Pays `cost` from `pool`, returning the remaining pool, or null if it can't be paid.
+ * Specific symbols first, then hybrid (preferring the type the pool has most of),
+ * then generic (colorless first, then the most plentiful color).
+ * CR 118.3: a cost can't be paid without the resources to pay it fully.
+ */
+export function payFromPool(pool: ManaPool, cost: ManaCost, xValue = 0): ManaPool | null {
+  if (cost.unsupported.length) return null;
+  const left: ManaPool = { ...pool };
+  for (const c of MANA_COLORS) {
+    const need = cost.specific[c] ?? 0;
+    if (left[c] < need) return null;
+    left[c] -= need;
+  }
+  let generic = cost.generic + cost.x * xValue;
+  for (const options of cost.hybrid) {
+    const colors = options.filter((o): o is ManaColor => o !== '2');
+    const best = colors.filter((c) => left[c] > 0).sort((a, b) => left[b] - left[a])[0];
+    if (best) left[best]--;
+    else if (options.includes('2')) generic += 2;
+    else return null;
+  }
+  const order = [...MANA_COLORS].sort((a, b) => (a === 'C' ? -1 : b === 'C' ? 1 : left[b] - left[a]));
+  for (const c of order) {
+    const take = Math.min(left[c], generic);
+    left[c] -= take;
+    generic -= take;
+  }
+  return generic === 0 ? left : null;
+}
+
+/** Mana still owed after paying what the pool can: used to plan automatic tapping. */
+export function shortfall(pool: ManaPool, cost: ManaCost, xValue = 0): { specific: ManaColor[]; generic: number } | null {
+  if (cost.unsupported.length) return null;
+  const left: ManaPool = { ...pool };
+  const specific: ManaColor[] = [];
+  for (const c of MANA_COLORS) {
+    let need = cost.specific[c] ?? 0;
+    const have = Math.min(left[c], need);
+    left[c] -= have;
+    need -= have;
+    for (let i = 0; i < need; i++) specific.push(c);
+  }
+  let generic = cost.generic + cost.x * xValue;
+  for (const options of cost.hybrid) {
+    const color = options.find((o): o is ManaColor => o !== '2' && left[o as ManaColor] > 0);
+    if (color) left[color]--;
+    else if (options.includes('2')) generic += 2;
+    else specific.push(options[0] as ManaColor);
+  }
+  generic = Math.max(0, generic - poolTotal(left));
+  return { specific, generic };
+}

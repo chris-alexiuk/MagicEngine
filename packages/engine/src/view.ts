@@ -1,0 +1,75 @@
+import type { CardDef } from '@mtg/schema';
+import type { GameObject, GameState, ObjectId, PendingChoice, PlayerId } from './types.js';
+
+/**
+ * What one player is allowed to see. The server sends each client only its own
+ * view, so hidden information never leaves the server.
+ *
+ * Hidden: every library's contents, other players' hands, and the deck lists
+ * behind them. Visible: everything public plus the viewer's own hand.
+ */
+export interface PlayerView extends Omit<GameState, 'objects' | 'zones' | 'cards' | 'pending' | 'rng' | 'opening'> {
+  viewer: PlayerId;
+  objects: Record<ObjectId, GameObject>;
+  cards: Record<string, CardDef>;
+  zones: {
+    library: Record<PlayerId, number>;
+    hand: Record<PlayerId, ObjectId[] | number>;
+    graveyard: Record<PlayerId, ObjectId[]>;
+    battlefield: ObjectId[];
+    exile: ObjectId[];
+    command: ObjectId[];
+  };
+  /** The viewer's own pending choice in full; someone else's only as who and what kind. */
+  pending: PendingChoice | { kind: PendingChoice['kind']; player: PlayerId; hidden: true } | null;
+}
+
+export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
+  const visible = new Set<ObjectId>();
+  const hand: Record<PlayerId, ObjectId[] | number> = {};
+  const library: Record<PlayerId, number> = {};
+
+  for (const p of g.order) {
+    library[p] = g.zones.library[p]?.length ?? 0;
+    const h = g.zones.hand[p] ?? [];
+    if (p === viewer) {
+      hand[p] = [...h];
+      h.forEach((id) => visible.add(id));
+    } else hand[p] = h.length;
+    (g.zones.graveyard[p] ?? []).forEach((id) => visible.add(id));
+  }
+  for (const id of [...g.zones.battlefield, ...g.zones.exile, ...g.zones.command]) visible.add(id);
+  for (const e of g.stack) if (e.kind === 'spell') visible.add(e.object);
+
+  const objects: Record<ObjectId, GameObject> = {};
+  const cards: Record<string, CardDef> = {};
+  for (const id of visible) {
+    const o = g.objects[id];
+    if (!o) continue;
+    objects[id] = structuredClone(o);
+    cards[o.card] = g.cards[o.card]!;
+  }
+
+  const pending: PlayerView['pending'] = !g.pending
+    ? null
+    : g.pending.player === viewer
+      ? structuredClone(g.pending)
+      : { kind: g.pending.kind, player: g.pending.player, hidden: true };
+
+  const { objects: _o, zones: _z, cards: _c, pending: _p, rng: _r, opening: _op, ...rest } = g;
+  return {
+    ...structuredClone(rest),
+    viewer,
+    objects,
+    cards,
+    zones: {
+      library,
+      hand,
+      graveyard: structuredClone(g.zones.graveyard),
+      battlefield: [...g.zones.battlefield],
+      exile: [...g.zones.exile],
+      command: [...g.zones.command],
+    },
+    pending,
+  };
+}

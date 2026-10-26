@@ -1,0 +1,105 @@
+import type { AddManaEffect } from '@mtg/schema';
+import { canUseTapAbilities, manaAbilities } from './characteristics.js';
+import { type ManaCost, shortfall } from './mana.js';
+import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
+
+export interface PlannedActivation {
+  object: ObjectId;
+  ability: number;
+  choice?: number | ManaColor;
+}
+
+interface Mode {
+  ability: number;
+  mana: ManaColor[];
+  choice?: number | ManaColor;
+}
+
+/** One permanent that can tap for mana, and every way it can do so. A permanent taps only once. */
+interface Source {
+  object: ObjectId;
+  modes: Mode[];
+}
+
+function manaSources(g: GameState, player: PlayerId): Source[] {
+  const out: Source[] = [];
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (o.controller !== player || o.tapped || !canUseTapAbilities(g, o)) continue;
+    const modes: Mode[] = [];
+    manaAbilities(g, o).forEach((ab, ability) => {
+      // Only simple "{T}: Add …" abilities are used automatically.
+      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1) return;
+      const effect = ab.effects[0] as AddManaEffect;
+      if (effect.type !== 'add_mana') return;
+      if (effect.anyColor) {
+        for (const c of ['W', 'U', 'B', 'R', 'G'] as ManaColor[]) {
+          modes.push({ ability, mana: Array.from({ length: effect.anyColor }, () => c), choice: c });
+        }
+      } else {
+        const options = effect.options ?? [];
+        options.forEach((opt, i) => modes.push({ ability, mana: opt as ManaColor[], ...(options.length > 1 ? { choice: i } : {}) }));
+      }
+    });
+    if (modes.length) out.push({ object: id, modes });
+  }
+  return out;
+}
+
+const flexibility = (s: Source) => new Set(s.modes.flatMap((m) => m.mana)).size;
+const toActivation = (s: Source, m: Mode): PlannedActivation => ({
+  object: s.object,
+  ability: m.ability,
+  ...(m.choice !== undefined ? { choice: m.choice } : {}),
+});
+
+/**
+ * Picks permanents to tap for a cost, beyond what's already in the pool.
+ * Greedy: the scarcest colors first, each paid by the least flexible source,
+ * then generic mana from whatever is left. Returns null if the cost can't be met.
+ */
+export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0): PlannedActivation[] | null {
+  const need = shortfall(g.players[player]!.pool, cost, x);
+  if (!need) return null;
+  const sources = manaSources(g, player);
+  const used = new Set<ObjectId>();
+  const plan: PlannedActivation[] = [];
+  let surplus = 0; // extra mana from a source tapped for a color (e.g. the second {C} from Sol Ring)
+
+  const counts = new Map<ManaColor, number>();
+  for (const c of need.specific) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const supply = (c: ManaColor) => sources.filter((s) => s.modes.some((m) => m.mana.includes(c))).length;
+  const colors = [...counts.keys()].sort((a, b) => supply(a) - supply(b));
+
+  for (const color of colors) {
+    let remaining = counts.get(color)!;
+    while (remaining > 0) {
+      const source = sources
+        .filter((s) => !used.has(s.object) && s.modes.some((m) => m.mana.includes(color)))
+        .sort((a, b) => flexibility(a) - flexibility(b))[0];
+      if (!source) return null;
+      const mode = source.modes
+        .filter((m) => m.mana.includes(color))
+        .sort((a, b) => b.mana.filter((c) => c === color).length - a.mana.filter((c) => c === color).length)[0]!;
+      used.add(source.object);
+      plan.push(toActivation(source, mode));
+      const produced = mode.mana.filter((c) => c === color).length;
+      const usedForColor = Math.min(produced, remaining);
+      remaining -= usedForColor;
+      surplus += mode.mana.length - usedForColor;
+    }
+  }
+
+  let generic = need.generic - surplus;
+  const rest = sources
+    .filter((s) => !used.has(s.object))
+    .sort((a, b) => flexibility(a) - flexibility(b));
+  for (const source of rest) {
+    if (generic <= 0) break;
+    const mode = [...source.modes].sort((a, b) => b.mana.length - a.mana.length)[0]!;
+    used.add(source.object);
+    plan.push(toActivation(source, mode));
+    generic -= mode.mana.length;
+  }
+  return generic <= 0 ? plan : null;
+}

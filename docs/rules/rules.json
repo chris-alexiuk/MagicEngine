@@ -1294,6 +1294,7 @@
     "606.2",
     "606.3",
     "606.4",
+    "606.5",
     "606.6"
    ]
   },
@@ -5582,6 +5583,7 @@
     "119.1a",
     "119.1b",
     "119.1c",
+    "119.1d",
     "119.1e"
    ],
    "parent": "119"
@@ -5602,7 +5604,14 @@
   },
   "119.1c": {
    "id": "119.1c",
-   "text": "In a Commander game, each player’s starting life total is 40. See rule 903, “Commander.”\n119.1d. In a two-player Brawl game, each player’s starting life total is 25. In a multiplayer Brawl game, each player’s starting life total is 30. See rule 903.12, “Brawl Option.”",
+   "text": "In a Commander game, each player’s starting life total is 40. See rule 903, “Commander.”",
+   "examples": [],
+   "children": [],
+   "parent": "119.1"
+  },
+  "119.1d": {
+   "id": "119.1d",
+   "text": "In a two-player Brawl game, each player’s starting life total is 25. In a multiplayer Brawl game, each player’s starting life total is 30. See rule 903.12, “Brawl Option.”",
    "examples": [],
    "children": [],
    "parent": "119.1"
@@ -6985,6 +6994,7 @@
    "children": [
     "205.4a",
     "205.4b",
+    "205.4c",
     "205.4d",
     "205.4e",
     "205.4f",
@@ -7004,8 +7014,15 @@
    "id": "205.4b",
    "text": "An object’s supertype is independent of its card type and subtype, even though some supertypes are closely identified with specific card types. Changing an object’s card types or subtypes won’t change its supertypes. Changing an object’s supertypes won’t change its card types or subtypes. When an object gains or loses a supertype, it retains any other supertypes it had.",
    "examples": [
-    "An ability reads, “All lands are 1/1 creatures that are still lands.” If any of the affected lands were legendary, they are still legendary.\n205.4c Any land with the supertype “basic” is a basic land. Any land that doesn’t have this supertype is a nonbasic land, even if it has a basic land type.      Cards printed in sets prior to the Eighth Edition core set didn’t use the word “basic” to indicate a basic land. Cards from those sets with the following names are basic lands and have received errata in the Oracle card reference accordingly: Forest, Island, Mountain, Plains, Swamp, Snow-Covered Forest, Snow-Covered Island, Snow-Covered Mountain, Snow-Covered Plains, and Snow-Covered Swamp."
+    "An ability reads, “All lands are 1/1 creatures that are still lands.” If any of the affected lands were legendary, they are still legendary."
    ],
+   "children": [],
+   "parent": "205.4"
+  },
+  "205.4c": {
+   "id": "205.4c",
+   "text": "Any land with the supertype “basic” is a basic land. Any land that doesn’t have this supertype is a nonbasic land, even if it has a basic land type.      Cards printed in sets prior to the Eighth Edition core set didn’t use the word “basic” to indicate a basic land. Cards from those sets with the following names are basic lands and have received errata in the Oracle card reference accordingly: Forest, Island, Mountain, Plains, Swamp, Snow-Covered Forest, Snow-Covered Island, Snow-Covered Mountain, Snow-Covered Plains, and Snow-Covered Swamp.",
+   "examples": [],
    "children": [],
    "parent": "205.4"
   },
@@ -9982,6 +9999,7 @@
    "examples": [],
    "children": [
     "509.1a",
+    "509.1b",
     "509.1c",
     "509.1d",
     "509.1e",
@@ -9994,7 +10012,14 @@
   },
   "509.1a": {
    "id": "509.1a",
-   "text": "The defending player chooses which creatures they control, if any, will block. The chosen creatures must be untapped and they can’t also be battles. For each of the chosen creatures, the defending player chooses one creature for it to block that’s attacking that player, a planeswalker they control, or a battle they protect.\n509.1b The defending player checks each creature they control to see whether it’s affected by any restrictions (effects that say a creature can’t block, or that it can’t block unless some condition is met). If any restrictions are being disobeyed, the declaration of blockers is illegal.      A restriction may be created by an evasion ability (a static ability an attacking creature has that restricts what can block it). If an attacking creature gains or loses an evasion ability after a legal block has been declared, it doesn’t affect that block. Different evasion abilities are cumulative.",
+   "text": "The defending player chooses which creatures they control, if any, will block. The chosen creatures must be untapped and they can’t also be battles. For each of the chosen creatures, the defending player chooses one creature for it to block that’s attacking that player, a planeswalker they control, or a battle they protect.",
+   "examples": [],
+   "children": [],
+   "parent": "509.1"
+  },
+  "509.1b": {
+   "id": "509.1b",
+   "text": "The defending player checks each creature they control to see whether it’s affected by any restrictions (effects that say a creature can’t block, or that it can’t block unless some condition is met). If any restrictions are being disobeyed, the declaration of blockers is illegal.      A restriction may be created by an evasion ability (a static ability an attacking creature has that restricts what can block it). If an attacking creature gains or loses an evasion ability after a legal block has been declared, it doesn’t affect that block. Different evasion abilities are cumulative.",
    "examples": [
     "An attacking creature with flying and shadow can’t be blocked by a creature with flying but without shadow."
    ],
@@ -11280,7 +11305,14 @@
   },
   "606.4": {
    "id": "606.4",
-   "text": "The cost to activate a loyalty ability of a permanent is to put on or remove from that permanent a certain number of loyalty counters, as shown by the loyalty symbol in the ability’s cost. This cost may be modified by other effects.\n606.5 If the total cost to activate a loyalty ability contains multiple costs to add or remove loyalty counters, those costs are combined into a single cost to add or remove loyalty counters, as appropriate.",
+   "text": "The cost to activate a loyalty ability of a permanent is to put on or remove from that permanent a certain number of loyalty counters, as shown by the loyalty symbol in the ability’s cost. This cost may be modified by other effects.",
+   "examples": [],
+   "children": [],
+   "parent": "606"
+  },
+  "606.5": {
+   "id": "606.5",
+   "text": "If the total cost to activate a loyalty ability contains multiple costs to add or remove loyalty counters, those costs are combined into a single cost to add or remove loyalty counters, as appropriate.",
    "examples": [
     "A player controls Carth the Lion, which says, in part, “Planeswalkers’ loyalty abilities you control cost an additional [+1] to activate. That player also controls a planeswalker with three loyalty counters. To activate one of that planeswalker’s abilities that normally costs [+1], they put two loyalty counters on it. To activate one of its abilities that normally costs [−4], they remove three loyalty counters from it."
    ],
@@ -27593,7 +27625,7 @@
  },
  "glossary": {
   "Abandon": "To turn a face-up ongoing scheme card face down and put it on the bottom of its owner’s scheme deck. See rule 701.33, “Abandon.”",
-  "Ability": "1. Text on an object that explains what that object does or can do. 2. An activated or triggered ability on the stack. This kind of ability is an object. See rule 113, “Abilities,” and section 6, “Spells, Abilities, and Effects.”",
+  "Ability": "1. Text on an object that explains what that object does or can do. 2. An activated or triggered ability on the stack. This kind of ability is an object. See rule 113, “Abilities,” and section 6, “Spells, Abilities, and Effects.”",
   "Ability Word": "An italicized word with no rules meaning that ties together abilities on different cards that have similar functionality. See rule 207.2c.",
   "Absorb": "A keyword ability that prevents damage. See rule 702.64, “Absorb.”",
   "Activate": "To put an activated ability onto the stack and pay its costs, so that it will eventually resolve and have its effect. See rule 602, “Activating Activated Abilities.”",
@@ -27617,10 +27649,10 @@
   "Amplify": "A keyword ability than can have a creature enter the battlefield with +1/+1 counters on it. See rule 702.38, “Amplify.”",
   "Anchor Word": "A word that precedes one of two abilities a permanent may enter the battlefield with. See rule 614.12b.",
   "Annihilator": "A keyword ability that can make a creature particularly brutal when it attacks. See rule 702.86, “Annihilator.”",
-  "Ante": "1. A zone used only when playing “for keeps.” 2. To put a card into the ante zone. See rule 407, “Ante.”",
+  "Ante": "1. A zone used only when playing “for keeps.” 2. To put a card into the ante zone. See rule 407, “Ante.”",
   "Any Target": "A spell or ability may require “any target.” “Any target” is the same as “target creature, player, planeswalker, or battle.” See rule 115.4.",
   "APNAP Order": "See Active Player, Nonactive Player Order.",
-  "Archenemy": "1. A casual variant in which a team of players faces off against a single opponent strengthened with powerful scheme cards. See rule 904, “Archenemy.” 2. A player in an Archenemy game who is playing with a scheme deck.",
+  "Archenemy": "1. A casual variant in which a team of players faces off against a single opponent strengthened with powerful scheme cards. See rule 904, “Archenemy.” 2. A player in an Archenemy game who is playing with a scheme deck.",
   "Archenemy Commander": "A Commander game that follows a modified version of the Archenemy rules. See rule 903, “Commander,” and rule 904, “Archenemy.”",
   "Artifact": "A card type. An artifact is a permanent. See rule 301, “Artifacts.”",
   "Artifact Creature": "A combination of artifact and creature that’s subject to the rules for both. See rule 301, “Artifacts,” and rule 302, “Creatures.”",
@@ -27704,15 +27736,15 @@
   "Clue Token": "A Clue token is a colorless artifact token with “{2}, Sacrifice this token: Draw a card.” For more information about predefined tokens, see rule 111.10.",
   "Collect Evidence": "A keyword action. To “collect evidence N” means to exile any number of cards from your graveyard with total mana value N or greater. See rule 701.59, “Collect Evidence.”",
   "Collector Number": "A number printed on most cards that has no effect on game play. See rule 213, “Information Below the Text Box.”",
-  "Color": "1. A characteristic of an object. See rule 105, “Colors,” and rule 202, “Mana Cost and Color.” 2. An attribute mana may have. See rule 106, “Mana.”",
+  "Color": "1. A characteristic of an object. See rule 105, “Colors,” and rule 202, “Mana Cost and Color.” 2. An attribute mana may have. See rule 106, “Mana.”",
   "Color Identity": "A set of colors that determines what cards may be included in a deck for the Commander casual variant. See rule 903.4.",
   "Color Indicator": "A characteristic of an object. See rule 105, “Colors,” and rule 204, “Color Indicator.”",
-  "Colorless": "1. An object with no color is colorless. Colorless is not a color. See rule 105, “Colors,” and rule 202, “Mana Cost and Color.” 2. A type of mana. See rule 106, “Mana,” and rule 107.4c.",
+  "Colorless": "1. An object with no color is colorless. Colorless is not a color. See rule 105, “Colors,” and rule 202, “Mana Cost and Color.” 2. A type of mana. See rule 106, “Mana,” and rule 107.4c.",
   "Combat Damage": "Damage dealt during the combat damage step by attacking creatures and blocking creatures as a consequence of combat. See rule 510, “Combat Damage Step.”",
   "Combat Damage Step": "Part of the turn. This step is the fourth step of the combat phase. See rule 510, “Combat Damage Step.”",
   "Combat Phase": "Part of the turn. This phase is the third phase of the turn. See rule 506, “Combat Phase.”",
   "Command": "A zone for certain specialized objects that have an overarching effect on the game, yet are not permanents and cannot be destroyed. See rule 408, “Command.”",
-  "Commander": "1. A casual variant in which each deck is led by a legendary card (usually a creature). See rule 903, “Commander.” 2. A designation given to one legendary card in each player’s deck in the Commander casual variant.",
+  "Commander": "1. A casual variant in which each deck is led by a legendary card (usually a creature). See rule 903, “Commander.” 2. A designation given to one legendary card in each player’s deck in the Commander casual variant.",
   "Commander Draft": "A casual variant in which players participate in a booster draft and then play multiplayer games. See rule 903.13, “Commander Draft.”",
   "Commander Ninjutsu": "A variant of the ninjutsu ability. See rule 702.49, “Ninjutsu.”",
   "Commander Tax": "Informal term for the additional cost to cast a commander based on the number of times a player has cast it previously this game. See rule 903.8.",
@@ -27733,9 +27765,9 @@
   "Converted Mana Cost (Obsolete)": "An obsolete term for mana value. Cards printed with this term have received errata in the Oracle card reference.",
   "Convoke": "A keyword ability that lets you tap creatures rather than pay mana to cast a spell. See rule 702.51, “Convoke.”",
   "Copiable Values": "Values of an object’s characteristics that are checked by copy effects. See rules 613.2, 707.2, and 707.3.",
-  "Copy": "1. To create a new object whose copiable values have been set to those of another object. 2. An object whose copiable values have been set to those of another object. See rule 707, “Copying Objects.”",
+  "Copy": "1. To create a new object whose copiable values have been set to those of another object. 2. An object whose copiable values have been set to those of another object. See rule 707, “Copying Objects.”",
   "Cost": "An action or payment necessary to take another action or to stop another action from taking place. See rule 118, “Costs.”",
-  "Counter": "1. To cancel a spell or ability so it doesn’t resolve and none of its effects occur. See rule 701.6, “Counter.” 2. A marker placed on an object or player that modifies its characteristics or interacts with a rule or ability. See rule 122, “Counters.”",
+  "Counter": "1. To cancel a spell or ability so it doesn’t resolve and none of its effects occur. See rule 701.6, “Counter.” 2. A marker placed on an object or player that modifies its characteristics or interacts with a rule or ability. See rule 122, “Counters.”",
   "Counts As (Obsolete)": "Some older cards were printed with text stating that the card “counts as” something. Cards printed with this text have received errata in the Oracle card reference to state that the card actually is that thing.",
   "Craft": "Craft is an activated ability that allows a player to exile cards from their graveyard and/or permanents they control to exile the permanent with the craft ability and return it onto the battlefield transformed. See rule 702.167, “Craft.”",
   "Create": "To create a token is to put a token onto the battlefield. See rule 701.7, “Create.”",
@@ -27786,7 +27818,7 @@
   "Double-Faced Cards": "Cards with two faces, one on each side of the card, and no Magic card back. See rule 712, “Double-Faced Cards.”",
   "Draft": "1. A Limited format in which players choose cards one at a time from booster packs, then construct a deck solely from the chosen cards and basic land cards.\n2. To choose a card during a draft and put it into your card pool.",
   "Draft Round": "Part of a draft in which each player opens an unopened booster pack and the cards in those booster packs are drafted. See rules 905.1a and 905.1b.",
-  "Draw": "1. To put the top card of a player’s library into their hand as a turn-based action or as the result of an effect that uses the word “draw.” See rule 121, “Drawing a Card.” 2. The result of a game in which neither player wins or loses. See rule 104.4.",
+  "Draw": "1. To put the top card of a player’s library into their hand as a turn-based action or as the result of an effect that uses the word “draw.” See rule 121, “Drawing a Card.” 2. The result of a game in which neither player wins or loses. See rule 104.4.",
   "Draw Step": "Part of the turn. This step is the third and final step of the beginning phase. See rule 504, “Draw Step.”",
   "Dredge": "A keyword ability that lets a player return a card from their graveyard to their hand. See rule 702.52, “Dredge.”",
   "Dungeon": "A card type found on nontraditional Magic cards. A dungeon card is not a permanent. See rule 309, “Dungeons.”",
@@ -27834,7 +27866,7 @@
   "Exchange": "To swap two things, such as objects, sets of objects, or life totals. See rule 701.12, “Exchange.”",
   "Exert": "A keyword action that stops a permanent from untapping during the next untap step of the player who exerted it. See rule 701.43, “Exert.”",
   "Exhaust": "An activated ability that may be activated only once. See rule 702.177, “Exhaust.”",
-  "Exile": "1. A zone. Exile is essentially a holding area for cards. It used to be known as the “removed-from-the-game” zone. 2. To put an object into the exile zone from whatever zone it’s currently in. An “exiled” card is one that’s been put into the exile zone. See rule 406, “Exile.”",
+  "Exile": "1. A zone. Exile is essentially a holding area for cards. It used to be known as the “removed-from-the-game” zone. 2. To put an object into the exile zone from whatever zone it’s currently in. An “exiled” card is one that’s been put into the exile zone. See rule 406, “Exile.”",
   "Expansion Symbol": "A card’s expansion symbol is a small icon normally printed below the right edge of the illustration that has no effect on game play. See rule 206, “Expansion Symbol.”",
   "Expend": "A word found on some abilities that care how much mana a player has spent to cast spells this turn. See rule 700.14.",
   "Exploit": "A keyword ability that lets you sacrifice a creature for a benefit. See rule 702.110, “Exploit.”",
@@ -27843,8 +27875,8 @@
   "Extra Turn": "A turn created by an effect of a spell or ability. See rule 500.7. For rules about extra turns in a multiplayer game using the shared team turns option, see 805.8. For rules about extra turns in a Grand Melee game, see rule 807.4.",
   "Fabricate": "A keyword ability that lets you choose whether to create Servo tokens or put +1/+1 counters on a creature. See rule 702.123, “Fabricate.”",
   "Face a Villainous Choice": "A keyword action that causes a player to choose one of two listed choices. See rule 701.55, “Face a Villainous Choice.”",
-  "Face Down": "1. A card is “face down” if it’s physically positioned so the card back is showing. Cards in some zones are normally kept face down. See section 4, “Zones.” 2. A status a permanent may have. See rule 110.5 and rule 702.37, “Morph.” 3. Face-down spells have additional rules. See rule 708, “Face-Down Spells and Permanents,” and rule 702.37, “Morph.”",
-  "Face Up": "1. A card is “face up” if it’s physically positioned so the card front is showing. Cards in some zones are normally kept face up. See section 4, “Zones.” 2. A default status a permanent may have. See rule 110.5 and rule 702.37, “Morph.”",
+  "Face Down": "1. A card is “face down” if it’s physically positioned so the card back is showing. Cards in some zones are normally kept face down. See section 4, “Zones.” 2. A status a permanent may have. See rule 110.5 and rule 702.37, “Morph.” 3. Face-down spells have additional rules. See rule 708, “Face-Down Spells and Permanents,” and rule 702.37, “Morph.”",
+  "Face Up": "1. A card is “face up” if it’s physically positioned so the card front is showing. Cards in some zones are normally kept face up. See section 4, “Zones.” 2. A default status a permanent may have. See rule 110.5 and rule 702.37, “Morph.”",
   "Fading": "A keyword ability that limits how long a permanent remains on the battlefield. See rule 702.32, “Fading.”",
   "Fateseal": "To manipulate some of the cards on top of an opponent’s library. See rule 701.29, “Fateseal.”",
   "Fear": "A keyword ability that restricts how a creature may be blocked. See rule 702.36, “Fear.”",
@@ -27888,8 +27920,8 @@
   "Graft": "A keyword ability that has a permanent enter the battlefield with +1/+1 counters on it and can move those counters to other creatures. See rule 702.58, “Graft.”",
   "Grand Melee": "A multiplayer variant in which a large group of players (usually ten or more) compete as individuals against each other. See rule 807, “Grand Melee Variant.”",
   "Gravestorm": "A keyword ability that creates copies of a spell. See rule 702.69, “Gravestorm.”",
-  "Graveyard": "1. A zone. A player’s graveyard is their discard pile. 2. All the cards in a player’s graveyard. See rule 404, “Graveyard.”",
-  "Hand": "1. A zone. A player’s hand is where that player holds cards they have drawn but not played yet. 2. All the cards in a player’s hand. See rule 402, “Hand.”",
+  "Graveyard": "1. A zone. A player’s graveyard is their discard pile. 2. All the cards in a player’s graveyard. See rule 404, “Graveyard.”",
+  "Hand": "1. A zone. A player’s hand is where that player holds cards they have drawn but not played yet. 2. All the cards in a player’s hand. See rule 402, “Hand.”",
   "Hand Modifier": "A characteristic that only vanguards have. See rule 211, “Hand Modifier.”",
   "Harmonize": "A keyword ability that lets a player cast a card from their graveyard for a specific cost and lets them tap a creature they control to reduce that cost. See rule 702.180, “Harmonize.”",
   "Harness": "A keyword action that grants a permanent the harnessed designation. See rule 701.64, “Harness.”",
@@ -27926,7 +27958,7 @@
   "Independent": "See Dependency.",
   "Indestructible": "A keyword ability that precludes a permanent from being destroyed. See rule 702.12.",
   "Infect": "A keyword ability that affects how an object deals damage to creatures and players. See rule 702.90, “Infect.”",
-  "Infinity": "1. An artifact subtype. 2. ∞ is a keyword found on Infinity cards that grants an ability as long as that permanent is harnessed. See rule 702.186, “∞ (Infinity),” and rule 701.64, “Harness.”",
+  "Infinity": "1. An artifact subtype. 2. ∞ is a keyword found on Infinity cards that grants an ability as long as that permanent is harnessed. See rule 702.186, “∞ (Infinity),” and rule 701.64, “Harness.”",
   "Ingest": "A keyword ability that can exile the top card of a player’s library. See rule 702.115, “Ingest.”",
   "Initiative": "A designation a player can have. Some effects instruct a player to take the initiative. The player with the initiative ventures into Undercity whenever they take the initiative and at the beginning of their upkeep. See rule 726, “The Initiative.”",
   "Instant": "A card type. An instant is not a permanent. See rule 304, “Instants.”",
@@ -27962,7 +27994,7 @@
   "Level Symbol": "A symbol that represents a keyword ability indicating abilities, power, and toughness a leveler card may have. See rule 107.8 and rule 711, “Leveler Cards.”",
   "Level Up": "A keyword ability that can put level counters on a creature. See rule 702.87, “Level Up.” For class level abilities of Class cards, see rule 716, “Class Cards.”",
   "Leveler Cards": "Cards with striated text boxes and three power/toughness boxes. See rule 711, “Leveler Cards.”",
-  "Library": "1. A zone. A player’s library is where that player draws cards from. 2. All the cards in a player’s library. See rule 401, “Library.”",
+  "Library": "1. A zone. A player’s library is where that player draws cards from. 2. All the cards in a player’s library. See rule 401, “Library.”",
   "Life, Life Total": "Each player has an amount of “life,” represented by that player’s “life total.” Life may be gained or lost. See rule 119, “Life.”",
   "Life Modifier": "A characteristic that only vanguards have. See rule 212, “Life Modifier.”",
   "Lifelink": "A keyword ability that causes a player to gain life. See rule 702.15, “Lifelink.”",
@@ -27977,7 +28009,7 @@
   "London Mulligan": "Informal term for the current system of mulligan rules. See rule 103.5.",
   "Loop": "A set of actions that could be repeated indefinitely. See rule 732, “Taking Shortcuts.”",
   "Lose the Game": "There are several ways to lose the game. See rule 104, “Ending the Game,” rule 810.8 (for additional rules for Two-Headed Giant games), rule 809.5 (for additional rules for Emperor games), and rule 903.10 (for an additional rule for Commander games).",
-  "Loyalty": "1. Part of a card that only planeswalker cards have. A planeswalker card’s loyalty is printed in its lower right corner. See rule 209, “Loyalty.” 2. A characteristic that only planeswalkers have. See rule 306.5.",
+  "Loyalty": "1. Part of a card that only planeswalker cards have. A planeswalker card’s loyalty is printed in its lower right corner. See rule 209, “Loyalty.” 2. A characteristic that only planeswalkers have. See rule 306.5.",
   "Loyalty Ability": "An activated ability with a loyalty symbol in its cost. See rule 606, “Loyalty Abilities.”",
   "Madness": "A keyword ability that lets a player cast a card they discard. See rule 702.35, “Madness.”",
   "Main Game": "The game in which a spell (or ability) that created a subgame was cast (or activated). See rule 729, “Subgames.”",
@@ -27994,7 +28026,7 @@
   "Manifest Dread": "A keyword action that puts one of the top two cards of your library onto the battlefield face down as a 2/2 creature. See rule 701.62, “Manifest Dread,” rule 701.40, “Manifest,” and rule 708, “Face-Down Spells and Permanents.”",
   "Map": "A Map token is a colorless Map artifact token with “{1}, {T}, Sacrifice this token: Target creature you control explores. Activate only as a sorcery.” See rule 701.44, “Explore.” For more information about predefined tokens, see rule 111.10.",
   "Match": "A multiplayer game or a two-player series of games (usually best-two-of-three) played in a tournament. See rule 100.6.",
-  "Max Speed": "1. A player has max speed if their speed is 4. See rule 702.179, “Start Your Engines!” 2. A keyword ability that grants an ability to the permanent or card it’s on only if that permanent’s controller (or that card’s owner, if it isn’t on the battlefield) has a speed of 4. See rule 702.178, “Max Speed.”",
+  "Max Speed": "1. A player has max speed if their speed is 4. See rule 702.179, “Start Your Engines!” 2. A keyword ability that grants an ability to the permanent or card it’s on only if that permanent’s controller (or that card’s owner, if it isn’t on the battlefield) has a speed of 4. See rule 702.178, “Max Speed.”",
   "Maximum Hand Size": "The number of cards in hand a player must discard down to during their cleanup step. See rule 402.2 and 514.1.",
   "Mayhem": "A keyword ability that allows you to play cards you discarded this turn from your graveyard for an alternative cost. See rule 702.187, “Mayhem.”",
   "Megamorph": "A variant of the morph ability that puts a +1/+1 counter on the creature as it turns face up. See rule 702.37, “Morph.”",
@@ -28065,7 +28097,7 @@
   "Permanent Spell": "A spell that will enter the battlefield as a permanent as part of its resolution. See rule 110.4b.",
   "Permanently (Obsolete)": "An obsolete term used to indicate that a continuous effect has no duration and thus lasts until the end of the game. Cards printed with this term have received errata in the Oracle card reference to delete it.",
   "Persist": "A keyword ability that can return a creature from the graveyard to the battlefield. See rule 702.79, “Persist.”",
-  "Phase": "1. A subsection of a turn. See section 5, “Turn Structure.” 2. A permanent “phases in” when its status changes from phased out to phased in. A permanent “phases out” when its status changes from phased in to phased out. See rule 702.26, “Phasing.”",
+  "Phase": "1. A subsection of a turn. See section 5, “Turn Structure.” 2. A permanent “phases in” when its status changes from phased out to phased in. A permanent “phases out” when its status changes from phased in to phased out. See rule 702.26, “Phasing.”",
   "Phased In, Phased Out": "A status a permanent may have. Phased-in is the default status. Phased-out permanents are treated as though they do not exist. See rule 110.5 and rule 702.26, “Phasing.” (“Phased-out” was a zone in older versions of the rules.)",
   "Phasing": "A keyword ability that causes a permanent to sometimes be treated as though it does not exist. See rule 702.26, “Phasing.”",
   "Phenomenon": "A card type seen only on nontraditional Magic cards in the Planechase casual variant. A phenomenon card is not a permanent. See rule 312, “Phenomena.”",
@@ -28085,7 +28117,7 @@
   "Planeswalker Symbol": "The Planeswalker symbol appears on the planar die in the Planechase casual variant. See rule 107.11.",
   "Planeswalker Type": "A subtype that’s correlated to the planeswalker card type. See rule 306, “Planeswalkers.” See rule 205.3j for the list of planeswalker types.",
   "Planeswalker Uniqueness Rule (Obsolete)": "Older versions of the rules stated that a player who controlled two or more planeswalkers with the same planeswalker type would put all but one of those planeswalkers into their owners’ graveyards. This rule was called the “planeswalker uniqueness rule” and no longer exists.",
-  "Play": "1. To play a land is to put a land onto the battlefield as a special action. See rule 116, “Special Actions,” and rule 305, “Lands.” 2. To play a card is to play that card as a land or cast that card as a spell, whichever is appropriate. See rule 601, “Casting Spells.” 3. (Obsolete) Casting a spell used to be known as playing a spell. Cards with that text have received errata in the Oracle card reference. See Cast. 4. (Obsolete) Activating an activated ability used to be known as playing an activated ability. Cards with that text have received errata in the Oracle card reference. See Activate. 5. (Obsolete) The battlefield used to be known as the in-play zone. Cards that were printed with text that contains the phrases “in play,” “from play,” “into play,” or the like are referring to the battlefield and have received errata in the Oracle card reference. See Battlefield.",
+  "Play": "1. To play a land is to put a land onto the battlefield as a special action. See rule 116, “Special Actions,” and rule 305, “Lands.” 2. To play a card is to play that card as a land or cast that card as a spell, whichever is appropriate. See rule 601, “Casting Spells.” 3. (Obsolete) Casting a spell used to be known as playing a spell. Cards with that text have received errata in the Oracle card reference. See Cast. 4. (Obsolete) Activating an activated ability used to be known as playing an activated ability. Cards with that text have received errata in the Oracle card reference. See Activate. 5. (Obsolete) The battlefield used to be known as the in-play zone. Cards that were printed with text that contains the phrases “in play,” “from play,” “into play,” or the like are referring to the battlefield and have received errata in the Oracle card reference. See Battlefield.",
   "Player": "One of the people in the game. See rule 102, “Players.”",
   "Plot": "A keyword ability that lets a player exile cards from their hand and cast them without paying their mana cost on future turns. See rule 702.170, “Plot.”",
   "Plotted": "A card exiled using the plot special action becomes plotted. Other effects can also make an exiled card plotted. See rule 702.170, “Plot.”",
@@ -28095,7 +28127,7 @@
   "Poly Artifact (Obsolete)": "An obsolete term that appeared on the type line of artifacts with activated abilities that didn’t cause the artifact to be tapped as a cost. Cards printed with this text have received errata in the Oracle card reference to simply say “Artifact.”",
   "Populate": "A keyword action that creates a copy of a creature token you control. See rule 701.36, “Populate.”",
   "Postcombat Main Phase": "A main phase that occurs after a combat phase. See Main Phase.",
-  "Power": "1. Part of a card that only creature cards have. A creature card’s power is printed before the slash in its lower right corner. See rule 208, “Power/Toughness.” 2. A characteristic that only creatures have. See rule 302.4.",
+  "Power": "1. Part of a card that only creature cards have. A creature card’s power is printed before the slash in its lower right corner. See rule 208, “Power/Toughness.” 2. A characteristic that only creatures have. See rule 302.4.",
   "Powerstone Token": "A Powerstone token is a colorless artifact token with “{T}: Add {C}. This mana can’t be spent to cast a nonartifact spell.” For more information about predefined tokens, see rule 111.10.",
   "Power-up": "A one-time activated ability found on permanents that costs less during the turn the permanent with the ability entered the battlefield. See rule 702.193, “Power-up.”",
   "Precombat Main Phase": "The first main phase of a turn. See Main Phase.",
@@ -28184,7 +28216,7 @@
   "Snow": "A supertype that’s normally relevant on permanents. See rule 205.4, “Supertypes.”",
   "Snow Mana Symbol": "The snow mana symbol {S} represents a cost that can be paid with one mana produced by a snow source. It can also represent mana from a snow source that was spent to pay a cost. See rule 107.4h.",
   "Snow-Covered (Obsolete)": "Some older cards were printed with the term “snow-covered” in their rules text. Except when referencing card names, such cards have received errata in the Oracle card reference to reference the supertype “snow” instead. See Snow.",
-  "Solved": "1. A designation a Case may have, allowing its last ability to affect the game. See rule 719, “Case Cards.” 2. A keyword ability of Case cards that affects the game only if the Case has the solved designation. See rule 702.169, “Solved.”",
+  "Solved": "1. A designation a Case may have, allowing its last ability to affect the game. See rule 719, “Case Cards.” 2. A keyword ability of Case cards that affects the game only if the Case has the solved designation. See rule 702.169, “Solved.”",
   "Sorcery": "A card type. A sorcery is not a permanent. See rule 307, “Sorceries.”",
   "Soulbond": "A keyword ability that makes creatures better by pairing them together. See rule 702.95, “Soulbond.”",
   "Soulshift": "A keyword ability that lets a player return a card from their graveyard to their hand. See rule 702.46, “Soulshift.”",
@@ -28259,7 +28291,7 @@
   "Total Casting Cost (Obsolete)": "An obsolete term for mana value. Cards printed with this term have received errata in the Oracle card reference.",
   "Total Cost": "What a player actually has to pay, in practical terms, to cast a spell or activated ability: the mana cost, activation cost, or alternative cost, plus all cost increases (including additional costs) and minus all cost reductions. See rule 601.2f.",
   "Totem Armor (Obsolete)": "An obsolete keyword ability that has been renamed. See rule 702.89, “Umbra Armor.”",
-  "Toughness": "1. Part of a card that only creature cards have. A creature card’s toughness is printed after the slash in its lower right corner. See rule 208, “Power/Toughness.” 2. A characteristic that only creatures have. See rule 302.4.",
+  "Toughness": "1. Part of a card that only creature cards have. A creature card’s toughness is printed after the slash in its lower right corner. See rule 208, “Power/Toughness.” 2. A characteristic that only creatures have. See rule 302.4.",
   "Tournament": "An organized play activity where players compete against other players. See rule 100.6.",
   "Tournament Rules": "Additional rules that apply to games played in a sanctioned tournament. See rule 100.6.",
   "Toxic": "A keyword ability that causes a player to get poison counters due to combat damage from creatures with the ability. See rule 702.164, “Toxic.”",
@@ -28282,7 +28314,7 @@
   "Turn Markers": "Markers used to keep track of which players are taking turns in a Grand Melee game. See rule 807.4.",
   "Turn-Based Actions": "Game actions that happen automatically when certain steps or phases begin, or when each step or phase ends. See rule 703, “Turn-Based Actions.”",
   "Two-Headed Giant Variant": "A multiplayer variant played among two-player teams that each have a shared life total and take a simultaneous turn. See rule 810, “Two-Headed Giant Variant.”",
-  "Type": "1. An object’s card type or, more broadly, its card type, subtype, and/or supertype. See rule 205, “Type Line,” and section 3, “Card Types.” 2. An attribute mana has. See rule 106, “Mana.”",
+  "Type": "1. An object’s card type or, more broadly, its card type, subtype, and/or supertype. See rule 205, “Type Line,” and section 3, “Card Types.” 2. An attribute mana has. See rule 106, “Mana.”",
   "Type Icon": "An icon that appears in the upper left of some Future Sight cards that has no effect on game play. See rule 107.10.",
   "Type Line": "Part of a card. The type line is printed directly below the illustration and contains the card’s card type(s), subtype(s), and/or supertype(s). See rule 205, “Type Line.”",
   "Type-Changing Effect": "An effect that changes an object’s card type, subtype, and/or supertype. See rules 205.1a–b, 305.7, and 613.1d.",
@@ -28305,7 +28337,7 @@
   "Untap Symbol": "The untap symbol {Q} in an activation cost means “Untap this permanent.” See rule 107.6.",
   "Untapped": "A default status a permanent may have. See rule 110.5 and rule 701.26, “Tap and Untap.” See also Tapped.",
   "Upkeep Step": "Part of the turn. This step is the second step of the beginning phase. See rule 503, “Upkeep Step.”",
-  "Vanguard": "1. A casual variant in which each player plays the role of a famous character. See rule 902, “Vanguard.” 2. A card type seen only on nontraditional Magic cards in the Vanguard casual variant. A vanguard card is not a permanent. See rule 313, “Vanguards.”",
+  "Vanguard": "1. A casual variant in which each player plays the role of a famous character. See rule 902, “Vanguard.” 2. A card type seen only on nontraditional Magic cards in the Vanguard casual variant. A vanguard card is not a permanent. See rule 313, “Vanguards.”",
   "Vanishing": "A keyword ability that limits how long a permanent remains on the battlefield. See rule 702.63, “Vanishing.”",
   "Variant": "An additional set of rules that determines the style of a multiplayer game. See rule 800.2.",
   "Vehicle": "An artifact subtype. Vehicles can become artifact creatures. See rule 301, “Artifacts,” and rule 702.122, “Crew.”",

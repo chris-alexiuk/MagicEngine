@@ -9,10 +9,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p .",
-    "test": "echo 'engine tests arrive in milestone 2'"
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@mtg/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@mtg/compiler": "workspace:*"
   }
 }
