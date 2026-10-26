@@ -1,0 +1,97 @@
+name: Reference data
+
+# Fetches the external data the engine is built against:
+#   - the Comprehensive Rules (URL in docs/rules/SOURCE.txt), parsed and committed to main
+#   - the full compiled card DB from Scryfall, published with its coverage report
+#     to the `reports` branch (and as a build artifact)
+# Runs weekly, on demand, and whenever the parsers or the rules source change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/rules/SOURCE.txt
+      - packages/rules/src/**
+      - packages/compiler/src/**
+      - packages/schema/src/**
+      - .github/workflows/data.yml
+  schedule:
+    - cron: '17 9 * * 1' # Mondays 09:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reference-data
+  cancel-in-progress: false
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download the Comprehensive Rules
+        run: |
+          url="$(head -n1 docs/rules/SOURCE.txt)"
+          curl -fsSL -A "MagicEngine/0.1 (rules sync)" "$url" -o /tmp/cr.txt
+          # Older releases were Windows-1252; normalise to UTF-8 with LF endings.
+          if ! iconv -f UTF-8 -t UTF-8 /tmp/cr.txt > /dev/null 2>&1; then
+            iconv -f WINDOWS-1252 -t UTF-8 /tmp/cr.txt > /tmp/cr8.txt && mv /tmp/cr8.txt /tmp/cr.txt
+          fi
+          sed -i 's/\r$//' /tmp/cr.txt
+          mv /tmp/cr.txt docs/rules/MagicCompRules.txt
+      - name: Parse
+        # Commit the raw text even if parsing fails, so the parser can be fixed against it.
+        run: pnpm rules:parse || echo "::warning::Comprehensive Rules parse failed"
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/rules/MagicCompRules.txt
+          [ -f docs/rules/rules.json ] && git add docs/rules/rules.json
+          if git diff --cached --quiet; then echo "rules unchanged"; exit 0; fi
+          git commit -m "Update Comprehensive Rules from $(head -n1 docs/rules/SOURCE.txt)"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+  cards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download and compile every card
+        run: pnpm cards:build
+      - name: Coverage summary
+        run: cat apps/web/public/coverage.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: card-db
+          path: |
+            apps/web/public/cards.json.gz
+            apps/web/public/cards.meta.json
+            apps/web/public/coverage.json
+            apps/web/public/coverage.md
+          retention-days: 30
+      - name: Publish to the reports branch
+        run: |
+          mkdir /tmp/reports
+          cp apps/web/public/cards.json.gz apps/web/public/cards.meta.json \
+             apps/web/public/coverage.json apps/web/public/coverage.md /tmp/reports/
+          cd /tmp/reports
+          git init -q -b reports
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -qm "Card DB and coverage for ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" reports

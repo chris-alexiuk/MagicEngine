@@ -69,6 +69,8 @@ importers:
         specifier: workspace:*
         version: link:../schema
 
+  packages/rules: {}
+
   packages/schema: {}
 
 packages:

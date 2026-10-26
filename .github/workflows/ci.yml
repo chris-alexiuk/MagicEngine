@@ -18,6 +18,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Check rule citations against the Comprehensive Rules
+        run: pnpm rules:check
       - name: Build the web app against the sample card DB
         run: |
           pnpm cards:fixture

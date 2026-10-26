@@ -9,7 +9,10 @@
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm --filter @mtg/web dev",
     "cards:fixture": "pnpm --filter @mtg/compiler compile -- --input packages/compiler/test/fixtures/scryfall-sample.json --out apps/web/public",
-    "cards:build": "pnpm --filter @mtg/compiler compile -- --download --out apps/web/public"
+    "cards:build": "pnpm --filter @mtg/compiler compile -- --download --out apps/web/public",
+    "rules:parse": "pnpm --filter @mtg/rules cli parse docs/rules/MagicCompRules.txt docs/rules/rules.json",
+    "rules:trace": "pnpm --filter @mtg/rules cli trace",
+    "rules:check": "pnpm --filter @mtg/rules cli trace --check"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
