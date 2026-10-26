@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.cache/
+*.log
+.DS_Store
+# Compiled card DB is a build output (CI publishes it; `pnpm cards:fixture` or `pnpm cards:build` makes a local one).
+apps/web/public/cards.json.gz
+apps/web/public/cards.meta.json
+apps/web/public/coverage.md
+apps/web/public/coverage.json

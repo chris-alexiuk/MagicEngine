@@ -1,0 +1,1652 @@
+[
+ {
+  "object": "card",
+  "id": "97458eff-0f96-cc82-5347-7ee8d910e986",
+  "oracle_id": "5e1a4ec4-bfbd-4da1-b3d3-83c1ab8a6f88",
+  "name": "Grizzly Bears",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}{G}",
+  "type_line": "Creature — Bear",
+  "oracle_text": "",
+  "colors": [
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/9/7/97458eff-0f96-cc82-5347-7ee8d910e986.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/9/7/97458eff-0f96-cc82-5347-7ee8d910e986.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/9/7/97458eff-0f96-cc82-5347-7ee8d910e986.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/9/7/97458eff-0f96-cc82-5347-7ee8d910e986.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/9/7/97458eff-0f96-cc82-5347-7ee8d910e986.jpg?1700000000"
+  },
+  "power": "2",
+  "toughness": "2",
+  "cmc": 2,
+  "color_identity": [
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "a6f05c47-8e92-ec1a-dc94-8188d7e63475",
+  "oracle_id": "f918566d-d358-f09d-1282-bab71c270507",
+  "name": "Serra Angel",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{3}{W}{W}",
+  "type_line": "Creature — Angel",
+  "oracle_text": "Flying, vigilance",
+  "colors": [
+   "W"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/a/6/a6f05c47-8e92-ec1a-dc94-8188d7e63475.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/a/6/a6f05c47-8e92-ec1a-dc94-8188d7e63475.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/a/6/a6f05c47-8e92-ec1a-dc94-8188d7e63475.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/a/6/a6f05c47-8e92-ec1a-dc94-8188d7e63475.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/a/6/a6f05c47-8e92-ec1a-dc94-8188d7e63475.jpg?1700000000"
+  },
+  "power": "4",
+  "toughness": "4",
+  "cmc": 5,
+  "color_identity": [
+   "W"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "4e2785d4-477d-aeaf-23b5-917563b18f59",
+  "oracle_id": "3b4b6279-fdbf-2f86-b9aa-d6b059633455",
+  "name": "Storm Crow",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}{U}",
+  "type_line": "Creature — Bird",
+  "oracle_text": "Flying",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/4/e/4e2785d4-477d-aeaf-23b5-917563b18f59.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/4/e/4e2785d4-477d-aeaf-23b5-917563b18f59.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/4/e/4e2785d4-477d-aeaf-23b5-917563b18f59.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/4/e/4e2785d4-477d-aeaf-23b5-917563b18f59.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/4/e/4e2785d4-477d-aeaf-23b5-917563b18f59.jpg?1700000000"
+  },
+  "power": "1",
+  "toughness": "2",
+  "cmc": 2,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "b460d000-745b-6d4a-2193-cb5fe77570fa",
+  "oracle_id": "85ddbd8d-fe32-815e-ee0a-30d9c33dbab8",
+  "name": "White Knight",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{W}{W}",
+  "type_line": "Creature — Human Knight",
+  "oracle_text": "First strike, protection from black",
+  "colors": [
+   "W"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/b/4/b460d000-745b-6d4a-2193-cb5fe77570fa.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/b/4/b460d000-745b-6d4a-2193-cb5fe77570fa.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/b/4/b460d000-745b-6d4a-2193-cb5fe77570fa.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/b/4/b460d000-745b-6d4a-2193-cb5fe77570fa.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/b/4/b460d000-745b-6d4a-2193-cb5fe77570fa.jpg?1700000000"
+  },
+  "power": "2",
+  "toughness": "2",
+  "cmc": 2,
+  "color_identity": [
+   "W"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "4ab0a780-1c15-0acf-3e29-5e5592932d21",
+  "oracle_id": "ac12ee4a-edb1-76eb-73ce-3f6c0d1e9036",
+  "name": "Forest",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Basic Land — Forest",
+  "oracle_text": "({T}: Add {G}.)",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/4/a/4ab0a780-1c15-0acf-3e29-5e5592932d21.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/4/a/4ab0a780-1c15-0acf-3e29-5e5592932d21.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/4/a/4ab0a780-1c15-0acf-3e29-5e5592932d21.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/4/a/4ab0a780-1c15-0acf-3e29-5e5592932d21.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/4/a/4ab0a780-1c15-0acf-3e29-5e5592932d21.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": [
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "bd970926-dbea-2aef-d10d-075152edf444",
+  "oracle_id": "ac0ce97f-bbf9-358c-1945-2118b49eeacc",
+  "name": "Island",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Basic Land — Island",
+  "oracle_text": "({T}: Add {U}.)",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/b/d/bd970926-dbea-2aef-d10d-075152edf444.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/b/d/bd970926-dbea-2aef-d10d-075152edf444.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/b/d/bd970926-dbea-2aef-d10d-075152edf444.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/b/d/bd970926-dbea-2aef-d10d-075152edf444.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/b/d/bd970926-dbea-2aef-d10d-075152edf444.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "d442c5b5-86f4-ea93-db71-8a4595743c31",
+  "oracle_id": "36520cd7-c10c-47c4-687f-63979b0e04f9",
+  "name": "Llanowar Elves",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{G}",
+  "type_line": "Creature — Elf Druid",
+  "oracle_text": "{T}: Add {G}.",
+  "colors": [
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/d/4/d442c5b5-86f4-ea93-db71-8a4595743c31.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/d/4/d442c5b5-86f4-ea93-db71-8a4595743c31.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/d/4/d442c5b5-86f4-ea93-db71-8a4595743c31.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/d/4/d442c5b5-86f4-ea93-db71-8a4595743c31.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/d/4/d442c5b5-86f4-ea93-db71-8a4595743c31.jpg?1700000000"
+  },
+  "power": "1",
+  "toughness": "1",
+  "cmc": 1,
+  "color_identity": [
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "174a78cf-c4c0-e118-1358-4be3b2e7a88c",
+  "oracle_id": "0c5819e4-1ba3-1e96-7ed7-f295697d0b93",
+  "name": "Birds of Paradise",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{G}",
+  "type_line": "Creature — Bird",
+  "oracle_text": "Flying\n{T}: Add one mana of any color.",
+  "colors": [
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/1/7/174a78cf-c4c0-e118-1358-4be3b2e7a88c.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/1/7/174a78cf-c4c0-e118-1358-4be3b2e7a88c.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/1/7/174a78cf-c4c0-e118-1358-4be3b2e7a88c.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/1/7/174a78cf-c4c0-e118-1358-4be3b2e7a88c.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/1/7/174a78cf-c4c0-e118-1358-4be3b2e7a88c.jpg?1700000000"
+  },
+  "power": "0",
+  "toughness": "1",
+  "cmc": 1,
+  "color_identity": [
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "22695b61-10fb-cf9e-4fe9-bf0b53d425ab",
+  "oracle_id": "df1b01b9-e654-1a1f-c95c-11950b494eea",
+  "name": "Sol Ring",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "banned",
+   "legacy": "banned",
+   "vintage": "restricted",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}",
+  "type_line": "Artifact",
+  "oracle_text": "{T}: Add {C}{C}.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/2/2/22695b61-10fb-cf9e-4fe9-bf0b53d425ab.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/2/2/22695b61-10fb-cf9e-4fe9-bf0b53d425ab.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/2/2/22695b61-10fb-cf9e-4fe9-bf0b53d425ab.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/2/2/22695b61-10fb-cf9e-4fe9-bf0b53d425ab.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/2/2/22695b61-10fb-cf9e-4fe9-bf0b53d425ab.jpg?1700000000"
+  },
+  "cmc": 1,
+  "color_identity": [],
+  "game_changer": true
+ },
+ {
+  "object": "card",
+  "id": "4acf45ea-8f30-add2-04f5-bc1fb996c3c8",
+  "oracle_id": "e45a65a6-435d-3da8-0978-6d633da32c4a",
+  "name": "Lightning Bolt",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{R}",
+  "type_line": "Instant",
+  "oracle_text": "Lightning Bolt deals 3 damage to any target.",
+  "colors": [
+   "R"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/4/a/4acf45ea-8f30-add2-04f5-bc1fb996c3c8.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/4/a/4acf45ea-8f30-add2-04f5-bc1fb996c3c8.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/4/a/4acf45ea-8f30-add2-04f5-bc1fb996c3c8.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/4/a/4acf45ea-8f30-add2-04f5-bc1fb996c3c8.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/4/a/4acf45ea-8f30-add2-04f5-bc1fb996c3c8.jpg?1700000000"
+  },
+  "cmc": 1,
+  "color_identity": [
+   "R"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "ebda179b-0659-adca-59e2-5d23a81965c5",
+  "oracle_id": "7c1bffb7-67b3-fd76-cb59-9755db2ec969",
+  "name": "Counterspell",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "legal"
+  },
+  "keywords": [],
+  "mana_cost": "{U}{U}",
+  "type_line": "Instant",
+  "oracle_text": "Counter target spell.",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/e/b/ebda179b-0659-adca-59e2-5d23a81965c5.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/e/b/ebda179b-0659-adca-59e2-5d23a81965c5.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/e/b/ebda179b-0659-adca-59e2-5d23a81965c5.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/e/b/ebda179b-0659-adca-59e2-5d23a81965c5.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/e/b/ebda179b-0659-adca-59e2-5d23a81965c5.jpg?1700000000"
+  },
+  "cmc": 2,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "1698d962-5d22-6239-1501-10b0a4e56289",
+  "oracle_id": "578f8d85-95a1-3f48-3d1c-b47527063ba4",
+  "name": "Kinnan, Bonder Prodigy",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "mythic",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{G}{U}",
+  "type_line": "Legendary Creature — Human Druid",
+  "oracle_text": "Whenever you tap a nonland permanent for mana, add one additional mana of any type that permanent produced.\n{5}{G}{U}: Look at the top five cards of your library. You may put a non-Human creature card from among them onto the battlefield. Put the rest on the bottom of your library in a random order.",
+  "colors": [
+   "U",
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/1/6/1698d962-5d22-6239-1501-10b0a4e56289.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/1/6/1698d962-5d22-6239-1501-10b0a4e56289.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/1/6/1698d962-5d22-6239-1501-10b0a4e56289.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/1/6/1698d962-5d22-6239-1501-10b0a4e56289.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/1/6/1698d962-5d22-6239-1501-10b0a4e56289.jpg?1700000000"
+  },
+  "power": "2",
+  "toughness": "2",
+  "cmc": 2,
+  "color_identity": [
+   "U",
+   "G"
+  ],
+  "game_changer": true,
+  "edhrec_rank": 1900
+ },
+ {
+  "object": "card",
+  "id": "2076d10f-9d6e-35f9-926b-cefb1a479cd5",
+  "oracle_id": "9a43d157-d666-e874-b785-b6e12f46334b",
+  "name": "Thornwood Falls",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Land",
+  "oracle_text": "This land enters tapped.\nWhen this land enters, you gain 1 life.\n{T}: Add {G} or {U}.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/2/0/2076d10f-9d6e-35f9-926b-cefb1a479cd5.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/2/0/2076d10f-9d6e-35f9-926b-cefb1a479cd5.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/2/0/2076d10f-9d6e-35f9-926b-cefb1a479cd5.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/2/0/2076d10f-9d6e-35f9-926b-cefb1a479cd5.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/2/0/2076d10f-9d6e-35f9-926b-cefb1a479cd5.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": [
+   "G",
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "bb46f36d-15f3-7825-93a1-2eaed9792dc1",
+  "oracle_id": "93864159-c515-e534-d128-4bce87a5cafc",
+  "name": "Breeding Pool",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Land — Forest Island",
+  "oracle_text": "({T}: Add {G} or {U}.)\nAs this land enters, you may pay 2 life. If you don't, it enters tapped.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/b/b/bb46f36d-15f3-7825-93a1-2eaed9792dc1.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/b/b/bb46f36d-15f3-7825-93a1-2eaed9792dc1.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/b/b/bb46f36d-15f3-7825-93a1-2eaed9792dc1.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/b/b/bb46f36d-15f3-7825-93a1-2eaed9792dc1.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/b/b/bb46f36d-15f3-7825-93a1-2eaed9792dc1.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": [
+   "G",
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "c91ef446-2f44-40d1-0185-962b45440767",
+  "oracle_id": "6e589c86-9c1e-d781-65d9-477b8963b5ef",
+  "name": "Llanowar Wastes",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Land",
+  "oracle_text": "{T}: Add {C}.\n{T}: Add {B} or {G}. This land deals 1 damage to you.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/c/9/c91ef446-2f44-40d1-0185-962b45440767.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/c/9/c91ef446-2f44-40d1-0185-962b45440767.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/c/9/c91ef446-2f44-40d1-0185-962b45440767.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/c/9/c91ef446-2f44-40d1-0185-962b45440767.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/c/9/c91ef446-2f44-40d1-0185-962b45440767.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": [
+   "B",
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "c8b3fe40-6217-a382-e4c5-93e6ce842e6f",
+  "oracle_id": "9584d1f6-c49d-d754-6c89-34175215bfc9",
+  "name": "Command Tower",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Land",
+  "oracle_text": "{T}: Add one mana of any color in your commander's color identity.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/c/8/c8b3fe40-6217-a382-e4c5-93e6ce842e6f.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/c/8/c8b3fe40-6217-a382-e4c5-93e6ce842e6f.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/c/8/c8b3fe40-6217-a382-e4c5-93e6ce842e6f.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/c/8/c8b3fe40-6217-a382-e4c5-93e6ce842e6f.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/c/8/c8b3fe40-6217-a382-e4c5-93e6ce842e6f.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "507cb80e-1e7b-f3cd-f3e6-015e96293dfd",
+  "oracle_id": "088c0d25-c7a4-0ed4-c492-72b800ed943d",
+  "name": "Arcane Signet",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{2}",
+  "type_line": "Artifact",
+  "oracle_text": "{T}: Add one mana of any color in your commander's color identity.",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/5/0/507cb80e-1e7b-f3cd-f3e6-015e96293dfd.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/5/0/507cb80e-1e7b-f3cd-f3e6-015e96293dfd.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/5/0/507cb80e-1e7b-f3cd-f3e6-015e96293dfd.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/5/0/507cb80e-1e7b-f3cd-f3e6-015e96293dfd.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/5/0/507cb80e-1e7b-f3cd-f3e6-015e96293dfd.jpg?1700000000"
+  },
+  "cmc": 2,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "381e63a6-4ac8-bb38-ccf2-84b4db274b32",
+  "oracle_id": "90c907c1-1f56-dce6-3009-d845521b2f36",
+  "name": "Bonesplitter",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}",
+  "type_line": "Artifact — Equipment",
+  "oracle_text": "Equipped creature gets +2/+0.\nEquip {1}",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/3/8/381e63a6-4ac8-bb38-ccf2-84b4db274b32.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/3/8/381e63a6-4ac8-bb38-ccf2-84b4db274b32.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/3/8/381e63a6-4ac8-bb38-ccf2-84b4db274b32.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/3/8/381e63a6-4ac8-bb38-ccf2-84b4db274b32.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/3/8/381e63a6-4ac8-bb38-ccf2-84b4db274b32.jpg?1700000000"
+  },
+  "cmc": 1,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "57db0eb3-177e-deda-2467-f50bd257a078",
+  "oracle_id": "d146e104-08b3-3c98-c21d-116073588590",
+  "name": "Tolarian Terror",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{6}{U}",
+  "type_line": "Creature — Serpent",
+  "oracle_text": "This spell costs {1} less to cast for each instant and sorcery card in your graveyard.\nWard {2}",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/5/7/57db0eb3-177e-deda-2467-f50bd257a078.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/5/7/57db0eb3-177e-deda-2467-f50bd257a078.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/5/7/57db0eb3-177e-deda-2467-f50bd257a078.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/5/7/57db0eb3-177e-deda-2467-f50bd257a078.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/5/7/57db0eb3-177e-deda-2467-f50bd257a078.jpg?1700000000"
+  },
+  "power": "5",
+  "toughness": "5",
+  "cmc": 7,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "4494972e-fcd4-d5b3-0c1d-040364225e9f",
+  "oracle_id": "e62f9c93-fec8-e3c4-6eca-c51f9827307c",
+  "name": "Uro, Titan of Nature's Wrath",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "mythic",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}{G}{U}",
+  "type_line": "Legendary Creature — Elder Giant",
+  "oracle_text": "When Uro enters, sacrifice it unless it escaped.\nWhenever Uro enters or attacks, you gain 3 life and draw a card, then you may put a land card from your hand onto the battlefield.\nEscape—{G}{G}{U}{U}, Exile five other cards from your graveyard.",
+  "colors": [
+   "U",
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/4/4/4494972e-fcd4-d5b3-0c1d-040364225e9f.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/4/4/4494972e-fcd4-d5b3-0c1d-040364225e9f.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/4/4/4494972e-fcd4-d5b3-0c1d-040364225e9f.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/4/4/4494972e-fcd4-d5b3-0c1d-040364225e9f.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/4/4/4494972e-fcd4-d5b3-0c1d-040364225e9f.jpg?1700000000"
+  },
+  "power": "6",
+  "toughness": "6",
+  "cmc": 3,
+  "color_identity": [
+   "U",
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "3c062155-3c0b-c48b-586b-b45a7b6c9f17",
+  "oracle_id": "207939e4-08a7-9ed0-497f-e31246d983c0",
+  "name": "Street Wraith",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{3}{B}{B}",
+  "type_line": "Creature — Wraith",
+  "oracle_text": "Swampwalk\nCycling—Pay 2 life.",
+  "colors": [
+   "B"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/3/c/3c062155-3c0b-c48b-586b-b45a7b6c9f17.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/3/c/3c062155-3c0b-c48b-586b-b45a7b6c9f17.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/3/c/3c062155-3c0b-c48b-586b-b45a7b6c9f17.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/3/c/3c062155-3c0b-c48b-586b-b45a7b6c9f17.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/3/c/3c062155-3c0b-c48b-586b-b45a7b6c9f17.jpg?1700000000"
+  },
+  "power": "3",
+  "toughness": "4",
+  "cmc": 5,
+  "color_identity": [
+   "B"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "d3bc0894-07f9-0aee-640b-1085e0eb5df6",
+  "oracle_id": "70057b52-1fc1-b67e-dcfb-a8ec988b9a08",
+  "name": "Ash Barrens",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Land",
+  "oracle_text": "{T}: Add {C}.\nBasic landcycling {1} ({1}, Discard this card: Search your library for a basic land card, reveal it, put it into your hand, then shuffle.)",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/d/3/d3bc0894-07f9-0aee-640b-1085e0eb5df6.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/d/3/d3bc0894-07f9-0aee-640b-1085e0eb5df6.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/d/3/d3bc0894-07f9-0aee-640b-1085e0eb5df6.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/d/3/d3bc0894-07f9-0aee-640b-1085e0eb5df6.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/d/3/d3bc0894-07f9-0aee-640b-1085e0eb5df6.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "710224eb-6e00-af8c-c752-3e4b39b6a83a",
+  "oracle_id": "e74ff0e2-82b6-1088-5ae9-59e9573ae454",
+  "name": "Lotus Cobra",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}{G}",
+  "type_line": "Creature — Snake",
+  "oracle_text": "Landfall — Whenever a land you control enters, add one mana of any color.",
+  "colors": [
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/7/1/710224eb-6e00-af8c-c752-3e4b39b6a83a.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/7/1/710224eb-6e00-af8c-c752-3e4b39b6a83a.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/7/1/710224eb-6e00-af8c-c752-3e4b39b6a83a.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/7/1/710224eb-6e00-af8c-c752-3e4b39b6a83a.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/7/1/710224eb-6e00-af8c-c752-3e4b39b6a83a.jpg?1700000000"
+  },
+  "power": "2",
+  "toughness": "1",
+  "cmc": 2,
+  "color_identity": [
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "8113d84c-ee9f-7c50-09e0-2860c8e19434",
+  "oracle_id": "937c81b9-6e3a-f4bb-935e-2a1b3bd5c834",
+  "name": "Goblin Guide",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{R}",
+  "type_line": "Creature — Goblin Scout",
+  "oracle_text": "Haste\nWhenever this creature attacks, defending player reveals the top card of their library. If it's a land card, that player puts it into their hand.",
+  "colors": [
+   "R"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/8/1/8113d84c-ee9f-7c50-09e0-2860c8e19434.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/8/1/8113d84c-ee9f-7c50-09e0-2860c8e19434.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/8/1/8113d84c-ee9f-7c50-09e0-2860c8e19434.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/8/1/8113d84c-ee9f-7c50-09e0-2860c8e19434.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/8/1/8113d84c-ee9f-7c50-09e0-2860c8e19434.jpg?1700000000"
+  },
+  "power": "2",
+  "toughness": "2",
+  "cmc": 1,
+  "color_identity": [
+   "R"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6",
+  "oracle_id": "2dcc0627-8170-e13b-2233-ce011552d875",
+  "name": "Phyrexian Arena",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{1}{B}{B}",
+  "type_line": "Enchantment",
+  "oracle_text": "At the beginning of your upkeep, you draw a card and you lose 1 life.",
+  "colors": [
+   "B"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/1/8/18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/1/8/18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/1/8/18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/1/8/18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/1/8/18b0902c-1bc7-fb8b-4b6c-d97b9483f7c6.jpg?1700000000"
+  },
+  "cmc": 3,
+  "color_identity": [
+   "B"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "67cb0938-d7f3-4d22-9f20-51b09b223186",
+  "oracle_id": "ffa158b9-62db-7e6d-711c-c385c5fd135c",
+  "name": "Rhystic Study",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{2}{U}",
+  "type_line": "Enchantment",
+  "oracle_text": "Whenever an opponent casts a spell, you may draw a card unless that player pays {1}.",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/6/7/67cb0938-d7f3-4d22-9f20-51b09b223186.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/6/7/67cb0938-d7f3-4d22-9f20-51b09b223186.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/6/7/67cb0938-d7f3-4d22-9f20-51b09b223186.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/6/7/67cb0938-d7f3-4d22-9f20-51b09b223186.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/6/7/67cb0938-d7f3-4d22-9f20-51b09b223186.jpg?1700000000"
+  },
+  "cmc": 3,
+  "color_identity": [
+   "U"
+  ],
+  "game_changer": true
+ },
+ {
+  "object": "card",
+  "id": "2883ae15-0f50-82c7-6e95-aba093e9dc9f",
+  "oracle_id": "fd71e749-eda1-f9ee-bedb-68d8ec9f5d57",
+  "name": "Thrasios, Triton Hero",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{G}{U}",
+  "type_line": "Legendary Creature — Merfolk Wizard",
+  "oracle_text": "{4}: Scry 1, then reveal the top card of your library. If it's a land card, put it onto the battlefield tapped. Otherwise, draw a card.\nPartner",
+  "colors": [
+   "U",
+   "G"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/2/8/2883ae15-0f50-82c7-6e95-aba093e9dc9f.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/2/8/2883ae15-0f50-82c7-6e95-aba093e9dc9f.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/2/8/2883ae15-0f50-82c7-6e95-aba093e9dc9f.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/2/8/2883ae15-0f50-82c7-6e95-aba093e9dc9f.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/2/8/2883ae15-0f50-82c7-6e95-aba093e9dc9f.jpg?1700000000"
+  },
+  "power": "1",
+  "toughness": "3",
+  "cmc": 2,
+  "color_identity": [
+   "U",
+   "G"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "dd5d351d-a831-302b-f513-a92025361ced",
+  "oracle_id": "ab5436d2-6104-8e47-f0fb-a2e28f63513e",
+  "name": "Jace, the Mind Sculptor",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "mythic",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{2}{U}{U}",
+  "type_line": "Legendary Planeswalker — Jace",
+  "oracle_text": "+2: Look at the top card of target player's library. You may put that card on the bottom of that player's library.\n0: Draw three cards, then put two cards from your hand on top of your library in any order.\n−1: Return target creature to its owner's hand.\n−12: Exile all cards from target player's library, then that player shuffles their hand into their library.",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/d/d/dd5d351d-a831-302b-f513-a92025361ced.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/d/d/dd5d351d-a831-302b-f513-a92025361ced.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/d/d/dd5d351d-a831-302b-f513-a92025361ced.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/d/d/dd5d351d-a831-302b-f513-a92025361ced.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/d/d/dd5d351d-a831-302b-f513-a92025361ced.jpg?1700000000"
+  },
+  "loyalty": "3",
+  "cmc": 4,
+  "color_identity": [
+   "U"
+  ],
+  "game_changer": true
+ },
+ {
+  "object": "card",
+  "id": "0f524755-3280-9f59-d891-c2bf8acfa429",
+  "oracle_id": "d3b1b1a7-3bd4-5c22-a45e-346623fb6933",
+  "name": "The Eldest Reborn",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{4}{B}",
+  "type_line": "Enchantment — Saga",
+  "oracle_text": "(As this Saga enters and after your draw step, add a lore counter. Sacrifice after III.)\nI — Each opponent sacrifices a creature or planeswalker.\nII — Each opponent discards a card.\nIII — Put target creature or planeswalker card from a graveyard onto the battlefield under your control.",
+  "colors": [
+   "B"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/0/f/0f524755-3280-9f59-d891-c2bf8acfa429.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/0/f/0f524755-3280-9f59-d891-c2bf8acfa429.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/0/f/0f524755-3280-9f59-d891-c2bf8acfa429.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/0/f/0f524755-3280-9f59-d891-c2bf8acfa429.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/0/f/0f524755-3280-9f59-d891-c2bf8acfa429.jpg?1700000000"
+  },
+  "cmc": 5,
+  "color_identity": [
+   "B"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "d030acab-d4c7-1303-499e-e8da1d061820",
+  "oracle_id": "891d399b-303e-f98a-ff96-e4e523d16f7d",
+  "name": "Fire // Ice",
+  "layout": "split",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "uncommon",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "card_faces": [
+   {
+    "object": "card_face",
+    "name": "Fire",
+    "mana_cost": "{1}{R}",
+    "type_line": "Instant",
+    "oracle_text": "Fire deals 2 damage divided as you choose among one or two targets."
+   },
+   {
+    "object": "card_face",
+    "name": "Ice",
+    "mana_cost": "{1}{U}",
+    "type_line": "Instant",
+    "oracle_text": "Tap target permanent.\nDraw a card."
+   }
+  ],
+  "type_line": "Instant // Instant",
+  "mana_cost": "{1}{R} // {1}{U}",
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/d/0/d030acab-d4c7-1303-499e-e8da1d061820.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/d/0/d030acab-d4c7-1303-499e-e8da1d061820.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/d/0/d030acab-d4c7-1303-499e-e8da1d061820.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/d/0/d030acab-d4c7-1303-499e-e8da1d061820.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/d/0/d030acab-d4c7-1303-499e-e8da1d061820.jpg?1700000000"
+  },
+  "colors": [
+   "U",
+   "R"
+  ],
+  "cmc": 4,
+  "color_identity": [
+   "U",
+   "R"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "c54a7658-0a55-45af-edf3-92a4a786a2cb",
+  "oracle_id": "4840c157-ab8b-f86c-d6d9-e8cb2fa74866",
+  "name": "Bonecrusher Giant // Stomp",
+  "layout": "adventure",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "card_faces": [
+   {
+    "object": "card_face",
+    "name": "Bonecrusher Giant",
+    "mana_cost": "{2}{R}",
+    "type_line": "Creature — Giant",
+    "oracle_text": "Whenever this creature becomes the target of a spell, this creature deals 2 damage to that spell's controller.",
+    "power": "4",
+    "toughness": "3"
+   },
+   {
+    "object": "card_face",
+    "name": "Stomp",
+    "mana_cost": "{1}{R}",
+    "type_line": "Instant — Adventure",
+    "oracle_text": "Damage can't be prevented this turn. Stomp deals 2 damage to any target."
+   }
+  ],
+  "type_line": "Creature — Giant // Instant — Adventure",
+  "mana_cost": "{2}{R} // {1}{R}",
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/c/5/c54a7658-0a55-45af-edf3-92a4a786a2cb.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/c/5/c54a7658-0a55-45af-edf3-92a4a786a2cb.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/c/5/c54a7658-0a55-45af-edf3-92a4a786a2cb.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/c/5/c54a7658-0a55-45af-edf3-92a4a786a2cb.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/c/5/c54a7658-0a55-45af-edf3-92a4a786a2cb.jpg?1700000000"
+  },
+  "colors": [
+   "R"
+  ],
+  "cmc": 3,
+  "color_identity": [
+   "R"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "0699272f-cc23-ed85-0a1d-76855f3221c8",
+  "oracle_id": "6ccd2e52-7c7a-055f-dfc1-4438f1317b10",
+  "name": "Delver of Secrets // Insectile Aberration",
+  "layout": "transform",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "card_faces": [
+   {
+    "object": "card_face",
+    "name": "Delver of Secrets",
+    "mana_cost": "{U}",
+    "type_line": "Creature — Human Wizard",
+    "oracle_text": "At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform this creature.",
+    "power": "1",
+    "toughness": "1",
+    "colors": [
+     "U"
+    ],
+    "image_uris": {
+     "small": "https://cards.scryfall.io/small/front/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "normal": "https://cards.scryfall.io/normal/front/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "large": "https://cards.scryfall.io/large/front/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "art_crop": "https://cards.scryfall.io/art_crop/front/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "border_crop": "https://cards.scryfall.io/border_crop/front/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000"
+    }
+   },
+   {
+    "object": "card_face",
+    "name": "Insectile Aberration",
+    "mana_cost": "",
+    "type_line": "Creature — Human Insect",
+    "oracle_text": "Flying",
+    "power": "3",
+    "toughness": "2",
+    "colors": [
+     "U"
+    ],
+    "image_uris": {
+     "small": "https://cards.scryfall.io/small/back/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "normal": "https://cards.scryfall.io/normal/back/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "large": "https://cards.scryfall.io/large/back/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "art_crop": "https://cards.scryfall.io/art_crop/back/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000",
+     "border_crop": "https://cards.scryfall.io/border_crop/back/0/6/0699272f-cc23-ed85-0a1d-76855f3221c8.jpg?1700000000"
+    }
+   }
+  ],
+  "type_line": "Creature — Human Wizard // Creature — Human Insect",
+  "mana_cost": "{U} // ",
+  "cmc": 1,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "10a1948d-8529-6b34-32aa-82ffc5e53037",
+  "oracle_id": "99acb216-1e7c-df8e-f429-e758a11754c8",
+  "name": "Valakut Awakening // Valakut Stoneforge",
+  "layout": "modal_dfc",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "rare",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "card_faces": [
+   {
+    "object": "card_face",
+    "name": "Valakut Awakening",
+    "mana_cost": "{2}{R}",
+    "type_line": "Instant",
+    "oracle_text": "Put any number of cards from your hand on the bottom of your library, then draw that many cards plus one.",
+    "colors": [
+     "R"
+    ],
+    "image_uris": {
+     "small": "https://cards.scryfall.io/small/front/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "normal": "https://cards.scryfall.io/normal/front/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "large": "https://cards.scryfall.io/large/front/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "art_crop": "https://cards.scryfall.io/art_crop/front/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "border_crop": "https://cards.scryfall.io/border_crop/front/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000"
+    }
+   },
+   {
+    "object": "card_face",
+    "name": "Valakut Stoneforge",
+    "mana_cost": "",
+    "type_line": "Land",
+    "oracle_text": "As this land enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {R}.",
+    "colors": [],
+    "image_uris": {
+     "small": "https://cards.scryfall.io/small/back/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "normal": "https://cards.scryfall.io/normal/back/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "large": "https://cards.scryfall.io/large/back/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "art_crop": "https://cards.scryfall.io/art_crop/back/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000",
+     "border_crop": "https://cards.scryfall.io/border_crop/back/1/0/10a1948d-8529-6b34-32aa-82ffc5e53037.jpg?1700000000"
+    }
+   }
+  ],
+  "type_line": "Instant // Land",
+  "mana_cost": "{2}{R} // ",
+  "cmc": 3,
+  "color_identity": [
+   "R"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "df1a4ebb-aa74-8111-0042-3b3faeb632ae",
+  "oracle_id": "de75f2eb-4393-68d9-b392-81bd0c4bdabb",
+  "name": "Soldier",
+  "layout": "token",
+  "set": "ttst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "not_legal",
+   "modern": "not_legal",
+   "legacy": "not_legal",
+   "vintage": "not_legal",
+   "commander": "not_legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Token Creature — Soldier",
+  "oracle_text": "",
+  "colors": [
+   "W"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/d/f/df1a4ebb-aa74-8111-0042-3b3faeb632ae.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/d/f/df1a4ebb-aa74-8111-0042-3b3faeb632ae.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/d/f/df1a4ebb-aa74-8111-0042-3b3faeb632ae.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/d/f/df1a4ebb-aa74-8111-0042-3b3faeb632ae.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/d/f/df1a4ebb-aa74-8111-0042-3b3faeb632ae.jpg?1700000000"
+  },
+  "power": "1",
+  "toughness": "1",
+  "cmc": 0,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "6d67313b-0047-a1d2-4d4b-e04435a07113",
+  "oracle_id": "a67aba83-5520-0425-cab6-fd3ef3e2b5cd",
+  "name": "Lightning Bolt Art Card",
+  "layout": "art_series",
+  "set": "atst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "not_legal",
+   "modern": "not_legal",
+   "legacy": "not_legal",
+   "vintage": "not_legal",
+   "commander": "not_legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "",
+  "type_line": "Card // Card",
+  "oracle_text": "",
+  "colors": [],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/6/d/6d67313b-0047-a1d2-4d4b-e04435a07113.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/6/d/6d67313b-0047-a1d2-4d4b-e04435a07113.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/6/d/6d67313b-0047-a1d2-4d4b-e04435a07113.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/6/d/6d67313b-0047-a1d2-4d4b-e04435a07113.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/6/d/6d67313b-0047-a1d2-4d4b-e04435a07113.jpg?1700000000"
+  },
+  "cmc": 0,
+  "color_identity": []
+ },
+ {
+  "object": "card",
+  "id": "40cb4682-9a59-ee68-aa7c-8a87e33c31aa",
+  "oracle_id": "26e98ada-5acb-d66d-5e2c-58c04981ee25",
+  "name": "A-Tolarian Terror",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "expansion",
+  "rarity": "common",
+  "games": [
+   "arena"
+  ],
+  "digital": true,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "legal",
+   "modern": "legal",
+   "legacy": "legal",
+   "vintage": "legal",
+   "commander": "legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{5}{U}",
+  "type_line": "Creature — Serpent",
+  "oracle_text": "Ward {2}",
+  "colors": [
+   "U"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/4/0/40cb4682-9a59-ee68-aa7c-8a87e33c31aa.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/4/0/40cb4682-9a59-ee68-aa7c-8a87e33c31aa.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/4/0/40cb4682-9a59-ee68-aa7c-8a87e33c31aa.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/4/0/40cb4682-9a59-ee68-aa7c-8a87e33c31aa.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/4/0/40cb4682-9a59-ee68-aa7c-8a87e33c31aa.jpg?1700000000"
+  },
+  "power": "5",
+  "toughness": "5",
+  "cmc": 6,
+  "color_identity": [
+   "U"
+  ]
+ },
+ {
+  "object": "card",
+  "id": "2ca336c1-23b4-d7b9-337b-0512883f9ca7",
+  "oracle_id": "921aab43-4fc2-4d10-b6fe-a61b8f193853",
+  "name": "Goblin Stunt Double",
+  "layout": "normal",
+  "set": "tst",
+  "set_type": "funny",
+  "rarity": "common",
+  "games": [
+   "paper",
+   "mtgo"
+  ],
+  "digital": false,
+  "legalities": {
+   "standard": "not_legal",
+   "pioneer": "not_legal",
+   "modern": "not_legal",
+   "legacy": "not_legal",
+   "vintage": "not_legal",
+   "commander": "not_legal",
+   "pauper": "not_legal"
+  },
+  "keywords": [],
+  "mana_cost": "{R}",
+  "type_line": "Creature — Goblin",
+  "oracle_text": "Whenever you laugh, this creature gets +1/+0.",
+  "colors": [
+   "R"
+  ],
+  "image_uris": {
+   "small": "https://cards.scryfall.io/small/front/2/c/2ca336c1-23b4-d7b9-337b-0512883f9ca7.jpg?1700000000",
+   "normal": "https://cards.scryfall.io/normal/front/2/c/2ca336c1-23b4-d7b9-337b-0512883f9ca7.jpg?1700000000",
+   "large": "https://cards.scryfall.io/large/front/2/c/2ca336c1-23b4-d7b9-337b-0512883f9ca7.jpg?1700000000",
+   "art_crop": "https://cards.scryfall.io/art_crop/front/2/c/2ca336c1-23b4-d7b9-337b-0512883f9ca7.jpg?1700000000",
+   "border_crop": "https://cards.scryfall.io/border_crop/front/2/c/2ca336c1-23b4-d7b9-337b-0512883f9ca7.jpg?1700000000"
+  },
+  "power": "1",
+  "toughness": "1",
+  "cmc": 1,
+  "color_identity": [
+   "R"
+  ]
+ }
+]

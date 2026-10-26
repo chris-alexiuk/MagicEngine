@@ -1,0 +1,10 @@
+{
+  "name": "@mtg/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "echo 'server lands in milestone 4'",
+    "test": "echo 'server lands in milestone 4'"
+  }
+}

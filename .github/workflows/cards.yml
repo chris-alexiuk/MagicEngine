@@ -1,0 +1,34 @@
+name: Card database
+
+# Rebuilds the compiled card DB from Scryfall's Oracle Cards bulk file.
+# Scryfall notes gameplay data changes rarely, so weekly (plus manual runs after
+# a set release) is enough.
+on:
+  schedule:
+    - cron: '17 9 * * 1' # Mondays 09:17 UTC
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download and compile
+        run: pnpm cards:build
+      - name: Coverage summary
+        run: cat apps/web/public/coverage.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: card-db
+          path: |
+            apps/web/public/cards.json.gz
+            apps/web/public/cards.meta.json
+            apps/web/public/coverage.json
+            apps/web/public/coverage.md
+          retention-days: 30
