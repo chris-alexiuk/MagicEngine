@@ -312,6 +312,8 @@ export type AmountExpr = (
   | { kind: 'devotion'; colors: Color[] }
   /** X as paid (CR 107.3m), when it needs scaling ("-X/-X"). */
   | { kind: 'x' }
+  /** "that much" / "that many": the amount of the event that triggered the ability. */
+  | { kind: 'event' }
 ) & { times?: number; plus?: number };
 
 /**
@@ -461,7 +463,8 @@ export const CORE_NODES = {
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'destroy', 'move', 'counter', 'tap', 'untap',
     'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
-    'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters',
+    'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
+    'proliferate', 'connive', 'amass', 'exile_top',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -470,11 +473,11 @@ export const CORE_NODES = {
   statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier'],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
-    'becomes_target',
+    'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

@@ -87,19 +87,19 @@ describe('core grammar rules', () => {
   });
 
   it('records unparsed lines verbatim (minus reminder text)', () => {
-    const r = parser.parse('Exile the top card of your library. You may play it this turn. (Reminder.)', ctx('Light Up', 'Instant'));
-    expect(r.unparsed).toEqual(['Exile the top card of your library. You may play it this turn.']);
+    const r = parser.parse('Venture into the dungeon. (Reminder.)', ctx('Into the Dark', 'Instant'));
+    expect(r.unparsed).toEqual(['Venture into the dungeon.']);
   });
 
   it('accepts plugin grammar rules', () => {
-    const proliferateRule: GrammarRule = {
-      id: 'proliferate',
-      parse: (line, original) => (line === 'Proliferate.' ? { kind: 'spell', text: original, effects: [{ type: 'proliferate' }] } : null),
+    const ventureRule: GrammarRule = {
+      id: 'venture',
+      parse: (line, original) => (line === 'Venture into the dungeon.' ? { kind: 'spell', text: original, effects: [{ type: 'venture' }] } : null),
     };
-    expect(parser.parse('Proliferate.', ctx('Tezzeret’s Gambit', 'Sorcery')).unparsed).toEqual(['Proliferate.']);
+    expect(parser.parse('Venture into the dungeon.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual(['Venture into the dungeon.']);
     const extended = new ParserRegistry();
-    extended.addRule(proliferateRule);
-    expect(extended.parse('Proliferate.', ctx('Tezzeret’s Gambit', 'Sorcery')).unparsed).toEqual([]);
-    expect(() => extended.addRule(proliferateRule)).toThrow(/duplicate/);
+    extended.addRule(ventureRule);
+    expect(extended.parse('Venture into the dungeon.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual([]);
+    expect(() => extended.addRule(ventureRule)).toThrow(/duplicate/);
   });
 });

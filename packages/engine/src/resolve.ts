@@ -21,18 +21,21 @@ export function apnap(g: GameState): PlayerId[] {
   return out;
 }
 
+/** CR 400.7j: this resolution moved it to a public zone, so its other parts can find the new object. */
+const foundNow = (ctx: EffectContext, o: GameObject) => ctx.resolution?.found?.[o.id] === o.zcc;
+
 function sourceOf(ctx: EffectContext): GameObject | null {
   const s = ctx.source;
   if (!s) return null;
-  // CR 400.7: once it has changed zones it's a new object that "~" no longer refers to.
-  return ctx.sourceZcc === undefined || s.zcc === ctx.sourceZcc ? s : null;
+  // CR 400.7: once it has changed zones it's a new object that "~" no longer refers to (unless 400.7j finds it).
+  return ctx.sourceZcc === undefined || s.zcc === ctx.sourceZcc || foundNow(ctx, s) ? s : null;
 }
 
 function targetObjects(ctx: EffectContext, index: number): GameObject[] {
   return (ctx.targets[index] ?? []).flatMap((t) => {
     if (t.kind !== 'object') return [];
     const o = ctx.g.objects[t.id];
-    return o && o.zcc === t.zcc ? [o] : [];
+    return o && (o.zcc === t.zcc || foundNow(ctx, o)) ? [o] : [];
   });
 }
 
@@ -49,7 +52,7 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
     case 'trigger_object': {
       const r = ctx.trigger?.object;
       const o = r ? g.objects[r.id] : undefined;
-      return o && r && o.zcc === r.zcc ? [o] : [];
+      return o && r && (o.zcc === r.zcc || foundNow(ctx, o)) ? [o] : [];
     }
     case 'attached': {
       const s = sourceOf(ctx);
@@ -135,7 +138,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -202,6 +205,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return devotion(ctx, e.colors);
     case 'x':
       return ctx.x;
+    case 'event':
+      // "that much", "that many": how much the trigger event was.
+      return ctx.trigger?.amount ?? 0;
     default:
       return 0;
   }

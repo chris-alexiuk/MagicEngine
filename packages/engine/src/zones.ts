@@ -2,6 +2,7 @@ import type { FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
 import { chars } from './characteristics.js';
+import { addLore } from './sagas.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -107,6 +108,7 @@ export function moveObject(
   delete o.monstrous;
   delete o.chosen;
   delete o.exiledBy;
+  delete o.skipUntap;
   delete o.exileIfDiesTurn;
   delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;
@@ -116,6 +118,8 @@ export function moveObject(
   o.controller = to === 'battlefield' || to === 'stack' ? (opts.controller ?? o.controller) : o.owner;
   o.face = opts.face ?? (to === 'battlefield' || to === 'stack' ? o.face : 0);
 
+  // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.
+  if (g.resolving && to !== 'library' && to !== 'hand') (g.resolving.found ??= {})[id] = o.zcc;
   if (to !== 'stack') {
     const list = zoneList(g, to, o.owner);
     // Libraries are top-first; graveyards and other zones append (last = most recent / top).
@@ -147,6 +151,8 @@ export function moveObject(
     ...(o.token ? { token: true as const } : {}),
     ...(countersBefore ? { counters: countersBefore } : {}),
   });
+  // CR 714.3a: a Saga enters with a lore counter on it.
+  if (to === 'battlefield') addLore(g, o, events);
 }
 
 /** The zone-change count an object had (or has) on the battlefield: now if it's there, else as it left. */

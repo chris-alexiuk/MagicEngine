@@ -5,7 +5,7 @@ import { parseCombatRule } from './combat.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { parseTokenPhrase } from './tokens.js';
-import { parseAmount, parsePT } from './words.js';
+import { parseAmount, parsePT, subtypeOf } from './words.js';
 
 /**
  * Effect text → effect nodes, compositionally:
@@ -76,6 +76,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         out.push(node);
         continue;
       }
+      // Impulse draw: "Exile the top card of your library. Until the end of your next turn, you may play that card."
+      const top = /^[Ee]xile the top (card|(\w+) cards) of your library$/.exec(s);
+      const next = sentences[i + 1] ?? '';
+      const untilPlay = /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next);
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) this turn$/.exec(next);
+      if (top && (untilPlay || thisTurn)) {
+        const amount = top[2] ? parseAmount(top[2]) : 1;
+        if (typeof amount !== 'number') return null;
+        const until = untilPlay && untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot';
+        const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
+        out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode, until } });
+        i++;
+        continue;
+      }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
       const delayed =
         /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ?? /^At the beginning of the next (end step|turn's upkeep), (.+)$/.exec(s);
@@ -131,6 +145,15 @@ function parseCounted(s: string, b: Binder): EffectNode[] | null {
       });
       if (r) return r;
     }
+  }
+  // "you gain that much life", "put that many +1/+1 counters on it" — the trigger event's amount.
+  if (b.eventAmount && /\bthat (?:much|many)\b/.test(s)) {
+    const text = s.replace(/\bthat (?:much|many)\b/g, 'X');
+    const r = attempt(b, (b) => {
+      const inner = parseSentence(text, b);
+      return inner ? bindX(inner, { kind: 'event' }) : null;
+    });
+    if (r) return r;
   }
   if (/ equal to /.test(s)) {
     for (const [re, rewrite] of EQUAL_TO) {
@@ -325,15 +348,17 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(hand[1]!, b);
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
-    const field = /^(.+?) to the battlefield( tapped)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
       const node: EffectNode = { type: 'move', what: what.ref, to: 'battlefield' };
       if (field[2]) node.tapped = true;
-      if (field[3] === ' under your control') node.under = 'you';
+      // CR 712.14a
+      if (field[3]) node.transformed = true;
+      if (field[4] === ' under your control') node.under = 'you';
       // CR 122.6: "with a -1/-1 counter on it" — it enters with the counter.
-      if (field[4]) node.counters = { [field[5]!.replace(/−/g, '-')]: parseAmount(field[4]!) };
+      if (field[5]) node.counters = { [field[6]!.replace(/−/g, '-')]: parseAmount(field[5]!) };
       return [node];
     }
     return null;
@@ -453,6 +478,27 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const who = parsePlayerRef((energy ?? experience)![1]!, b);
     const amount = energy ? energy[2]!.length / 3 : parseAmount(experience![2]!);
     return who && typeof amount === 'number' ? [{ type: 'get_counters', who, counter: energy ? 'energy' : experience![3]!, amount }] : null;
+  }
+  // CR 701.34a
+  if (/^proliferate$/i.test(c)) return [{ type: 'proliferate' }];
+  // CR 701.50a: "~ connives", "target creature you control connives".
+  const connive = /^(.+?) connives$/i.exec(c);
+  if (connive) {
+    const what = parseObjectRef(connive[1]!, b);
+    return what && !what.plural ? [{ type: 'connive', what: what.ref }] : null;
+  }
+  // CR 701.47a: "Amass Orcs 2" (older cards: "Amass 2", Zombies).
+  const amass = /^amass(?: (\w+))? (\S+)$/i.exec(c);
+  if (amass) {
+    const amount = parseAmount(amass[2]!);
+    const subtype = amass[1] ? subtypeOf(amass[1]) : 'Zombie';
+    return amount !== null && subtype ? [{ type: 'amass', subtype, amount }] : null;
+  }
+  // "It doesn't untap during its controller's next untap step." (CR 502.3)
+  const stay = /^(.+?) (?:doesn't|don't) untap during (?:its controller's|their controllers'|their controller's|your) next untap step$/i.exec(c);
+  if (stay) {
+    const what = parseObjectRef(stay[1]!, b);
+    return what ? [{ type: 'skip_untap', what: what.ref }] : null;
   }
   // CR 725.1: "you become the monarch", "target player becomes the monarch".
   const monarch = /^(.+?) becomes? the monarch$/i.exec(c);

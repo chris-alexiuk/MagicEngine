@@ -36,6 +36,7 @@ import {
 import { landsAllowed, playerRule } from './player-rules.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
+import { mayPlayFrom } from './permissions.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 
 /**
@@ -168,6 +169,8 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'pay':
     case 'search':
     case 'sacrifice':
+    case 'proliferate':
+    case 'choose_objects':
       // A choice made while a spell or ability resolves: carry on resolving with it.
       if (!g.resolving) throw new RulesError('Nothing is resolving.');
       g.pending = null;
@@ -185,7 +188,8 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
-  if (o.zone !== 'hand' || o.owner !== player) throw new RulesError('You can only play lands from your hand.');
+  const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'land');
+  if (!fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
   if (!face.types.includes('Land')) throw new RulesError(`${face.name} isn’t a land.`);
   // CR 712.12: a modal double-faced card is played as a land with a land face up.
   if (faceIndex > 0 && def.layout !== 'modal_dfc') throw new RulesError('Only modal double-faced cards can be played back face up.');
@@ -293,8 +297,10 @@ function cast(
   const fromCommandZone = o.zone === 'command' && o.commander === true && o.owner === player;
   // CR 702.34a: flashback — cast from your graveyard by paying the flashback cost instead.
   const flashback = o.zone === 'graveyard' && o.owner === player ? flashbackCost(face) : null;
+  // "Until the end of your next turn, you may play that card."
+  const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!fromCommandZone && !flashback && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!fromCommandZone && !flashback && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 305.9: a land can't be cast as a spell.
@@ -351,7 +357,7 @@ function cast(
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   if (flashback) o.exileOnLeave = true;
-  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : 'hand', ...(kicked ? { kicked: true as const } : {}) };
+  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : fromExile ? 'exile' : 'hand', ...(kicked ? { kicked: true as const } : {}) };
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);

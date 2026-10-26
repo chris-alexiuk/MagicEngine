@@ -94,10 +94,10 @@ describe('effects', () => {
   it('is all-or-nothing', () => {
     expect(parse('Draw a card for each creature card with a name sticker on it.').unparsed).toHaveLength(1);
     // A modal spell keeps the modes it can read; the others are left to players (CR 700.2).
-    const modal = parse('Choose one —\n• Destroy target artifact.\n• Exile the top card of your library. You may play it this turn.');
+    const modal = parse('Choose one —\n• Destroy target artifact.\n• Venture into the dungeon.');
     expect(modal.unparsed).toEqual([]);
     expect(modal.abilities[0]).toMatchObject({ modes: { options: [{ effects: [{ type: 'destroy' }] }, { manual: true, effects: [] }] } });
-    expect(parse('Choose one —\n• Exile the top card of your library. You may play it this turn.\n• Learn.').unparsed).toHaveLength(3);
+    expect(parse('Choose one —\n• Venture into the dungeon.\n• Learn.').unparsed).toHaveLength(3);
     // Bare instructions only make sense on instants and sorceries.
     expect(parse('Draw a card.', 'Creature — Elf').unparsed).toEqual(['Draw a card.']);
   });
@@ -331,6 +331,35 @@ describe('counted amounts (CR 107.3, CR 608.2h)', () => {
     });
     expect(one('Enchanted creature has base power and toughness 1/1.', 'Enchantment — Aura')).toMatchObject({
       effect: { affected: { ref: 'attached' }, setPower: 1, setToughness: 1, setLayer: '7b' },
+    });
+  });
+});
+
+describe('slice 5', () => {
+  it('CR 714.2: Saga chapters are triggered abilities', () => {
+    const r = parse('I, II — Draw a card.\nIII — Exile this Saga, then return it to the battlefield transformed under your control.', 'Enchantment — Saga', 'Moth Story');
+    expect(r.unparsed).toEqual([]);
+    expect(r.abilities).toMatchObject([
+      { kind: 'triggered', trigger: { type: 'chapter', chapters: [1, 2] }, effects: [{ type: 'draw' }] },
+      { trigger: { chapters: [3] }, effects: [{ type: 'move', to: 'exile' }, { type: 'move', to: 'battlefield', transformed: true, under: 'you' }] },
+    ]);
+  });
+
+  it('impulse draw and other keyword actions', () => {
+    expect(one('Exile the top two cards of your library. Until the end of your next turn, you may play those cards.')).toMatchObject({
+      effects: [{ type: 'exile_top', amount: 2, play: { mode: 'play', until: 'next_turn' } }],
+    });
+    expect(one('Proliferate.')).toMatchObject({ effects: [{ type: 'proliferate' }] });
+    expect(one('Amass Orcs 2.')).toMatchObject({ effects: [{ type: 'amass', subtype: 'Orc', amount: 2 }] });
+    expect(one("Tap target creature. It doesn't untap during its controller's next untap step.")).toMatchObject({
+      effects: [{ type: 'tap' }, { type: 'skip_untap', what: { ref: 'target', index: 0 } }],
+    });
+  });
+
+  it('"that much" from the trigger event', () => {
+    expect(one('Whenever this creature is dealt damage, put that many +1/+1 counters on it.', 'Creature — Hydra')).toMatchObject({
+      trigger: { type: 'dealt_damage' },
+      effects: [{ type: 'add_counters', amount: { kind: 'event' } }],
     });
   });
 });

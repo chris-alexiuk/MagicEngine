@@ -159,8 +159,8 @@ export { stripReminder };
 export function stripAbilityWord(line: string): string {
   const m = /^([A-Z][A-Za-z' ]*?(?: \d+)?) — (.+)$/.exec(line);
   if (!m) return line;
-  // "Choose one —" is a modal spell, not an ability word.
-  if (/^Choose\b/.test(m[1]!)) return line;
+  // "Choose one —" is a modal spell, not an ability word; "II —" is a Saga's chapter symbol (CR 714.2).
+  if (/^Choose\b/.test(m[1]!) || /^[IVX]+(?:, [IVX]+)*$/.test(m[1]!)) return line;
   return m[2]!;
 }
 

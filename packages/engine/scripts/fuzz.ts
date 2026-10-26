@@ -157,6 +157,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       const k = Math.floor(rnd() * (xs.length + 1));
       return { player: me, answer: { kind: 'surveil', top: xs.slice(0, k), graveyard: xs.slice(k) } };
     }
+    case 'proliferate':
+      return { player: me, answer: { kind: 'proliferate', objects: p.objects.filter(() => rnd() < 0.6), players: p.players.filter(() => rnd() < 0.5) } };
+    case 'choose_objects': {
+      const n = p.min + Math.floor(rnd() * (Math.min(p.max, p.candidates.length) - p.min + 1));
+      return { player: me, answer: { kind: 'choose_objects', objects: shuffle([...p.candidates]).slice(0, n) } };
+    }
     case 'as_enters':
       if (p.choice === 'pay_life') return { player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life >= (p.amount ?? 0) && rnd() < 0.6 } };
       if (p.choice === 'reveal') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };

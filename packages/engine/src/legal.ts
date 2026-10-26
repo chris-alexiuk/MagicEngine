@@ -8,6 +8,7 @@ import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
+import { mayPlayFrom, playableFromExile } from './permissions.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { faceOf, zoneList } from './zones.js';
 
@@ -29,10 +30,12 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   const out: Action[] = [{ type: 'pass', player }];
   const mainPhaseEmptyStack = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
 
-  for (const id of zoneList(g, 'hand', player)) {
+  // The hand, plus cards an effect lets this player play from exile (impulse draw).
+  for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player)]) {
     const o = g.objects[id]!;
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
+      if (o.zone === 'exile' && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
       if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
       if (face.types.includes('Land')) {
         if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc')) {

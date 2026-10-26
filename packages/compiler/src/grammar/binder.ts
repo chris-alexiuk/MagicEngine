@@ -30,6 +30,8 @@ export class Binder {
   selfZone: 'graveyard' | null = null;
   /** "it" is this object even though it has left the battlefield ("When ~ dies, it deals damage …"). */
   itIsSource = false;
+  /** The trigger event has an amount, so "that much" / "that many" means it. */
+  eventAmount = false;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -41,6 +43,7 @@ export class Binder {
     b.named = this.named;
     b.selfZone = this.selfZone;
     b.itIsSource = this.itIsSource;
+    b.eventAmount = this.eventAmount;
     return b;
   }
 
@@ -51,6 +54,7 @@ export class Binder {
     this.named = other.named;
     this.selfZone = other.selfZone;
     this.itIsSource = other.itIsSource;
+    this.eventAmount = other.eventAmount;
   }
 
   addTarget(spec: TargetSpec): Ref {

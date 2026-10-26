@@ -153,7 +153,7 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
 }
 
 /** Effects that never stop for a player's choice (for the extra effects of mana abilities). */
-const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mill', 'add_counters', 'tap', 'untap', 'create_token', 'add_mana']);
+const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mill', 'add_counters', 'tap', 'untap', 'create_token', 'add_mana', 'skip_untap']);
 const noChoices = (e: EffectNode): boolean =>
   e.type === 'if' ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices) : NO_CHOICE.has(e.type);
 
@@ -266,9 +266,34 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger, it: { ref: 'self' }, player: null };
   }
 
+  // "Whenever ~ deals damage", "deals combat damage", "is dealt damage" — with an amount ("that much").
+  const damage = /^(~|enchanted creature|equipped creature) (deals damage|deals combat damage|is dealt damage)$/.exec(t);
+  if (damage) {
+    const subject: Ref = damage[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    const trigger: TriggerNode =
+      damage[2] === 'is dealt damage' ? { type: 'dealt_damage', subject } : { type: 'deals_damage', subject, ...(damage[2] === 'deals combat damage' ? { combat: true } : {}) };
+    b.eventAmount = true;
+    return { trigger, it: subject, player: null };
+  }
+  const attachedHits = /^(enchanted|equipped) creature deals combat damage to a player$/.exec(t);
+  if (attachedHits) {
+    b.eventAmount = true;
+    return { trigger: { type: 'deals_combat_damage', subject: { ref: 'attached' }, to: 'player' }, it: { ref: 'attached' }, player: { ref: 'trigger_player' } };
+  }
+  if (/^you're dealt damage$|^you are dealt damage$/.test(t)) {
+    b.eventAmount = true;
+    return { trigger: { type: 'player_dealt_damage', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  }
+  const loses = /^(an opponent|you) loses? life$/.exec(t);
+  if (loses) {
+    b.eventAmount = true;
+    return { trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
+
   const self = /^~ (enters(?: the battlefield)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
+    if (type === 'deals_combat_damage') b.eventAmount = true;
     const leaves = type === 'dies' || type === 'leaves';
     // CR 506.2: for an attacking creature, "defending player" is the player it's attacking.
     if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
@@ -304,7 +329,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
 
   const life = /^(you) gain life$/.exec(t);
-  if (life) return { trigger: { type: 'gain_life', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  if (life) {
+    b.eventAmount = true;
+    return { trigger: { type: 'gain_life', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  }
   const draw = /^(you) draw a card$/.exec(t);
   if (draw) return { trigger: { type: 'draw', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
 
@@ -698,6 +726,29 @@ export const asEntersRule: GrammarRule = {
   },
 };
 
+const ROMAN: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7 };
+
+/**
+ * CR 714.2b: a Saga's chapter ability "II — [Effect]" means "When one or more lore counters are put onto
+ * this Saga, if the number of lore counters on it was less than 2 and became at least 2, [effect]."
+ * CR 714.2c: "I, II — [Effect]" is both.
+ */
+export const chapterRule: GrammarRule = {
+  id: 'chapter',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^((?:I|II|III|IV|V|VI|VII)(?:, (?:I|II|III|IV|V|VI|VII))*) — (.+)$/s.exec(line);
+    if (!env || !m || !/\bSaga\b/.test(ctx.typeLine)) return null;
+    const chapters = m[1]!.split(', ').map((r) => ROMAN[r]!);
+    const b = new Binder(env);
+    b.it = { ref: 'self' };
+    const program = parseProgram(m[2]!.replace(/^\w/, (c) => c.toUpperCase()), b);
+    if (!program) return null;
+    const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: { type: 'chapter', chapters }, ...program };
+    return node;
+  },
+};
+
 /** "~ enters with two +1/+1 counters on it." — CR 614.1c: a replacement effect on how it enters. */
 export const entersWithCountersRule: GrammarRule = {
   id: 'enters_with_counters',
@@ -730,6 +781,7 @@ export const additionalCostRule: GrammarRule = {
 };
 
 export const GRAMMAR_RULES: GrammarRule[] = [
+  chapterRule,
   entersWithCountersRule,
   entersTappedUnlessRule,
   asEntersRule,

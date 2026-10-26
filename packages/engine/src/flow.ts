@@ -7,6 +7,8 @@ import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
+import { prunePermissions } from './permissions.js';
+import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
 import type { ChoiceAnswer, GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
@@ -260,6 +262,8 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   g.extraCleanup = false;
   // CR 305.2: one land per turn — the count restarts each turn.
   for (const p of Object.values(g.players)) p.landsPlayedThisTurn = 0;
+  // "You may play that card this turn" ends with the turn.
+  prunePermissions(g);
   events.push({ type: 'turn_began', turn: g.turn, player });
   beginStep(g, 'untap', events);
 }
@@ -278,6 +282,12 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
         // CR 302.6: permanents the active player controls have now been controlled since this turn began.
         o.sick = false;
         // CR 502.3: the active player untaps their permanents, unless an effect says otherwise.
+        if (o.skipUntap) {
+          // "It doesn't untap during its controller's next untap step."
+          o.skipUntap--;
+          if (!o.skipUntap) delete o.skipUntap;
+          continue;
+        }
         if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
       }
       // CR 502.4: no priority in the untap step.
@@ -293,6 +303,13 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       if (!skip && !playerRule(g, g.active, 'skip_draw')) drawCard(g, g.active, events);
       break;
     }
+    case 'main1':
+      // CR 714.3c: as the precombat main phase begins, a lore counter on each of the active player's Sagas.
+      for (const id of [...g.zones.battlefield]) {
+        const o = g.objects[id]!;
+        if (o.controller === g.active) addLore(g, o, events);
+      }
+      break;
     case 'beginning_of_combat':
       // CR 507.1: with every opponent defending (CR 802.2), there's no defending player to choose.
       g.combat = newCombat();
@@ -423,6 +440,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       delete o.deathtouched;
       // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
       if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
+      // CR 714.4: a Saga that has finished its chapters is sacrificed.
+      if (sagaDone(g, o)) toGraveyard.add(id);
       const face = faceOf(g, o);
       if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
         // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.

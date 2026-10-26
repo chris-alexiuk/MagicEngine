@@ -233,6 +233,17 @@ function decide(g: GameState): { action: Action; note?: string } | null {
       }
       case 'search':
         return { action: { type: 'choose', player: me, answer: { kind: 'search', objects: p.candidates.slice(0, p.count) } } };
+      case 'proliferate':
+        // Our own permanents' counters, and opponents' poison.
+        return {
+          action: {
+            type: 'choose',
+            player: me,
+            answer: { kind: 'proliferate', objects: p.objects.filter((id) => g.objects[id]!.controller === me), players: p.players.filter((x) => x !== me) },
+          },
+        };
+      case 'choose_objects':
+        return { action: { type: 'choose', player: me, answer: { kind: 'choose_objects', objects: p.candidates.slice(0, p.min || 1) } } };
       case 'as_enters': {
         // Pay life for an untapped land while it's cheap; reveal when possible; otherwise the first option.
         if (p.choice === 'pay_life') return { action: { type: 'choose', player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life > 10 } } };

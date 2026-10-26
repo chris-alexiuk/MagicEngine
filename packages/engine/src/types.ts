@@ -113,6 +113,8 @@ export interface GameObject {
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
   exileIfDiesTurn?: number;
+  /** "It doesn't untap during its controller's next untap step": how many untap steps it skips. */
+  skipUntap?: number;
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
@@ -188,6 +190,8 @@ export interface TriggerInfo {
   entry?: string;
   /** CR 603.10a: the object as it last existed on the battlefield. */
   lki?: { counters: Record<string, number> };
+  /** How much happened ("that much life", "that many +1/+1 counters"): damage dealt, life gained or lost. */
+  amount?: number;
 }
 
 interface StackBase {
@@ -286,6 +290,8 @@ export interface Resolution {
   targets: TargetRef[][];
   /** Controllers of targeted objects as resolution began, for "its controller" after it moves (CR 608.2h). */
   lki: Record<ObjectId, PlayerId>;
+  /** CR 400.7j: objects this resolution moved to a public zone, by their new zone-change count — it can still find them. */
+  found?: Record<ObjectId, number>;
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
@@ -325,6 +331,10 @@ export type PendingChoice =
   | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
   | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
+  /** CR 701.34a: any number of permanents and players that have counters. */
+  | { kind: 'proliferate'; player: PlayerId; objects: ObjectId[]; players: PlayerId[] }
+  /** A choice of one or more objects ("choose an Army creature you control"). */
+  | { kind: 'choose_objects'; player: PlayerId; candidates: ObjectId[]; min: number; max: number; text: string }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
    * (reveal lists the cards that qualify); color / creature_type: pick one of `options`.
@@ -360,6 +370,8 @@ export type ChoiceAnswer =
   | { kind: 'pay'; pay: boolean }
   | { kind: 'search'; objects: ObjectId[] }
   | { kind: 'sacrifice'; objects: ObjectId[] }
+  | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
+  | { kind: 'choose_objects'; objects: ObjectId[] }
   /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
   | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string };
 
@@ -528,6 +540,8 @@ export interface GameState {
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
   lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number }>;
+  /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

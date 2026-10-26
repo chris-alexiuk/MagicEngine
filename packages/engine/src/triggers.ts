@@ -28,7 +28,7 @@ import { livePlayers } from './zones.js';
  */
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
-  'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target',
+  'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
@@ -93,7 +93,7 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
         if (c.left && !LOOK_BACK.has(ability.trigger.type)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
-        const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left });
+        const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch });
         if (ability.oncePerTurn && infos.length) {
           // "This ability triggers only once each turn."
           (c.o.triggeredTurn ??= {})[index] = g.turn;

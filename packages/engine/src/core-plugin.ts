@@ -2,7 +2,7 @@ import type { AddManaEffect, AsEntersNode, CombatRules, ConditionNode, EffectNod
 import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
-import { hasKeyword, hasRule, matchesFilter } from './characteristics.js';
+import { chars, hasKeyword, hasRule, matchesFilter } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -12,8 +12,8 @@ import { attach, createToken, destroy, sacrifice } from './permanents.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type ManaColor, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
-import { battlefieldZcc, drawCard, moveObject, nameOf, setTapped, zoneList } from './zones.js';
+import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
+import { battlefieldZcc, drawCard, livePlayers, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -28,6 +28,19 @@ function answerOf<K extends ChoiceAnswer['kind']>(ctx: EffectContext, kind: K): 
 
 function sourceName(ctx: EffectContext): string {
   return ctx.source ? nameOf(ctx.g, ctx.source) : 'an ability';
+}
+
+/** The last turn a "this turn" / "until the end of your next turn" permission lasts through. */
+function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'): number {
+  if (until === 'eot') return g.turn;
+  // The player's next turn: count turns in order from the next one (extra turns aside).
+  let turn = g.turn + 1;
+  let p = nextPlayer(g, g.active);
+  for (let i = 0; i < g.order.length && p !== player; i++) {
+    p = nextPlayer(g, p);
+    turn++;
+  }
+  return turn;
 }
 
 /** Splits "+1/+1" counters from others and fires the event. */
@@ -108,7 +121,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const controller = node.under === 'you' ? ctx.controller : o.owner;
         if (o.zone === 'stack' || o.zone === 'battlefield') continue;
         const counters = node.counters as Record<string, number> | undefined;
-        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}) });
+        // CR 712.14a: "transformed" — a double-faced card enters with its back face up (others don't move at all).
+        const dfc = (ctx.g.cards[o.card]?.faces.length ?? 0) > 1 && ['transform', 'modal_dfc', 'meld'].includes(ctx.g.cards[o.card]!.layout);
+        if (node.transformed && !dfc) continue;
+        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}) });
         if (node.tapped) setTapped(ctx.g, o.id, true, ctx.events);
       } else if (node.until === 'source_leaves') {
         // CR 610.3a: if the source has already left the battlefield, the object doesn't move at all.
@@ -337,6 +353,113 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       counters[String(node.counter)] = (counters[String(node.counter)] ?? 0) + n;
       ctx.events.push({ type: 'player_counters', player: p, counter: String(node.counter), delta: n });
     }
+    return true;
+  },
+
+  exile_top(node, ctx) {
+    // "Exile the top card of your library. Until the end of your next turn, you may play that card."
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount);
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' } | undefined;
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      for (const id of zoneList(g, 'library', p).slice(0, n)) {
+        moveObject(g, id, 'exile', ctx.events);
+        const o = g.objects[id]!;
+        if (play) (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn: lastTurnOf(g, ctx.controller, play.until) });
+      }
+    }
+    return true;
+  },
+
+  skip_untap(node, ctx) {
+    // "doesn't untap during its controller's next untap step" (CR 502.3 lets effects stop the untap).
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.skipUntap = (o.skipUntap ?? 0) + 1;
+    return true;
+  },
+
+  proliferate(_node, ctx) {
+    // CR 701.34a: choose any number of permanents and/or players with counters; each gets one more of each kind.
+    const g = ctx.g;
+    const objects = g.zones.battlefield.filter((id) => Object.values(g.objects[id]!.counters).some((n) => n > 0));
+    const players = livePlayers(g).filter((p) => g.players[p]!.poison > 0 || Object.values(g.players[p]!.counters ?? {}).some((n) => n > 0));
+    const answer = answerOf(ctx, 'proliferate');
+    if (!answer) {
+      if (!objects.length && !players.length) return true;
+      return { ask: { kind: 'proliferate', player: ctx.controller, objects, players } };
+    }
+    if (!answer.objects.every((id) => objects.includes(id)) || !answer.players.every((p) => players.includes(p))) {
+      throw new RulesError('Choose only permanents and players that have counters.');
+    }
+    for (const id of new Set(answer.objects)) {
+      const o = g.objects[id]!;
+      for (const [counter, n] of Object.entries(o.counters)) if (n > 0) addCounters(ctx, o, counter, 1);
+    }
+    for (const p of new Set(answer.players)) {
+      const ps = g.players[p]!;
+      if (ps.poison > 0) ps.poison++;
+      for (const [counter, n] of Object.entries(ps.counters ?? {})) {
+        if (n <= 0) continue;
+        ps.counters![counter] = n + 1;
+        ctx.events.push({ type: 'player_counters', player: p, counter, delta: 1 });
+      }
+    }
+    return true;
+  },
+
+  connive(node, ctx) {
+    // CR 701.50a: draw a card, then discard a card; if it was a nonland card, put a +1/+1 counter on the conniver.
+    const memo = ctx.memo as { drew?: boolean; who?: PlayerId; conniver?: { id: string; zcc: number } };
+    const answer = answerOf(ctx, 'discard');
+    if (!memo.drew) {
+      const [o] = refObjects(ctx, ref(node, 'what'));
+      // CR 701.50b: if it's gone, its last known controller still connives.
+      const who = o?.controller ?? ctx.controller;
+      memo.drew = true;
+      memo.who = who;
+      if (o) memo.conniver = { id: o.id, zcc: o.zcc };
+      drawCard(ctx.g, who, ctx.events);
+    }
+    const who = memo.who!;
+    const hand = zoneList(ctx.g, 'hand', who);
+    let discarded: string | undefined;
+    if (answer) {
+      if (answer.objects.length !== 1 || !hand.includes(answer.objects[0]!)) throw new RulesError('Choose one card from your hand to discard.');
+      discarded = answer.objects[0]!;
+    } else if (hand.length > 1) {
+      return { ask: { kind: 'discard', player: who, count: 1 } };
+    } else discarded = hand[0];
+    if (!discarded) return true;
+    const card = ctx.g.objects[discarded]!;
+    const nonland = !ctx.g.cards[card.card]!.faces[card.face]!.types.includes('Land');
+    moveObject(ctx.g, discarded, 'graveyard', ctx.events);
+    const c = memo.conniver && ctx.g.objects[memo.conniver.id];
+    if (nonland && c && c.zcc === memo.conniver!.zcc && c.zone === 'battlefield') addCounters(ctx, c, '+1/+1', 1);
+    return true;
+  },
+
+  amass(node, ctx) {
+    // CR 701.47a: create a 0/0 black [subtype] Army if you control no Army; then N +1/+1 counters on an Army you control.
+    const g = ctx.g;
+    const subtype = String(node.subtype ?? 'Army');
+    const armies = () => g.zones.battlefield.filter((id) => g.objects[id]!.controller === ctx.controller && chars(g, g.objects[id]!).subtypes.includes('Army'));
+    const answer = answerOf(ctx, 'choose_objects');
+    let army: string | undefined;
+    if (answer) {
+      army = answer.objects[0];
+      if (!army || !armies().includes(army)) throw new RulesError('Choose an Army creature you control.');
+    } else {
+      if (!armies().length) {
+        const face: FaceDef = {
+          name: `${subtype} Army`, manaCost: '', typeLine: `Creature — ${subtype} Army`, supertypes: [], types: ['Creature'],
+          subtypes: [...new Set([subtype, 'Army'])], oracle: '', colors: ['B'], keywords: [], abilities: [], unparsed: [], power: '0', toughness: '0',
+        };
+        createToken(g, face, ctx.controller, ctx.events);
+      }
+      const list = armies();
+      if (list.length > 1) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: list, min: 1, max: 1, text: 'Choose an Army creature you control.' } };
+      army = list[0];
+    }
+    if (army) addCounters(ctx, g.objects[army]!, '+1/+1', amountOf(ctx, node.amount));
     return true;
   },
 
@@ -607,6 +730,8 @@ function describeSearch(node: EffectNode): string {
 /** Does `o` satisfy a trigger's subject ("~" or "a creature you control")? */
 function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: { lastController?: PlayerId; anyZone?: boolean } = {}): boolean {
   if (subject.ref === 'self') return o.id === check.source.id;
+  // "enchanted creature", "equipped creature"
+  if (subject.ref === 'attached') return check.source.attachedTo?.id === o.id && check.source.attachedTo.zcc === o.zcc;
   if (subject.ref !== 'all') return false;
   const filter: ObjectFilter = { ...subject.filter };
   return matchesFilter(check.g, o, filter, {
@@ -703,7 +828,52 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
     const o = check.g.objects[e.source];
-    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player }] : [];
+    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
+  },
+  // CR 714.2b: a chapter ability triggers as the lore count goes from below N to at least N.
+  chapter(t, check) {
+    const e = check.event;
+    if (e.type !== 'counters' || e.counter !== 'lore' || e.delta <= 0 || e.object !== check.source.id || check.sourceLeft) return [];
+    const after = check.source.counters.lore ?? 0;
+    const before = after - e.delta;
+    return (t.chapters as number[]).some((n) => before < n && after >= n) ? [{ object: refTo(check.source) }] : [];
+  },
+  // "Whenever ~ deals damage" / "deals combat damage": once for everything it dealt at the same time.
+  deals_damage(t, check) {
+    const e = check.event;
+    if (e.type !== 'damage' || (t.combat && !e.combat) || check.sourceLeft) return [];
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat);
+    if (together[0] !== e) return [];
+    const o = check.g.objects[e.source];
+    const amount = together.reduce((n, x) => n + x.amount, 0);
+    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), amount }] : [];
+  },
+  // "Whenever ~ is dealt damage": once per batch, for all of it.
+  dealt_damage(t, check) {
+    const e = check.event;
+    if (e.type !== 'damage' || e.to.kind !== 'permanent' || check.sourceLeft) return [];
+    const to = e.to.object;
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to);
+    if (together[0] !== e) return [];
+    const o = check.g.objects[to];
+    const amount = together.reduce((n, x) => n + x.amount, 0);
+    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), amount }] : [];
+  },
+  // "Whenever you're dealt damage"
+  player_dealt_damage(t, check) {
+    const e = check.event;
+    if (e.type !== 'damage' || e.to.kind !== 'player' || check.sourceLeft || e.to.player !== check.controller) return [];
+    const player = e.to.player;
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player);
+    if (together[0] !== e) return [];
+    return [{ player, amount: together.reduce((n, x) => n + x.amount, 0) }];
+  },
+  // "Whenever an opponent loses life" / "Whenever you lose life"
+  lose_life(t, check) {
+    const e = check.event;
+    if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
+    if (t.who === 'you' ? e.player !== check.controller : e.player === check.controller) return [];
+    return [{ player: e.player, amount: -e.delta }];
   },
   // CR 603.2b: "at the beginning of" a step triggers as the step begins.
   phase(t, check) {
@@ -717,7 +887,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   gain_life(t, check) {
     const e = check.event;
     if (e.type !== 'life' || e.delta <= 0 || check.sourceLeft || e.player !== check.controller) return [];
-    return [{ player: e.player }];
+    return [{ player: e.player, amount: e.delta }];
   },
   draw(t, check) {
     const e = check.event;

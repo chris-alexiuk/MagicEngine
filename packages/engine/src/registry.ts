@@ -60,6 +60,8 @@ export interface TriggerCheck {
   controller: PlayerId;
   /** CR 603.10a: the source left the battlefield in this same event batch. */
   sourceLeft: boolean;
+  /** Every event in the batch, for triggers that add up simultaneous events ("deals damage"). */
+  batch?: GameEvent[];
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { power, viewFor, type GameState } from '../src/index.js';
-import { act, give, makeCard, passRound, start, toStep } from './helpers.js';
+import { chars, legalActions, power, viewFor, type GameState } from '../src/index.js';
+import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 const make = (name: string, type_line: string, oracle_text: string, pt?: string) =>
   makeCard({ name, type_line, oracle_text, mana_cost: '{G}', ...(pt ? { power: pt, toughness: pt } : {}) });
@@ -13,6 +13,14 @@ const CARDS = [
   make('Courtly Seer', 'Creature — Human Wizard', 'As long as you’re the monarch, this creature gets +2/+2.', '1'),
   make('Banishing Light', 'Enchantment', 'When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.'),
   make('Fiend Hunter', 'Creature — Human Cleric', 'When this creature enters, you may exile another target creature.\nWhen this creature leaves the battlefield, return the exiled card to the battlefield under its owner’s control.', '1'),
+  make('Spread the Growth', 'Sorcery', 'Proliferate.'),
+  make('Sly Rogue', 'Creature — Human Rogue', 'When this creature enters, it connives.', '1'),
+  make('Orc Muster', 'Sorcery', 'Amass Orcs 2.'),
+  make('Frost Breath Lite', 'Instant', "Tap target creature. It doesn't untap during its controller's next untap step."),
+  make('Lifelinked Spirit', 'Creature — Spirit', 'Whenever this creature deals damage, you gain that much life.', '3'),
+  make('Spiked Hydra', 'Creature — Hydra', 'Whenever this creature is dealt damage, put that many +1/+1 counters on it.', '4'),
+  make('Light Up the Stage Lite', 'Sorcery', 'Exile the top two cards of your library. Until the end of your next turn, you may play those cards.'),
+  make('Act on Impulse Lite', 'Sorcery', 'Exile the top card of your library. You may play that card this turn.'),
   make('Vizier of the Top', 'Creature — Human Wizard', 'You may look at the top card of your library any time.', '1'),
 ];
 
@@ -157,5 +165,151 @@ describe('CR 607.2a: linked abilities — “the exiled card”', () => {
     g = passRound(g);
     if (g.pending?.kind === 'may') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
     expect(g.objects[theirs]!.zone).toBe('exile');
+  });
+});
+
+describe('more keyword actions', () => {
+  it('CR 701.34a: proliferate adds one of each kind of counter to what you choose', () => {
+    let g = setup();
+    const mine = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    g.objects[mine]!.counters['+1/+1'] = 1;
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g.objects[theirs]!.counters['+1/+1'] = 1;
+    g.players.bob!.poison = 3;
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Spread the Growth', 'hand'), autoTap: true }));
+    expect(g.pending).toMatchObject({ kind: 'proliferate', objects: expect.arrayContaining([mine, theirs]), players: ['bob'] });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'proliferate', objects: [mine], players: ['bob'] } });
+    expect(g.objects[mine]!.counters['+1/+1']).toBe(2);
+    expect(g.objects[theirs]!.counters['+1/+1']).toBe(1);
+    expect(g.players.bob!.poison).toBe(4);
+  });
+
+  it('CR 701.50a: connive — draw, discard, and a counter for a nonland', () => {
+    let g = setup();
+    const rogue = give(g, 'alice', 'Sly Rogue', 'hand');
+    g = passRound(passRound(act(g, { type: 'cast', player: 'alice', object: rogue, autoTap: true })));
+    expect(g.pending).toMatchObject({ kind: 'discard', player: 'alice', count: 1 });
+    const bears = give(g, 'alice', 'Grizzly Bears', 'hand');
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [bears] } });
+    expect(g.objects[bears]!.zone).toBe('graveyard');
+    expect(g.objects[rogue]!.counters['+1/+1']).toBe(1);
+  });
+
+  it('CR 701.47a: amass makes an Army if you have none, then grows it', () => {
+    let g = setup();
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Orc Muster', 'hand'), autoTap: true }));
+    const army = g.zones.battlefield.find((id) => g.objects[id]!.token)!;
+    expect(chars(g, g.objects[army]!)).toMatchObject({ subtypes: ['Orc', 'Army'], power: 2, toughness: 2 });
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Orc Muster', 'hand'), autoTap: true }));
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token)).toHaveLength(1);
+    expect(g.objects[army]!.counters['+1/+1']).toBe(4);
+  });
+
+  it('“It doesn’t untap during its controller’s next untap step.”', () => {
+    let g = setup();
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Frost Breath Lite', 'hand'), autoTap: true, targets: [[{ kind: 'object', object: theirs }]] }));
+    expect(g.objects[theirs]!.tapped).toBe(true);
+    g = toStep(g, 'upkeep', 'bob');
+    expect(g.objects[theirs]!.tapped).toBe(true);
+    g = toStep(toStep(g, 'upkeep', 'alice'), 'upkeep', 'bob');
+    expect(g.objects[theirs]!.tapped).toBe(false);
+  });
+});
+
+describe('“that much” from the trigger event', () => {
+  it('“Whenever ~ deals damage, you gain that much life” (once for simultaneous damage)', () => {
+    let g = setup();
+    const spirit = give(g, 'alice', 'Lifelinked Spirit', 'battlefield');
+    g = passRound(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: spirit, target: { kind: 'player', player: 'bob' } }] } });
+    g = toStep(g, 'combat_damage');
+    expect(g.stack).toHaveLength(1);
+    g = passRound(g);
+    expect(g.players.alice!.life).toBe(23);
+  });
+
+  it('“Whenever ~ is dealt damage, put that many +1/+1 counters on it”', () => {
+    let g = setup();
+    const hydra = give(g, 'alice', 'Spiked Hydra', 'battlefield');
+    g.players.alice!.pool.R = 1;
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Lightning Bolt', 'hand'), targets: [[{ kind: 'object', object: hydra }]] }));
+    g = passRound(g);
+    expect(g.objects[hydra]!.counters['+1/+1']).toBe(3);
+  });
+});
+
+describe('impulse draw: playing cards from exile', () => {
+  it('“you may play that card this turn” — a land from exile counts as the land play', () => {
+    let g = setup();
+    const top = give(g, 'alice', 'Forest', 'library');
+    g.zones.library.alice = [top, ...g.zones.library.alice!.filter((id) => id !== top)];
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Act on Impulse Lite', 'hand'), autoTap: true }));
+    expect(g.objects[top]!.zone).toBe('exile');
+    expect(legalActions(g, 'alice')).toContainEqual({ type: 'play_land', player: 'alice', object: top });
+    g = act(g, { type: 'play_land', player: 'alice', object: top });
+    expect(g.objects[top]!.zone).toBe('battlefield');
+  });
+
+  it('“until the end of your next turn” — and then it’s gone', () => {
+    let g = setup();
+    const top = give(g, 'alice', 'Grizzly Bears', 'library');
+    g.zones.library.alice = [top, ...g.zones.library.alice!.filter((id) => id !== top)];
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Light Up the Stage Lite', 'hand'), autoTap: true }));
+    expect(g.objects[top]!.zone).toBe('exile');
+    // Still playable on Alice's next turn.
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    expect(legalActions(g, 'alice')).toContainEqual(expect.objectContaining({ type: 'cast', object: top }));
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: top, autoTap: true })).toMatch(/hand/);
+  });
+});
+
+describe('Sagas (CR 714)', () => {
+  const saga = makeCard({
+    name: 'Tale of Plenty',
+    type_line: 'Enchantment — Saga',
+    oracle_text: '(As this Saga enters and after your draw step, add a lore counter. Sacrifice after III.)\nI, II — Draw a card.\nIII — You gain 3 life.',
+    mana_cost: '{G}',
+  });
+  const flip = makeCard({
+    name: 'Moth Story // Moth',
+    layout: 'transform',
+    type_line: 'Enchantment — Saga // Enchantment Creature — Insect',
+    oracle_text: '',
+    mana_cost: '{G}',
+    card_faces: [
+      { object: 'card_face', name: 'Moth Story', type_line: 'Enchantment — Saga', mana_cost: '{G}', oracle_text: '(As this Saga enters and after your draw step, add a lore counter.)\nI — You gain 1 life.\nII — Exile this Saga, then return it to the battlefield transformed under your control.' },
+      { object: 'card_face', name: 'Moth', type_line: 'Enchantment Creature — Insect', mana_cost: '', power: '3', toughness: '3', oracle_text: 'Flying' },
+    ],
+  } as never);
+
+  it('chapters trigger as lore counters arrive, and it’s sacrificed after the last', () => {
+    let g = toStep(start({ extra: [saga, flip] }), 'main1');
+    give(g, 'alice', 'Forest', 'battlefield');
+    const tale = give(g, 'alice', 'Tale of Plenty', 'hand');
+    const hand = g.zones.hand.alice!.length;
+    g = passRound(passRound(act(g, { type: 'cast', player: 'alice', object: tale, autoTap: true })));
+    expect(g.objects[tale]!.counters.lore).toBe(1);
+    expect(g.zones.hand.alice!.length).toBe(hand); // drew one (chapter I), cast one
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    expect(g.objects[tale]!.counters.lore).toBe(2);
+    expect(g.stack).toMatchObject([{ kind: 'ability', sourceName: 'Tale of Plenty' }]);
+    g = passRound(g);
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    expect(g.objects[tale]!.zone).toBe('battlefield'); // chapter III is on the stack
+    g = passRound(g);
+    expect(g.players.alice!.life).toBe(23);
+    expect(g.objects[tale]!.zone).toBe('graveyard');
+  });
+
+  it('CR 400.7j / CR 712.14a: “Exile this Saga, then return it to the battlefield transformed”', () => {
+    let g = toStep(start({ extra: [saga, flip] }), 'main1');
+    const story = give(g, 'alice', 'Moth Story // Moth', 'battlefield');
+    g.objects[story]!.counters.lore = 1;
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    g = passRound(g);
+    expect(g.objects[story]).toMatchObject({ zone: 'battlefield', face: 1 });
+    expect(chars(g, g.objects[story]!)).toMatchObject({ name: 'Moth', power: 3 });
   });
 });
