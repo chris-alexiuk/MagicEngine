@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -19,10 +19,12 @@ export interface TurnLog {
   lostLife: PlayerId[];
   spellsCast: Record<PlayerId, number>;
   noncreatureCast: PlayerId[];
+  /** Players dealt damage this turn (CR 702.54a bloodthirst). */
+  damagedPlayers: PlayerId[];
 }
 
 export function newTurnLog(): TurnLog {
-  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [] };
+  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [] };
 }
 
 /** Records the events of one batch in the turn log. */
@@ -39,6 +41,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'life':
         if (e.delta > 0 && !log.gainedLife.includes(e.player)) log.gainedLife.push(e.player);
         if (e.delta < 0 && !log.lostLife.includes(e.player)) log.lostLife.push(e.player);
+        break;
+      case 'damage':
+        if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
         break;
       case 'cast': {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
@@ -70,6 +75,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
     }
+    case 'renowned':
+      // CR 702.112b
+      return Boolean(source?.renowned && source.zone === 'battlefield') !== Boolean(cond.not);
     case 'paid':
       // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
       return Boolean(source?.cast?.paid?.includes(String(cond.cost)));
@@ -116,6 +124,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       switch (cond.event) {
         case 'creature_died':
           return log.creatureDied;
+        case 'opponent_damaged':
+          return (log.damagedPlayers ?? []).some((p) => p !== controller);
         case 'you_attacked':
           return log.attacked.includes(controller);
         case 'you_gained_life':

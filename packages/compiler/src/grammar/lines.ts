@@ -181,6 +181,8 @@ const noChoices = (e: EffectNode): boolean =>
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
+  // CR 702.177a (exhaust)
+  [/ Activate only once\.$/, (a) => (a.oncePerGame = true)],
 ];
 
 /** "[Cost]: [Effect]." (CR 602.1). Mana abilities are handled by the mana rule. */
@@ -268,6 +270,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
   }
 
+  // CR 702.63a (vanishing): "When the last time counter is removed from ~"
+  const lastCounter = /^the last (\S+) counter is removed from ~$/.exec(t);
+  if (lastCounter) return { trigger: { type: 'last_counter_removed', counter: lastCounter[1]! }, it: { ref: 'self' }, player: null };
   // CR 702.37 / 708: "When ~ is turned face up"
   if (t === '~ is turned face up') return { trigger: { type: 'turned_face_up', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // CR 716.2a: "When this Class becomes level 2"
@@ -932,15 +937,19 @@ export const chapterRule: GrammarRule = {
 /** "~ enters with two +1/+1 counters on it." — CR 614.1c: a replacement effect on how it enters. */
 export const entersWithCountersRule: GrammarRule = {
   id: 'enters_with_counters',
-  parse(line, original) {
-    const m = /^~ enters(?: the battlefield)? with (\S+) (\S+) counters? on it\.$/.exec(line);
-    const amount = m && parseAmount(m[1]!);
+  parse(line, original, ctx) {
+    const m = /^(?:If (.+?), )?~ enters(?: the battlefield)? with (\S+) (\S+) counters? on it\.$/.exec(line);
+    const amount = m && parseAmount(m[2]!);
     // X is the value paid as it was cast (CR 107.3m).
     if (!m || amount === null || amount === undefined) return null;
+    // CR 702.54a (bloodthirst): "If an opponent was dealt damage this turn, …"; "If ~ was kicked, …".
+    const env = envOf(ctx);
+    const condition = m[1] ? (env ? parseCondition(m[1], new Binder(env)) : null) : undefined;
+    if (condition === null) return null;
     const node: StaticAbility = {
       kind: 'static',
       text: original,
-      effect: { type: 'enters_with_counters', counter: m[2]!.replace(/−/g, '-'), amount },
+      effect: { type: 'enters_with_counters', counter: m[3]!.replace(/−/g, '-'), amount, ...(condition ? { condition } : {}) },
     };
     return node;
   },
@@ -976,6 +985,13 @@ export const castOptionRule: GrammarRule = {
     }
     const additional = /^You may pay an additional (.+?) as you cast ~$/.exec(t);
     if (additional) return make('additional', additional[1]!);
+    // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
+    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+)$/.exec(t);
+    if (mayAdditional) {
+      const choice = choiceCost(mayAdditional[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
+      if (!choice) return null;
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'additional', cost: { other: [choice] } } as CastOptionNode };
+    }
     // CR 702.42a: "You may choose all modes of this spell instead of just the number specified. If you do, you pay an additional [cost]."
     const entwine = /^You may choose all modes of ~ instead of just the number specified\. If you do, you pay an additional (.+)$/.exec(t);
     if (entwine) return make('additional', entwine[1]!, { allModes: true });

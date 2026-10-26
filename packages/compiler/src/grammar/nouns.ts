@@ -23,6 +23,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
+  // CR 702.134a (mentor)
+  [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],

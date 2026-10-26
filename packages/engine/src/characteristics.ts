@@ -442,6 +442,8 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  // CR 702.134a: "with power less than this creature's power"
+  if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;

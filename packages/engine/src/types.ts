@@ -99,6 +99,10 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** CR 702.112b: it became renowned. */
+  renowned?: true;
+  /** CR 702.177a: abilities activated "only once" (by index). */
+  activatedOnce?: Record<number, true>;
   /** CR 702.143a: foretold (exiled face down from hand) on this turn. */
   foretold?: number;
   /** CR 702.170a: plotted on this turn. */

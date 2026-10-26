@@ -5,7 +5,7 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withC
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { additionalCosts, castOptions, exileActionCost, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
+import { additionalCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -26,7 +26,10 @@ import { faceOf, zoneList } from './zones.js';
  */
 export function legalActions(g: GameState, player: PlayerId): Action[] {
   // Read-only: characteristics can be shared across the whole listing.
-  return withCharsCache(() => listLegalActions(g, player));
+  return withCharsCache(() => {
+    const all = listLegalActions(g, player);
+    return splitSecond(g) ? all.filter((a) => a.type !== 'cast' && a.type !== 'activate') : all;
+  });
 }
 
 function listLegalActions(g: GameState, player: PlayerId): Action[] {
@@ -167,6 +170,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if ((ab.timing === 'sorcery' || cost.loyalty !== undefined) && !sorcerySpeed) return;
       if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
+      if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
       if (cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
       if (cost.untap && !o.tapped) return;
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;

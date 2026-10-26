@@ -334,6 +334,26 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // "Remove a time counter from it."
+  remove_counters(node, ctx) {
+    const counter = String(node.counter);
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      const have = o.counters[counter] ?? 0;
+      const n = Math.min(have, amountOf(ctx, node.amount));
+      if (n <= 0) continue;
+      o.counters[counter] = have - n;
+      if (!o.counters[counter]) delete o.counters[counter];
+      ctx.events.push({ type: 'counters', object: o.id, counter, delta: -n });
+    }
+    return true;
+  },
+
+  // CR 702.112a: "it becomes renowned".
+  become_renowned(node, ctx) {
+    for (const o of refObjects(ctx, { ref: 'self' })) if (o.zone === 'battlefield') o.renowned = true;
+    return true;
+  },
+
   monstrosity(node, ctx) {
     // CR 701.37a: if it isn't monstrous, put N +1/+1 counters on it and it becomes monstrous.
     for (const o of refObjects(ctx, { ref: 'self' })) {
@@ -1098,6 +1118,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
+  // CR 702.63a: "When the last time counter is removed from ~".
+  last_counter_removed(t, check) {
+    const e = check.event;
+    if (e.type !== 'counters' || e.delta >= 0 || e.object !== check.source.id || e.counter !== t.counter || check.sourceLeft) return [];
+    return (check.source.counters[String(t.counter)] ?? 0) === 0 ? [{ object: refTo(check.source) }] : [];
+  },
   // "When ~ is turned face up" (CR 708.8: it doesn't enter again).
   turned_face_up(t, check) {
     const e = check.event;
@@ -1234,6 +1260,8 @@ export const corePlugin: MechanicPlugin = {
     },
     // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
     enters_with_counters(node, o, g) {
+      // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
+      if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       // CR 107.3m: X is the X paid for the spell that became this permanent.
       const base = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
       // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.

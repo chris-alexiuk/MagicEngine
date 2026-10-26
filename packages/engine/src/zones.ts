@@ -147,6 +147,8 @@ export function moveObject(
   }
   delete o.regenShields;
   delete o.foretold;
+  delete o.renowned;
+  delete o.activatedOnce;
   delete o.plotted;
   delete o.suspended;
   delete o.activatedTurn;

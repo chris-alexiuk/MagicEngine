@@ -59,10 +59,17 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
+  if (/^an opponent was dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
+  // CR 702.112b (renown): "if it isn't renowned", "as long as ~ is renowned"
+  const renowned = /^(?:it|~) (is|isn't) renowned$/.exec(t);
+  if (renowned) return { type: 'renowned', ...(renowned[1] === "isn't" ? { not: true } : {}) };
   // CR 702.30a (echo): "if this permanent came under your control since the beginning of your last upkeep"
   if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
   // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
+  // CR 702.166b: "if this spell was bargained"
+  if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
   const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
@@ -173,6 +180,7 @@ export function conditionSubject(c: ConditionNode): Ref | null {
     case 'monstrous':
     case 'paid':
     case 'arrived_since_upkeep':
+    case 'renowned':
       return { ref: 'self' };
     case 'is':
     case 'counters':

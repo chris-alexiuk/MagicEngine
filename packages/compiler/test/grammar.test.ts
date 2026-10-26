@@ -575,3 +575,22 @@ describe('cards cast later from exile', () => {
     expect(parse('Suspend 3—{1}{G}', 'Sorcery', 'Card').keywords).toMatchObject([{ id: 'suspend', n: 3, cost: '{1}{G}' }]);
   });
 });
+
+describe('more keywords from CR 702 (slice 16)', () => {
+  it('bloodthirst, vanishing, renown, mentor, bargain, exhaust', () => {
+    expect(parse('Bloodthirst 2', 'Creature — Ogre', 'Ogre').keywords[0]!.abilities).toMatchObject([
+      { effect: { type: 'enters_with_counters', amount: 2, condition: { type: 'this_turn', event: 'opponent_damaged' } } },
+    ]);
+    expect(parse('Vanishing 3', 'Creature — Spirit', 'Spirit').keywords[0]!.abilities).toMatchObject([
+      { effect: { type: 'enters_with_counters', counter: 'time', amount: 3 } },
+      { trigger: { type: 'phase', step: 'upkeep' }, effects: [{ type: 'remove_counters', counter: 'time', amount: 1 }] },
+      { trigger: { type: 'last_counter_removed', counter: 'time' }, effects: [{ type: 'sacrifice' }] },
+    ]);
+    expect(parse('Renown 1', 'Creature — Human', 'Human').keywords[0]!.abilities).toMatchObject([
+      { condition: { type: 'renowned', not: true }, effects: [{ type: 'add_counters' }, { type: 'become_renowned' }] },
+    ]);
+    expect(parse('Mentor', 'Creature — Human', 'Human').keywords[0]!.abilities).toMatchObject([{ targets: [{ filter: { powerBelowSource: true, combat: 'attacking' } }] }]);
+    expect(parse('Bargain', 'Sorcery', 'Spell').keywords[0]!.abilities).toMatchObject([{ effect: { type: 'cast_option', id: 'bargain', kind: 'additional' } }]);
+    expect(one('Exhaust — {2}{G}: Put three +1/+1 counters on this creature.', 'Creature — Elf')).toMatchObject({ kind: 'activated', oncePerGame: true });
+  });
+});

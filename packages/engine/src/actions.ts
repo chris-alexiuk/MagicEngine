@@ -4,7 +4,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
-import { printedAbilities } from './characteristics.js';
+import { hasKeyword, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -85,6 +85,8 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
   if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose (${g.pending.kind}).`);
   if (g.priority !== a.player) throw new RulesError('You don’t have priority.');
 
+  // CR 702.61a: while a spell with split second is on the stack, players can't cast spells or activate non-mana abilities.
+  if ((a.type === 'cast' || a.type === 'activate') && splitSecond(g)) throw new RulesError('A spell with split second is on the stack.');
   switch (a.type) {
     case 'pass':
       return passPriority(g, a.player, events);
@@ -195,6 +197,11 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
 // ---------------------------------------------------------------------------
 // Lands
 // ---------------------------------------------------------------------------
+
+/** CR 702.61a: whether a spell with split second is on the stack. */
+export function splitSecond(g: GameState): boolean {
+  return g.stack.some((e) => e.kind === 'spell' && g.objects[e.object] && hasKeyword(g, g.objects[e.object]!, 'split_second'));
+}
 
 /** The mana a special action from hand costs: foretell {2}, plot and suspend their own cost. */
 export function exileActionCost(face: FaceDef, kind: 'foretell' | 'plot' | 'suspend'): string | null {
@@ -586,6 +593,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     throw new RulesError('That ability can’t be activated now.');
   }
   if (ability.oncePerTurn && o.activatedTurn?.[index] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
+  if (ability.oncePerGame && o.activatedOnce?.[index]) throw new RulesError('That ability can be activated only once.');
   if (cost.tap) {
     // CR 118.3 / CR 302.6
     if (o.tapped) throw new RulesError(`${name} is already tapped.`);
@@ -620,6 +628,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
+  if (ability.oncePerGame) (o.activatedOnce ??= {})[index] = true;
   payOtherCosts(g, player, o, cost, events, choices.costs);
 
   // CR 602.2: the ability goes on the stack.

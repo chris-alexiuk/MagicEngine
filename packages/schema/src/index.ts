@@ -158,6 +158,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   timing?: 'sorcery';
   /** "Activate only once each turn." */
   oncePerTurn?: true;
+  /** CR 702.177a (exhaust): "Activate only once." */
+  oncePerGame?: true;
   /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a). */
   zone?: 'hand' | 'graveyard';
 }
@@ -270,6 +272,8 @@ export interface ObjectFilter {
   power?: Compare;
   toughness?: Compare;
   manaValue?: Compare;
+  /** CR 702.134a (mentor): power less than the source's. */
+  powerBelowSource?: true;
   /** CR 903.3: a commander. */
   commander?: true;
   /** Any one of these ("creature or Vehicle"). */
@@ -579,10 +583,11 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
+    'remove_counters', 'become_renowned',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
@@ -591,7 +596,7 @@ export const CORE_NODES = {
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked', 'turned_face_up',
+    'player_attacked', 'turned_face_up', 'last_counter_removed',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'],
   /** Counted amounts (AmountExpr kinds). */
@@ -601,7 +606,7 @@ export const CORE_NODES = {
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
-    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness',
+    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker',

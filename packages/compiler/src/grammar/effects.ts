@@ -336,6 +336,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // "Remove a time counter from it" (vanishing, CR 702.63a).
+  const remove = /^[Rr]emove (a|an|one|two|three|\d+) (\S+) counters? from (.+)$/.exec(s);
+  if (remove) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(remove[3]!, b);
+      const amount = parseAmount(remove[1]!);
+      return what && !what.plural && typeof amount === 'number' ? [{ type: 'remove_counters', what: what.ref, counter: remove[2]!, amount }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 702.112a: "it becomes renowned".
+  if (/^(?:it|~) becomes renowned$/.test(s)) return [{ type: 'become_renowned' }];
   // CR 701.57a: "discover N".
   const discover = /^[Dd]iscover (\d+)$/.exec(s);
   if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
@@ -635,6 +647,8 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
 
 /** Keyword actions that are a whole clause on their own. */
 function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
+  // CR 702.112a: "… and it becomes renowned".
+  if (/^(?:it|~) becomes renowned$/i.test(c)) return [{ type: 'become_renowned' }];
   // CR 701.16a: "Investigate" means "Create a Clue token."
   if (/^investigate$/i.test(c)) {
     const clue = parseTokenPhrase('a Clue token', b);

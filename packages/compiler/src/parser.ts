@@ -113,6 +113,17 @@ export class ParserRegistry {
         continue;
       }
 
+      // CR 702.177a: "Exhaust — [Cost]: [Effect]" means "[Cost]: [Effect]. Activate only once."
+      const exhaust = /^Exhaust — (.+)$/.exec(line);
+      if (exhaust) {
+        const node = this.parseBlock([exhaust[1]!], env, line);
+        if (node?.kind === 'activated') {
+          node.oncePerGame = true;
+          if (gate) node.gate = gate;
+          result.abilities.push(node);
+        } else result.unparsed.push(line);
+        continue;
+      }
       const kws = this.keywords.parseLine(line);
       if (kws && gate) {
         // A keyword at a level: "it has [abilities]" while the level holds (granted, layer 6).
