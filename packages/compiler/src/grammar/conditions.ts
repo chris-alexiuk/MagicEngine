@@ -98,6 +98,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'is', of: subject.ref, filter };
   }
   if (/^it's your turn$/.test(t)) return { type: 'your_turn', value: true };
+  // "as long as it's attacking" — "it" being what the ability is about.
+  const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
+  if (itIs && b.it) {
+    const filter = stateFilter(itIs[1]!, b);
+    if (filter) return { type: 'is', of: b.it, filter };
+  }
   // CR 725: "you're the monarch"
   if (/^you're the monarch$|^you are the monarch$/.test(t)) return { type: 'monarch' };
   if (/^there is no monarch$/.test(t)) return { type: 'monarch', none: true };

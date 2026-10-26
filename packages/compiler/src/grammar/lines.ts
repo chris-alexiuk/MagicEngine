@@ -132,6 +132,17 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
   if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  // "Exile a creature card from your graveyard", "Exile two cards from your graveyard" (CR 118.3).
+  const exile = /^[Ee]xile (a|an|one|two|three|four|five) (.+?) from your graveyard$/.exec(item);
+  if (exile && b) {
+    const amount = parseAmount(exile[1]!);
+    if (typeof amount !== 'number') return null;
+    if (/^(?:other )?cards?$/.test(exile[2]!)) return { type: 'exile_cards', amount, other: true };
+    const pf = parseFilter(`${exile[2]} in your graveyard`, b);
+    if (!pf || pf.plural !== amount > 1) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'exile_cards', amount, other: true, filter };
+  }
   return null;
 }
 
@@ -373,6 +384,23 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
+  // "Whenever ~ or another Ally you control enters": the source itself, or another such object.
+  const orSelf = /^~ or (?:another|other) (.+)$/.exec(t);
+  if (orSelf) {
+    const inner = parseTrigger(word, `another ${orSelf[1]}`, b);
+    const subject = inner?.trigger.subject as Ref | undefined;
+    if (!inner || subject?.ref !== 'all') return null;
+    const { other: _o, ...filter } = subject.filter;
+    inner.trigger.subject = { ref: 'all', filter: { ...filter, orSource: true } };
+    return inner;
+  }
+  // "Whenever ~ deals combat damage to a creature" — "that creature" is the creature dealt damage.
+  const hitsCreature = /^~ deals combat damage to a creature$/.exec(t);
+  if (hitsCreature) {
+    b.eventAmount = true;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'deals_combat_damage', subject: { ref: 'self' }, to: 'creature' }, it: { ref: 'self' }, player: null };
+  }
   const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
@@ -402,6 +430,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'gain_life', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
+  // "Whenever you draw your second card each turn"
+  const nth = /^you draw your (first|second|third) card each turn$/.exec(t);
+  if (nth) return { trigger: { type: 'draw', who: 'you', nth: ['first', 'second', 'third'].indexOf(nth[1]!) + 1 }, it: { ref: 'self' }, player: { ref: 'you' } };
   const draw = /^(you draw|enchanted player draws) a card$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
@@ -524,7 +555,14 @@ export const continuousRule: GrammarRule = {
       // "~ gets +2/+2 as long as there are seven or more cards in your graveyard." (the condition last)
       const trailing = /^(.+?) as long as (.+)$/.exec(rest);
       if (trailing && !/^As long as /i.test(rest)) {
-        const cond = attempt(b, (b) => parseCondition(trailing[2]!, b));
+        const cond = attempt(b, (b) => {
+          // "~ has first strike as long as it's attacking": "it" is the subject.
+          const it = b.it;
+          if (/^~ /.test(trailing[1]!)) b.it = { ref: 'self' };
+          const c = parseCondition(trailing[2]!, b);
+          b.it = it;
+          return c;
+        });
         if (!cond) return null;
         conds.push(cond);
         rest = trailing[1]!;
@@ -945,18 +983,28 @@ export const chapterRule: GrammarRule = {
 export const entersWithCountersRule: GrammarRule = {
   id: 'enters_with_counters',
   parse(line, original, ctx) {
-    const m = /^(?:If (.+?), )?~ enters(?: the battlefield)? with (\S+) (\S+) counters? on it\.$/.exec(line);
+    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)? with (\S+) (\S+) counters? on it( for each time it was kicked)?(?: if (.+?))?\.$/.exec(line);
     const amount = m && parseAmount(m[2]!);
     // X is the value paid as it was cast (CR 107.3m).
     if (!m || amount === null || amount === undefined) return null;
-    // CR 702.54a (bloodthirst): "If an opponent was dealt damage this turn, …"; "If ~ was kicked, …".
+    // CR 702.54a (bloodthirst): "If an opponent was dealt damage this turn, …"; "If ~ was kicked, …";
+    // raid's "… if you attacked this turn".
     const env = envOf(ctx);
-    const condition = m[1] ? (env ? parseCondition(m[1], new Binder(env)) : null) : undefined;
+    const condText = m[1] ?? m[5];
+    if (m[1] && m[5]) return null;
+    const condition = condText ? (env ? parseCondition(condText, new Binder(env)) : null) : undefined;
     if (condition === null) return null;
     const node: StaticAbility = {
       kind: 'static',
       text: original,
-      effect: { type: 'enters_with_counters', counter: m[3]!.replace(/−/g, '-'), amount, ...(condition ? { condition } : {}) },
+      effect: {
+        type: 'enters_with_counters',
+        counter: m[3]!.replace(/−/g, '-'),
+        amount,
+        ...(condition ? { condition } : {}),
+        // CR 702.33c (multikicker)
+        ...(m[4] ? { perKick: true } : {}),
+      },
     };
     return node;
   },

@@ -276,6 +276,10 @@ export interface ObjectFilter {
   powerBelowSource?: true;
   /** CR 903.3: a commander. */
   commander?: true;
+  /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
+  counter?: string;
+  /** "~ or another Ally you control": the source itself matches too, whatever else it is. */
+  orSource?: true;
   /** Any one of these ("creature or Vehicle"). */
   anyOf?: ObjectFilter[];
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
@@ -346,6 +350,8 @@ export type AmountExpr = (
   | { kind: 'cast_before'; of: Ref }
   /** CR 903.8: times you've cast your commander from the command zone this game. */
   | { kind: 'commander_casts' }
+  /** CR 702.33c (multikicker): how many times the spell was kicked. */
+  | { kind: 'kicks' }
 ) & { times?: number; plus?: number };
 
 /**
@@ -583,7 +589,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'become_renowned', 'day_night', 'become_saddled',
+    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -600,7 +606,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -609,7 +615,7 @@ export const CORE_NODES = {
     'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
-    'kicker',
+    'kicker', 'multikicker',
   ],
 } as const;
 
@@ -620,7 +626,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (['flashback', 'kicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]
   if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;

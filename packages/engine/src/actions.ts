@@ -400,12 +400,14 @@ function cast(
   modes: number[] | undefined,
   events: GameEvent[],
   costChoices: CostChoices,
-  kicked: boolean,
+  kickedArg: boolean | number,
   altId?: string,
   extras: string[] = [],
   /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
   during?: { free?: boolean; suspended?: true },
 ): void {
+  const kicks = typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
+  const kicked = kicks > 0;
   const o = obj(g, id);
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
@@ -485,10 +487,11 @@ function cast(
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (kicked) {
-    // CR 702.33a: the kicker cost is paid in addition (CR 601.2f).
-    const kicker = face.keywords.find((k) => k.id === 'kicker' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+    // CR 702.33a: the kicker cost is paid in addition (CR 601.2f); CR 702.33c: multikicker, any number of times.
+    const kicker = face.keywords.find((k) => (k.id === 'kicker' || k.id === 'multikicker') && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
     if (!kicker) throw new RulesError(`${face.name} has no kicker cost the engine can pay.`);
-    addCost(cost, parseManaCost(kicker.cost!));
+    if (kicker.id === 'kicker' && kicks > 1) throw new RulesError(`${face.name} can be kicked only once.`);
+    for (let i = 0; i < kicks; i++) addCost(cost, parseManaCost(kicker.cost!));
   }
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, castFace, cost);
@@ -524,7 +527,7 @@ function cast(
     by: player,
     from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile ? 'exile' : 'hand',
     before,
-    ...(kicked ? { kicked: true as const } : {}),
+    ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),

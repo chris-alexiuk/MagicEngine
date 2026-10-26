@@ -260,7 +260,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (pick.length < n) return null;
       discard.push(...pick);
     } else if (c.type === 'exile_cards') {
-      const pick = exileCostCandidates(g, player, source).filter((id) => !exile.includes(id)).slice(0, n);
+      const pick = exileCostCandidates(g, player, source, c).filter((id) => !exile.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       exile.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;

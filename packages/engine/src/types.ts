@@ -136,7 +136,7 @@ export interface GameObject {
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true; paid?: string[]; suspended?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; before?: number; copy?: true; paid?: string[]; suspended?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
@@ -473,7 +473,8 @@ export type Action =
       x?: number;
       autoTap?: boolean;
       /** CR 702.33a: pay the kicker cost too. */
-      kicked?: boolean;
+      /** Kicked (CR 702.33a), or how many times for multikicker (CR 702.33c). */
+      kicked?: boolean | number;
       /** CR 118.9: an alternative cost to cast it with, by id ("evoke", "dash", "escape", "alt"). */
       alt?: string;
       /** CR 601.2f: optional additional costs paid, by id ("buyback", "entwine"). */
@@ -504,7 +505,8 @@ export type Action =
 export type GameEvent =
   | { type: 'game_started'; order: PlayerId[] }
   | { type: 'shuffled'; player: PlayerId }
-  | { type: 'drew'; player: PlayerId; object: ObjectId }
+  /** nth: which card this is that the player drew this turn. */
+  | { type: 'drew'; player: PlayerId; object: ObjectId; nth?: number }
   | { type: 'mulligan'; player: PlayerId; count: number }
   | { type: 'kept'; player: PlayerId; bottomed: number }
   | { type: 'turn_began'; turn: number; player: PlayerId }

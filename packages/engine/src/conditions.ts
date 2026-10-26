@@ -21,10 +21,12 @@ export interface TurnLog {
   noncreatureCast: PlayerId[];
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
   damagedPlayers: PlayerId[];
+  /** Cards each player has drawn this turn. */
+  drawn?: Record<PlayerId, number>;
 }
 
 export function newTurnLog(): TurnLog {
-  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [] };
+  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [], drawn: {} };
 }
 
 /** Records the events of one batch in the turn log. */

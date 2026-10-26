@@ -3,7 +3,7 @@ import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, matchesFilter } from './characteristics.js';
+import { chars, hasKeyword, hasRule, matchesFilter, power } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -85,8 +85,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   deal_damage(node, ctx) {
-    const source = ctx.source;
+    // "Target creature you control deals damage equal to its power to …": that creature is the source.
+    const source = node.from ? refObjects(ctx, ref(node, 'from'))[0] : ctx.source;
     if (!source) return true;
+    if (node.from && source.zone !== 'battlefield') return true;
     const n = amountOf(ctx, node.amount);
     let dealt = 0;
     for (const to of refRecipients(ctx, ref(node, 'to'))) dealt += dealDamage(ctx.g, source, to, n, false, ctx.events);
@@ -334,6 +336,46 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       o.face = next;
       ctx.events.push({ type: 'transformed', object: o.id, face: next });
     }
+    return true;
+  },
+
+  // CR 701.14a: each creature deals damage equal to its power to the other.
+  fight(node, ctx) {
+    const g = ctx.g;
+    const [a] = refObjects(ctx, ref(node, 'a'));
+    const [d] = refObjects(ctx, ref(node, 'b'));
+    // CR 701.14b: if either isn't a creature on the battlefield (or is an illegal target), neither fights.
+    const ok = (o: GameObject | undefined): o is GameObject => Boolean(o && o.zone === 'battlefield' && chars(g, o).types.includes('Creature'));
+    if (!ok(a) || !ok(d)) return true;
+    const pa = Math.max(0, power(g, a));
+    const pd = Math.max(0, power(g, d));
+    // CR 701.14d: not combat damage. CR 701.14c: a creature that fights itself deals twice its power to itself.
+    for (const [from, to, n] of [[a, d, pa], [d, a, pd]] as const) {
+      const dealt = dealDamage(g, from, { kind: 'permanent', object: to.id }, n, false, ctx.events);
+      if (dealt > 0 && hasKeyword(g, from, 'lifelink')) gainLife(ctx, from.controller, dealt);
+    }
+    return true;
+  },
+
+  // "Return a land you control to its owner's hand." — chosen as it resolves (CR 608.2d).
+  move_chosen(node, ctx) {
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount ?? 1);
+    const candidates = () => g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, node.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null }));
+    const answer = answerOf(ctx, 'choose_objects');
+    let chosen: string[];
+    if (answer) {
+      const list = candidates();
+      if (answer.objects.length !== Math.min(n, list.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => list.includes(id))) {
+        throw new RulesError(`Choose ${Math.min(n, list.length)} permanent(s).`);
+      }
+      chosen = answer.objects;
+    } else {
+      const list = candidates();
+      if (list.length > n) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: list, min: n, max: n, text: `Choose ${n === 1 ? 'a permanent' : `${n} permanents`} to return to ${n === 1 ? 'its' : 'their'} owner's hand.` } };
+      chosen = list;
+    }
+    for (const id of chosen) moveObject(g, id, 'hand', ctx.events);
     return true;
   },
 
@@ -1131,6 +1173,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   deals_combat_damage(t, check) {
     const e = check.event;
+    // "Whenever ~ deals combat damage to a creature" — the creature is the trigger's object.
+    if (t.to === 'creature') {
+      if (e.type !== 'damage' || !e.combat || e.to.kind !== 'permanent' || check.sourceLeft) return [];
+      const src = check.g.objects[e.source];
+      const hit = check.g.objects[e.to.object];
+      if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true })) return [];
+      return chars(check.g, hit).types.includes('Creature') ? [{ object: refTo(hit), amount: e.amount }] : [];
+    }
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
     if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
     const o = check.g.objects[e.source];
@@ -1235,6 +1285,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'drew' || check.sourceLeft) return [];
     if (e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
+    // "Whenever you draw your second card each turn"
+    if (t.nth && e.nth !== t.nth) return [];
     return [{ player: e.player }];
   },
   cast(t, check) {
@@ -1290,7 +1342,9 @@ export const corePlugin: MechanicPlugin = {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
       if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       // CR 107.3m: X is the X paid for the spell that became this permanent.
-      const base = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      const per = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      // CR 702.33c: "… a +1/+1 counter on it for each time it was kicked"
+      const base = node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per;
       // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.
       const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter: String(node.counter) });
       if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;

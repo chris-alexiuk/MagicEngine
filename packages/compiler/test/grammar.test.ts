@@ -607,3 +607,30 @@ describe('day and night, saddle (slice 17)', () => {
     expect(one('Whenever this creature attacks while saddled, create a Treasure token.', 'Creature — Horse Mount')).toMatchObject({ trigger: { type: 'attacks', saddled: true } });
   });
 });
+
+describe('fight, bite and one-line patterns (slice 18)', () => {
+  it('fight and "deals damage equal to its power"', () => {
+    expect(one("Target creature you control fights target creature you don't control.", 'Sorcery')).toMatchObject({
+      effects: [{ type: 'fight', a: { ref: 'target', index: 0 }, b: { ref: 'target', index: 1 } }],
+    });
+    expect(one("Target creature you control deals damage equal to its power to target creature you don't control.", 'Instant')).toMatchObject({
+      effects: [{ type: 'deal_damage', from: { ref: 'target', index: 0 }, to: { ref: 'target', index: 1 }, amount: { kind: 'stat', stat: 'power' } }],
+    });
+  });
+  it('"… instead" replaces the sentence before it, unless it brings new targets', () => {
+    expect(one('You gain 4 life. If a creature died this turn, you gain 8 life instead.', 'Instant')).toMatchObject({
+      effects: [{ type: 'if', effects: [{ type: 'gain_life', amount: 8 }], else: [{ type: 'gain_life', amount: 4 }] }],
+    });
+    expect(parse('Exile target artifact or enchantment. If this spell was kicked, exile target nonland permanent instead.', 'Instant', 'Spell').unparsed).toHaveLength(1);
+  });
+  it('counters filters, "~ or another", "it enters with", raid, multikicker, chosen returns', () => {
+    expect(one('Each creature you control with a +1/+1 counter on it has trample.', 'Enchantment')).toMatchObject({ effect: { affected: { filter: { counter: '+1/+1' } } } });
+    expect(one('Whenever this creature or another Ally you control enters, you gain 1 life.', 'Creature — Ally')).toMatchObject({
+      trigger: { subject: { filter: { orSource: true, subtypes: ['Ally'] } } },
+    });
+    expect(one('Raid — This creature enters with a +1/+1 counter on it if you attacked this turn.', 'Creature — Orc')).toMatchObject({ effect: { type: 'enters_with_counters', condition: {} } });
+    expect(one('This creature enters with a +1/+1 counter on it for each time it was kicked.', 'Creature — Hydra')).toMatchObject({ effect: { perKick: true } });
+    expect(one("When this land enters, return a land you control to its owner's hand.", 'Land')).toMatchObject({ effects: [{ type: 'move_chosen', amount: 1, to: 'hand' }] });
+    expect(one('Whenever you draw your second card each turn, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'draw', nth: 2 } });
+  });
+});

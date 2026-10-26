@@ -43,8 +43,10 @@ function checkChosen(chosen: ObjectId[] | undefined, candidates: ObjectId[], n: 
 
 /** Non-mana costs (CR 118): checked before anything is paid, paid together with the rest (CR 601.2h). */
 /** Other cards in your graveyard that could be exiled to pay a cost. */
-export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject): ObjectId[] {
-  return zoneList(g, 'graveyard', player).filter((id) => id !== o.id);
+export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject, c?: EffectNode): ObjectId[] {
+  const filter = c?.filter as ObjectFilter | undefined;
+  // "Exile a creature card from your graveyard"
+  return zoneList(g, 'graveyard', player).filter((id) => id !== o.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone: 'graveyard' }, { controller: player, source: o })));
 }
 
 export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, cost: Cost, choices: CostChoices = {}): void {
@@ -78,7 +80,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
     } else if (c.type === 'exile_cards') {
       const n = Number(c.amount ?? 1);
-      const ok = exileCostCandidates(g, player, o);
+      const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
       if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your graveyard to exile.`);
     } else if (c.type === 'crew') {

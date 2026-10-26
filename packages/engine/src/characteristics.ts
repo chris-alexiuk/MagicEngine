@@ -408,6 +408,8 @@ export function matchesFilter(
   c: Characteristics = chars(g, o),
 ): boolean {
   if (!ctx.anyZone && o.zone !== (f.zone ?? 'battlefield')) return false;
+  // "~ or another Ally you control": the source itself always matches.
+  if (f.orSource && ctx.source && o.id === ctx.source.id) return true;
   const controller = ctx.lastController ?? o.controller;
   if (f.types && !f.types.some((t) => c.types.includes(t))) return false;
   if (f.allTypes && !f.allTypes.every((t) => c.types.includes(t))) return false;
@@ -442,6 +444,8 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  // "with a +1/+1 counter on it" (CR 122.1)
+  if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).

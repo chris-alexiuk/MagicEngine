@@ -41,8 +41,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const sentences = splitSentences(text);
     if (!sentences) return null;
     const out: EffectNode[] = [];
+    // The plain effects of the last sentence, for a following "… instead".
+    let previous: EffectNode[] = [];
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
+      if (i > 0 && !/ instead$/.test(s)) previous = [];
       // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
         s = `${s.replace(/, and put /, ', put ')}, then shuffle`;
@@ -107,6 +110,25 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
+      // "If this spell was kicked, that creature gets -5/-5 until end of turn instead." — the earlier
+      // sentence's effect, replaced when the condition holds.
+      const instead = iff && cond && / instead$/.test(iff[2]!) && !/would/.test(iff[2]!) ? iff[2]!.replace(/ instead$/, '') : null;
+      if (instead && previous.length) {
+        // New targets would be chosen whether or not the condition holds (Tear Asunder's kicker picks
+        // different targets): not this shape.
+        const targetsBefore = b.targets.length;
+        let yes = parseSentence(capitalise(instead), b);
+        if (b.targets.length !== targetsBefore) return null;
+        // "If this spell was kicked, it deals 5 damage instead." — the same damage, a new amount.
+        const more = /^(?:it|~) deals (\S+) damage$/i.exec(instead);
+        const n = more ? parseAmount(more[1]!) : null;
+        if (!yes && n !== null && previous.every((x) => x.type === 'deal_damage')) yes = previous.map((x) => ({ ...structuredClone(x), amount: n }));
+        if (!yes) return null;
+        const replaced = out.splice(out.length - previous.length, previous.length);
+        out.push({ type: 'if', cond: cond!, effects: yes, else: replaced });
+        previous = [];
+        continue;
+      }
       if (iff && cond) {
         const yes = parseSentence(capitalise(iff[2]!), b);
         if (!yes) return null;
@@ -205,6 +227,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const effects = parseSentence(s, b);
       if (!effects) return null;
       out.push(...effects);
+      previous = effects;
     }
     return out.length ? out : null;
   });
@@ -350,6 +373,43 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const becomes = /^[Ii]t becomes (day|night)$/.exec(s);
   if (becomes) return [{ type: 'day_night', to: becomes[1] }];
   // CR 702.171a (saddle): "This permanent becomes saddled until end of turn."
+  // CR 701.14a: "Target creature you control fights target creature you don't control." / "… fight each other."
+  const fight = /^(.+?) fights (.+)$/.exec(s) ?? /^(.+?) and (.+?) fight each other$/.exec(s);
+  if (fight) {
+    const r = attempt(b, (b) => {
+      const a = parseObjectRef(fight[1]!, b);
+      const other = a && !a.plural ? parseObjectRef(fight[2]!, b) : null;
+      return a && other && !other.plural ? [{ type: 'fight', a: a.ref, b: other.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // "Target creature you control deals damage equal to its power to target creature you don't control." —
+  // the creature is the source of the damage (CR 120.3); "… deals damage to itself equal to its power".
+  const bite = /^(.+?) deals damage equal to (?:its|~'s) power to (.+)$/.exec(s) ?? /^(.+?) deals damage to (itself) equal to its power$/.exec(s);
+  // (The source itself dealing the damage is the ordinary case, read elsewhere.)
+  const sourceItself = bite && (bite[1] === '~' || (/^it$/i.test(bite[1]!) && (b.it?.ref === 'self' || b.itIsSource)));
+  if (bite && !sourceItself) {
+    const r = attempt(b, (b) => {
+      const from = parseObjectRef(bite[1]!, b);
+      if (!from || from.plural) return null;
+      const to = bite[2] === 'itself' ? [from.ref] : parseRecipients(bite[2]!, b);
+      if (!to) return null;
+      return to.map((t) => ({ type: 'deal_damage', amount: { kind: 'stat', stat: 'power', of: from.ref }, to: t, from: from.ref }));
+    });
+    if (r) return r;
+  }
+  // "Return a land you control to its owner's hand." — chosen as it resolves, not targeted (CR 608.2d).
+  const chosen = /^[Rr]eturn (a|an|another|one|two) (.+?) to (?:its|their) owners?'s? hands?$/.exec(s);
+  if (chosen) {
+    const r = attempt(b, (b) => {
+      const amount = chosen[1] === 'another' ? 1 : parseAmount(chosen[1]!);
+      const pf = parseFilter(chosen[2]!, b);
+      if (typeof amount !== 'number' || !pf || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
+      if (chosen[1] === 'another') pf.filter.other = true;
+      return [{ type: 'move_chosen', filter: pf.filter, amount, to: 'hand' }];
+    });
+    if (r) return r;
+  }
   // "Target Mount you control becomes saddled until end of turn."
   const saddled = /^(.+?) becomes saddled until end of turn$/.exec(s);
   if (saddled) {
@@ -629,6 +689,10 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
   // CR 614.1a: "If that creature would die this turn, exile it instead."
   const dies = /^If (.+?) would die this turn, exile it instead$/.exec(c);
   if (dies) {
+    // "a creature dealt damage this way": what the spell's damage was dealt to.
+    if (/^an? (?:creature|permanent|creature or planeswalker) dealt damage this way$/.test(dies[1]!)) {
+      return b.damaged ? [{ type: 'exile_if_dies', what: b.damaged }] : null;
+    }
     const what = parseObjectRef(dies[1]!, b);
     return what ? [{ type: 'exile_if_dies', what: what.ref }] : null;
   }
@@ -826,6 +890,8 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     const first = parseRecipients(second ? second[1]! : m[3]!, b);
     if (!first) return null;
     for (const to of first) out.push({ type: 'deal_damage', amount, to });
+    // "If a creature dealt damage this way would die this turn, …"
+    if (first.length === 1) b.damaged = first[0]!;
     if (second) {
       const amount2 = parseAmount(second[2]!);
       const rest = amount2 !== null ? parseRecipients(second[3]!, b) : null;

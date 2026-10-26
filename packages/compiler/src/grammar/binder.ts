@@ -34,6 +34,8 @@ export class Binder {
   itIsSource = false;
   /** The trigger event has an amount, so "that much" / "that many" means it. */
   eventAmount = false;
+  /** What the last "deals N damage to …" dealt damage to ("a creature dealt damage this way"). */
+  damaged: Ref | null = null;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -46,6 +48,7 @@ export class Binder {
     b.selfZone = this.selfZone;
     b.itIsSource = this.itIsSource;
     b.eventAmount = this.eventAmount;
+    b.damaged = this.damaged;
     return b;
   }
 
@@ -57,6 +60,7 @@ export class Binder {
     this.selfZone = other.selfZone;
     this.itIsSource = other.itIsSource;
     this.eventAmount = other.eventAmount;
+    this.damaged = other.damaged;
   }
 
   addTarget(spec: TargetSpec): Ref {

@@ -260,7 +260,10 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): v
     return;
   }
   moveObject(g, top, 'hand', events);
-  events.push({ type: 'drew', player, object: top });
+  // "Whenever you draw your second card each turn": count them as they're drawn.
+  const drawn = (g.turnLog.drawn ??= {});
+  drawn[player] = (drawn[player] ?? 0) + 1;
+  events.push({ type: 'drew', player, object: top, nth: drawn[player] });
 }
 
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
