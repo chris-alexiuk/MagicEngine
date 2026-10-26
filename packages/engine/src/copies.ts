@@ -1,4 +1,5 @@
 import { SUBTYPES, type CardDef, type CopyExcept, type FaceDef } from '@mtg/schema';
+import { faceDownKey } from './face-down.js';
 import type { GameObject, GameState } from './types.js';
 
 /**
@@ -18,6 +19,8 @@ export interface CopyRef {
 
 /** CR 707.2: what a copy of this object copies. */
 export function copiable(o: GameObject): CopyRef {
+  // CR 708.2: a face-down permanent's copiable values are the face-down ones.
+  if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) return { card: faceDownKey(o), face: 0 };
   return o.copyOf ? { ...o.copyOf } : { card: o.card, face: o.face };
 }
 

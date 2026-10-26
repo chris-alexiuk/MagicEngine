@@ -99,6 +99,8 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** CR 708: face down, and how it got that way (its own card is still there to turn face up). */
+  faceDown?: 'morph' | 'disguise' | 'manifest' | 'cloak';
   /** When it came under its controller's control (a clock value; CR 702.30a echo). */
   arrived?: number;
   /** CR 707.2: the card (and face) whose copiable values this permanent has, if it's a copy. */
@@ -441,6 +443,8 @@ export type Action =
   | { type: 'pass'; player: PlayerId }
   | { type: 'choose'; player: PlayerId; answer: ChoiceAnswer }
   | { type: 'play_land'; player: PlayerId; object: ObjectId; face?: number }
+  /** CR 702.37e / 116.2b: turn a face-down permanent you control face up by paying its cost (a special action). */
+  | { type: 'turn_face_up'; player: PlayerId; object: ObjectId; autoTap?: boolean }
   | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor; costs?: CostChoices }
   | {
       type: 'cast';
@@ -507,6 +511,7 @@ export type GameEvent =
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
+  | { type: 'turned_face_up'; object: ObjectId }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   | { type: 'countered'; object: ObjectId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
@@ -595,7 +600,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number }; granted?: AbilityNode[] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */

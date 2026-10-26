@@ -1,5 +1,6 @@
 import { auraTargetSpec } from './permanents.js';
 import { payWithHelpers } from './helpers-cost.js';
+import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
 import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
@@ -89,6 +90,8 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
       return passPriority(g, a.player, events);
     case 'play_land':
       return playLand(g, a.player, a.object, a.face ?? 0, events);
+    case 'turn_face_up':
+      return turnFaceUp(g, a.player, a.object, a.autoTap ?? false, events);
     case 'cast':
       return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? []);
     case 'activate':
@@ -188,6 +191,28 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
 // Lands
 // ---------------------------------------------------------------------------
 
+/** CR 702.37e / 116.2b: turn a face-down permanent you control face up — a special action. */
+function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: boolean, events: GameEvent[]): void {
+  const o = obj(g, id);
+  if (!o.faceDown || o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You can only turn a face-down permanent you control face up.');
+  const costText = faceUpCost(g, o);
+  if (!costText) throw new RulesError('That can’t be turned face up.');
+  const cost = parseManaCost(costText);
+  if (cost.unsupported.length || cost.x) throw new RulesError(`Paying ${costText} isn’t supported yet.`);
+  if (wantsAutoTap) autoTap(g, player, cost, 0, events);
+  const left = payFromPool(g.players[player]!.pool, cost, 0);
+  if (!left) throw new RulesError(`Not enough mana to pay ${costText}.`);
+  g.players[player]!.pool = left;
+  const face = g.cards[o.card]!.faces[o.face] ?? g.cards[o.card]!.faces[0]!;
+  // CR 708.8: it's the same permanent, now with its own characteristics; nothing about entering happens.
+  delete o.faceDown;
+  // CR 702.37b: megamorph — a +1/+1 counter as it's turned face up.
+  if (face.keywords.some((k) => k.id === 'megamorph')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+  events.push({ type: 'turned_face_up', object: id });
+  // CR 116.3: a player who takes a special action receives priority afterward.
+  givePriority(g, player);
+}
+
 function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: number, events: GameEvent[]): void {
   const o = obj(g, id);
   const def = g.cards[o.card]!;
@@ -277,7 +302,24 @@ export function additionalCosts(face: FaceDef): EffectNode[] {
 
 /** CR 118.9 / 601.2f: the alternative and optional additional costs a face offers as it's cast. */
 export function castOptions(face: FaceDef): CastOptionNode[] {
-  return printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
+  const out = printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
+  // CR 702.37a / 702.168a: morph, megamorph and disguise cast it face down for {3}.
+  for (const kw of face.keywords) {
+    if ((FACE_DOWN_KEYWORDS as readonly string[]).includes(kw.id) && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost)) {
+      out.push({ type: 'cast_option', id: kw.id, kind: 'alternative', cost: { mana: '{3}' } });
+    }
+  }
+  return out;
+}
+
+/** CR 702.37e / 701.40b: the cost to turn a face-down permanent face up, or null if it can't be. */
+export function faceUpCost(g: GameState, o: GameObject): string | null {
+  const face = g.cards[o.card]!.faces[o.face] ?? g.cards[o.card]!.faces[0]!;
+  const kw = face.keywords.find((k) => (FACE_DOWN_KEYWORDS as readonly string[]).includes(k.id) && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+  if (kw) return kw.cost!;
+  // A manifested or cloaked creature card: its mana cost.
+  if ((o.faceDown === 'manifest' || o.faceDown === 'cloak') && face.types.includes('Creature') && face.manaCost) return face.manaCost;
+  return null;
 }
 
 /** The flashback cost, if the face has flashback with a mana cost the engine can pay. */
@@ -318,6 +360,9 @@ function cast(
   if (alt?.condition && !evalCondition(alt.condition, { g, controller: player, source: o, events: [], targets: [], x, memo: {} })) {
     throw new RulesError(`${face.name} can’t be cast for that cost now.`);
   }
+  // CR 702.37c / 702.168b: cast face down, it's a 2/2 creature spell with no text (CR 708.4).
+  const faceDown = alt && (FACE_DOWN_KEYWORDS as readonly string[]).includes(alt.id) ? (alt.id === 'disguise' ? 'disguise' : 'morph') : undefined;
+  const castFace = faceDown ? faceDownFace({ ...o, faceDown }) : face;
   // CR 702.42a: entwine chooses every mode.
   if (added.some((a) => a.allModes)) {
     const modal = face.abilities.find((a): a is SpellAbility => a.kind === 'spell' && Boolean(a.modes));
@@ -343,16 +388,16 @@ function cast(
 
   // CR 117.1a: instants any time you have priority; anything else during your main phase with an empty stack.
   // CR 702.8a: flash lets a card be cast any time you could cast an instant.
-  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
+  const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
   if (!instantSpeed) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
-      throw new RulesError(`${face.name} can only be cast during your main phase while the stack is empty.`);
+      throw new RulesError(`${faceDown ? 'A face-down creature' : face.name} can only be cast during your main phase while the stack is empty.`);
     }
   }
 
   // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
   // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
-  const program = spellProgram(face, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }), added.some((a) => a.allModes));
+  const program = spellProgram(castFace, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }), added.some((a) => a.allModes));
   const targets = program
     ? chooseTargets(g, player, program.specs, chosenTargets, o)
     : chosenTargets?.some((t) => t.length)
@@ -373,7 +418,7 @@ function cast(
     addCost(cost, parseManaCost(kicker.cost!));
   }
   // CR 601.2f: then increases and reductions.
-  applyCostModifiers(g, player, o, face, cost);
+  applyCostModifiers(g, player, o, castFace, cost);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
   const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
   const helping = costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length;
@@ -381,7 +426,7 @@ function cast(
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
-  const additional: Cost = { other: [...additionalCosts(face), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
+  const additional: Cost = { other: [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
   checkOtherCosts(g, player, o, additional, costChoices);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
   if (wantsAutoTap) autoTap(g, player, cost, x, events);
@@ -394,7 +439,8 @@ function cast(
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
-  moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
+  moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
+  if (faceDown) ensureFaceDownDefs(g);
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   if (flashback) o.exileOnLeave = true;
   // CR 702.40a: storm counts the spells cast before this one this turn.

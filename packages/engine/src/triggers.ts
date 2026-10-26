@@ -19,7 +19,8 @@ import {
   type Target,
   type TriggerInfo,
 } from './types.js';
-import { livePlayers, abilitySources } from './zones.js';
+import { faceOf, livePlayers, abilitySources } from './zones.js';
+import { faceDownFace } from './face-down.js';
 
 /**
  * Triggered abilities (CR 603). Events are checked in batches: after each action,
@@ -30,7 +31,7 @@ import { livePlayers, abilitySources } from './zones.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
-  'class_level',
+  'class_level', 'turned_face_up',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
@@ -99,7 +100,14 @@ function collect(g: GameState, events: GameEvent[]): void {
     // CR 603.10a: a copy that left had the copied abilities (CR 707.2).
     const last = c.left ? g.lastKnown?.[c.o.id] : undefined;
     const at = c.left ? (last?.copyOf && last.zcc === c.o.zcc - 1 ? last.copyOf : { card: c.o.card, face: c.face }) : (c.o.copyOf ?? { card: c.o.card, face: c.face });
-    const face = g.cards[at.card]?.faces[at.face];
+    // CR 708.2: face down, it has no abilities (bar ward from disguise or cloak).
+    const leftFaceDown = c.left && last?.faceDown && last.zcc === c.o.zcc - 1;
+    const face =
+      !c.left && c.o.faceDown && (c.o.zone === 'battlefield' || c.o.zone === 'stack')
+        ? faceOf(g, c.o)
+        : leftFaceDown
+          ? faceDownFace({ ...c.o, faceDown: last.faceDown })
+          : g.cards[at.card]?.faces[at.face];
     if (!face) return [];
     const lastGranted = last && last.zcc === c.o.zcc - 1 ? (last.granted ?? []) : [];
     const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);

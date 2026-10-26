@@ -1,3 +1,4 @@
+import { faceDownFace } from './face-down.js';
 import type { ExileInsteadNode, FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
@@ -11,6 +12,8 @@ export function obj(g: GameState, id: ObjectId): GameObject {
 }
 
 export function faceOf(g: GameState, o: GameObject): FaceDef {
+  // CR 708.2: face down on the battlefield or the stack, it has only the face-down characteristics.
+  if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) return faceDownFace(o);
   // CR 707.2 / 613.2a: a copy has the copiable values of what it copies (layer 1).
   const at = o.copyOf ?? o;
   const def = g.cards[at.card];
@@ -29,6 +32,7 @@ export function abilitySources(g: GameState): ObjectId[] {
 
 /** CR 202.3: mana value, from the mana cost it has (a copy's is the original's, CR 707.2). */
 export function manaValueOf(g: GameState, o: GameObject): number {
+  if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) return 0; // CR 708.2: no mana cost
   return g.cards[(o.copyOf ?? o).card]?.cmc ?? 0;
 }
 
@@ -87,7 +91,7 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number> } = {},
+  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown'] } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
@@ -114,6 +118,7 @@ export function moveObject(
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
       ...(granted.length ? { granted } : {}),
+      ...(o.faceDown ? { faceDown: o.faceDown } : {}),
     };
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
@@ -133,6 +138,13 @@ export function moveObject(
   delete o.attachedTo;
   delete o.attachedToPlayer;
   delete o.copyOf;
+  // CR 708.9: a face-down permanent or spell that leaves is revealed; a face-down spell resolves face down.
+  const faceDown = opts.faceDown ?? (from === 'stack' && to === 'battlefield' ? o.faceDown : undefined);
+  if (faceDown) o.faceDown = faceDown;
+  else if (o.faceDown) {
+    delete o.faceDown;
+    events.push({ type: 'revealed', player: o.owner, objects: [o.id] });
+  }
   delete o.regenShields;
   delete o.activatedTurn;
   delete o.triggeredTurn;

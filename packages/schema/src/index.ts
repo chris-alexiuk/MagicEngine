@@ -578,7 +578,7 @@ export const CORE_NODES = {
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
-    'players_do', 'emblem', 'copy_spell',
+    'players_do', 'emblem', 'copy_spell', 'manifest',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -591,7 +591,7 @@ export const CORE_NODES = {
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked',
+    'player_attacked', 'turned_face_up',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'],
   /** Counted amounts (AmountExpr kinds). */
@@ -601,7 +601,7 @@ export const CORE_NODES = {
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
-    'flashback', 'convoke', 'delve', 'improvise',
+    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker',
@@ -615,7 +615,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (kw.id === 'flashback' || kw.id === 'kicker') return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (kw.id === 'flashback' || kw.id === 'kicker' || kw.id === 'morph' || kw.id === 'megamorph' || kw.id === 'disguise') return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;
 }
 

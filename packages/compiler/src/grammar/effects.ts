@@ -317,6 +317,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 701.40a / 701.58a: "Manifest the top card of your library", "cloak the top two cards of your library".
+  const manifest = /^([Mm]anifest|[Cc]loak) the top (card|two cards|three cards) of your library$/.exec(s);
+  if (manifest) {
+    const amount = manifest[2] === 'card' ? 1 : manifest[2] === 'two cards' ? 2 : 3;
+    return [{ type: 'manifest', amount, ...(/^[Cc]loak/.test(manifest[1]!) ? { cloak: true } : {}) }];
+  }
   // CR 114.1: "You get an emblem with "…"" (planeswalkers' ultimates).
   const emblem = /^[Yy]ou get an emblem with (.+)$/.exec(s);
   if (emblem) {

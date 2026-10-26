@@ -3,8 +3,9 @@ import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
 import { helperChoices } from './helpers-cost.js';
+import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { additionalCosts, castOptions, flashbackCost } from './actions.js';
+import { additionalCosts, castOptions, faceUpCost, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -72,6 +73,15 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   }
   // CR 702.138a: escape from the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) out.push(...optionCasts(g, player, g.objects[id]!, mainPhaseEmptyStack, true));
+
+  // CR 702.37e: turning face-down permanents face up (a special action, any time with priority).
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (!o.faceDown || o.controller !== player) continue;
+    const costText = faceUpCost(g, o);
+    const cost = costText ? parseManaCost(costText) : null;
+    if (cost && !cost.unsupported.length && !cost.x && planAutoTap(g, player, cost)) out.push({ type: 'turn_face_up', player, object: id, autoTap: true });
+  }
 
   // CR 702.34a: flashback spells in the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) {
@@ -160,9 +170,15 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   const options = castOptions(face);
   if (!options.length || face.types.includes('Land')) return [];
   const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
-  if (!instantSpeed && !sorcerySpeed) return [];
   const out: Action[] = [];
   for (const opt of options) {
+    // CR 702.37c: cast face down, it's a creature spell with no text.
+    if ((FACE_DOWN_KEYWORDS as readonly string[]).includes(opt.id)) {
+      if (fromGraveyard || !sorcerySpeed) continue;
+      if (planAutoTap(g, player, parseManaCost('{3}'))) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
+      continue;
+    }
+    if (!instantSpeed && !sorcerySpeed) continue;
     if ((opt.zone === 'graveyard') !== fromGraveyard) continue;
     if (opt.kind === 'additional' && fromGraveyard) continue;
     if (opt.condition && !evalCondition(opt.condition, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) continue;

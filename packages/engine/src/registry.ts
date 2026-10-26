@@ -129,6 +129,8 @@ export function canAutomate(ability: { effects: EffectNode[] }): boolean {
 }
 
 export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEvent[]): void {
+  // CR 708.3: a permanent that enters face down has no abilities as it enters.
+  if (o.faceDown) return;
   const at = o.copyOf ?? o;
   const def = g.cards[at.card];
   const face = def?.faces[at.face] ?? def?.faces[0];

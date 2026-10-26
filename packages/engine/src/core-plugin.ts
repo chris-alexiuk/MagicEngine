@@ -12,6 +12,7 @@ import { payDuringResolution } from './payment.js';
 import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copySpell } from './spell-copies.js';
+import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
@@ -693,6 +694,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 701.40a / 701.58a: manifest or cloak the top card(s) of your library.
+  manifest(node, ctx) {
+    const n = amountOf(ctx, node.amount ?? 1);
+    ensureFaceDownDefs(ctx.g);
+    for (const id of zoneList(ctx.g, 'library', ctx.controller).slice(0, n)) {
+      moveObject(ctx.g, id, 'battlefield', ctx.events, { controller: ctx.controller, faceDown: node.cloak ? 'cloak' : 'manifest' });
+    }
+    return true;
+  },
+
   // CR 114.1: "You get an emblem with "…"".
   emblem(node, ctx) {
     const face: FaceDef = {
@@ -989,6 +1000,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
+  },
+  // "When ~ is turned face up" (CR 708.8: it doesn't enter again).
+  turned_face_up(t, check) {
+    const e = check.event;
+    if (e.type !== 'turned_face_up' || check.sourceLeft) return [];
+    const o = check.g.objects[e.object];
+    return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o) }] : [];
   },
   // CR 716.2a: "When this Class becomes level 2"
   becomes_level(t, check) {

@@ -543,3 +543,15 @@ describe('upkeep costs and paying with permanents', () => {
     for (const kw of ['Convoke', 'Delve', 'Improvise']) expect(parse(kw, 'Sorcery', 'Spell').manualKeywords).toEqual([]);
   });
 });
+
+describe('face-down cards (CR 708)', () => {
+  it('morph, megamorph and disguise with mana costs are applied; "when ~ is turned face up"; manifest', () => {
+    const r = parse('When this creature is turned face up, draw a card.\nMorph {2}{R}', 'Creature — Ogre', 'Ogre');
+    expect(r.unparsed).toEqual([]);
+    expect(r.manualKeywords ?? []).toEqual([]);
+    expect(r.abilities[0]).toMatchObject({ trigger: { type: 'turned_face_up', subject: { ref: 'self' } } });
+    expect(parse('Morph—Reveal a white card in your hand.', 'Creature — Bird', 'Bird').manualKeywords).toHaveLength(1);
+    expect(one('Manifest the top card of your library.', 'Sorcery')).toMatchObject({ effects: [{ type: 'manifest', amount: 1 }] });
+    expect(one('Cloak the top two cards of your library.', 'Sorcery')).toMatchObject({ effects: [{ type: 'manifest', amount: 2, cloak: true }] });
+  });
+});

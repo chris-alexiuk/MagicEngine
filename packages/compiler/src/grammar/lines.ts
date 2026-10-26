@@ -268,6 +268,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
   }
 
+  // CR 702.37 / 708: "When ~ is turned face up"
+  if (t === '~ is turned face up') return { trigger: { type: 'turned_face_up', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // CR 716.2a: "When this Class becomes level 2"
   const level = /^~ becomes level (\d+)$/.exec(t);
   if (level) return { trigger: { type: 'becomes_level', level: Number(level[1]) }, it: { ref: 'self' }, player: null };

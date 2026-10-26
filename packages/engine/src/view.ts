@@ -1,4 +1,5 @@
 import type { CardDef } from '@mtg/schema';
+import { faceDownDef, faceDownKey } from './face-down.js';
 import { playerRule } from './player-rules.js';
 import type { GameObject, GameState, ObjectId, PendingChoice, PlayerId } from './types.js';
 
@@ -60,8 +61,19 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   for (const id of visible) {
     const o = g.objects[id];
     if (!o) continue;
+    if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack') && o.controller !== viewer) {
+      // CR 708.5: others see only a face-down card.
+      const key = faceDownKey(o);
+      objects[id] = { ...structuredClone(o), card: key, face: 0 };
+      delete objects[id]!.copyOf;
+      delete objects[id]!.cast;
+      cards[key] = faceDownDef(key)!;
+      continue;
+    }
     objects[id] = structuredClone(o);
     cards[o.card] = g.cards[o.card]!;
+    // A copy's characteristics come from the card it copies (CR 707.2).
+    if (o.copyOf && g.cards[o.copyOf.card]) cards[o.copyOf.card] = g.cards[o.copyOf.card]!;
   }
 
   const pending: PlayerView['pending'] = !g.pending
