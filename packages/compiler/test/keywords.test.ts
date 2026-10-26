@@ -26,6 +26,8 @@ describe('keyword lines', () => {
     ['Partner with Pir, Imaginative Rascal', [{ id: 'partner_with', text: 'Pir, Imaginative Rascal' }]],
     ['Enchant creature', [{ id: 'enchant', text: 'creature' }]],
     ['Cumulative upkeep {1}', [{ id: 'cumulative_upkeep', cost: '{1}' }]],
+    ['Station', [{ id: 'station' }]],
+    ['Start your engines!', [{ id: 'start_your_engines' }]],
   ])('%s', (line, expected) => {
     expect(reg.parseLine(line)).toEqual(expected);
   });

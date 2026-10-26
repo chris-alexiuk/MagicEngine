@@ -4,12 +4,12 @@ import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
 
-/** Layouts that are not game pieces in a normal game. */
-const SKIP_LAYOUTS = new Set(['art_series', 'planar', 'scheme', 'vanguard', 'reversible_card_back']);
+/** Layouts that are not game pieces in a normal game (front_card: theme/tutorial cards from starter products). */
+const SKIP_LAYOUTS = new Set(['art_series', 'planar', 'scheme', 'vanguard', 'reversible_card_back', 'front_card']);
 const TOKEN_LAYOUTS = new Set(['token', 'double_faced_token', 'emblem']);
 /** Layouts whose card_faces are distinct game faces (vs. reversible printings of one face). */
 const MULTI_FACE_LAYOUTS = new Set([
-  'split', 'flip', 'transform', 'modal_dfc', 'adventure', 'double_faced_token', 'meld',
+  'split', 'flip', 'transform', 'modal_dfc', 'adventure', 'prepare', 'double_faced_token', 'meld',
 ]);
 
 const IMAGE_PREFIX = /^https:\/\/cards\.scryfall\.io\/[a-z_]+\//;
