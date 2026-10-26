@@ -46,9 +46,15 @@ function fromCwd(p: string): string {
 }
 
 async function download(cacheDir: string): Promise<{ file: string; updatedAt: string }> {
-  const metaRes = await fetch('https://api.scryfall.com/bulk-data/oracle-cards', { headers: HEADERS });
-  if (!metaRes.ok) throw new Error(`bulk-data lookup failed: ${metaRes.status}`);
-  const item = (await metaRes.json()) as ScryfallBulkItem;
+  // List every bulk file and pick Oracle Cards by its documented type.
+  const listRes = await fetch('https://api.scryfall.com/bulk-data', { headers: HEADERS });
+  const body = await listRes.text();
+  if (!listRes.ok) throw new Error(`bulk-data lookup failed: HTTP ${listRes.status}: ${body.slice(0, 300)}`);
+  const list = JSON.parse(body) as { data?: ScryfallBulkItem[] };
+  const item = list.data?.find((d) => d.type === 'oracle_cards');
+  if (!item?.download_uri) {
+    throw new Error(`no oracle_cards entry with a download_uri in the bulk-data list: ${body.slice(0, 600)}`);
+  }
   const file = join(cacheDir, `oracle-cards-${item.updated_at.replace(/[:.]/g, '-')}.json`);
   if (existsSync(file)) {
     console.log(`using cached ${file}`);
