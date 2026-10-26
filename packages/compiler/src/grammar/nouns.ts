@@ -288,6 +288,16 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     }
 
     if (mode === 'effect') {
+      // "each of up to two other target creatures" (CR 115.4)
+      const eachOf = /^each of (up to )?(\w+) (other )?target (.+)$/i.exec(t);
+      if (eachOf) {
+        const count = parseAmount(eachOf[2]!);
+        const pf = typeof count === 'number' && count >= 2 ? parseFilter(eachOf[4]!, b) : null;
+        if (!pf || !pf.plural || typeof count !== 'number') return null;
+        if (eachOf[3]) pf.filter.other = true;
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, ...(eachOf[1] ? { upTo: true } : {}) };
+        return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
+      }
       const tm = /^(?:(up to )?((?!another\b|other\b)\w+) )?(another |other )?target (.+)$/i.exec(t);
       if (tm) {
         const count = tm[2] ? parseAmount(tm[2]) : 1;

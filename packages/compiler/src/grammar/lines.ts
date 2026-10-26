@@ -384,6 +384,30 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
+  // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
+  // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
+  const either = /^~ (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield)$/.exec(t);
+  if (either && either[1] !== either[2]) {
+    const one = parseTrigger(word, `~ ${either[1]}`, b);
+    const two = one ? parseTrigger(word, `~ ${either[2]}`, b) : null;
+    if (!one || !two) return null;
+    // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies").
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
+  }
+  // "Whenever ~ becomes tapped", "Whenever enchanted land becomes tapped", "Whenever a creature you control becomes tapped"
+  const tapped = /^(~|enchanted (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes tapped$/.exec(t);
+  if (tapped) {
+    let subject: Ref;
+    if (tapped[1] === '~') subject = { ref: 'self' };
+    else if (/^enchanted /.test(tapped[1]!)) subject = { ref: 'attached' };
+    else {
+      const pf = parseFilter(tapped[2]!, b);
+      if (!pf || pf.plural) return null;
+      if (/^another /.test(tapped[1]!)) pf.filter.other = true;
+      subject = { ref: 'all', filter: pf.filter };
+    }
+    return { trigger: { type: 'becomes_tapped', subject }, it: subject.ref === 'all' ? { ref: 'trigger_object' } : subject, player: null };
+  }
   // "Whenever ~ or another Ally you control enters": the source itself, or another such object.
   const orSelf = /^~ or (?:another|other) (.+)$/.exec(t);
   if (orSelf) {
@@ -441,6 +465,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
 
   // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
   if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
+  // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
+  const heroic = /^you cast a spell that targets ~$/.exec(t);
+  if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targetsSource: true }, it: { ref: 'self' }, player: { ref: 'you' } };
   const cast = /^(you|an opponent|a player|enchanted player) casts? (?:a|an) (.+)$/.exec(t);
   if (cast) {
     const spell = cast[2] === 'spell' ? { filter: {}, plural: false } : parseFilter(cast[2]!, b);
@@ -545,6 +572,9 @@ export const continuousRule: GrammarRule = {
     // Conditions in front: "During your turn, …", "As long as [condition], …" (CR 611.3a: checked continuously).
     const conds: ConditionNode[] = [];
     let rest = line.slice(0, -1);
+    // "Creatures with power less than ~'s power can't block it." — the same as "~ can't be blocked by …".
+    const cantBlockIt = /^(Creatures .+?) can't block (?:it|~)$/.exec(rest);
+    if (cantBlockIt) rest = `~ can't be blocked by ${cantBlockIt[1]!.replace(/^C/, 'c')}`;
     for (;;) {
       const during = /^During (your turn|turns other than yours), (.+)$/i.exec(rest);
       if (during) {
@@ -983,6 +1013,14 @@ export const chapterRule: GrammarRule = {
 export const entersWithCountersRule: GrammarRule = {
   id: 'enters_with_counters',
   parse(line, original, ctx) {
+    // CR 702.138c: "~ escapes with a +1/+1 counter on it" — if it escaped, it enters with the counter.
+    const escapes = /^~ escapes with (\S+) (\S+) counters? on it\.$/.exec(line);
+    if (escapes) {
+      const n = parseAmount(escapes[1]!);
+      if (typeof n !== 'number') return null;
+      const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: escapes[2]!.replace(/−/g, '-'), amount: n, condition: { type: 'paid', cost: 'escape' } } };
+      return node;
+    }
     const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)? with (\S+) (\S+) counters? on it( for each time it was kicked)?(?: if (.+?))?\.$/.exec(line);
     const amount = m && parseAmount(m[2]!);
     // X is the value paid as it was cast (CR 107.3m).

@@ -3,7 +3,7 @@ import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, matchesFilter, power } from './characteristics.js';
+import { chars, hasKeyword, hasRule, matchesFilter, power, toughness } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -16,7 +16,7 @@ import { dayNightCard, setDayNight } from './day-night.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
-import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
+import { installPlugin, matchTrigger, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
@@ -355,6 +355,62 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (dealt > 0 && hasKeyword(g, from, 'lifelink')) gainLife(ctx, from.controller, dealt);
     }
     return true;
+  },
+
+  // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards that card."
+  choose_from_hand(node, ctx) {
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount ?? 1);
+    const [p] = refPlayers(ctx, ref(node, 'who'));
+    if (!p) return true;
+    const hand = zoneList(g, 'hand', p);
+    const filter = { ...(node.filter as ObjectFilter), zone: 'hand' as const };
+    const candidates = hand.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+    const answer = answerOf(ctx, 'choose_objects');
+    let chosen: string[];
+    if (answer) {
+      const need = node.optional ? 0 : Math.min(n, candidates.length);
+      if (answer.objects.length < need || answer.objects.length > n || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+        throw new RulesError(`Choose ${need === n ? n : `up to ${n}`} card(s) from that hand.`);
+      }
+      chosen = answer.objects;
+    } else {
+      ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
+      if (!candidates.length) return true;
+      if (candidates.length > n || node.optional) {
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: node.optional ? 0 : n, max: n, text: `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p}'s hand.`, revealed: [...hand] } };
+      }
+      chosen = candidates;
+    }
+    for (const id of chosen) {
+      if (node.then === 'exile') moveObject(g, id, 'exile', ctx.events);
+      else discardCard(g, id, ctx.events);
+    }
+    return true;
+  },
+
+  // CR 701.39a: "Bolster N" — a creature you control with the least toughness gets N +1/+1 counters.
+  bolster(node, ctx) {
+    const g = ctx.g;
+    const mine = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === ctx.controller && chars(g, o).types.includes('Creature'));
+    if (!mine.length) return true;
+    const least = Math.min(...mine.map((o) => toughness(g, o)));
+    const tied = mine.filter((o) => toughness(g, o) === least).map((o) => o.id);
+    const answer = answerOf(ctx, 'choose_objects');
+    let pick = tied[0]!;
+    if (answer) {
+      if (answer.objects.length !== 1 || !tied.includes(answer.objects[0]!)) throw new RulesError('Choose a creature you control with the least toughness.');
+      pick = answer.objects[0]!;
+    } else if (tied.length > 1) {
+      return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: tied, min: 1, max: 1, text: 'Choose a creature with the least toughness to bolster.' } };
+    }
+    addCounters(ctx, g.objects[pick]!, '+1/+1', amountOf(ctx, node.amount));
+    return true;
+  },
+
+  // "Look at the top four cards of your library, then put them back in any order."
+  reorder_top(node, ctx) {
+    return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry', true);
   },
 
   // "Return a land you control to its owner's hand." — chosen as it resolves (CR 608.2d).
@@ -1032,14 +1088,21 @@ function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
   ctx.events.push({ type: 'life', player: p, delta: n, life: ps.life });
 }
 
-function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil'): EffectResult {
+function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false): EffectResult {
   const library = zoneList(ctx.g, 'library', ctx.controller);
   const looked = library.slice(0, n);
   if (!looked.length) return true;
   const answer = ctx.answer?.kind === kind ? ctx.answer : null;
-  if (!answer) return { ask: { kind, player: ctx.controller, objects: looked } };
+  if (!answer) return { ask: kind === 'scry' ? { kind, player: ctx.controller, objects: looked, ...(reorder ? { reorder: true } : {}) } : { kind, player: ctx.controller, objects: looked } };
   const top = answer.top;
   const away = answer.kind === 'scry' ? answer.bottom : answer.graveyard;
+  // Only putting them back, in any order: none go to the bottom.
+  if (reorder && away.length) throw new RulesError('Put them all back on top, in any order.');
+  if (reorder) {
+    if (top.length !== looked.length || new Set(top).size !== top.length || !top.every((id) => looked.includes(id))) throw new RulesError(`Put the ${looked.length} card(s) back on top.`);
+    library.splice(0, looked.length, ...top);
+    return true;
+  }
   const all = [...top, ...away];
   if (all.length !== looked.length || new Set(all).size !== all.length || !all.every((id) => looked.includes(id))) {
     throw new RulesError(`Put each of the ${looked.length} card(s) somewhere.`);
@@ -1186,6 +1249,17 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
+  // "When ~ enters or attacks": either event (once per event, CR 603.2c).
+  either(t, check) {
+    return ((t.of as TriggerNode[] | undefined) ?? []).flatMap((sub) => matchTrigger(sub, check));
+  },
+  // "Whenever ~ becomes tapped" (CR 701.26a).
+  becomes_tapped(t, check) {
+    const e = check.event;
+    if (e.type !== 'tapped' || !e.tapped || check.sourceLeft) return [];
+    const o = check.g.objects[e.object];
+    return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o), player: o.controller }] : [];
+  },
   // CR 731.1a: "Whenever day becomes night or night becomes day" (not when it first becomes one).
   day_night_changed(t, check) {
     const e = check.event;
@@ -1299,6 +1373,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'enchanted' && e.player !== check.source.attachedToPlayer) return [];
     const spell = check.g.objects[e.object];
     if (!spell) return [];
+    // Heroic: "a spell that targets ~"
+    if (t.targetsSource) {
+      const entry = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object);
+      const src = check.source;
+      if (!entry || !entry.targets.some((list) => list.some((x) => x.kind === 'object' && x.id === src.id && x.zcc === src.zcc))) return [];
+    }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
     return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player }] : [];
   },

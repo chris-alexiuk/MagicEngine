@@ -372,7 +372,8 @@ export type PendingChoice =
       prompts: TargetPrompt[];
       modes?: { min: number; max: number; options: { text: string; prompts: TargetPrompt[] }[] };
     }
-  | { kind: 'scry'; player: PlayerId; objects: ObjectId[] }
+  /** reorder: "put them back in any order" — nothing goes to the bottom. */
+  | { kind: 'scry'; player: PlayerId; objects: ObjectId[]; reorder?: true }
   | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
   | { kind: 'discard'; player: PlayerId; count: number }
   | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
@@ -389,7 +390,8 @@ export type PendingChoice =
   /** CR 701.34a: any number of permanents and players that have counters. */
   | { kind: 'proliferate'; player: PlayerId; objects: ObjectId[]; players: PlayerId[] }
   /** A choice of one or more objects ("choose an Army creature you control"). */
-  | { kind: 'choose_objects'; player: PlayerId; candidates: ObjectId[]; min: number; max: number; text: string }
+  /** revealed: cards every player sees while the choice is made (a revealed hand, CR 701.20a). */
+  | { kind: 'choose_objects'; player: PlayerId; candidates: ObjectId[]; min: number; max: number; text: string; revealed?: ObjectId[] }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
    * (reveal lists the cards that qualify); color / creature_type: pick one of `options`;

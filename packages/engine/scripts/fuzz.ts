@@ -160,7 +160,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     }
     case 'scry': {
       const xs = shuffle([...p.objects]);
-      const k = Math.floor(rnd() * (xs.length + 1));
+      // "Put them back in any order": all of them on top.
+      const k = p.reorder ? xs.length : Math.floor(rnd() * (xs.length + 1));
       return { player: me, answer: { kind: 'scry', top: xs.slice(0, k), bottom: xs.slice(k) } };
     }
     case 'surveil': {

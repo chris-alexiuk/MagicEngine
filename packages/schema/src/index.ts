@@ -589,7 +589,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen',
+    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -602,7 +602,7 @@ export const CORE_NODES = {
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed',
+    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'],
   /** Counted amounts (AmountExpr kinds). */
@@ -688,7 +688,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
   else {
     visit(a.effects);
     for (const m of a.modes?.options ?? []) visit(m.effects);
-    if (a.kind === 'triggered') out.triggers.push(a.trigger.type);
+    if (a.kind === 'triggered') out.triggers.push(a.trigger.type, ...(((a.trigger.of as TriggerNode[] | undefined) ?? []).map((t) => t.type)));
     if (a.kind === 'activated') for (const c of a.cost.other ?? []) out.costs.push(c.type);
   }
   return out;

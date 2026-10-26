@@ -634,3 +634,23 @@ describe('fight, bite and one-line patterns (slice 18)', () => {
     expect(one('Whenever you draw your second card each turn, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'draw', nth: 2 } });
   });
 });
+
+describe('compound triggers, keyword actions, revealed hands (slice 19)', () => {
+  it('"enters or attacks", "enters and whenever it attacks", "becomes tapped", heroic', () => {
+    expect(one('Whenever this creature enters or attacks, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters' }, { type: 'attacks' }] } });
+    expect(one('When this creature enters and whenever it attacks, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'either' } });
+    expect(one('Whenever this creature becomes tapped, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'becomes_tapped', subject: { ref: 'self' } } });
+    expect(one('Whenever you cast a spell that targets this creature, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'cast', targetsSource: true } });
+  });
+  it('bolster, support, endure, "back in any order", "of their choice", Thoughtseize', () => {
+    expect(one('When this creature enters, bolster 2.', 'Creature — Human')).toMatchObject({ effects: [{ type: 'bolster', amount: 2 }] });
+    expect(one('Support 2.', 'Sorcery')).toMatchObject({ targets: [{ count: 2, upTo: true }] });
+    expect(one('When this creature enters, support 2.', 'Creature — Human')).toMatchObject({ targets: [{ count: 2, upTo: true, filter: { other: true } }] });
+    expect(one('When this creature enters, it endures 2.', 'Creature — Spirit')).toMatchObject({ effects: [{ type: 'may_do', else: [{ type: 'create_token' }] }] });
+    expect(one('When this creature enters, look at the top three cards of your library, then put them back in any order.', 'Creature — Human')).toMatchObject({ effects: [{ type: 'reorder_top', amount: 3 }] });
+    expect(one('Each opponent sacrifices a creature of their choice.', 'Sorcery')).toMatchObject({ effects: [{ type: 'sacrifice_choice' }] });
+    expect(one('Target opponent reveals their hand. You choose a nonland card from it. That player discards that card.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'choose_from_hand', then: 'discard', amount: 1, filter: { notTypes: ['Land'] } }],
+    });
+  });
+});

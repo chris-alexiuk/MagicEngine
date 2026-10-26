@@ -107,6 +107,34 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards
+      // that card." — the chosen card is discarded (or exiled).
+      const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
+      const chooses = reveals && sentences[i + 1] ? /^You (may )?choose (a|an|one|two) (.+?) from it(?: with mana value (\d+) or (less|greater))?(?: and (exile|discard) (?:that card|it))?$/.exec(sentences[i + 1]!) : null;
+      if (reveals && chooses) {
+        const r = attempt(b, (b) => {
+          const who = parsePlayerRef(reveals[1]!, b);
+          const amount = parseAmount(chooses[2]!);
+          const pf = who && typeof amount === 'number' ? parseFilter(`${chooses[3]} in your hand`, b) : null;
+          if (!who || !pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
+          const { zone: _z, owner: _o, ...filter } = pf.filter;
+          if (chooses[4]) filter.manaValue = { op: chooses[5] === 'less' ? 'le' : 'ge', n: Number(chooses[4]) };
+          let then = chooses[6] === 'exile' ? 'exile' : chooses[6] === 'discard' ? 'discard' : null;
+          let used = 2;
+          if (!then) {
+            const next = sentences[i + 2] ?? '';
+            if (/^(?:That player|They|The player) discards? (?:that card|it|those cards)$/.test(next)) then = 'discard';
+            else if (/^(?:Exile that card|That player exiles that card)$/.test(next)) then = 'exile';
+            else return null;
+            used = 3;
+          }
+          return { node: { type: 'choose_from_hand', who, filter, amount, then, ...(chooses[1] ? { optional: true } : {}) } as EffectNode, used };
+        });
+        if (!r) return null;
+        out.push(r.node);
+        i += r.used - 1;
+        continue;
+      }
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -373,6 +401,42 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const becomes = /^[Ii]t becomes (day|night)$/.exec(s);
   if (becomes) return [{ type: 'day_night', to: becomes[1] }];
   // CR 702.171a (saddle): "This permanent becomes saddled until end of turn."
+  // CR 701.39a: "Bolster N"
+  const bolster = /^[Bb]olster (\w+)$/.exec(s);
+  if (bolster) {
+    const amount = parseAmount(bolster[1]!);
+    return amount !== null ? [{ type: 'bolster', amount }] : null;
+  }
+  // CR 701.41a: "Support N" — on a permanent, other target creatures; on an instant or sorcery, any.
+  const support = /^[Ss]upport (\w+)$/.exec(s);
+  if (support) {
+    const n = parseAmount(support[1]!);
+    if (typeof n !== 'number' || n < 1) return null;
+    const spell = /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine);
+    const what = n === 1 ? `up to one ${spell ? '' : 'other '}target creature` : `each of up to ${support[1]} ${spell ? '' : 'other '}target creatures`;
+    return parseSentence(`Put a +1/+1 counter on ${what}`, b);
+  }
+  // CR 701.63a: "it endures N" — its controller creates an N/N white Spirit token unless they put N +1/+1 counters on it.
+  const endure = /^(.+?) endures (\d+)$/.exec(s);
+  if (endure) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(endure[1]!, b);
+      const n = Number(endure[2]);
+      if (!what || what.plural) return null;
+      // CR 701.63b: endure 0 does nothing.
+      if (n === 0) return [];
+      const token = parseSentence(`Create a ${n}/${n} white Spirit creature token`, b.clone());
+      if (!token) return null;
+      return [{ type: 'may_do', effects: [{ type: 'add_counters', what: what.ref, counter: '+1/+1', amount: n }], then: [], else: token }];
+    });
+    if (r) return r;
+  }
+  // "Look at the top four cards of your library, then put them back in any order."
+  const reorder = /^[Ll]ook at the top (\w+) cards of your library(?:,| and) then put them back in any order$/.exec(s);
+  if (reorder) {
+    const amount = parseAmount(reorder[1]!);
+    return typeof amount === 'number' ? [{ type: 'reorder_top', amount }] : null;
+  }
   // CR 701.14a: "Target creature you control fights target creature you don't control." / "… fight each other."
   const fight = /^(.+?) fights (.+)$/.exec(s) ?? /^(.+?) and (.+?) fight each other$/.exec(s);
   if (fight) {
@@ -569,7 +633,8 @@ const VERBS: Record<string, VerbHandler> = {
   },
   sacrifice(args, who, b) {
     // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
-    const choice = /^(a|an|one|two|three|four|five|\d+|another) (.+)$/.exec(args);
+    // "sacrifices a creature of their choice" (the 2024 wording; CR 701.21a: the player chooses either way).
+    const choice = /^(a|an|one|two|three|four|five|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
     if (choice) {
       const pf = parseFilter(choice[2]!, b);
       const amount = choice[1] === 'another' ? 1 : parseAmount(choice[1]!);

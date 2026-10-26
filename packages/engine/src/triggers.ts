@@ -1,5 +1,5 @@
 import { copyChoicePending } from './as-enters.js';
-import type { TriggeredAbility } from '@mtg/schema';
+import type { TriggeredAbility, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, matchesFilter, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
@@ -31,10 +31,11 @@ import { faceDownFace } from './face-down.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
-  'class_level', 'turned_face_up', 'discarded', 'day_night',
+  'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped',
 ]);
-/** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
+/** CR 603.10a: leaves-the-battlefield abilities "look back in time" ("When ~ enters or dies" too). */
+const looksBack = (t: TriggerNode): boolean => LOOK_BACK.has(t.type) || (t.type === 'either' && ((t.of as TriggerNode[] | undefined) ?? []).some(looksBack));
 
 const cursors = new WeakMap<GameEvent[], number>();
 
@@ -122,7 +123,7 @@ function collect(g: GameState, events: GameEvent[]): void {
         if (ability.kind !== 'triggered') return;
         // Each ability triggers only from the zone it works in.
         if ((ability.zone ?? 'battlefield') !== (c.left || c.o.emblem ? 'battlefield' : c.o.zone)) return;
-        if (c.left && !LOOK_BACK.has(ability.trigger.type)) return;
+        if (c.left && !looksBack(ability.trigger)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
         const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch });
