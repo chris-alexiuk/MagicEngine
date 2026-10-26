@@ -95,6 +95,8 @@ export interface GameObject {
   timestamp: number;
   /** The object an Aura or Equipment is attached to (CR 701.3). */
   attachedTo?: ObjectRef;
+  /** CR 303.4: the player an Aura with "enchant player" is attached to. */
+  attachedToPlayer?: PlayerId;
   /** CR 701.19a: regeneration shields until end of turn. */
   regenShields?: number;
   /** "Activate only once each turn": ability index → turn it was last activated. */
@@ -113,6 +115,8 @@ export interface GameObject {
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
   exileIfDiesTurn?: number;
+  /** "If it would leave the battlefield, exile it instead of putting it anywhere else" (unearth, CR 702.84a). */
+  exileWhenLeaves?: true;
   /** CR 716.2: a Class's level (1 if it has none, CR 716.2d). */
   classLevel?: number;
   /** "It doesn't untap during its controller's next untap step": how many untap steps it skips. */
@@ -464,7 +468,7 @@ export type GameEvent =
   | { type: 'control_changed'; object: ObjectId; controller: PlayerId }
   | { type: 'prevented'; source: ObjectId; amount: number }
   | { type: 'created'; object: ObjectId; controller: PlayerId }
-  | { type: 'attached'; object: ObjectId; to: ObjectId }
+  | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   | { type: 'countered'; object: ObjectId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
@@ -553,7 +557,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */

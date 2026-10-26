@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chars, legalActions, power, toughness, type GameState, type Target } from '../src/index.js';
+import { chars, hasKeyword, legalActions, power, toughness, type GameState, type Target } from '../src/index.js';
 import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 const creature = (name: string, oracle_text: string, pt = '2', type = 'Creature — Human Monk') =>
@@ -187,5 +187,46 @@ describe('more keywords from their CR 702 definitions', () => {
     for (let i = 0; i < 4; i++) give(g, 'alice', 'Trinket', 'battlefield');
     const r = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Frogmite Again', 'hand'), autoTap: true });
     expect(r.stack).toHaveLength(1);
+  });
+});
+
+describe('unearth (CR 702.84a)', () => {
+  const ghoul = makeCard({ name: 'Unearthed Ghoul', type_line: 'Creature — Zombie', oracle_text: 'Unearth {B}', mana_cost: '{2}{B}', power: '3', toughness: '2' });
+  it('returns with haste, is exiled at the next end step, and is exiled if it would leave', () => {
+    let g = toStep(start({ extra: [ghoul] }), 'main1');
+    const z = give(g, 'alice', 'Unearthed Ghoul', 'graveyard');
+    g.players.alice!.pool.B = 1;
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: z, ability: 0 }));
+    expect(g.objects[z]!.zone).toBe('battlefield');
+    expect(hasKeyword(g, g.objects[z]!, 'haste')).toBe(true);
+    g = toStep(g, 'end');
+    g = passRound(g);
+    expect(g.objects[z]!.zone).toBe('exile');
+
+    // Again: this time it dies first — and is exiled instead.
+    let h = toStep(start({ extra: [ghoul] }), 'main1');
+    const y = give(h, 'alice', 'Unearthed Ghoul', 'graveyard');
+    h.players.alice!.pool.B = 1;
+    h = passRound(act(h, { type: 'activate', player: 'alice', object: y, ability: 0 }));
+    h = act(h, { type: 'manual', player: 'alice', op: { kind: 'move', object: y, to: 'graveyard' } });
+    expect(h.objects[y]!.zone).toBe('exile');
+  });
+});
+
+describe('ward with other costs (CR 702.21a)', () => {
+  const warded = makeCard({ name: 'Life Warded', type_line: 'Creature — Spirit', oracle_text: 'Ward—Pay 3 life', mana_cost: '{G}', power: '2', toughness: '2' });
+  const shock = makeCard({ name: 'Shock Again', type_line: 'Instant', oracle_text: 'Shock Again deals 2 damage to any target.', mana_cost: '{R}' });
+  it('the targeting player may pay life; otherwise the spell is countered', () => {
+    let g = toStep(start({ extra: [warded, shock] }), 'main1');
+    const spirit = give(g, 'alice', 'Life Warded', 'battlefield');
+    g = act(g, { type: 'pass', player: 'alice' });
+    g.players.bob!.pool.R = 2;
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Shock Again', 'hand'), targets: [[{ kind: 'object', object: spirit }]] });
+    g = passRound(g); // ward triggers and resolves
+    expect(g.pending).toMatchObject({ kind: 'pay', player: 'bob' });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'pay', pay: true } });
+    expect(g.players.bob!.life).toBe(17);
+    g = passRound(g);
+    expect(g.objects[spirit]!.zone).toBe('graveyard');
   });
 });

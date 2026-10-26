@@ -94,6 +94,8 @@ export interface KeywordInstance {
   text?: string;
   /** The parameter parsed as an object description, e.g. "Enchant creature you control" (CR 702.5a). */
   filter?: ObjectFilter;
+  /** "Enchant player" / "Enchant opponent" (CR 303.4: an Aura can be attached to a player). */
+  player?: 'any' | 'opponent';
   /** What the keyword means, compiled from its definition in CR 702 (prowess → a triggered ability). */
   abilities?: AbilityNode[];
 }
@@ -250,7 +252,8 @@ export interface ObjectFilter {
   notColors?: Color[];
   colorless?: true;
   multicolored?: true;
-  controller?: 'you' | 'opponent' | 'not_you';
+  /** 'enchanted': the player the source Aura is attached to ("creatures enchanted player controls"). */
+  controller?: 'you' | 'opponent' | 'not_you' | 'enchanted';
   owner?: 'you' | 'opponent';
   /** "another" / "other": not the source itself. */
   other?: true;
@@ -266,6 +269,8 @@ export interface ObjectFilter {
   manaValue?: Compare;
   /** CR 903.3: a commander. */
   commander?: true;
+  /** Any one of these ("creature or Vehicle"). */
+  anyOf?: ObjectFilter[];
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
   chosenType?: true;
   chosenColor?: true;
@@ -294,11 +299,14 @@ export type Ref =
   /** Every object matching (CR 608.2h: determined as the effect is applied). */
   | { ref: 'all'; filter: ObjectFilter }
   | { ref: 'you' }
-  | { ref: 'players'; who: 'each' | 'opponents' }
+  /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref }
   | { ref: 'controller_of'; of: Ref }
   | { ref: 'owner_of'; of: Ref }
   /** CR 607.2a: "the exiled card", "cards exiled with ~" — what this object's linked ability exiled. */
-  | { ref: 'exiled_with' };
+  | { ref: 'exiled_with' }
+  /** CR 303.4: "enchanted player" — the player an Aura is attached to. */
+  | { ref: 'enchanted_player' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -511,7 +519,8 @@ export const CORE_NODES = {
     'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
-    'proliferate', 'connive', 'amass', 'exile_top', 'class_level',
+    'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
+    'players_do',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -521,6 +530,7 @@ export const CORE_NODES = {
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
+    'player_attacked',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'],
   /** Counted amounts (AmountExpr kinds). */
@@ -543,7 +553,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.abilities?.length) return true;
   if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
-  if (kw.id === 'enchant') return Boolean(kw.filter);
+  if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
   if (kw.id === 'flashback' || kw.id === 'kicker') return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;
 }
@@ -575,7 +585,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     for (const e of list ?? []) {
       out.effects.push(e.type);
       amounts(e);
-      for (const key of ['effects', 'then', 'else']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
+      for (const key of ['effects', 'then', 'else', 'action']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
       if (e.cond) cond(e.cond as ConditionNode);
     }
   };

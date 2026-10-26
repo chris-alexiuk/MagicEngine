@@ -398,3 +398,32 @@ describe('slice 6', () => {
     ]);
   });
 });
+
+describe('slice 7', () => {
+  it('CR 303.4: "Enchant player" / "Enchant opponent", and what refers to that player', () => {
+    const r = parse("Enchant opponent\nCreatures enchanted player controls get -1/-1.\nAt the beginning of enchanted player's upkeep, that player loses 1 life.", 'Enchantment — Aura Curse', 'Curse');
+    expect(r.unparsed).toEqual([]);
+    expect(r.keywords).toMatchObject([{ id: 'enchant', player: 'opponent' }]);
+    expect(r.abilities).toMatchObject([
+      { effect: { affected: { filter: { controller: 'enchanted' } } } },
+      { trigger: { type: 'phase', step: 'upkeep', whose: 'enchanted' }, effects: [{ type: 'lose_life', who: { ref: 'enchanted_player' } }] },
+    ]);
+  });
+
+  it('"Each opponent attacking that player does the same."', () => {
+    expect(one('Whenever enchanted player is attacked, you gain 2 life. Each opponent attacking that player does the same.', 'Enchantment — Aura Curse')).toMatchObject({
+      trigger: { type: 'player_attacked', who: 'enchanted' },
+      effects: [{ type: 'gain_life' }, { type: 'players_do', players: { ref: 'players', who: 'opponents', attacking: { ref: 'enchanted_player' } }, effects: [{ type: 'gain_life' }] }],
+    });
+  });
+
+  it('another player chooses: "that player may …. If they do, …"; "discards their hand"', () => {
+    expect(one('Whenever a player attacks enchanted player with one or more creatures, that attacking player may discard a card. If the player does, they draw a card.', 'Enchantment — Aura Curse')).toMatchObject({
+      effects: [{ type: 'may_do', who: { ref: 'trigger_player' }, effects: [{ type: 'discard', who: { ref: 'trigger_player' } }], then: [{ type: 'draw' }] }],
+    });
+    expect(one('Whenever a Sliver deals combat damage to a player, its controller may draw a card.', 'Enchantment')).toMatchObject({
+      effects: [{ type: 'may', who: { ref: 'controller_of', of: { ref: 'trigger_object' } }, effects: [{ type: 'draw', who: { ref: 'controller_of' } }] }],
+    });
+    expect(one('At the beginning of your end step, discard your hand.', 'Enchantment')).toMatchObject({ effects: [{ type: 'discard', all: true, who: { ref: 'you' } }] });
+  });
+});

@@ -59,6 +59,30 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Curses: "Create a Gold token. Each opponent attacking that player does the same." — each of
+      // those players does it as if they were "you".
+      const same = sentences[i + 1] ? /^Each opponent attacking (that player|enchanted player) does the same$/.exec(sentences[i + 1]!) : null;
+      if (same) {
+        const first = parseSentence(capitalise(s), b);
+        const defender = first ? parsePlayerRef(same[1]!, b) : null;
+        if (!first || !defender) return null;
+        out.push(...first, { type: 'players_do', players: { ref: 'players', who: 'opponents', attacking: defender }, effects: structuredClone(first) });
+        i++;
+        continue;
+      }
+      // "That player may discard a card. If they do, they draw a card." — another player chooses.
+      const theyMay = /^(.+?) may (.+)$/.exec(s);
+      const theyDo = sentences[i + 1] ? /^If (?:they do|the player does|that player does|they don't|the player doesn't|that player doesn't), (.+)$/.exec(sentences[i + 1]!) : null;
+      if (theyMay && theyDo && !/^You$/.test(theyMay[1]!)) {
+        const who = singlePlayer(theyMay[1]!, b);
+        const first = who ? attempt(b, (b) => parseClause(theyMay[2]!, b, who)) : null;
+        const rest = first ? parseSentence(capitalise(theyDo[1]!), b) : null;
+        if (!who || !first || !rest) return null;
+        const declined = /n't, /.test(sentences[i + 1]!);
+        out.push({ type: 'may_do', who, effects: first.effects, ...(declined ? { else: rest, then: [] } : { then: rest }) });
+        i++;
+        continue;
+      }
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -188,6 +212,27 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner && expr ? bindX(inner, expr) : null;
     });
   }
+  // CR 118.12a / CR 119.4: "… unless that player pays 3 life" (or "{2} and 2 life").
+  const unlessLife = /^(.+) unless (.+?) (?:pays|pay) (?:((?:\{(?:\d+|[WUBRGC])\})+) and )?(\d+) life$/.exec(s);
+  if (unlessLife) {
+    return attempt(b, (b) => {
+      const inner = parseSentence(unlessLife[1]!, b);
+      const payer = inner ? parsePlayerRef(unlessLife[2]!, b) : null;
+      return inner && payer ? [{ type: 'unless_pays', payer, cost: unlessLife[3] ?? '', life: Number(unlessLife[4]), effects: inner }] : null;
+    });
+  }
+  // "… unless that player discards a card" / "sacrifices a creature".
+  const unlessDoes = /^(.+) unless (.+?) (discards|sacrifices) (.+)$/.exec(s);
+  if (unlessDoes) {
+    const r = attempt(b, (b) => {
+      const inner = parseSentence(unlessDoes[1]!, b);
+      const payer = inner ? parsePlayerRef(unlessDoes[2]!, b) : null;
+      if (!inner || !payer) return null;
+      const action = attempt(b, (b) => parseClause(`${unlessDoes[3]} ${unlessDoes[4]}`, b, payer));
+      return action ? [{ type: 'unless_does', payer, action: action.effects, effects: inner }] : null;
+    });
+    if (r) return r;
+  }
   // CR 118.12a: "[Do something] unless [a player] pays [cost]."
   const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
   if (unless) {
@@ -201,6 +246,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (may) {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
+  }
+  // "That player may draw a card", "its controller may create a token": another player chooses (CR 603.5).
+  const theyMay = /^(.+?) may (.+)$/.exec(s);
+  if (theyMay) {
+    const r = attempt(b, (b) => {
+      const who = singlePlayer(theyMay[1]!, b);
+      const inner = who ? parseClause(theyMay[2]!, b, who) : null;
+      return who && inner ? [{ type: 'may', who, effects: inner.effects }] : null;
+    });
+    if (r) return r;
   }
   const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
@@ -277,6 +332,8 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && amount !== undefined ? [{ type: 'lose_life', amount, who }] : null;
   },
   discard(args, who) {
+    // "discards their hand" (CR 701.9a: all the cards in it).
+    if (/^(?:their|your|his or her) hand$/.test(args)) return [{ type: 'discard', all: true, amount: 0, who }];
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
@@ -429,6 +486,12 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(dies[1]!, b);
     return what ? [{ type: 'exile_if_dies', what: what.ref }] : null;
   }
+  // CR 702.84a (unearth): "If it would leave the battlefield, exile it instead of putting it anywhere else."
+  const leave = /^If (.+?) would leave the battlefield, exile (?:it|them) instead of putting (?:it|them) anywhere else$/.exec(c);
+  if (leave) {
+    const what = parseObjectRef(leave[1]!, b);
+    return what ? [{ type: 'exile_on_leave', what: what.ref }] : null;
+  }
   // CR 615.1a: prevention. "Prevent all combat damage that would be dealt this turn."
   if (/^Prevent all combat damage that would be dealt this turn$/.test(c)) return [{ type: 'prevent', amount: 'all', combat: true }];
   const next = /^Prevent the next (\S+) damage that would be dealt to (.+?) this turn$/.exec(c);
@@ -561,6 +624,12 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   });
 }
 
+/** One player other than "you" who makes a choice: "that player", "target opponent", "its controller". */
+function singlePlayer(text: string, b: Binder): Ref | null {
+  const who = parsePlayerRef(text, b);
+  return who && who.ref !== 'you' && who.ref !== 'players' ? who : null;
+}
+
 function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
   // Object-subject clauses first: damage, pumps, restrictions.
   const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
@@ -615,14 +684,16 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
 
 /** "Target creature gets +2/+2 and gains trample until end of turn." (CR 611.2a: lasts as stated.) */
 function parsePump(c: string, b: Binder): EffectNode[] | null {
-  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until end of turn$/.exec(c);
+  // Without a duration it lasts indefinitely (CR 611.2a): "It gains haste." (unearth).
+  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until end of turn$/.exec(c) ?? /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
   if (!m) return null;
+  const until = / until end of turn$/.test(c) ? 'eot' : 'game';
   return attempt(b, (b) => {
     const what = parseObjectRef(m[1]!, b);
     if (!what) return null;
     const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)![2]!;
     const parts = `${verb} ${m[2]}`.split(/ and (?=gets? |gains? |has |have )/);
-    const node: EffectNode = { type: 'modify', what: what.ref, until: 'eot' };
+    const node: EffectNode = { type: 'modify', what: what.ref, until };
     for (const part of parts) {
       const pm = /^(gets?|gains?|has|have) (.+)$/.exec(part);
       if (!pm) return null;

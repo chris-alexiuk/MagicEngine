@@ -78,6 +78,7 @@ export function moveObject(
   // CR 614.1a: "exile it instead" replaces the move — flashback (CR 702.34a), "if it would die this turn",
   // and "if ~ would be put into a graveyard from anywhere".
   if (from === 'stack' && o.exileOnLeave) to = 'exile';
+  if (from === 'battlefield' && o.exileWhenLeaves) to = 'exile';
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
   if (to === 'graveyard' && exiledInstead(g, o, from)) to = 'exile';
@@ -87,7 +88,7 @@ export function moveObject(
   if (from === 'battlefield') {
     // CR 608.2h: remember how it last existed on the battlefield ("deals damage equal to its power").
     const c = chars(g, o);
-    (g.lastKnown ??= {})[id] = { zcc: o.zcc, power: c.power, toughness: c.toughness };
+    (g.lastKnown ??= {})[id] = { zcc: o.zcc, power: c.power, toughness: c.toughness, ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}) };
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;
@@ -103,6 +104,7 @@ export function moveObject(
   o.timestamp = ++g.clock;
   delete o.loyaltyActivatedTurn;
   delete o.attachedTo;
+  delete o.attachedToPlayer;
   delete o.regenShields;
   delete o.activatedTurn;
   delete o.triggeredTurn;
@@ -111,6 +113,7 @@ export function moveObject(
   delete o.exiledBy;
   delete o.skipUntap;
   delete o.classLevel;
+  delete o.exileWhenLeaves;
   delete o.exileIfDiesTurn;
   delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;

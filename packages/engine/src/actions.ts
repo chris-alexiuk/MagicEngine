@@ -1,3 +1,4 @@
+import { auraTargetSpec } from './permanents.js';
 import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
@@ -246,9 +247,9 @@ const CASTABLE_ALT_FACES = new Set(['split', 'modal_dfc', 'adventure']);
  */
 function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: ConditionNode) => boolean): CompiledProgram | null {
   if (isPermanentCard(face)) {
-    const enchant = face.subtypes.includes('Aura') ? face.keywords.find((k) => k.id === 'enchant' && k.filter) : undefined;
+    const aura = auraTargetSpec(face);
     if (modes?.length) throw new RulesError(`${face.name} isn’t modal.`);
-    return enchant ? { specs: [{ what: 'object', filter: enchant.filter!, text: `${enchant.text} to enchant` }], effects: [] } : null;
+    return aura ? { specs: [aura], effects: [] } : null;
   }
   const programs = spellPrograms(face);
   if (!programs) {

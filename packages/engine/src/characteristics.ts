@@ -419,12 +419,14 @@ export function matchesFilter(
   if (f.multicolored && c.colors.length < 2) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
+  if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;
   if (f.owner === 'you' && o.owner !== ctx.controller) return false;
   if (f.owner === 'opponent' && o.owner === ctx.controller) return false;
   if (f.other && ctx.source && ctx.source.id === o.id) return false;
   if (f.tapped !== undefined && o.tapped !== f.tapped) return false;
   if (f.token !== undefined && Boolean(o.token) !== f.token) return false;
   if (f.commander && !o.commander) return false;
+  if (f.anyOf && !f.anyOf.some((alt) => matchesFilter(g, o, alt, { ...ctx, anyZone: true }, c))) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);

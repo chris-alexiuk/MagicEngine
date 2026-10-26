@@ -1,3 +1,4 @@
+import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
@@ -194,9 +195,9 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
 
 function defaultSpellChoice(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): Choice | null {
   if (isPermanentCard(face)) {
-    const enchant = face.subtypes.includes('Aura') ? face.keywords.find((k) => k.id === 'enchant' && k.filter) : undefined;
-    if (!enchant) return {};
-    const targets = defaultTargets(g, player, [{ what: 'object', filter: enchant.filter!, text: 'enchant' }], o);
+    const aura = auraTargetSpec(face);
+    if (!aura) return {};
+    const targets = defaultTargets(g, player, [aura], o);
     return targets ? { targets } : null;
   }
   const programs = spellPrograms(face);

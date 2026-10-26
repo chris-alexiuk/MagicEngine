@@ -1,7 +1,7 @@
 import { hasRule, hasType, isPermanentCard, hasKeyword, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
-import { canAttach, destroy } from './permanents.js';
+import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -169,6 +169,14 @@ function resolvePermanentSpell(g: GameState, entry: StackEntry & { kind: 'spell'
     const targets = recheckTargets(g, entry);
     const target = targets?.[0]?.[0];
     const enchanted = target?.kind === 'object' ? g.objects[target.id] : undefined;
+    if (target?.kind === 'player') {
+      // CR 303.4: "enchant player" — it enters attached to that player.
+      moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
+      o.attachedToPlayer = target.player;
+      events.push({ type: 'attached', object: o.id, to: target.player, player: true });
+      finishResolution(g, entry, events);
+      return;
+    }
     if (!enchanted) {
       moveObject(g, o.id, 'graveyard', events);
       events.push({ type: 'fizzled', entry });
@@ -445,7 +453,10 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         // CR 714.4: a Saga that has finished its chapters is sacrificed.
         if (sagaDone(g, o)) toGraveyard.add(id);
         const face = faceOf(g, o);
-        if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
+        if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.player)) {
+          // CR 704.5m: an Aura attached to a player who has left, or can't be enchanted by it now.
+          if (!o.attachedToPlayer || !canEnchantPlayer(g, o, o.attachedToPlayer)) toGraveyard.add(id);
+        } else if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
           // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.
           const to = o.attachedTo && g.objects[o.attachedTo.id];
           if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);

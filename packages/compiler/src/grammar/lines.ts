@@ -252,6 +252,9 @@ const STEP_WORDS: Record<string, string> = {
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
   const t = text.trim();
   if (word === 'At') {
+    // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
+    const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
+    if (cursed) return { trigger: { type: 'phase', step: STEP_WORDS[cursed[1]!]!, whose: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
     const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|end step|combat)( on your turn)?$/.exec(t);
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
@@ -298,9 +301,36 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'deals_combat_damage', subject: { ref: 'attached' }, to: 'player' }, it: { ref: 'attached' }, player: { ref: 'trigger_player' } };
   }
-  if (/^you're dealt damage$|^you are dealt damage$/.test(t)) {
+  // "Whenever enchanted player is attacked" / "a player attacks enchanted player with one or more creatures"
+  // ("that player" is the enchanted player; "that attacking player" the one attacking).
+  if (t === 'enchanted player is attacked') {
+    return { trigger: { type: 'player_attacked', who: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
+  }
+  if (/^a player attacks enchanted player with one or more creatures$|^you attack enchanted player with one or more creatures$/.test(t)) {
+    b.named['that attacking player'] = { ref: 'trigger_player' };
+    return {
+      trigger: { type: 'player_attacked', who: 'enchanted', ...(t.startsWith('you ') ? { by: 'you' } : {}) },
+      it: { ref: 'self' },
+      player: { ref: 'trigger_player' },
+    };
+  }
+  const attacksCursed = /^(?:a|an) (.+?) attacks enchanted player$/.exec(t);
+  if (attacksCursed) {
+    const pf = parseFilter(attacksCursed[1]!, b);
+    if (!pf || pf.plural) return null;
+    return { trigger: { type: 'attacks', subject: { ref: 'all', filter: pf.filter }, defender: 'enchanted' }, it: { ref: 'trigger_object' }, player: { ref: 'enchanted_player' } };
+  }
+  const hitsCursed = /^(?:a|an) (.+?) deals combat damage to enchanted player$/.exec(t);
+  if (hitsCursed) {
+    const pf = parseFilter(hitsCursed[1]!, b);
+    if (!pf || pf.plural) return null;
     b.eventAmount = true;
-    return { trigger: { type: 'player_dealt_damage', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+    return { trigger: { type: 'deals_combat_damage', subject: { ref: 'all', filter: pf.filter }, to: 'enchanted' }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
+  }
+  if (/^you're dealt damage$|^you are dealt damage$|^enchanted player is dealt damage$/.test(t)) {
+    b.eventAmount = true;
+    const cursed = t.startsWith('enchanted');
+    return { trigger: { type: 'player_dealt_damage', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
   const loses = /^(an opponent|you) loses? life$/.exec(t);
   if (loses) {
@@ -342,7 +372,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
         ...(/ alone$/.test(other[2]!) ? { alone: true } : {}),
       },
       it: { ref: 'trigger_object' },
-      player: type === 'deals_combat_damage' ? { ref: 'trigger_player' } : null,
+      // "Whenever a creature enchanted player controls enters, that player …"
+      player: type === 'deals_combat_damage' ? { ref: 'trigger_player' } : pf.filter.controller === 'enchanted' ? { ref: 'enchanted_player' } : null,
     };
   }
 
@@ -351,15 +382,18 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'gain_life', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
-  const draw = /^(you) draw a card$/.exec(t);
-  if (draw) return { trigger: { type: 'draw', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  const draw = /^(you draw|enchanted player draws) a card$/.exec(t);
+  if (draw) {
+    const cursed = draw[1] !== 'you draw';
+    return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
+  }
 
-  const cast = /^(you|an opponent|a player) casts? (?:a|an) (.+)$/.exec(t);
+  const cast = /^(you|an opponent|a player|enchanted player) casts? (?:a|an) (.+)$/.exec(t);
   if (cast) {
     const spell = cast[2] === 'spell' ? { filter: {}, plural: false } : parseFilter(cast[2]!, b);
     if (!spell || spell.plural || (cast[2] !== 'spell' && spell.filter.zone !== 'stack')) return null;
     delete spell.filter.zone;
-    const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : 'any';
+    const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : 'any';
     // "that player" is whoever cast the spell.
     return { trigger: { type: 'cast', who, filter: spell.filter }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }

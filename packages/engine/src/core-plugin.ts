@@ -252,8 +252,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   discard(node, ctx) {
     // CR 701.9a: the player chooses (in APNAP order, CR 101.4), then the cards go to the graveyard.
-    const n = amountOf(ctx, node.amount);
     const players = refPlayers(ctx, ref(node, 'who'));
+    if (node.all) {
+      // "discards their hand": nothing to choose.
+      for (const p of players) for (const id of [...zoneList(ctx.g, 'hand', p)]) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      return true;
+    }
+    const n = amountOf(ctx, node.amount);
     const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
     const answer = answerOf(ctx, 'discard');
     if (answer) {
@@ -379,6 +384,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (play) (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn: lastTurnOf(g, ctx.controller, play.until) });
       }
     }
+    return true;
+  },
+
+  exile_on_leave(node, ctx) {
+    // CR 614.1a: a replacement on this object only (it ends when the object changes zones, CR 400.7).
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.exileWhenLeaves = true;
     return true;
   },
 
@@ -517,8 +528,29 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx) } };
     }
     if (!answer.pay) return { expand: node.effects as EffectNode[] };
-    payDuringResolution(ctx.g, payer, cost, ctx.events);
+    // CR 119.4: life can be paid only if the life total is at least that much.
+    const life = Number(node.life ?? 0);
+    if (life && ctx.g.players[payer]!.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
+    if (cost) payDuringResolution(ctx.g, payer, cost, ctx.events);
+    if (life) {
+      const ps = ctx.g.players[payer]!;
+      ps.life -= life;
+      ctx.events.push({ type: 'life', player: payer, delta: -life, life: ps.life });
+    }
     return { expand: [] };
+  },
+
+  unless_does(node, ctx) {
+    // "… unless that player discards a card": they choose whether to (only if they can).
+    const payer = refPlayers(ctx, ref(node, 'payer'))[0];
+    const action = node.action as EffectNode[];
+    if (!payer || !action.every((e) => feasible(e, { ...ctx, controller: payer }))) return { expand: node.effects as EffectNode[] };
+    const answer = answerOf(ctx, 'pay');
+    if (!answer) {
+      const text = `${describeEffects(action)}, or else: ${describeEffects(node.effects as EffectNode[])}`;
+      return { ask: { kind: 'pay', player: payer, cost: describeEffects(action), text, sourceName: sourceName(ctx) } };
+    }
+    return { expand: answer.pay ? action : (node.effects as EffectNode[]) };
   },
 
   search(node, ctx) {
@@ -598,13 +630,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return { expand: ((yes ? node.effects : node.else) as EffectNode[] | undefined) ?? [] };
   },
 
+  // "Each opponent attacking that player does the same": the same effects, done by each of them as "you".
+  players_do(node, ctx) {
+    const players = refPlayers(ctx, ref(node, 'players'));
+    return { expand: players.flatMap((p) => (node.effects as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
+  },
+
   may_do(node, ctx) {
     // CR 118.12: "You may [do something]. If you do, [effect]." — only if it can actually be done.
+    // "That player may …. If they don't, …": another player chooses; declining (or being unable) runs `else`.
     const answer = answerOf(ctx, 'may');
     const first = node.effects as EffectNode[];
-    if (!first.every((e) => feasible(e, ctx))) return true;
-    if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: describeEffects([...first, ...(node.then as EffectNode[])]), sourceName: sourceName(ctx) } };
-    return { expand: answer.yes ? [...first, ...(node.then as EffectNode[])] : [] };
+    const then = (node.then as EffectNode[] | undefined) ?? [];
+    const otherwise = (node.else as EffectNode[] | undefined) ?? [];
+    const chooser = chooserOf(node, ctx);
+    if (!chooser || !first.every((e) => feasible(e, ctx, chooser))) return otherwise.length ? { expand: otherwise } : true;
+    if (!answer) return { ask: { kind: 'may', player: chooser, text: describeEffects([...first, ...then]), sourceName: sourceName(ctx) } };
+    return { expand: answer.yes ? [...first, ...then] : otherwise };
   },
 
   delayed(node, ctx) {
@@ -614,7 +656,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     g.delayed.push({
       id: `d${g.nextId++}`,
       controller: ctx.controller,
-      source: source ? { id: source.id, zcc: ctx.sourceZcc ?? source.zcc } : { id: '', zcc: 0 },
+      // CR 400.7j: if this effect just moved its source (unearth's return), "it" is the object it became.
+      source: source ? { id: source.id, zcc: ctx.resolution?.found?.[source.id] === source.zcc ? source.zcc : (ctx.sourceZcc ?? source.zcc) } : { id: '', zcc: 0 },
       sourceName: sourceName(ctx),
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
       step: node.step === 'upkeep' ? 'upkeep' : 'end',
@@ -675,29 +718,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   may(node, ctx) {
-    // CR 603.5: an optional effect — the controller chooses as it resolves.
+    // CR 603.5: an optional effect — the controller (or the player it names) chooses as it resolves.
     const answer = answerOf(ctx, 'may');
+    const chooser = chooserOf(node, ctx);
+    if (!chooser) return true;
     if (!answer) {
       const text = describeEffects(node.effects as EffectNode[]);
-      return { ask: { kind: 'may', player: ctx.controller, text, sourceName: sourceName(ctx) } };
+      return { ask: { kind: 'may', player: chooser, text, sourceName: sourceName(ctx) } };
     }
     return { expand: answer.yes ? (node.effects as EffectNode[]) : [] };
   },
 };
 
-/** Whether an optional action in "You may [do X]. If you do, …" can be done at all. */
-function feasible(e: EffectNode, ctx: EffectContext): boolean {
+/** Who decides an optional effect: its controller, or the one player it names ("that player may …"). */
+function chooserOf(node: EffectNode, ctx: EffectContext): PlayerId | null {
+  if (!node.who) return ctx.controller;
+  return refPlayers(ctx, node.who as Ref)[0] ?? null;
+}
+
+/** Whether an optional action in "You may [do X]. If you do, …" can be done at all by `chooser`. */
+function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
-  if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(ctx.controller)) {
+  if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(chooser)) {
     const filter = (e.filter ?? {}) as ObjectFilter;
     const n = g.zones.battlefield.filter((id) => {
       const o = g.objects[id]!;
-      return o.controller === ctx.controller && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
+      return o.controller === chooser && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
     }).length;
     return n >= amountOf(ctx, e.amount);
   }
-  if (e.type === 'discard') return zoneList(g, 'hand', ctx.controller).length >= amountOf(ctx, e.amount);
-  if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === ctx.controller);
+  if (e.type === 'discard') return e.all ? zoneList(g, 'hand', chooser).length > 0 : zoneList(g, 'hand', chooser).length >= amountOf(ctx, e.amount);
+  if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
   return true;
 }
 
@@ -802,6 +853,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return e.attacks.flatMap(({ attacker, target }) => {
       const o = check.g.objects[attacker];
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+      // "Whenever a creature attacks enchanted player"
+      if (t.defender === 'enchanted' && (target.kind !== 'player' || target.player !== check.source.attachedToPlayer)) return [];
       const player = target.kind === 'player' ? target.player : check.g.objects[target.object]?.controller;
       return [{ object: refTo(o), ...(player ? { player } : {}) }];
     });
@@ -849,6 +902,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   deals_combat_damage(t, check) {
     const e = check.event;
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
+    if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
@@ -890,7 +944,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever you're dealt damage"
   player_dealt_damage(t, check) {
     const e = check.event;
-    if (e.type !== 'damage' || e.to.kind !== 'player' || check.sourceLeft || e.to.player !== check.controller) return [];
+    if (e.type !== 'damage' || e.to.kind !== 'player' || check.sourceLeft) return [];
+    if (e.to.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     const player = e.to.player;
     const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player);
     if (together[0] !== e) return [];
@@ -910,7 +965,18 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const active = check.g.active;
     if (t.whose === 'you' && active !== check.controller) return [];
     if (t.whose === 'opponent' && active === check.controller) return [];
+    // Curses: "At the beginning of enchanted player's upkeep"
+    if (t.whose === 'enchanted' && active !== check.source.attachedToPlayer) return [];
     return [{ player: active }];
+  },
+  // CR 506.3: "Whenever enchanted player is attacked" — once per combat, as attackers are declared.
+  player_attacked(t, check) {
+    const e = check.event;
+    if (e.type !== 'attacks_declared' || check.sourceLeft) return [];
+    const defender = check.source.attachedToPlayer;
+    if (!defender || !e.attacks.some(({ target }) => target.kind === 'player' && target.player === defender)) return [];
+    if (t.by === 'you' && check.g.active !== check.controller) return [];
+    return [{ player: check.g.active }];
   },
   gain_life(t, check) {
     const e = check.event;
@@ -919,7 +985,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   draw(t, check) {
     const e = check.event;
-    if (e.type !== 'drew' || check.sourceLeft || e.player !== check.controller) return [];
+    if (e.type !== 'drew' || check.sourceLeft) return [];
+    if (e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     return [{ player: e.player }];
   },
   cast(t, check) {
@@ -927,6 +994,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'cast' || check.sourceLeft) return [];
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
+    if (t.who === 'enchanted' && e.player !== check.source.attachedToPlayer) return [];
     const spell = check.g.objects[e.object];
     if (!spell) return [];
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };

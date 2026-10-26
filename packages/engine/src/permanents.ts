@@ -1,8 +1,8 @@
-import type { CardDef, FaceDef } from '@mtg/schema';
+import type { CardDef, FaceDef, TargetSpec } from '@mtg/schema';
 import { chars, hasKeyword, hasType, matchesFilter } from './characteristics.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
-import { createObject, faceOf, moveObject, nameOf, setTapped } from './zones.js';
+import { createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
 
 /**
  * CR 701.8a: destroying moves a permanent to its owner's graveyard.
@@ -59,6 +59,26 @@ export function canAttach(g: GameState, attachment: GameObject, target: GameObje
     return matchesFilter(g, target, enchant.filter, { controller: attachment.controller, source: attachment });
   }
   return false;
+}
+
+/**
+ * What an Aura spell targets (CR 303.4a): an object its enchant ability allows, or a player
+ * for "enchant player" / "enchant opponent".
+ */
+export function auraTargetSpec(face: FaceDef): TargetSpec | null {
+  if (!face.subtypes.includes('Aura')) return null;
+  const enchant = face.keywords.find((k) => k.id === 'enchant' && (k.filter || k.player));
+  if (!enchant) return null;
+  if (enchant.player) return { what: 'player', ...(enchant.player === 'opponent' ? { player: 'opponent' as const } : {}), text: `${enchant.text} to enchant` };
+  return { what: 'object', filter: enchant.filter!, text: `${enchant.text} to enchant` };
+}
+
+/** CR 303.4d / 704.5m: whether an Aura can stay attached to this player. */
+export function canEnchantPlayer(g: GameState, aura: GameObject, player: PlayerId): boolean {
+  if (!livePlayers(g).includes(player)) return false;
+  const enchant = chars(g, aura).keywords.find((k) => k.id === 'enchant');
+  if (!enchant?.player) return false;
+  return enchant.player === 'any' || player !== aura.controller;
 }
 
 /** CR 701.3a: attach it; CR 701.3b: if it can't be attached there, it doesn't move. CR 613.7e: new timestamp. */

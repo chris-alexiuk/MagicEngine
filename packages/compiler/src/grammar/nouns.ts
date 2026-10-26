@@ -21,6 +21,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
+  [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
@@ -92,8 +93,9 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
 
   // "noncreature, nonland permanent": a comma between "non-" words is "and".
   rest = rest.replace(/,\s+(?=non)/g, ' ');
-  const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/);
+  const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   const last = parts[parts.length - 1]!;
+  const base: ObjectFilter = { ...f };
   const head = parseHeadPhrase(last, f);
   if (!head) return null;
   if (parts.length > 1) {
@@ -101,10 +103,19 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
     // the earlier words stand in for the first word of the last part.
     const first = last.split(' ')[0]!;
     const cat = categoryOf(first);
-    if (!cat) return null;
-    for (const alt of parts.slice(0, -1)) {
-      if (alt.includes(' ') || categoryOf(alt) !== cat) return null;
-      if (!addAlternative(f, cat, alt, first)) return null;
+    const simple = cat && parts.slice(0, -1).every((alt) => !alt.includes(' ') && categoryOf(alt) === cat);
+    if (simple) {
+      for (const alt of parts.slice(0, -1)) if (!addAlternative(f, cat, alt, first)) return null;
+    } else {
+      // Different kinds of words: "creature or Vehicle", "artifact or non-Aura enchantment" — any one of them.
+      const anyOf: ObjectFilter[] = [];
+      for (const part of parts) {
+        const alt: ObjectFilter = base.zone ? { zone: base.zone } : {};
+        if (!parseHeadPhrase(part, alt)) return null;
+        delete alt.zone;
+        anyOf.push(alt);
+      }
+      return { filter: { ...base, ...(f.zone && !base.zone ? { zone: f.zone } : {}), anyOf }, plural: head.plural };
     }
   }
   return { filter: f, plural: head.plural };
@@ -300,6 +311,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     return ref;
   }
   if (t === 'that player' || t === 'they') return b.player;
+  // CR 303.4: an Aura attached to a player (Curses).
+  if (t === 'enchanted player') return { ref: 'enchanted_player' };
   if (b.named[t]) return b.named[t]!;
   const owner = /^(?:its|that (?:creature|permanent|spell|card)'s) (controller|owner)$/.exec(t);
   if (owner && b.it) return { ref: owner[1] === 'controller' ? 'controller_of' : 'owner_of', of: b.it };

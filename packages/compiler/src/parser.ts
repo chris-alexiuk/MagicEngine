@@ -126,8 +126,11 @@ export class ParserRegistry {
         for (const kw of kws) {
           // CR 702.5a / CR 303.4a: what an Aura can enchant is also what the Aura spell targets.
           if (kw.id === 'enchant' && kw.text) {
-            const pf = parseFilter(kw.text, new Binder(env as GrammarEnv));
-            if (pf && !pf.plural) kw.filter = pf.filter;
+            if (kw.text === 'player' || kw.text === 'opponent') kw.player = kw.text === 'player' ? 'any' : 'opponent';
+            else {
+              const pf = parseFilter(kw.text, new Binder(env as GrammarEnv));
+              if (pf && !pf.plural) kw.filter = pf.filter;
+            }
           }
           const abilities = this.expandKeyword(kw, env);
           if (abilities) kw.abilities = abilities;
@@ -186,9 +189,23 @@ export class ParserRegistry {
 }
 
 /** Fills a definition's parameters ("N", "[cost]", "[type]", "[quality]") from a keyword instance. */
+/**
+ * "pays [cost]" with a cost that isn't mana reads as a verb: "pays 3 life", "pays {2} and 2 life",
+ * "discards a card", "sacrifices a creature" (ward, CR 702.21a).
+ */
+function paysCost(cost: string): string | null {
+  if (/^(\{[^}]+\})+$/.test(cost)) return `pays ${cost}`;
+  const life = /^(?:((?:\{[^}]+\})+), )?[Pp]ay (\d+) life$/.exec(cost);
+  if (life) return life[1] ? `pays ${life[1]} and ${life[2]} life` : `pays ${life[2]} life`;
+  const verb = /^(Discard|Sacrifice) (an? .+|one .+|two .+)$/.exec(cost);
+  if (verb && !/at random/.test(cost)) return `${verb[1]!.toLowerCase()}s ${verb[2]}`;
+  return null;
+}
+
 function keywordText(template: string, kw: KeywordInstance): string | null {
   let ok = true;
   const out = template
+    .replace(/pays \[cost\]/g, () => (kw.cost ? (paysCost(kw.cost) ?? ((ok = false), '')) : ((ok = false), '')))
     .replace(/\[(cost|Cost)\]/g, () => kw.cost ?? ((ok = false), ''))
     .replace(/\[(type|Type)\]/g, (_m, t: string) => {
       if (!kw.text) return ((ok = false), '');

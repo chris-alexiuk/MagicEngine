@@ -1,4 +1,4 @@
-import type { Amount, AmountExpr, Ref } from '@mtg/schema';
+import type { Amount, AmountExpr, EffectNode, Ref } from '@mtg/schema';
 import { chars, matchesFilter } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
@@ -93,12 +93,26 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
   switch (ref.ref) {
     case 'you':
       return live.includes(ctx.controller) ? [ctx.controller] : [];
-    case 'players':
-      return apnap(g).filter((p) => ref.who === 'each' || p !== ctx.controller);
+    case 'players': {
+      const all = apnap(g).filter((p) => ref.who === 'each' || p !== ctx.controller);
+      if (!ref.attacking) return all;
+      // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
+      const defenders = refPlayers(ctx, ref.attacking);
+      const attackers = Object.entries(g.combat?.attackers ?? {}).flatMap(([id, a]) =>
+        a.target.kind === 'player' && defenders.includes(a.target.player) && g.objects[id] ? [g.objects[id]!.controller] : [],
+      );
+      return all.filter((p) => attackers.includes(p));
+    }
     case 'target':
       return (ctx.targets[ref.index] ?? []).flatMap((t) => (t.kind === 'player' && live.includes(t.player) ? [t.player] : []));
     case 'trigger_player':
       return ctx.trigger?.player && live.includes(ctx.trigger.player) ? [ctx.trigger.player] : [];
+    case 'enchanted_player': {
+      // CR 303.4: the player the source Aura is attached to (as it last existed, if it has left).
+      const s = ctx.source;
+      const p = s?.attachedToPlayer ?? (s ? g.lastKnown?.[s.id]?.enchantedPlayer : undefined);
+      return p && live.includes(p) ? [p] : [];
+    }
     case 'controller_of':
     case 'owner_of': {
       const out: PlayerId[] = [];
@@ -227,12 +241,13 @@ export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
 // Resolution
 // ---------------------------------------------------------------------------
 
-function contextFor(g: GameState, entry: StackEntry, r: Resolution, events: GameEvent[], answer?: ChoiceAnswer): EffectContext {
+function contextFor(g: GameState, entry: StackEntry, r: Resolution, events: GameEvent[], answer?: ChoiceAnswer, node?: EffectNode): EffectContext {
   const sourceId = entry.kind === 'spell' ? entry.object : entry.source.id;
   const source = g.objects[sourceId];
   const ctx: EffectContext = {
     g,
-    controller: entry.controller,
+    // An effect done by another player as if they were "you" ("does the same").
+    controller: (node?.asPlayer as PlayerId | undefined) ?? entry.controller,
     events,
     targets: r.targets,
     x: entry.x,
@@ -287,14 +302,16 @@ export function runResolution(g: GameState, events: GameEvent[], answer?: Choice
   let pendingAnswer = answer;
   while (r.index < r.effects.length) {
     const node = r.effects[r.index]!;
-    const result = runEffect(node, contextFor(g, entry, r, events, pendingAnswer));
+    const result = runEffect(node, contextFor(g, entry, r, events, pendingAnswer, node));
     pendingAnswer = undefined;
     if (typeof result === 'object' && 'ask' in result) {
       g.pending = result.ask;
       return false;
     }
     if (typeof result === 'object' && 'expand' in result) {
-      r.effects.splice(r.index, 1, ...result.expand);
+      // What an effect done "as" another player expands into is done by them too.
+      const as = node.asPlayer;
+      r.effects.splice(r.index, 1, ...(as ? result.expand.map((e) => (e.asPlayer ? e : { ...e, asPlayer: as })) : result.expand));
       r.memo = {};
       continue;
     }
