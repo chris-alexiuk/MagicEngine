@@ -1,4 +1,4 @@
-import type { AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
@@ -9,11 +9,12 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
-import { attach, createToken, destroy, sacrifice } from './permanents.js';
+import { attach, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
+import { copiable, withExceptions } from './copies.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
 import { battlefieldZcc, drawCard, livePlayers, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 
 /**
@@ -216,18 +217,27 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   create_token(node, ctx) {
     const n = amountOf(ctx, node.amount);
-    const face = node.token as FaceDef;
+    const face = node.token as FaceDef | undefined;
     const players = node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller];
     const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
     if (node.attachTo && !attachTo) return true; // nothing to attach it to: it isn't created
+    // CR 707.2: "a token that's a copy of …" — of the object's copiable values, with this effect's exceptions.
+    // "this card" still means the card after a cost moved it (embalm exiles it from the graveyard).
+    const original = node.copyOf ? (ref(node, 'copyOf').ref === 'self' ? ctx.source : refObjects(ctx, ref(node, 'copyOf'))[0]) : undefined;
+    if (node.copyOf && !original) return true;
+    const copy = original ? withExceptions(ctx.g, copiable(original), node.except as CopyExcept | undefined) : undefined;
+    const created: ObjectRef[] = [];
     for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
       const count = replaceQuantity(ctx.g, 'tokens', n, { player: p });
       for (let i = 0; i < count; i++) {
-        const t = createToken(ctx.g, face, p, ctx.events, { tapped: Boolean(node.tapped) });
+        const opts = { tapped: Boolean(node.tapped) };
+        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, face!, p, ctx.events, opts);
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
+        created.push({ id: t.id, zcc: t.zcc });
       }
     }
+    if (ctx.resolution) ctx.resolution.created = created;
     return true;
   },
 
@@ -665,7 +675,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       createdStep: g.step,
       effects: node.effects as EffectNode[],
       targets: ctx.targets,
-      ...(ctx.trigger ? { info: ctx.trigger } : {}),
+      ...(ctx.trigger || ctx.resolution?.created ? { info: { ...ctx.trigger, ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}) } } : {}),
     });
     return true;
   },
@@ -1027,6 +1037,8 @@ export const corePlugin: MechanicPlugin = {
     },
     // CR 614.12: "As ~ enters, …" — the choice is asked for before anyone gets priority.
     as_enters(node, o, g) {
+      // A permanent that already entered as a copy doesn't choose again from the copied ability.
+      if ((node as AsEntersNode).choice === 'copy' && o.copyOf) return;
       queueAsEnters(g, o, node as AsEntersNode);
     },
     // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).

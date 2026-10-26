@@ -95,6 +95,8 @@ export interface GameObject {
   timestamp: number;
   /** The object an Aura or Equipment is attached to (CR 701.3). */
   attachedTo?: ObjectRef;
+  /** CR 707.2: the card (and face) whose copiable values this permanent has, if it's a copy. */
+  copyOf?: { card: string; face: number };
   /** CR 303.4: the player an Aura with "enchant player" is attached to. */
   attachedToPlayer?: PlayerId;
   /** CR 701.19a: regeneration shields until end of turn. */
@@ -198,6 +200,8 @@ export interface TriggerInfo {
   lki?: { counters: Record<string, number> };
   /** How much happened ("that much life", "that many +1/+1 counters"): damage dealt, life gained or lost. */
   amount?: number;
+  /** Tokens the original ability created, for a delayed trigger ("sacrifice it at the next end step"). */
+  created?: ObjectRef[];
 }
 
 interface StackBase {
@@ -307,6 +311,8 @@ export interface Resolution {
   lki: Record<ObjectId, PlayerId>;
   /** CR 400.7j: objects this resolution moved to a public zone, by their new zone-change count — it can still find them. */
   found?: Record<ObjectId, number>;
+  /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
+  created?: ObjectRef[];
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
@@ -352,7 +358,8 @@ export type PendingChoice =
   | { kind: 'choose_objects'; player: PlayerId; candidates: ObjectId[]; min: number; max: number; text: string }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
-   * (reveal lists the cards that qualify); color / creature_type: pick one of `options`.
+   * (reveal lists the cards that qualify); color / creature_type: pick one of `options`;
+   * copy: one of `candidates` to enter as a copy of, or none (CR 707.5).
    */
   | {
       kind: 'as_enters';
@@ -388,7 +395,7 @@ export type ChoiceAnswer =
   | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
   | { kind: 'choose_objects'; objects: ObjectId[] }
   /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
-  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string };
+  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -469,6 +476,7 @@ export type GameEvent =
   | { type: 'prevented'; source: ObjectId; amount: number }
   | { type: 'created'; object: ObjectId; controller: PlayerId }
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
+  | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   | { type: 'countered'; object: ObjectId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
@@ -557,13 +565,15 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number } }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
   asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode }[];
+  /** Events whose triggers wait for a copy choice (CR 707.5). */
+  heldEvents?: GameEvent[];
   /** What happened this turn, and how many spells each player cast last turn. */
   turnLog: TurnLog;
   lastTurnSpells: Record<PlayerId, number>;

@@ -29,6 +29,7 @@ import { attempt, Binder, type GrammarEnv } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
+import { parseCopyCandidates, parseCopyExcept } from './copies.js';
 import { parseEffectText, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, parseAmount, parsePT } from './words.js';
@@ -872,6 +873,26 @@ export const asEntersRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 707.5 / CR 614.1c: "You may have ~ enter as a copy of any creature on the battlefield[, except …]."
+ * The choice is made as it enters (CR 614.12), like the other "as ~ enters" choices.
+ */
+export const entersAsCopyRule: GrammarRule = {
+  id: 'enters_as_copy',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^You may have ~ enter(?: the battlefield)? as a copy of (.+?)(?:, except (.+))?\.$/.exec(line);
+    if (!env || !m) return null;
+    const b = new Binder(env);
+    const filter = parseCopyCandidates(m[1]!, b);
+    const except = m[2] ? parseCopyExcept(m[2], b) : undefined;
+    if (!filter || except === null) return null;
+    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}) };
+    const ability: StaticAbility = { kind: 'static', text: original, effect: node };
+    return ability;
+  },
+};
+
 const ROMAN: Record<string, number> = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7 };
 
 /**
@@ -931,6 +952,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   entersWithCountersRule,
   entersTappedUnlessRule,
   asEntersRule,
+  entersAsCopyRule,
   deckRule,
   costModifierRule,
   quantityReplacementRule,

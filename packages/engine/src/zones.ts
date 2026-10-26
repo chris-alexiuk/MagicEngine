@@ -11,9 +11,16 @@ export function obj(g: GameState, id: ObjectId): GameObject {
 }
 
 export function faceOf(g: GameState, o: GameObject): FaceDef {
-  const def = g.cards[o.card];
-  if (!def) throw new RulesError(`no card definition for ${o.card}`);
-  return def.faces[o.face] ?? def.faces[0]!;
+  // CR 707.2 / 613.2a: a copy has the copiable values of what it copies (layer 1).
+  const at = o.copyOf ?? o;
+  const def = g.cards[at.card];
+  if (!def) throw new RulesError(`no card definition for ${at.card}`);
+  return def.faces[at.face] ?? def.faces[0]!;
+}
+
+/** CR 202.3: mana value, from the mana cost it has (a copy's is the original's, CR 707.2). */
+export function manaValueOf(g: GameState, o: GameObject): number {
+  return g.cards[(o.copyOf ?? o).card]?.cmc ?? 0;
 }
 
 export function nameOf(g: GameState, o: GameObject): string {
@@ -88,7 +95,13 @@ export function moveObject(
   if (from === 'battlefield') {
     // CR 608.2h: remember how it last existed on the battlefield ("deals damage equal to its power").
     const c = chars(g, o);
-    (g.lastKnown ??= {})[id] = { zcc: o.zcc, power: c.power, toughness: c.toughness, ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}) };
+    (g.lastKnown ??= {})[id] = {
+      zcc: o.zcc,
+      power: c.power,
+      toughness: c.toughness,
+      ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
+      ...(o.copyOf ? { copyOf: o.copyOf } : {}),
+    };
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;
@@ -105,6 +118,7 @@ export function moveObject(
   delete o.loyaltyActivatedTurn;
   delete o.attachedTo;
   delete o.attachedToPlayer;
+  delete o.copyOf;
   delete o.regenShields;
   delete o.activatedTurn;
   delete o.triggeredTurn;

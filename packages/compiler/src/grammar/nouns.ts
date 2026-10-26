@@ -247,7 +247,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     const t = text.trim();
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
-    if (named) return set(b, { ref: named, plural: false, targeted: false });
+    if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$/i.test(t), targeted: false });
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
     const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
     if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });

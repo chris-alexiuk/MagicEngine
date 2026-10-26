@@ -1,3 +1,4 @@
+import { copyChoicePending } from './as-enters.js';
 import type { TriggeredAbility } from '@mtg/schema';
 import { abilitiesOf, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
@@ -52,8 +53,15 @@ function collect(g: GameState, events: GameEvent[]): void {
   const from = cursors.get(events) ?? 0;
   cursors.set(events, events.length);
   if (!g.started || g.over) return;
-  logTurnEvents(g, events.slice(from));
-  const batch = events.slice(from).filter((e) => TRIGGER_EVENTS.has(e.type));
+  // CR 707.5 / 603.6d: a permanent entering as a copy triggers as the copy — wait until it has chosen.
+  if (copyChoicePending(g)) {
+    (g.heldEvents ??= []).push(...events.slice(from));
+    return;
+  }
+  const fresh = g.heldEvents?.length ? [...g.heldEvents, ...events.slice(from)] : events.slice(from);
+  delete g.heldEvents;
+  logTurnEvents(g, fresh);
+  const batch = fresh.filter((e) => TRIGGER_EVENTS.has(e.type));
   if (!batch.length) return;
   collectDelayed(g, batch);
   collectMonarch(g, batch);
@@ -83,7 +91,10 @@ function collect(g: GameState, events: GameEvent[]): void {
 
   // Each candidate's triggered abilities: printed and from keywords (granted ones too, while it's on the battlefield).
   const withAbilities = candidates.flatMap((c) => {
-    const face = g.cards[c.o.card]?.faces[c.face];
+    // CR 603.10a: a copy that left had the copied abilities (CR 707.2).
+    const last = c.left ? g.lastKnown?.[c.o.id] : undefined;
+    const at = c.left ? (last?.copyOf && last.zcc === c.o.zcc - 1 ? last.copyOf : { card: c.o.card, face: c.face }) : (c.o.copyOf ?? { card: c.o.card, face: c.face });
+    const face = g.cards[at.card]?.faces[at.face];
     if (!face) return [];
     const abilities = c.left || c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);
     return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];

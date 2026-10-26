@@ -126,6 +126,18 @@ export function createToken(g: GameState, face: FaceDef, controller: PlayerId, e
   return o;
 }
 
+/** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
+export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): GameObject {
+  const o = createObject(g, of.card, controller, 'battlefield');
+  o.face = of.face;
+  o.token = true;
+  o.sick = true;
+  if (opts.tapped) o.tapped = true;
+  onEnterBattlefield(g, o, events);
+  events.push({ type: 'created', object: o.id, controller });
+  return o;
+}
+
 export function describe(g: GameState, o: GameObject): string {
   return nameOf(g, o);
 }

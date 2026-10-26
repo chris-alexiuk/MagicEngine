@@ -306,7 +306,9 @@ export type Ref =
   /** CR 607.2a: "the exiled card", "cards exiled with ~" — what this object's linked ability exiled. */
   | { ref: 'exiled_with' }
   /** CR 303.4: "enchanted player" — the player an Aura is attached to. */
-  | { ref: 'enchanted_player' };
+  | { ref: 'enchanted_player' }
+  /** "the token", "those tokens": what the effect just created. */
+  | { ref: 'created' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -389,6 +391,33 @@ export interface CombatRules {
 }
 
 /** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
+/**
+ * CR 707.9: "…a copy of …, except …" — exceptions that become part of the copy's copiable values.
+ * Applied in layer 1 along with the copy itself.
+ */
+export interface CopyExcept {
+  name?: string;
+  /** "it isn't legendary" */
+  nonlegendary?: true;
+  /** "it's legendary in addition to its other types" */
+  supertypes?: string[];
+  /** "it's an artifact in addition to its other types" */
+  addTypes?: string[];
+  /** "it's a Spirit in addition to its other types" */
+  addSubtypes?: string[];
+  /** "it's a 4/4 black Zombie": these replace its creature types. */
+  setCreatureTypes?: string[];
+  /** "it's white" / "it's black": its colors become these. */
+  colors?: Color[];
+  /** "it's 1/1" */
+  power?: number;
+  toughness?: number;
+  /** "it has haste" / "it has flying" */
+  keywords?: KeywordInstance[];
+  /** CR 707.9d: "it has no mana cost" */
+  noManaCost?: true;
+}
+
 export interface ContinuousEffectNode extends EffectNode {
   type: 'continuous';
   affected: Ref;
@@ -419,7 +448,10 @@ export interface ContinuousEffectNode extends EffectNode {
  */
 export interface AsEntersNode extends EffectNode {
   type: 'as_enters';
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type';
+  /** copy: "You may have ~ enter as a copy of any creature on the battlefield" (CR 707.5, CR 614.1c). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy';
+  /** For copy: how the copy differs from the original (CR 707.9). */
+  copyExcept?: CopyExcept;
   amount?: number;
   /** For reveal: the kind of card in hand. */
   filter?: ObjectFilter;

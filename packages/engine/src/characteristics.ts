@@ -17,7 +17,7 @@ import type {
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
-import { faceOf } from './zones.js';
+import { faceOf, manaValueOf } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // Characteristics through the layer system (CR 613)
@@ -438,7 +438,7 @@ export function matchesFilter(
   if (f.notKeywords?.some((k) => c.keywords.some((x) => x.id === k))) return false;
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
-  if (f.manaValue && !compare(g.cards[o.card]?.cmc ?? 0, f.manaValue)) return false;
+  if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;

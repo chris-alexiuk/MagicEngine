@@ -427,3 +427,23 @@ describe('slice 7', () => {
     expect(one('At the beginning of your end step, discard your hand.', 'Enchantment')).toMatchObject({ effects: [{ type: 'discard', all: true, who: { ref: 'you' } }] });
   });
 });
+
+describe('copy effects (CR 707)', () => {
+  it('"enter as a copy of", with exceptions (CR 707.9)', () => {
+    expect(one("You may have this creature enter as a copy of any creature on the battlefield, except it's a Spirit in addition to its other types and it has flying.", 'Creature — Shapeshifter')).toMatchObject({
+      effect: { type: 'as_enters', choice: 'copy', filter: { types: ['Creature'] }, copyExcept: { addSubtypes: ['Spirit'], keywords: [{ id: 'flying' }] } },
+    });
+  });
+
+  it('token copies, and "the token" / "it" afterwards', () => {
+    expect(one("{T}: Create a token that's a copy of target creature you control, except it isn't legendary. Sacrifice it at the beginning of the next end step.", 'Artifact')).toMatchObject({
+      effects: [
+        { type: 'create_token', copyOf: { ref: 'target', index: 0 }, except: { nonlegendary: true } },
+        { type: 'delayed', effects: [{ type: 'sacrifice', what: { ref: 'created' } }] },
+      ],
+    });
+    expect(one("Whenever another nontoken creature you control dies, create a token that's a copy of that creature, except it's a 4/4 black Zombie.", 'Creature — God')).toMatchObject({
+      effects: [{ type: 'create_token', copyOf: { ref: 'trigger_object' }, except: { power: 4, toughness: 4, colors: ['B'], setCreatureTypes: ['Zombie'] } }],
+    });
+  });
+});

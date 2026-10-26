@@ -3,7 +3,7 @@ import { chars, matchesFilter } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
-import { battlefieldZcc, faceOf, livePlayers, nextPlayer } from './zones.js';
+import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nextPlayer } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // References: who and what an effect acts on
@@ -73,6 +73,14 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       return ids
         .map((id) => g.objects[id]!)
         .filter((o) => o && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
+    }
+    case 'created': {
+      // "the token", "sacrifice it at the beginning of the next end step"
+      const made = ctx.resolution?.created ?? ctx.trigger?.created ?? [];
+      return made.flatMap((r) => {
+        const o = g.objects[r.id];
+        return o && o.zcc === r.zcc ? [o] : [];
+      });
     }
     case 'exiled_with': {
       // CR 607.2a: cards in exile that this object's linked ability put there.
@@ -168,7 +176,7 @@ function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'man
   const [r] = refRefs(ctx, ref);
   if (!r) return 0;
   const o = g.objects[r.id];
-  if (stat === 'mana_value') return o ? (g.cards[o.card]?.cmc ?? 0) : 0;
+  if (stat === 'mana_value') return o ? manaValueOf(g, o) : 0;
   if (o && o.zcc === r.zcc && o.zone === 'battlefield') return chars(g, o)[stat];
   const last = g.lastKnown?.[r.id];
   // A leaves-the-battlefield trigger points at the new object; the one just before it was on the battlefield.

@@ -1,6 +1,8 @@
 import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
 import { matchesFilter } from './characteristics.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
+import { copiable, withExceptions } from './copies.js';
+import { onEnterBattlefield } from './registry.js';
 import { nameOf, setTapped, zoneList } from './zones.js';
 
 /**
@@ -48,6 +50,18 @@ export function promptAsEnters(g: GameState): boolean {
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
         break;
+      case 'copy': {
+        // CR 707.5: "You may have ~ enter as a copy of any creature on the battlefield."
+        // Or "any creature card in a graveyard" (Body Double).
+        const pool = node.filter?.zone === 'graveyard' ? Object.values(g.zones.graveyard).flat() : g.zones.battlefield;
+        const candidates = pool.filter((id) => id !== o.id && matchesFilter(g, g.objects[id]!, node.filter ?? {}, { controller: o.controller, source: o }));
+        if (!candidates.length) {
+          g.asEnters.shift();
+          continue;
+        }
+        g.pending = { ...base, text: `Choose what ${nameOf(g, o)} enters as a copy of, or nothing.`, candidates };
+        break;
+      }
     }
   }
   return Boolean(g.pending);
@@ -77,6 +91,18 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       } else setTapped(g, o.id, true, events);
       break;
     }
+    case 'copy': {
+      if (answer.copy) {
+        if (!p.candidates?.includes(answer.copy)) throw new RulesError('Choose one of the permanents it can copy.');
+        const original = g.objects[answer.copy]!;
+        // CR 707.2: the copiable values of the original, with this effect's exceptions (CR 707.9).
+        o.copyOf = withExceptions(g, copiable(original), next.node.copyExcept);
+        events.push({ type: 'became_copy', object: o.id, of: original.id });
+        // CR 707.5: the copied permanent's own "enters with" / "as ~ enters" abilities apply as it enters.
+        onEnterBattlefield(g, o, events);
+      }
+      break;
+    }
     case 'color':
     case 'creature_type': {
       const choice = answer.choice;
@@ -86,6 +112,11 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       break;
     }
   }
-  g.asEnters!.shift();
+  g.asEnters!.splice(g.asEnters!.indexOf(next), 1);
   g.pending = null;
+}
+
+/** CR 603.6d / 707.5: while a permanent is choosing what to enter as a copy of, its "enters" triggers wait. */
+export function copyChoicePending(g: GameState): boolean {
+  return Boolean(g.asEnters?.some((e) => e.node.choice === 'copy' && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
 }

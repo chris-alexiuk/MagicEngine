@@ -2,6 +2,7 @@ import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
+import { parseCopyExcept } from './copies.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { parseTokenPhrase } from './tokens.js';
@@ -352,11 +353,27 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && who.ref === 'you' ? [{ type: 'surveil', amount }] : null;
   },
   create(args, who, b) {
+    // CR 707.2: "a token that's a copy of target creature you control, except it has haste".
+    const copy = /^(a|an|one|two|three|four|five|X|that many) (tapped )?tokens? (?:that's a copy|that are copies) of (.+?)(?:,? except (.+))?$/.exec(args);
+    if (copy) {
+      const amount = parseAmount(copy[1] === 'an' ? 'a' : copy[1]!);
+      if (amount === null || amount === undefined) return null;
+      const of = parseObjectRef(copy[3]!, b);
+      if (!of || of.plural) return null;
+      const except = copy[4] ? parseCopyExcept(copy[4], b) : undefined;
+      if (except === null) return null;
+      const node: EffectNode = { type: 'create_token', amount, copyOf: of.ref, who };
+      if (except) node.except = except;
+      if (copy[2]) node.tapped = true;
+      createdTokens(b);
+      return [node];
+    }
     const attached = /^(.+?) attached to (.+)$/.exec(args);
     const token = parseTokenPhrase(attached ? attached[1]! : args, b);
     if (!token) return null;
     const node: EffectNode = { type: 'create_token', amount: token.amount, token: token.face, who };
     if (token.tapped) node.tapped = true;
+    createdTokens(b);
     if (attached) {
       const to = parseObjectRef(attached[2]!, b);
       if (!to || to.plural || !token.face.subtypes.includes('Aura')) return null;
@@ -622,6 +639,12 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     }
     return [node];
   });
+}
+
+/** After "create …": "it", "the token", "those tokens" mean what was just created. */
+function createdTokens(b: Binder): void {
+  b.it = { ref: 'created' };
+  for (const n of ['the token', 'that token', 'the tokens', 'those tokens', 'the copy', 'the token copy']) b.named[n] = { ref: 'created' };
 }
 
 /** One player other than "you" who makes a choice: "that player", "target opponent", "its controller". */
