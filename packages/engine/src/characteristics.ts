@@ -17,7 +17,7 @@ import type {
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
-import { faceOf, manaValueOf } from './zones.js';
+import { abilitySources, faceOf, manaValueOf } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // Characteristics through the layer system (CR 613)
@@ -188,7 +188,7 @@ function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pic
 /** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3). */
 function staticEffects(g: GameState): ActiveEffect[] {
   const out: ActiveEffect[] = [];
-  for (const id of g.zones.battlefield) {
+  for (const id of abilitySources(g)) {
     const source = g.objects[id];
     if (!source) continue;
     for (const ability of objectAbilities(g, source)) {
@@ -265,6 +265,7 @@ export function withCharsCache<T>(fn: () => T): T {
     if (--charsDepth === 0) {
       conditionMemo = amountMemo = null;
       effectsMemo = null;
+      grantedManaMemo = null;
     }
   }
 }
@@ -476,7 +477,26 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
     }
   }
   for (const a of face.abilities) if (a.kind === 'activated' && a.mana && gateOpen(g, o, a)) out.push(a);
+  // Granted ones ("Creatures you control have "{T}: Add {G}."", CR 613.1f).
+  if (o.zone === 'battlefield' && anyGrantedMana(g)) for (const a of keywordAbilities(chars(g, o).keywords)) if (a.kind === 'activated' && a.mana) out.push(a);
   return out;
+}
+
+const grantsMana = (kws: KeywordInstance[] | undefined): boolean => Boolean(kws?.some((k) => k.abilities?.some((a) => a.kind === 'activated' && a.mana)));
+let grantedManaMemo: { g: GameState; v: boolean } | null = null;
+
+/** Whether anything grants a mana ability right now — rare, so other objects skip computing their characteristics. */
+function anyGrantedMana(g: GameState): boolean {
+  if (grantedManaMemo?.g === g) return grantedManaMemo.v;
+  let v = g.effects.some((e) => grantsMana(e.keywords));
+  for (const id of abilitySources(g)) {
+    if (v) break;
+    const o = g.objects[id];
+    if (!o) continue;
+    v = printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && grantsMana((a.effect as ContinuousEffectNode).keywords));
+  }
+  if (charsDepth > 0) grantedManaMemo = { g, v };
+  return v;
 }
 
 /**

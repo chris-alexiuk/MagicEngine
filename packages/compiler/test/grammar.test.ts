@@ -447,3 +447,33 @@ describe('copy effects (CR 707)', () => {
     });
   });
 });
+
+describe('quoted abilities (CR 113.1a)', () => {
+  it('granted by a static ability, as a keyword instance carrying the compiled ability', () => {
+    expect(one('Creatures you control have "{T}: Add {G}."', 'Enchantment')).toMatchObject({
+      effect: { type: 'continuous', keywords: [{ id: 'ability', text: '{T}: Add {G}.', abilities: [{ kind: 'activated', mana: true }] }] },
+    });
+    expect(one('Equipped creature has flying and "Whenever this creature attacks, you gain 1 life."\nEquip {1}', 'Artifact — Equipment')).toMatchObject({
+      effect: { keywords: [{ id: 'flying' }, { id: 'ability', abilities: [{ kind: 'triggered', trigger: { type: 'attacks', subject: { ref: 'self' } } }] }] },
+    });
+  });
+
+  it('granted static abilities and the card’s own name inside the quotes stay unread', () => {
+    expect(parse('Creatures you control have "This creature can\'t block."', 'Enchantment').unparsed).toHaveLength(1);
+    expect(parse('Creatures you control have "{T}: Sacrifice Bomb Totem."', 'Enchantment', 'Bomb Totem').unparsed).toHaveLength(1);
+  });
+
+  it('tokens: "with "…"", "named …", and "It has …" afterwards', () => {
+    const r = one('{T}: Create a 1/1 blue Faerie creature token named Cloud Sprite. It has flying and "This token can block only creatures with flying."', 'Artifact');
+    expect(r).toMatchObject({ effects: [{ type: 'create_token', token: { name: 'Cloud Sprite', keywords: [{ id: 'flying' }], abilities: [{ kind: 'static' }] } }] });
+    expect(one('Create a 1/1 green Saproling creature token with "When this token dies, you gain 2 life."', 'Sorcery')).toMatchObject({
+      effects: [{ token: { abilities: [{ kind: 'triggered', trigger: { type: 'dies' } }] } }],
+    });
+  });
+
+  it('CR 114.1: "You get an emblem with "…""', () => {
+    expect(one('−6: You get an emblem with "Creatures you control get +2/+2."', 'Legendary Planeswalker — Ajani')).toMatchObject({
+      effects: [{ type: 'emblem', abilities: [{ kind: 'static', effect: { type: 'continuous', power: 2 } }] }],
+    });
+  });
+});

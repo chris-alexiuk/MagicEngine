@@ -108,6 +108,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'life', ...c, ...(life[1] === 'you' ? {} : { who: life[1] === 'a player' ? 'any_player' : 'any_opponent' }) } : null;
   }
   if (/^you have no cards in hand$/.test(t)) return { type: 'hand', op: 'le', n: 0 };
+  // "you have more cards in hand than each opponent"
+  const moreHand = /^you have (more|fewer) cards in hand than (each|an) opponent$/.exec(t);
+  if (moreHand) return { type: 'hand', than: moreHand[2] === 'each' ? 'each_opponent' : 'an_opponent', op: moreHand[1] === 'more' ? 'gt' : 'lt' };
   const hand = /^you have (\w+ or (?:more|fewer)) cards in hand$/.exec(t);
   if (hand) {
     const c = compare(hand[1]!);

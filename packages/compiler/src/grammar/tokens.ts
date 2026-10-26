@@ -1,6 +1,7 @@
 import type { Amount, Color, FaceDef } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseKeywordList } from './nouns.js';
+import { isQuoted, quotedText } from './quoted.js';
 import { COLOR_WORDS, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** CR 111.10: predefined tokens, by the name effects use ("a Treasure token"). */
@@ -48,7 +49,8 @@ export interface ParsedToken {
  * after its subtypes plus "Token".
  */
 export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
-  const m = /^(\w+) (tapped )?(?:(\d+)\/(\d+) )?(.+?) tokens?(?: with (.+))?$/.exec(text.trim());
+  // CR 111.4: "named X" gives it that name instead.
+  const m = /^(\w+) (tapped )?(?:(\d+)\/(\d+) )?(.+?) tokens?(?: named ([A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
   if (!m) return null;
   const amount = parseAmount(m[1]!);
   if (amount === null) return null;
@@ -60,7 +62,7 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
 
   const predefined = PREDEFINED[words];
   if (predefined) {
-    if (m[3] || m[6]) return null;
+    if (m[3] || m[6] || m[7]) return null;
     return { amount, tapped, face: tokenFace(b, predefined.name ?? words.replace(/ Role$/, ''), predefined.typeLine, predefined.text, predefined.colors ?? [], predefined.pt) };
   }
 
@@ -86,15 +88,33 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if (!subtypes.length || !types.length) return null;
   const isCreature = types.includes('Creature');
   if (isCreature !== Boolean(m[3])) return null; // creature tokens state P/T; others don't
-  let text_ = '';
-  if (m[6]) {
-    const kws = parseKeywordList(m[6], b);
-    if (!kws) return null;
-    text_ = m[6].split(/,\s*(?:and\s+)?|\s+and\s+/).join(', ').replace(/^\w/, (c) => c.toUpperCase());
-  }
+  const extra = m[7] ? withText(m[7], b) : { text: '', quoted: [] };
+  if (!extra) return null;
   const typeLine = `${types.join(' ')} — ${subtypes.join(' ')}`;
-  const face = tokenFace(b, `${subtypes.join(' ')} Token`, typeLine, text_, colors, isCreature ? [m[3]!, m[4]!] : undefined);
+  const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? [m[3]!, m[4]!] : undefined);
+  // A quoted ability the grammar can't read leaves the whole phrase unread, rather than a token resolved by hand.
+  if (extra.quoted.some((q) => face.unparsed.includes(q))) return null;
   return { amount, tapped, face };
+}
+
+/** What a "with …" clause adds to a token: keywords on one line, each quoted ability on its own. */
+function withText(text: string, b: Binder): { text: string; quoted: string[] } | null {
+  const items = text.split(/,\s*(?:and\s+)?|\s+and\s+/).filter(Boolean);
+  const words = items.filter((i) => !isQuoted(i));
+  const quoted = items.filter(isQuoted).map((i) => quotedText(i, b));
+  if (quoted.some((t) => t === null)) return null;
+  if (words.length && !parseKeywordList(words.join(', '), b)) return null;
+  const lines = [...(words.length ? [words.join(', ').replace(/^\w/, (c) => c.toUpperCase())] : []), ...(quoted as string[])];
+  return { text: lines.join('\n'), quoted: quoted as string[] };
+}
+
+/** "Create a 1/1 Eldrazi Scion token. It has "Sacrifice this token: Add {C}."" — more of the token's own text. */
+export function addTokenText(face: FaceDef, text: string, b: Binder): FaceDef | null {
+  const extra = withText(text, b);
+  if (!extra) return null;
+  const typeLine = face.typeLine.replace(/^Token /, '');
+  const next = tokenFace(b, face.name, typeLine, [face.oracle, extra.text].filter(Boolean).join('\n'), face.colors, face.power !== undefined ? [face.power, face.toughness!] : undefined);
+  return extra.quoted.some((q) => next.unparsed.includes(q)) ? null : next;
 }
 
 function tokenFace(b: Binder, name: string, typeLine: string, text: string, colors: Color[], pt?: [string, string]): FaceDef {

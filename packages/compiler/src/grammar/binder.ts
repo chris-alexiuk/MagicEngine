@@ -7,6 +7,8 @@ export interface GrammarEnv {
   faceName: string;
   typeLine: string;
   keywords: KeywordRegistry;
+  /** Quoted ability texts set aside from the line being parsed, by QUOTED_n index (see quoted.ts). */
+  quotes?: string[];
   /** Parses a quoted or predefined ability text (used for tokens' abilities). */
   parseAbilities?: (text: string, name: string, typeLine: string) => import('../parser.js').ParseResult;
 }

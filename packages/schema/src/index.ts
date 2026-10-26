@@ -552,7 +552,7 @@ export const CORE_NODES = {
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
-    'players_do',
+    'players_do', 'emblem',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -613,10 +613,21 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     out.conditions.push(c.type);
     if (c.type === 'and') for (const part of c.all as ConditionNode[]) cond(part);
   };
+  // Abilities an effect gives something: quoted ones granted ("gains "…""), an emblem's, a token's.
+  const nested = (e: EffectNode) => {
+    const token = e.token as FaceDef | undefined;
+    const kws = [...((e.keywords as KeywordInstance[] | undefined) ?? []), ...(token?.keywords ?? []), ...(((e.except ?? e.copyExcept) as CopyExcept | undefined)?.keywords ?? [])];
+    const inner = [...((e.abilities as AbilityNode[] | undefined) ?? []), ...(token?.abilities ?? []), ...kws.flatMap((k) => k.abilities ?? [])];
+    for (const n of inner) {
+      const t = nodeTags(n);
+      for (const k of Object.keys(out) as (keyof typeof out)[]) out[k].push(...t[k]);
+    }
+  };
   const visit = (list: EffectNode[] | undefined) => {
     for (const e of list ?? []) {
       out.effects.push(e.type);
       amounts(e);
+      nested(e);
       for (const key of ['effects', 'then', 'else', 'action']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
       if (e.cond) cond(e.cond as ConditionNode);
     }
@@ -630,6 +641,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     if (a.effect.condition) cond(a.effect.condition as ConditionNode);
     if (a.effect.unless) cond(a.effect.unless as ConditionNode);
     if (a.effect.type === 'additional_cost') out.costs.push((a.effect.cost as EffectNode).type);
+    nested(a.effect);
   }
   else {
     visit(a.effects);

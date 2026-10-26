@@ -1,4 +1,4 @@
-import type { AsEntersNode, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AsEntersNode, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
@@ -95,6 +95,8 @@ export interface GameObject {
   timestamp: number;
   /** The object an Aura or Equipment is attached to (CR 701.3). */
   attachedTo?: ObjectRef;
+  /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
+  emblem?: true;
   /** CR 707.2: the card (and face) whose copiable values this permanent has, if it's a copy. */
   copyOf?: { card: string; face: number };
   /** CR 303.4: the player an Aura with "enchant player" is attached to. */
@@ -565,7 +567,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number } }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number }; granted?: AbilityNode[] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */

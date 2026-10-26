@@ -126,6 +126,20 @@ export function createToken(g: GameState, face: FaceDef, controller: PlayerId, e
   return o;
 }
 
+/** CR 114.1–114.2: an emblem with these abilities, put into the command zone; it's owned and controlled by `player`. */
+export function createEmblem(g: GameState, face: FaceDef, player: PlayerId): GameObject {
+  const json = JSON.stringify(face);
+  let h = 0;
+  for (let i = 0; i < json.length; i++) h = (Math.imul(h, 31) + json.charCodeAt(i)) | 0;
+  const key = `emblem:${(h >>> 0).toString(36)}`;
+  if (!g.cards[key]) {
+    g.cards[key] = { id: key, name: face.name, layout: 'emblem', cmc: 0, colorIdentity: [], faces: [face], legal: {}, set: '', rarity: 'emblem', automation: 'full' };
+  }
+  const o = createObject(g, key, player, 'command');
+  o.emblem = true;
+  return o;
+}
+
 /** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
 export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): GameObject {
   const o = createObject(g, of.card, controller, 'battlefield');

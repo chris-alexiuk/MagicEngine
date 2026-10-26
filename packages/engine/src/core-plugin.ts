@@ -1,4 +1,4 @@
-import type { AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
@@ -9,7 +9,7 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
-import { attach, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
+import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
@@ -638,6 +638,26 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "If [condition], [effect]. Otherwise, [effect]." — checked as this instruction is followed (CR 608.2c).
     const yes = evalCondition(node.cond as ConditionNode, ctx);
     return { expand: ((yes ? node.effects : node.else) as EffectNode[] | undefined) ?? [] };
+  },
+
+  // CR 114.1: "You get an emblem with "…"".
+  emblem(node, ctx) {
+    const face: FaceDef = {
+      name: `${sourceName(ctx)} emblem`,
+      manaCost: '',
+      typeLine: 'Emblem',
+      supertypes: [],
+      types: [],
+      subtypes: [],
+      oracle: String(node.text ?? ''),
+      colors: [],
+      keywords: [],
+      abilities: structuredClone(node.abilities as AbilityNode[]),
+      unparsed: [],
+    };
+    const o = createEmblem(ctx.g, face, ctx.controller);
+    ctx.events.push({ type: 'created', object: o.id, controller: ctx.controller });
+    return true;
   },
 
   // "Each opponent attacking that player does the same": the same effects, done by each of them as "you".

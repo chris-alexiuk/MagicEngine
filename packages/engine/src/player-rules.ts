@@ -1,7 +1,7 @@
 import type { PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
 import { objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { GameState, PlayerId } from './types.js';
-import { faceOf } from './zones.js';
+import { faceOf, abilitySources } from './zones.js';
 
 /**
  * Static abilities that change the rules for players rather than objects:
@@ -11,7 +11,7 @@ import { faceOf } from './zones.js';
  */
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
-  for (const id of g.zones.battlefield) {
+  for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;

@@ -11,7 +11,6 @@ import { COLOR_WORDS, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js'
 
 /** Splits "it's white, it has no mana cost, and it's a Zombie …" into its parts (not inside quotes). */
 function exceptParts(text: string): string[] {
-  if (text.includes('"') || text.includes('“')) return [];
   return text
     .split(/,? and (?=(?:it|its|the token)\b)|, (?:and )?(?=(?:it|its|the token)\b)/)
     .map((p) => p.trim())
@@ -100,7 +99,7 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     }
     const has = /^it has (.+)$/.exec(p);
     if (has) {
-      const kws = parseKeywordList(has[1]!, b);
+      const kws = parseKeywordList(has[1]!, b, true);
       if (!kws?.length) return null;
       (out.keywords ??= []).push(...kws);
       continue;

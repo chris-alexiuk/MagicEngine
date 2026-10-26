@@ -1,11 +1,11 @@
-import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
+import type { EffectNode, FaceDef, Ref, RuleFlag } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { parseCopyExcept } from './copies.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
-import { parseTokenPhrase } from './tokens.js';
+import { addTokenText, parseTokenPhrase } from './tokens.js';
 import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
@@ -113,6 +113,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode, until } });
         i++;
+        continue;
+      }
+      // "Create a 1/1 Eldrazi Scion creature token. It has "Sacrifice this token: Add {C}."" — the token's own text.
+      const tokenHas = /^(?:It|They) (?:has|have) (.+)$/.exec(s);
+      const made = out[out.length - 1];
+      if (tokenHas && made?.type === 'create_token' && made.token) {
+        const face = addTokenText(made.token as FaceDef, tokenHas[1]!, b);
+        if (!face) return null;
+        made.token = face;
         continue;
       }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
@@ -247,6 +256,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (may) {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
+  }
+  // CR 114.1: "You get an emblem with "…"" (planeswalkers' ultimates).
+  const emblem = /^[Yy]ou get an emblem with (.+)$/.exec(s);
+  if (emblem) {
+    const kws = parseKeywordList(emblem[1]!, b, true);
+    if (!kws || kws.some((k) => k.id !== 'ability')) return null;
+    return [{ type: 'emblem', abilities: kws.flatMap((k) => k.abilities ?? []), text: kws.map((k) => k.text).join('\n') }];
   }
   // "That player may draw a card", "its controller may create a token": another player chooses (CR 603.5).
   const theyMay = /^(.+?) may (.+)$/.exec(s);

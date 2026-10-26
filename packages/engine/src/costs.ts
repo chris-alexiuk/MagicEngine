@@ -5,7 +5,7 @@ import type { ManaCost } from './mana.js';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
-import { faceOf } from './zones.js';
+import { faceOf, abilitySources } from './zones.js';
 
 /**
  * CR 601.2f: the total cost of a spell is its mana cost (or an alternative cost), plus additional
@@ -26,7 +26,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
     changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
   }
-  for (const id of g.zones.battlefield) {
+  for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cost_modifier') continue;

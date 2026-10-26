@@ -29,6 +29,8 @@ export interface ParseContext {
   keywords?: KeywordRegistry;
   /** Filled in by the registry: compiles another ability text (a token's, say). */
   parseAbilities?: (text: string, name: string, typeLine: string) => ParseResult;
+  /** Quoted ability texts set aside from the line being parsed (QUOTED_n). */
+  quotes?: string[];
 }
 
 export interface GrammarRule {
@@ -156,11 +158,24 @@ export class ParserRegistry {
 
   /** One ability's lines (a modal block has several) through the grammar rules. */
   private parseBlock(block: string[], env: ParseContext, original = block.join('\n')): AbilityNode | null {
-    const normalised = block
+    // Quoted abilities are set aside as QUOTED_n, so sentence and list splitting don't look inside
+    // them and the card's name inside them isn't taken for "~" (see grammar/quoted.ts).
+    const quotes: string[] = [];
+    // A sentence that ends with the quote has its period inside it ('have "{T}: Add {G}."'): keep one outside.
+    const masked = block.map((l) =>
+      l.replace(/"([^"]*)"|“([^”]*)”/g, (_m, a: string | undefined, b: string | undefined, at: number, all: string) => {
+        const inner = (a ?? b)!;
+        const after = all.slice(at + _m.length);
+        const ends = inner.endsWith('.') && (after === '' || /^\s+[A-Z]/.test(after));
+        return `QUOTED_${quotes.push(inner) - 1}${ends ? '.' : ''}`;
+      }),
+    );
+    const normalised = masked
       .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
       .join('\n');
+    const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {
-      const node = rule.parse(normalised, original, env);
+      const node = rule.parse(normalised, original, ctx);
       if (node) return node;
     }
     return null;

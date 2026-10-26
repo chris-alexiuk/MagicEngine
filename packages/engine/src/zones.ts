@@ -18,6 +18,15 @@ export function faceOf(g: GameState, o: GameObject): FaceDef {
   return def.faces[at.face] ?? def.faces[0]!;
 }
 
+/**
+ * Where static and triggered abilities come from: permanents on the battlefield, and emblems
+ * in the command zone (CR 114.4: an emblem's abilities function there).
+ */
+export function abilitySources(g: GameState): ObjectId[] {
+  const emblems = g.zones.command.filter((id) => g.objects[id]?.emblem);
+  return emblems.length ? [...g.zones.battlefield, ...emblems] : g.zones.battlefield;
+}
+
 /** CR 202.3: mana value, from the mana cost it has (a copy's is the original's, CR 707.2). */
 export function manaValueOf(g: GameState, o: GameObject): number {
   return g.cards[(o.copyOf ?? o).card]?.cmc ?? 0;
@@ -95,12 +104,16 @@ export function moveObject(
   if (from === 'battlefield') {
     // CR 608.2h: remember how it last existed on the battlefield ("deals damage equal to its power").
     const c = chars(g, o);
+    // CR 603.10a: triggered abilities it was granted ("have "When this creature dies, …"") look back too.
+    const printedKws = faceOf(g, o).keywords;
+    const granted = c.keywords.filter((k) => !printedKws.includes(k)).flatMap((k) => (k.abilities ?? []).filter((a) => a.kind === 'triggered'));
     (g.lastKnown ??= {})[id] = {
       zcc: o.zcc,
       power: c.power,
       toughness: c.toughness,
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
+      ...(granted.length ? { granted } : {}),
     };
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
@@ -219,7 +232,7 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): v
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
 /** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
 function exiledInstead(g: GameState, o: GameObject, from: ZoneName): boolean {
-  for (const id of g.zones.battlefield) {
+  for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || a.effect.type !== 'exile_instead') continue;

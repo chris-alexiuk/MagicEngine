@@ -19,7 +19,7 @@ import {
   type Target,
   type TriggerInfo,
 } from './types.js';
-import { livePlayers } from './zones.js';
+import { livePlayers, abilitySources } from './zones.js';
 
 /**
  * Triggered abilities (CR 603). Events are checked in batches: after each action,
@@ -73,7 +73,7 @@ function collect(g: GameState, events: GameEvent[]): void {
     const o = g.objects[e.object];
     if (o && o.zone !== 'battlefield') left.set(o.id, { o, controller: e.controller, face: e.face, left: true });
   }
-  const present: Candidate[] = g.zones.battlefield.map((id) => {
+  const present: Candidate[] = abilitySources(g).map((id) => {
     const o = g.objects[id]!;
     return { o, controller: o.controller, face: o.face, left: false };
   });
@@ -96,7 +96,8 @@ function collect(g: GameState, events: GameEvent[]): void {
     const at = c.left ? (last?.copyOf && last.zcc === c.o.zcc - 1 ? last.copyOf : { card: c.o.card, face: c.face }) : (c.o.copyOf ?? { card: c.o.card, face: c.face });
     const face = g.cards[at.card]?.faces[at.face];
     if (!face) return [];
-    const abilities = c.left || c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);
+    const lastGranted = last && last.zcc === c.o.zcc - 1 ? (last.granted ?? []) : [];
+    const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);
     return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];
   });
 
@@ -106,7 +107,7 @@ function collect(g: GameState, events: GameEvent[]): void {
       c.abilities.forEach((ability, index) => {
         if (ability.kind !== 'triggered') return;
         // Each ability triggers only from the zone it works in.
-        if ((ability.zone ?? 'battlefield') !== (c.left ? 'battlefield' : c.o.zone)) return;
+        if ((ability.zone ?? 'battlefield') !== (c.left || c.o.emblem ? 'battlefield' : c.o.zone)) return;
         if (c.left && !LOOK_BACK.has(ability.trigger.type)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;

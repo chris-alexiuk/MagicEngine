@@ -1,7 +1,7 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities } from './characteristics.js';
 import type { DamageRecipient, GameObject, GameState, PlayerId } from './types.js';
-import { faceOf } from './zones.js';
+import { faceOf, abilitySources } from './zones.js';
 
 /**
  * Replacement effects that change an amount (CR 614.1a): life gained, tokens created, counters
@@ -24,7 +24,7 @@ export interface QuantitySubject {
 export function replaceQuantity(g: GameState, event: QuantityReplacementNode['event'], n: number, subject: QuantitySubject): number {
   if (n <= 0) return n;
   const mods: QuantityReplacementNode[] = [];
-  for (const id of g.zones.battlefield) {
+  for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;

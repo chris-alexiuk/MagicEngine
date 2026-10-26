@@ -90,8 +90,16 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       return cmp(g.players[controller]!.life, cond);
-    case 'hand':
-      return cmp(zoneList(g, 'hand', controller).length, cond);
+    case 'hand': {
+      const mine = zoneList(g, 'hand', controller).length;
+      if (cond.than) {
+        // "more cards in hand than each opponent" / "than an opponent"
+        const theirs = livePlayers(g).filter((p) => p !== controller).map((p) => zoneList(g, 'hand', p).length);
+        const beats = (n: number) => (cond.op === 'gt' ? mine > n : mine < n);
+        return cond.than === 'each_opponent' ? theirs.every(beats) : theirs.some(beats);
+      }
+      return cmp(mine, cond);
+    }
     case 'graveyard':
       return cmp(zoneList(g, 'graveyard', controller).length, cond);
     case 'this_turn': {

@@ -1,3 +1,4 @@
+import { isQuoted, parseQuotedAbility } from './quoted.js';
 import type { KeywordInstance, ObjectFilter, Ref, TargetSpec } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { capitalise, COLOR_WORDS, parseAmount, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js';
@@ -51,12 +52,15 @@ function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: str
   return true;
 }
 
-/** "flying and first strike", "trample, haste" → keyword instances; null if any item isn't a keyword. */
-export function parseKeywordList(text: string, b: Binder): KeywordInstance[] | null {
+/**
+ * "flying and first strike", "trample, haste", 'haste and "{T}: Add {G}."' → keyword instances;
+ * null if any item isn't a keyword. Quoted abilities are `printed` on a token or copy, or granted.
+ */
+export function parseKeywordList(text: string, b: Binder, printed = false): KeywordInstance[] | null {
   const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean);
   const out: KeywordInstance[] = [];
   for (const item of items) {
-    const kw = b.env.keywords.parseChunk(item, true);
+    const kw = isQuoted(item) ? parseQuotedAbility(item, b, printed) : b.env.keywords.parseChunk(item, true);
     if (!kw) return null;
     out.push(kw);
   }
@@ -93,6 +97,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
 
   // "noncreature, nonland permanent": a comma between "non-" words is "and".
   rest = rest.replace(/,\s+(?=non)/g, ' ');
+  // "each Fungus and Saproling you control": either subtype.
+  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) === a && subtypeOf(z) === z ? `${a} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   const last = parts[parts.length - 1]!;
   const base: ObjectFilter = { ...f };
@@ -206,6 +212,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     else if (SUPERTYPE_WORDS[w]) (f.supertypes ??= []).push(SUPERTYPE_WORDS[w]!);
     else if (TYPE_NOUNS[w] && w === TYPE_NOUNS[w]!.toLowerCase()) adjTypes.push(TYPE_NOUNS[w]!);
     else if (w === 'token') f.token = true;
+    // CR 903.3: "commander creatures you own"
+    else if (w === 'commander') f.commander = true;
     // "permanent card" (CR 110.4b): a card with a permanent type.
     else if (w === 'permanent' && /^cards?$/.test(lower)) f.types = [...PERMANENT_TYPES];
     else if (subtypeOf(raw) === raw) (f.subtypes ??= []).push(raw);
