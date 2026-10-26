@@ -1,4 +1,4 @@
-import type { Automation, CardDB } from '@mtg/schema';
+import { keywordSupported, type Automation, type CardDB } from '@mtg/schema';
 import { normaliseSelf, stripAbilityWord } from './parser.js';
 
 export interface TemplateStat {
@@ -15,6 +15,8 @@ export interface CoverageReport {
   /** Unparsed oracle lines grouped by shape, most common first: the parser's to-do list. */
   topTemplates: TemplateStat[];
   keywordCounts: Record<string, number>;
+  /** Keywords the engine doesn't apply yet, by number of cards: the engine's to-do list. */
+  manualKeywords: Record<string, number>;
 }
 
 const NUMBER_WORDS = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|X)\b/g;
@@ -33,6 +35,7 @@ export function buildCoverage(db: CardDB, topN = 200): CoverageReport {
   const byLayout: Record<string, Record<Automation, number>> = {};
   const templates = new Map<string, TemplateStat>();
   const keywordCounts: Record<string, number> = {};
+  const manualKeywords: Record<string, number> = {};
 
   for (const card of db.cards) {
     totals[card.automation]++;
@@ -40,7 +43,10 @@ export function buildCoverage(db: CardDB, topN = 200): CoverageReport {
     layout[card.automation]++;
 
     for (const face of card.faces) {
-      for (const kw of face.keywords) keywordCounts[kw.id] = (keywordCounts[kw.id] ?? 0) + 1;
+      for (const kw of face.keywords) {
+        keywordCounts[kw.id] = (keywordCounts[kw.id] ?? 0) + 1;
+        if (!keywordSupported(kw)) manualKeywords[kw.id] = (manualKeywords[kw.id] ?? 0) + 1;
+      }
       for (const line of face.unparsed) {
         const t = templateOf(line, card.name, face.name);
         const stat = templates.get(t) ?? { template: t, count: 0, examples: [] };
@@ -58,6 +64,7 @@ export function buildCoverage(db: CardDB, topN = 200): CoverageReport {
     byLayout,
     topTemplates: [...templates.values()].sort((a, b) => b.count - a.count).slice(0, topN),
     keywordCounts: Object.fromEntries(Object.entries(keywordCounts).sort((a, b) => b[1] - a[1])),
+    manualKeywords: Object.fromEntries(Object.entries(manualKeywords).sort((a, b) => b[1] - a[1])),
   };
 }
 
@@ -69,7 +76,7 @@ export function coverageMarkdown(report: CoverageReport, rows = 100): string {
     ``,
     `Built ${report.builtAt} · ${report.cardCount.toLocaleString('en-US')} cards`,
     ``,
-    `"Full" means every oracle line compiled to AST; "manual" means none did (players resolve it by hand).`,
+    `"Full" means the engine runs every line; "manual" means players resolve all of it by hand. A keyword the engine doesn't apply yet counts as a manual line.`,
     ``,
     `| Status | Cards | Share |`,
     `|---|---:|---:|`,
@@ -86,6 +93,14 @@ export function coverageMarkdown(report: CoverageReport, rows = 100): string {
     ...report.topTemplates
       .slice(0, rows)
       .map((t, i) => `| ${i + 1} | ${t.count} | ${esc(t.template)} | ${esc(t.examples.join(', '))} |`),
+    ``,
+    `## Keywords the engine doesn't apply yet`,
+    ``,
+    `| Keyword | Cards |`,
+    `|---|---:|`,
+    ...Object.entries(report.manualKeywords)
+      .slice(0, 60)
+      .map(([k, n]) => `| ${k.replace(/_/g, ' ')} | ${n} |`),
     ``,
   ];
   return lines.join('\n');

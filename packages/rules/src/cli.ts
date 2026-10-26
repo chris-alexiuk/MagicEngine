@@ -2,6 +2,7 @@
  *   tsx src/cli.ts parse <MagicCompRules.txt> <rules.json>
  *   tsx src/cli.ts trace [--check]
  *   tsx src/cli.ts subtypes
+ *   tsx src/cli.ts keywords
  *
  * `trace` scans packages/engine/src (implemented) and packages/engine/test (tested)
  * for "CR x.y" citations and writes docs/rules/TRACE.md. With --check it exits 1
@@ -11,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { parseComprehensiveRules, type RulesDoc } from './parse.js';
+import { extractKeywordDefinitions, keywordDefinitionsModule } from './keywords.js';
 import { extractSubtypes, subtypesModule } from './subtypes.js';
 import { buildTrace, findCitations, traceMarkdown, type Citation } from './trace.js';
 
@@ -66,9 +68,18 @@ async function trace(check: boolean): Promise<void> {
 async function subtypes(): Promise<void> {
   const doc: RulesDoc = JSON.parse(await readFile(fromRoot('docs/rules/rules.json'), 'utf8'));
   const lists = extractSubtypes(doc);
-  const out = 'packages/compiler/src/grammar/subtypes.ts';
+  const out = 'packages/schema/src/subtypes.ts';
   await writeFile(fromRoot(out), subtypesModule(lists, doc.effectiveDate));
   console.log(Object.entries(lists).map(([k, v]) => `${v.length} ${k}`).join(', ') + ` → ${out}`);
+}
+
+/** Writes the keyword definitions (CR 702) the compiler expands keywords with. */
+async function keywords(): Promise<void> {
+  const doc: RulesDoc = JSON.parse(await readFile(fromRoot('docs/rules/rules.json'), 'utf8'));
+  const defs = extractKeywordDefinitions(doc);
+  const out = 'packages/compiler/src/keyword-definitions.ts';
+  await writeFile(fromRoot(out), keywordDefinitionsModule(defs, doc.effectiveDate));
+  console.log(`${Object.keys(defs).length} keyword definitions → ${out}`);
 }
 
 const [cmd, ...args] = process.argv.slice(2).filter((a) => a !== '--');
@@ -79,7 +90,9 @@ const run =
       ? trace(args.includes('--check'))
       : cmd === 'subtypes'
         ? subtypes()
-        : Promise.reject(new Error('usage: cli parse <in.txt> <out.json> | cli trace [--check] | cli subtypes'));
+        : cmd === 'keywords'
+          ? keywords()
+          : Promise.reject(new Error('usage: cli parse <in.txt> <out.json> | cli trace [--check] | cli subtypes | cli keywords'));
 run.catch((err: unknown) => {
   console.error(err);
   process.exit(1);

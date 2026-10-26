@@ -24,6 +24,8 @@ export class Binder {
   it: Ref | null = null;
   /** Antecedent for "that player". */
   player: Ref | null = null;
+  /** Other phrases with a fixed meaning in this ability ("the blocking creature"). */
+  named: Record<string, Ref> = {};
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -32,6 +34,7 @@ export class Binder {
     b.targets = this.targets.map((t) => ({ ...t }));
     b.it = this.it;
     b.player = this.player;
+    b.named = this.named;
     return b;
   }
 
@@ -39,6 +42,7 @@ export class Binder {
     this.targets = other.targets;
     this.it = other.it;
     this.player = other.player;
+    this.named = other.named;
   }
 
   addTarget(spec: TargetSpec): Ref {

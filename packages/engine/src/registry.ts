@@ -129,7 +129,8 @@ export function canAutomate(ability: { effects: EffectNode[] }): boolean {
 export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEvent[]): void {
   const def = g.cards[o.card];
   const face = def?.faces[o.face] ?? def?.faces[0];
-  for (const ability of face?.abilities ?? []) {
+  const abilities = face ? [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])] : [];
+  for (const ability of abilities) {
     if (ability.kind !== 'static') continue;
     const replacement = enterReplacements.get((ability as StaticAbility).effect.type);
     if (replacement) replacement((ability as StaticAbility).effect, o, g);

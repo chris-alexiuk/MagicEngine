@@ -7,7 +7,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
-import { CORE_NODES, nodeTags, type CardDB } from '@mtg/schema';
+import { CORE_NODES, faceAbilities, nodeTags, type CardDB } from '@mtg/schema';
 import { buildCoverage, coverageMarkdown, reparseDB } from '../src/index.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -37,9 +37,9 @@ console.log(`  lines: ${lines} compiled, ${unparsed} unparsed`);
 const strays = new Map<string, number>();
 for (const c of [...next.cards, ...next.tokens]) {
   for (const f of c.faces) {
-    for (const a of f.abilities) {
+    for (const a of faceAbilities(f)) {
       const tags = nodeTags(a);
-      for (const k of ['effects', 'statics', 'triggers', 'costs'] as const) {
+      for (const k of ['effects', 'statics', 'triggers', 'costs', 'conditions'] as const) {
         for (const t of tags[k]) if (!(CORE_NODES[k] as readonly string[]).includes(t)) strays.set(`${k}:${t}`, (strays.get(`${k}:${t}`) ?? 0) + 1);
       }
     }

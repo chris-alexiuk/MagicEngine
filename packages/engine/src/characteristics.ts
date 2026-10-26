@@ -1,4 +1,6 @@
+import { SUBTYPES } from '@mtg/schema';
 import type {
+  AbilityNode,
   ActivatedAbility,
   Color,
   ContinuousEffectNode,
@@ -42,11 +44,15 @@ interface ActiveEffect {
   applies(o: GameObject, c: Characteristics): boolean;
 }
 
+const CREATURE_TYPES = SUBTYPES.creature;
+
 function printed(face: FaceDef): Characteristics {
+  // CR 702.73a / CR 604.3: changeling is a characteristic-defining ability — every creature type.
+  const changeling = face.keywords.some((k) => k.id === 'changeling');
   return {
     name: face.name,
     types: [...face.types],
-    subtypes: [...face.subtypes],
+    subtypes: changeling ? [...new Set([...face.subtypes, ...CREATURE_TYPES])] : [...face.subtypes],
     supertypes: [...face.supertypes],
     colors: [...face.colors],
     keywords: [...face.keywords],
@@ -57,13 +63,28 @@ function printed(face: FaceDef): Characteristics {
   };
 }
 
+/** Abilities a keyword stands for (compiled from its CR 702 definition), e.g. prowess's trigger. */
+export function keywordAbilities(keywords: KeywordInstance[]): AbilityNode[] {
+  return keywords.flatMap((k) => k.abilities ?? []);
+}
+
+/** Printed abilities plus those of printed keywords — what static abilities come from (no granted ones, to avoid loops). */
+export function printedAbilities(face: FaceDef): AbilityNode[] {
+  return [...face.abilities, ...keywordAbilities(face.keywords)];
+}
+
+/** Every ability an object has now: printed, and those its current keywords stand for (granted ones too). */
+export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
+  return [...faceOf(g, o).abilities, ...keywordAbilities(chars(g, o).keywords)];
+}
+
 /** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3). */
 function staticEffects(g: GameState): ActiveEffect[] {
   const out: ActiveEffect[] = [];
   for (const id of g.zones.battlefield) {
     const source = g.objects[id];
     if (!source) continue;
-    for (const ability of faceOf(g, source).abilities) {
+    for (const ability of printedAbilities(faceOf(g, source))) {
       if (ability.kind !== 'static' || ability.effect.type !== 'continuous') continue;
       const e = (ability as StaticAbility).effect as ContinuousEffectNode;
       out.push({
@@ -114,7 +135,7 @@ export function chars(g: GameState, o: GameObject): Characteristics {
   const c = printed(faceOf(g, o));
   if (o.zone === 'stack') {
     // A spell's own "can't be countered" works while it's on the stack.
-    for (const a of faceOf(g, o).abilities) {
+    for (const a of printedAbilities(faceOf(g, o))) {
       const e = a.kind === 'static' && a.effect.type === 'continuous' ? (a.effect as ContinuousEffectNode) : null;
       if (e && e.affected.ref === 'self') for (const r of e.rules ?? []) c.rules.add(r);
     }

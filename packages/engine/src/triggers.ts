@@ -1,4 +1,7 @@
 import type { TriggeredAbility } from '@mtg/schema';
+import { abilitiesOf, printedAbilities } from './characteristics.js';
+import { evalCondition, logTurnEvents } from './conditions.js';
+import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
 import { matchTrigger } from './registry.js';
 import { apnap } from './resolve.js';
@@ -11,7 +14,9 @@ import {
   type ObjectId,
   type PendingTrigger,
   type PlayerId,
+  type StackEntry,
   type Target,
+  type TriggerInfo,
 } from './types.js';
 import { livePlayers } from './zones.js';
 
@@ -23,7 +28,7 @@ import { livePlayers } from './zones.js';
  */
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
-  'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew',
+  'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
@@ -41,8 +46,10 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
   const from = cursors.get(events) ?? 0;
   cursors.set(events, events.length);
   if (!g.started || g.over) return;
+  logTurnEvents(g, events.slice(from));
   const batch = events.slice(from).filter((e) => TRIGGER_EVENTS.has(e.type));
   if (!batch.length) return;
+  collectDelayed(g, batch);
 
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
   const left = new Map<ObjectId, Candidate>();
@@ -57,11 +64,18 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
   });
   const candidates = [...present, ...left.values()];
 
+  // Each candidate's triggered abilities: printed and from keywords (granted ones too, while it's on the battlefield).
+  const withAbilities = candidates.flatMap((c) => {
+    const face = g.cards[c.o.card]?.faces[c.face];
+    if (!face) return [];
+    const abilities = c.left ? printedAbilities(face) : abilitiesOf(g, c.o);
+    return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];
+  });
+
   for (const event of batch) {
-    for (const c of candidates) {
-      const face = g.cards[c.o.card]?.faces[c.face];
-      if (!face) continue;
-      face.abilities.forEach((ability, index) => {
+    for (const c of withAbilities) {
+      const face = c.face;
+      c.abilities.forEach((ability, index) => {
         if (ability.kind !== 'triggered') return;
         if (c.left && !LOOK_BACK.has(ability.trigger.type)) return;
         if (!programRuns(ability)) return;
@@ -73,15 +87,15 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
           infos.splice(1);
         }
         for (const info of infos) {
+          // CR 603.4: an intervening "if" must be true for it to trigger at all.
+          if (ability.condition && !evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info))) continue;
           // CR 603.3a: controlled by whoever controlled the source when it triggered.
           g.triggers.push({
             id: `t${g.nextId++}`,
             controller: c.controller,
             source: { id: c.o.id, zcc: c.o.zcc },
             sourceName: face.name,
-            card: c.o.card,
-            face: c.face,
-            ability: index,
+            ability,
             info,
           });
         }
@@ -90,8 +104,8 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
   }
 }
 
-function abilityOf(g: GameState, t: PendingTrigger): TriggeredAbility {
-  return g.cards[t.card]!.faces[t.face]!.abilities[t.ability] as TriggeredAbility;
+function abilityOf(_g: GameState, t: PendingTrigger): TriggeredAbility {
+  return t.ability;
 }
 
 /**
@@ -118,6 +132,24 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
   const source = g.objects[t.source.id] ?? null;
   const specs = ability.targets ?? [];
 
+  if (t.boundTargets) {
+    // A delayed trigger: no new choices; it affects what its creator affected (CR 603.7c).
+    g.triggers = g.triggers.filter((x) => x.id !== t.id);
+    g.stack.push({
+      kind: 'ability',
+      id: `a${g.nextId++}`,
+      source: t.source,
+      sourceName: t.sourceName,
+      controller: t.controller,
+      text: ability.text,
+      program: { specs: [], effects: ability.effects },
+      targets: t.boundTargets,
+      x: 0,
+      trigger: t.info,
+    });
+    events.push({ type: 'triggered', source: t.source.id, text: ability.text, controller: t.controller });
+    return;
+  }
   if (!answer) {
     const modal = Boolean(ability.modes);
     const candidates = specs.map((s) => targetCandidates(g, t.controller, s, source));
@@ -164,8 +196,10 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     targets,
     x: 0,
     trigger: t.info,
+    ...(ability.condition ? { condition: ability.condition } : {}),
   });
   events.push({ type: 'triggered', source: t.source.id, text: ability.text, controller: t.controller });
+  announceTargets(g.stack[g.stack.length - 1]!, events);
 }
 
 /** The answer to a trigger_targets prompt. */
@@ -190,4 +224,46 @@ export function answerTriggerTargets(g: GameState, player: PlayerId, modes: numb
   }
   g.pending = null;
   putOnStack(g, t, events, { ...(modes ? { modes } : {}), targets });
+}
+
+/** Records that a spell or ability on the stack targets objects ("becomes the target", e.g. ward, CR 702.21a). */
+export function announceTargets(entry: StackEntry, events: GameEvent[]): void {
+  const seen = new Set<string>();
+  for (const t of entry.targets.flat()) {
+    if (t.kind !== 'object' || seen.has(t.id)) continue;
+    seen.add(t.id);
+    events.push({
+      type: 'became_target',
+      object: t.id,
+      ...(entry.kind === 'spell' ? { spell: entry.object } : { entry: entry.id }),
+      controller: entry.controller,
+    });
+  }
+}
+
+/** The context a trigger's condition is checked in as it triggers. */
+export function triggerContext(g: GameState, controller: PlayerId, source: GameObject, info: TriggerInfo): EffectContext {
+  return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: 0, memo: {}, trigger: info };
+}
+
+/** CR 603.7b: delayed triggers fire the next time their moment comes, once. */
+function collectDelayed(g: GameState, batch: GameEvent[]): void {
+  for (const e of batch) {
+    if (e.type !== 'step') continue;
+    for (const d of [...g.delayed]) {
+      if (d.step !== e.step) continue;
+      // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
+      if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === 'end') continue;
+      g.delayed = g.delayed.filter((x) => x.id !== d.id);
+      g.triggers.push({
+        id: `t${g.nextId++}`,
+        controller: d.controller,
+        source: d.source,
+        sourceName: d.sourceName,
+        ability: { kind: 'triggered', text: d.text, trigger: { type: 'phase', step: d.step, whose: 'each' }, effects: d.effects },
+        info: d.info ?? {},
+        boundTargets: d.targets,
+      });
+    }
+  }
 }

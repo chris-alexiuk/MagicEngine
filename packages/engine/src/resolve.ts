@@ -163,6 +163,8 @@ function contextFor(g: GameState, entry: StackEntry, r: Resolution, events: Game
  */
 export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] | null {
   const program = entry.program!;
+  // Nothing targeted: keep any objects it was bound to (a delayed trigger, CR 603.7c).
+  if (program.specs.length === 0) return entry.targets;
   const sourceId = entry.kind === 'spell' ? entry.object : entry.source.id;
   const source = g.objects[sourceId] ?? null;
   let chosen = 0;

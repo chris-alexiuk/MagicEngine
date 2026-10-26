@@ -1,7 +1,7 @@
 import type { ActivatedAbility, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
+import { abilitiesOf } from './characteristics.js';
 import { canAutomate } from './registry.js';
 import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
-import { faceOf } from './zones.js';
 
 /**
  * Turns the compiled programs of a spell or ability (with modes chosen) into the one
@@ -79,25 +79,12 @@ export function spellPrograms(face: FaceDef): Program[] | null {
 }
 
 /**
- * The non-mana activated abilities of a permanent, in a stable order: compiled ones,
- * then those its keywords define. CR 702.6a: "Equip [cost]" means
- * "[Cost]: Attach this permanent to target creature you control. Activate only as a sorcery."
+ * The non-mana activated abilities an object can use from where it is now, in a stable
+ * order: printed ones, then those its keywords stand for (equip, cycling… compiled from
+ * CR 702). Most work on the battlefield; some only from the hand (cycling, CR 702.29a).
  */
 export function activatedAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
-  const face = faceOf(g, o);
-  const out: ActivatedAbility[] = [];
-  for (const a of face.abilities) if (a.kind === 'activated' && !a.mana && programRuns(a)) out.push(a);
-  for (const kw of face.keywords) {
-    if (kw.id === 'equip' && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost) && face.subtypes.includes('Equipment')) {
-      out.push({
-        kind: 'activated',
-        text: `Equip ${kw.cost}`,
-        cost: { mana: kw.cost },
-        timing: 'sorcery',
-        targets: [{ what: 'object', filter: { types: ['Creature'], controller: 'you' }, text: 'target creature you control' }],
-        effects: [{ type: 'attach', what: { ref: 'self' }, to: { ref: 'target', index: 0 } }],
-      });
-    }
-  }
-  return out;
+  return abilitiesOf(g, o).filter(
+    (a): a is ActivatedAbility => a.kind === 'activated' && !a.mana && (a.zone ?? 'battlefield') === o.zone && programRuns(a),
+  );
 }

@@ -207,7 +207,7 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
 
 export type RefMode = 'effect' | 'static';
 
-const PRONOUNS = /^(?:it|them|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker)|those (?:creatures|permanents|cards|tokens))$/i;
+const PRONOUNS = /^(?:it|them|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
 
 export interface ParsedRef {
   ref: Ref;
@@ -224,6 +224,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
   return attempt(b, (b) => {
     const t = text.trim();
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
+    const named = b.named[t.toLowerCase()];
+    if (named) return set(b, { ref: named, plural: false, targeted: false });
     if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|those)/i.test(t), targeted: false } : null;
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
       return set(b, { ref: { ref: 'attached' }, plural: false, targeted: false });
@@ -279,6 +281,7 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     return ref;
   }
   if (t === 'that player' || t === 'they') return b.player;
+  if (b.named[t]) return b.named[t]!;
   const owner = /^(?:its|that (?:creature|permanent|spell|card)'s) (controller|owner)$/.exec(t);
   if (owner && b.it) return { ref: owner[1] === 'controller' ? 'controller_of' : 'owner_of', of: b.it };
   return null;

@@ -207,8 +207,7 @@ function decide(g: GameState): { action: Action; note?: string } | null {
         return { action: { type: 'choose', player: me, answer: { kind: 'manual_resolution', done: true } } };
       case 'trigger_targets': {
         const t = g.triggers.find((x) => x.id === p.trigger)!;
-        const ability = def(g, g.objects[t.source.id] ?? ({ card: t.card } as GameObject)).faces[t.face]!.abilities[t.ability]!;
-        const targets = pickTargets(g, me, p.prompts, 'effects' in ability ? ability.effects : []);
+        const targets = pickTargets(g, me, p.prompts, t.ability.effects);
         return { action: { type: 'choose', player: me, answer: { kind: 'trigger_targets', targets: targets ?? [] } } };
       }
       case 'may':
@@ -222,6 +221,11 @@ function decide(g: GameState): { action: Action; note?: string } | null {
       case 'discard': {
         const hand = [...g.zones.hand[me]!].sort((x, y) => def(g, g.objects[y]!).cmc - def(g, g.objects[x]!).cmc);
         return { action: { type: 'choose', player: me, answer: { kind: 'discard', objects: hand.slice(0, p.count) } } };
+      }
+      case 'sacrifice': {
+        // Least valuable first.
+        const worst = [...p.candidates].sort((x, y) => def(g, g.objects[x]!).cmc - def(g, g.objects[y]!).cmc);
+        return { action: { type: 'choose', player: me, answer: { kind: 'sacrifice', objects: worst.slice(0, p.count) } } };
       }
       case 'search':
         return { action: { type: 'choose', player: me, answer: { kind: 'search', objects: p.candidates.slice(0, p.count) } } };

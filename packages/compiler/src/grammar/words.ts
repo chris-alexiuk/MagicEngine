@@ -1,5 +1,5 @@
 import type { Amount, Color } from '@mtg/schema';
-import { SUBTYPES } from './subtypes.js';
+import { SUBTYPES } from '@mtg/schema';
 
 /** Small vocabulary shared by the grammar rules. */
 

@@ -53,7 +53,8 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   const amount = parseAmount(m[1]!);
   if (amount === null) return null;
   const plural = /tokens(?: with .+)?$/.test(text.trim());
-  if ((amount === 1) === plural && amount !== 'X') return null;
+  // A numeral comes from a keyword definition ("create N … tokens" with N = 1), so either number is fine.
+  if ((amount === 1) === plural && amount !== 'X' && !/^\d+$/.test(m[1]!)) return null;
   const tapped = Boolean(m[2]);
   const words = m[5]!;
 
@@ -98,7 +99,7 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
 
 function tokenFace(b: Binder, name: string, typeLine: string, text: string, colors: Color[], pt?: [string, string]): FaceDef {
   const [left, right = ''] = typeLine.split(' — ');
-  const parsed = b.env.parseAbilities?.(text, name, typeLine) ?? { keywords: [], abilities: [], unparsed: text ? text.split('\n') : [] };
+  const parsed = b.env.parseAbilities?.(text, name, typeLine) ?? { keywords: [], abilities: [], unparsed: text ? text.split('\n') : [], manualKeywords: [] };
   const face: FaceDef = {
     name,
     manaCost: '',
@@ -112,6 +113,7 @@ function tokenFace(b: Binder, name: string, typeLine: string, text: string, colo
     abilities: parsed.abilities,
     unparsed: parsed.unparsed,
   };
+  if (parsed.manualKeywords.length) face.manualKeywords = parsed.manualKeywords;
   if (pt) {
     face.power = pt[0];
     face.toughness = pt[1];

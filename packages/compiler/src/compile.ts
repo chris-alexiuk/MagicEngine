@@ -1,5 +1,5 @@
 import type { Automation, CardDB, CardDef, Color, FaceDef, LegalityCode } from '@mtg/schema';
-import { COLORS, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
+import { COLORS, keywordSupported, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
 import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
@@ -128,6 +128,7 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
     abilities: parsed.abilities,
     unparsed: parsed.unparsed,
   };
+  if (parsed.manualKeywords.length) out.manualKeywords = parsed.manualKeywords;
   for (const key of ['power', 'toughness', 'loyalty', 'defense'] as const) {
     const v = face[key];
     if (v !== undefined) out[key] = v;
@@ -146,7 +147,8 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
   const reparse = (card: CardDef): CardDef => {
     const faces = card.faces.map((f) => {
       const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine });
-      return { ...f, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed };
+      const { manualKeywords: _old, ...rest } = f;
+      return { ...rest, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed, ...(p.manualKeywords.length ? { manualKeywords: p.manualKeywords } : {}) };
     });
     return { ...card, faces, automation: automationOf(faces) };
   };
@@ -154,12 +156,12 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
 }
 
 function automationOf(faces: FaceDef[]): Automation {
-  const unparsed = faces.reduce((n, f) => n + f.unparsed.length, 0);
+  const unparsed = faces.reduce((n, f) => n + f.unparsed.length + (f.manualKeywords?.length ?? 0), 0);
   if (unparsed === 0) return 'full';
   // Reminder-only lines describe rules the engine applies anyway (a shockland's
   // intrinsic mana ability from its land types, saga lore counters), so they count as handled.
   const reminderOnly = (f: FaceDef) => f.oracle.split('\n').filter((l) => l.trim() && !stripReminder(l)).length;
-  const parsed = faces.reduce((n, f) => n + f.keywords.length + f.abilities.length + reminderOnly(f), 0);
+  const parsed = faces.reduce((n, f) => n + f.keywords.filter(keywordSupported).length + f.abilities.length + reminderOnly(f), 0);
   return parsed > 0 ? 'partial' : 'manual';
 }
 

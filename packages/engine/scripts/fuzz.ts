@@ -138,6 +138,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     case 'pay':
       // Try to pay half the time; the main loop falls back to declining if it can't be paid.
       return { player: me, answer: { kind: 'pay', pay: rnd() < 0.5 } };
+    case 'sacrifice':
+      return { player: me, answer: { kind: 'sacrifice', objects: shuffle([...p.candidates]).slice(0, p.count) } };
     case 'search': {
       const n = p.mustFind ? Math.min(p.count, p.candidates.length) : Math.floor(rnd() * (Math.min(p.count, p.candidates.length) + 1));
       return { player: me, answer: { kind: 'search', objects: shuffle([...p.candidates]).slice(0, n) } };
@@ -274,6 +276,8 @@ for (let game = 0; game < GAMES; game++) {
       const chosen = active.length && rnd() < 0.75 ? pick(active) : options[0]!;
       offered = true;
       action = rnd() < 0.5 ? randomiseTargets(g, chosen) : chosen;
+      // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
+      if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: true };
       if (action !== chosen) offered = false;
       if (!offered) {
         // A randomised version may be illegal; fall back to the offered one if so.

@@ -1,14 +1,16 @@
-import type { AddManaEffect, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
 import { hasKeyword, hasRule, matchesFilter } from './characteristics.js';
 import { dealDamage } from './combat.js';
+import { evalCondition } from './conditions.js';
+import { applyControlEffects } from './control.js';
 import { MANA_COLORS } from './mana.js';
 import { payDuringResolution } from './payment.js';
 import { attach, createToken, destroy, sacrifice } from './permanents.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type ManaColor, type PlayerId, type TriggerInfo } from './types.js';
+import { RulesError, type ChoiceAnswer, type GameObject, type ManaColor, type PlayerId, type TargetRef, type TriggerInfo } from './types.js';
 import { drawCard, moveObject, nameOf, setTapped, zoneList } from './zones.js';
 
 /**
@@ -102,8 +104,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       } else if (to === 'battlefield') {
         // Unless it says otherwise, a permanent is put onto the battlefield under its owner's control.
         const controller = node.under === 'you' ? ctx.controller : o.owner;
-        if (o.zone === 'stack') continue;
-        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller });
+        if (o.zone === 'stack' || o.zone === 'battlefield') continue;
+        const counters = node.counters as Record<string, number> | undefined;
+        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}) });
         if (node.tapped) setTapped(ctx.g, o.id, true, ctx.events);
       } else {
         // CR 701.13a: exile moves it to the exile zone from wherever it is.
@@ -115,6 +118,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   counter(node, ctx) {
+    // An ability the trigger was about ("counter that spell or ability", ward): it's removed from the stack (CR 701.6a).
+    const entry = ref(node, 'what').ref === 'trigger_object' ? ctx.trigger?.entry : undefined;
+    if (entry) {
+      const before = ctx.g.stack.length;
+      ctx.g.stack = ctx.g.stack.filter((e) => !(e.kind === 'ability' && e.id === entry));
+      if (ctx.g.stack.length < before) ctx.events.push({ type: 'countered', object: entry });
+    }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'stack') continue;
       // CR 101.2 / "can't be countered": the spell stays on the stack.
@@ -337,6 +347,122 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  sacrifice_choice(node, ctx) {
+    // CR 701.21a: each player (in APNAP order, CR 101.4) chooses permanents they control and sacrifices them.
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount);
+    const filter = (node.filter ?? {}) as ObjectFilter;
+    const players = refPlayers(ctx, ref(node, 'who'));
+    const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
+    const candidatesOf = (p: PlayerId) =>
+      g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, filter, { controller: p, source: ctx.source ?? null }));
+    const answer = answerOf(ctx, 'sacrifice');
+    if (answer) {
+      const p = ctx.memo.asking as PlayerId;
+      const candidates = candidatesOf(p);
+      if (answer.objects.length !== Math.min(n, candidates.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+        throw new RulesError(`Choose ${Math.min(n, candidates.length)} permanent(s) to sacrifice.`);
+      }
+      for (const id of answer.objects) sacrifice(g, g.objects[id]!, p, ctx.events);
+      done.push(p);
+    }
+    for (const p of players) {
+      if (done.includes(p)) continue;
+      const candidates = candidatesOf(p);
+      if (candidates.length <= n) {
+        for (const id of candidates) sacrifice(g, g.objects[id]!, p, ctx.events);
+        done.push(p);
+        continue;
+      }
+      ctx.memo.done = done;
+      ctx.memo.asking = p;
+      return { ask: { kind: 'sacrifice', player: p, candidates, count: n } };
+    }
+    return true;
+  },
+
+  if(node, ctx) {
+    // "If [condition], [effect]. Otherwise, [effect]." — checked as this instruction is followed (CR 608.2c).
+    const yes = evalCondition(node.cond as ConditionNode, ctx);
+    return { expand: ((yes ? node.effects : node.else) as EffectNode[] | undefined) ?? [] };
+  },
+
+  may_do(node, ctx) {
+    // CR 118.12: "You may [do something]. If you do, [effect]." — only if it can actually be done.
+    const answer = answerOf(ctx, 'may');
+    const first = node.effects as EffectNode[];
+    if (!first.every((e) => feasible(e, ctx))) return true;
+    if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: describeEffects([...first, ...(node.then as EffectNode[])]), sourceName: sourceName(ctx) } };
+    return { expand: answer.yes ? [...first, ...(node.then as EffectNode[])] : [] };
+  },
+
+  delayed(node, ctx) {
+    // CR 603.7: creates a delayed triggered ability; CR 603.7e: same source and controller.
+    const g = ctx.g;
+    const source = ctx.source;
+    g.delayed.push({
+      id: `d${g.nextId++}`,
+      controller: ctx.controller,
+      source: source ? { id: source.id, zcc: ctx.sourceZcc ?? source.zcc } : { id: '', zcc: 0 },
+      sourceName: sourceName(ctx),
+      text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
+      step: node.step === 'upkeep' ? 'upkeep' : 'end',
+      createdTurn: g.turn,
+      createdStep: g.step,
+      effects: node.effects as EffectNode[],
+      targets: ctx.targets,
+      ...(ctx.trigger ? { info: ctx.trigger } : {}),
+    });
+    return true;
+  },
+
+  gain_control(node, ctx) {
+    // Layer 2 (CR 613.1b): locked to the objects it affected (CR 611.2c).
+    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
+    if (!objects.length) return true;
+    const g = ctx.g;
+    g.effects.push({
+      id: `e${g.nextId++}`,
+      timestamp: ++g.clock,
+      source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
+      controller: ctx.controller,
+      objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
+      control: ctx.controller,
+      until: node.until === 'eot' ? 'eot' : 'game',
+    });
+    applyControlEffects(g, ctx.events);
+    return true;
+  },
+
+  exile_if_dies(node, ctx) {
+    // CR 614.1a: a replacement effect for this turn.
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.exileIfDiesTurn = ctx.g.turn;
+    return true;
+  },
+
+  prevent(node, ctx) {
+    // CR 615.1a / CR 615.7: prevention effects, as shields that last this turn.
+    const g = ctx.g;
+    const lock = (r: Ref | undefined) => {
+      if (!r) return [undefined];
+      return refRecipients(ctx, r).map((x): TargetRef => (x.kind === 'player' ? x : { kind: 'object', id: x.object, zcc: g.objects[x.object]!.zcc }));
+    };
+    const amount = node.amount === 'all' ? 'all' : amountOf(ctx, node.amount);
+    for (const to of lock(node.to as Ref | undefined)) {
+      for (const by of lock(node.by as Ref | undefined)) {
+        g.prevention.push({
+          id: `p${g.nextId++}`,
+          turn: g.turn,
+          amount,
+          ...(to ? { to } : {}),
+          ...(by ? { by } : {}),
+          ...(node.combat ? { combat: true as const } : {}),
+        });
+      }
+    }
+    return true;
+  },
+
   may(node, ctx) {
     // CR 603.5: an optional effect — the controller chooses as it resolves.
     const answer = answerOf(ctx, 'may');
@@ -347,6 +473,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return { expand: answer.yes ? (node.effects as EffectNode[]) : [] };
   },
 };
+
+/** Whether an optional action in "You may [do X]. If you do, …" can be done at all. */
+function feasible(e: EffectNode, ctx: EffectContext): boolean {
+  const g = ctx.g;
+  if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(ctx.controller)) {
+    const filter = (e.filter ?? {}) as ObjectFilter;
+    const n = g.zones.battlefield.filter((id) => {
+      const o = g.objects[id]!;
+      return o.controller === ctx.controller && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
+    }).length;
+    return n >= amountOf(ctx, e.amount);
+  }
+  if (e.type === 'discard') return zoneList(g, 'hand', ctx.controller).length >= amountOf(ctx, e.amount);
+  if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === ctx.controller);
+  return true;
+}
 
 function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
   if (n <= 0) return;
@@ -424,7 +566,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'moved' || e.from !== 'battlefield' || e.to !== 'graveyard') return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o) }] : [];
+    const lki = { counters: e.counters ?? {} };
+    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki }] : [];
   },
   // CR 603.6c: leaves-the-battlefield abilities.
   leaves(t, check) {
@@ -432,11 +575,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'moved' || e.from !== 'battlefield') return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o) }] : [];
+    const lki = { counters: e.counters ?? {} };
+    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki }] : [];
   },
   attacks(t, check) {
     const e = check.event;
     if (e.type !== 'attacks_declared' || check.sourceLeft) return [];
+    // CR 506.5 / CR 702.83b: "attacks alone" — the only creature declared as an attacker.
+    if (t.alone && e.attacks.length !== 1) return [];
     return e.attacks.flatMap(({ attacker, target }) => {
       const o = check.g.objects[attacker];
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
@@ -444,13 +590,45 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       return [{ object: refTo(o), ...(player ? { player } : {}) }];
     });
   },
+  // CR 509.3a: "whenever [a creature] blocks" triggers once per combat for that creature.
   blocks(t, check) {
     const e = check.event;
     if (e.type !== 'blocks_declared' || check.sourceLeft) return [];
-    return e.blocks.flatMap(({ blocker }) => {
+    const out = new Map<string, TriggerInfo>();
+    for (const { blocker, attacker } of e.blocks) {
       const o = check.g.objects[blocker];
-      return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o) }] : [];
-    });
+      if (o && subjectMatches(check, t.subject as Ref, o)) out.set(o.id, { object: refTo(o) });
+      // "blocks or becomes blocked" (bushido, CR 702.45a).
+      const a = check.g.objects[attacker];
+      if (t.orBlocked && a && subjectMatches(check, t.subject as Ref, a)) out.set(a.id, { object: refTo(a) });
+    }
+    return [...out.values()];
+  },
+  // CR 509.3c: "becomes blocked" triggers once per combat; CR 509.3d: "becomes blocked by a creature" once per blocker.
+  becomes_blocked(t, check) {
+    const e = check.event;
+    if (e.type !== 'blocks_declared' || check.sourceLeft) return [];
+    const once = new Map<string, TriggerInfo>();
+    const each: TriggerInfo[] = [];
+    for (const { blocker, attacker } of e.blocks) {
+      const a = check.g.objects[attacker];
+      const b = check.g.objects[blocker];
+      if (!a || !b || !subjectMatches(check, t.subject as Ref, a)) continue;
+      if (t.by) {
+        if (matchesFilter(check.g, b, t.by as ObjectFilter, { controller: check.controller, source: check.source })) each.push({ object: refTo(b) });
+      } else once.set(a.id, { object: refTo(a) });
+    }
+    return t.by ? each : [...once.values()];
+  },
+  // "Whenever ~ becomes the target of a spell or ability an opponent controls" (ward, CR 702.21a).
+  becomes_target(t, check) {
+    const e = check.event;
+    if (e.type !== 'became_target' || check.sourceLeft) return [];
+    if (t.by === 'opponent' && e.controller === check.controller) return [];
+    const o = check.g.objects[e.object];
+    if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+    const spell = e.spell ? check.g.objects[e.spell] : undefined;
+    return [{ player: e.controller, ...(spell ? { object: refTo(spell) } : {}), ...(e.entry ? { entry: e.entry } : {}) }];
   },
   deals_combat_damage(t, check) {
     const e = check.event;
@@ -493,7 +671,9 @@ export const corePlugin: MechanicPlugin = {
   id: 'core',
   effects,
   triggers,
-  statics: ['continuous'],
+  // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
+  // "exile it instead" in moveObject.
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(_node, o) {

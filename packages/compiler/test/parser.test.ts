@@ -76,7 +76,10 @@ describe('core grammar rules', () => {
   it('compiles equipment/aura pumps', () => {
     const r = parser.parse('Equipped creature gets +2/+0.\nEquip {1}', ctx('Bonesplitter'));
     expect(r.unparsed).toEqual([]);
-    expect(r.keywords).toEqual([{ id: 'equip', cost: '{1}' }]);
+    // CR 702.6a: equip's meaning is compiled from its definition.
+    expect(r.keywords).toMatchObject([
+      { id: 'equip', cost: '{1}', abilities: [{ kind: 'activated', text: 'Equip {1}', cost: { mana: '{1}' }, timing: 'sorcery' }] },
+    ]);
     expect(r.abilities[0]).toMatchObject({
       kind: 'static',
       effect: { type: 'continuous', affected: { ref: 'attached' }, power: 2, toughness: 0 },

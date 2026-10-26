@@ -1,6 +1,7 @@
 import type {
   AbilityNode,
   ActivatedAbility,
+  ConditionNode,
   Cost,
   EffectNode,
   ModeChoice,
@@ -15,6 +16,7 @@ import type {
 import type { GrammarRule } from '../parser.js';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
+import { parseCondition } from './conditions.js';
 import { parseEffectText, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { parseAmount, parsePT } from './words.js';
@@ -93,8 +95,23 @@ export const spellRule: GrammarRule = {
 
 const MANA_RUN = /^(?:\{(?:\d+|[WUBRGCSX]|[WUBRG2]\/[WUBRGP])\})+$/;
 
+/** "Sacrifice a creature", "Sacrifice another artifact", "Discard a card" — costs where the player picks what. */
+export function choiceCost(item: string, b: Binder | null): EffectNode | null {
+  const sac = /^[Ss]acrifice (a|an|one|two|three|another) (.+)$/.exec(item);
+  if (sac && b) {
+    const pf = parseFilter(sac[2]!, b);
+    const amount = sac[1] === 'another' ? 1 : parseAmount(sac[1]!);
+    if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
+    if (sac[1] === 'another') pf.filter.other = true;
+    return { type: 'sacrifice', filter: pf.filter, amount };
+  }
+  const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
+  if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  return null;
+}
+
 /** "{2}, {T}, Sacrifice ~" → cost. Null for costs the engine can't pay yet. */
-export function parseCost(text: string, planeswalker: boolean): Cost | null {
+export function parseCost(text: string, planeswalker: boolean, b: Binder | null = null): Cost | null {
   const cost: Cost = {};
   let mana = '';
   const loyalty = /^([+−-]?)(\d+)$/.exec(text.trim());
@@ -108,6 +125,8 @@ export function parseCost(text: string, planeswalker: boolean): Cost | null {
     else if (item === '{Q}') cost.untap = true;
     else if (MANA_RUN.test(item)) mana += item;
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
+    else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
+    else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
     else {
       const life = /^[Pp]ay (\d+) life$/.exec(item);
       if (!life) return null;
@@ -130,10 +149,12 @@ export const activatedRule: GrammarRule = {
     const env = envOf(ctx);
     const colon = line.indexOf(': ');
     if (!env || colon < 0) return null;
-    const cost = parseCost(line.slice(0, colon), /\bPlaneswalker\b/.test(ctx.typeLine));
+    const cost = parseCost(line.slice(0, colon), /\bPlaneswalker\b/.test(ctx.typeLine), new Binder(env));
     if (!cost) return null;
     let effectText = line.slice(colon + 2);
     const node: ActivatedAbility = { kind: 'activated', text: original, cost, effects: [] };
+    // A cost of discarding this card means it's activated from the hand (channel, cycling).
+    if (cost.other?.some((c) => c.type === 'discard_self')) node.zone = 'hand';
     for (let changed = true; changed; ) {
       changed = false;
       for (const [re, set] of ACTIVATION_LIMITS) {
@@ -195,10 +216,34 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
   }
 
+  // CR 702.21a (ward): "becomes the target of a spell or ability an opponent controls".
+  const targeted = /^~ becomes the target of a spell or ability(?: an opponent controls)?$/.exec(t);
+  if (targeted) {
+    return {
+      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...(/opponent/.test(t) ? { by: 'opponent' } : {}) },
+      it: { ref: 'trigger_object' },
+      player: { ref: 'trigger_player' },
+    };
+  }
+  // CR 509.3c: "blocks or becomes blocked", "becomes blocked", "becomes blocked by a creature without flanking".
+  const blocked = /^~ (blocks or becomes blocked|becomes blocked)(?: by (?:a|an) (.+))?$/.exec(t);
+  if (blocked) {
+    const by = blocked[2] ? parseFilter(blocked[2], b) : null;
+    if (blocked[2] && (!by || by.plural)) return null;
+    if (by) b.named['the blocking creature'] = { ref: 'trigger_object' };
+    const trigger: TriggerNode =
+      blocked[1] === 'becomes blocked'
+        ? { type: 'becomes_blocked', subject: { ref: 'self' }, ...(by ? { by: by.filter } : {}) }
+        : { type: 'blocks', subject: { ref: 'self' }, orBlocked: true };
+    return { trigger, it: { ref: 'self' }, player: null };
+  }
+
   const self = /^~ (enters(?: the battlefield)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
     const leaves = type === 'dies' || type === 'leaves';
+    // CR 506.2: for an attacking creature, "defending player" is the player it's attacking.
+    if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
     return {
       trigger: { type, subject: { ref: 'self' }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}) },
       // After a zone change "it" is the new object in the graveyard or wherever it went (CR 603.10a looks back to find it).
@@ -207,7 +252,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
-  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
+  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
     if (!pf || pf.plural) return null;
@@ -216,9 +261,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (pf.filter.controller) return null;
       pf.filter.controller = 'you';
     }
-    const type = eventType(other[2]!.replace(/ under your control$/, ''));
+    const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, ''));
     return {
-      trigger: { type, subject: { ref: 'all', filter: pf.filter }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}) },
+      trigger: {
+        type,
+        subject: { ref: 'all', filter: pf.filter },
+        ...(type === 'deals_combat_damage' ? { to: 'player' } : {}),
+        // CR 702.83b: it's the only creature declared as an attacker.
+        ...(/ alone$/.test(other[2]!) ? { alone: true } : {}),
+      },
       it: { ref: 'trigger_object' },
       player: type === 'deals_combat_damage' ? { ref: 'trigger_player' } : null,
     };
@@ -265,7 +316,15 @@ export const triggeredRule: GrammarRule = {
         b.it = trig.it;
         b.player = trig.player;
         let effectText = body.slice(comma.index! + 2);
-        if (/^(?:if|unless) /i.test(effectText)) return null; // CR 603.4 intervening "if" — not yet
+        // CR 603.4: "When …, if [condition], [effect]."
+        let condition: ConditionNode | null = null;
+        const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
+        if (iff) {
+          condition = parseCondition(iff[1]!, b);
+          if (!condition) return null;
+          effectText = iff[2]!;
+        }
+        if (/^unless /i.test(effectText)) return null;
         let oncePerTurn = false;
         if (/ This ability triggers only once each turn\.$/.test(effectText)) {
           effectText = effectText.replace(/ This ability triggers only once each turn\.$/, '');
@@ -273,11 +332,12 @@ export const triggeredRule: GrammarRule = {
         }
         effectText = effectText.replace(/^\w/, (c) => c.toUpperCase());
         const program = parseProgram(effectText, b);
-        return program ? { trig, program, oncePerTurn } : null;
+        return program ? { trig, program, oncePerTurn, condition } : null;
       });
       if (r) {
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
         if (r.oncePerTurn) node.oncePerTurn = true;
+        if (r.condition) node.condition = r.condition;
         return node;
       }
     }
@@ -309,6 +369,12 @@ export const continuousRule: GrammarRule = {
     if (!env || !line.endsWith('.') || /["“”]/.test(line)) return null;
     const body = line.slice(0, -1);
     const b = new Binder(env);
+    // Layer 2 (CR 613.1b): "You control enchanted creature." (Control Magic).
+    const control = /^You control (enchanted (?:creature|permanent|artifact|land|planeswalker))$/.exec(body);
+    if (control) {
+      const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'attached' }, control: 'you' } };
+      return node;
+    }
     // Subject, then a predicate.
     const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|attacks? each combat if able|doesn't untap during .+)$/.exec(body);
     if (!m) return null;
@@ -341,6 +407,16 @@ export const continuousRule: GrammarRule = {
   },
 };
 
+/** Static replacement effects about this object (CR 614.1a): "If ~ would be put into a graveyard from anywhere, exile it instead." */
+export const selfReplacementRule: GrammarRule = {
+  id: 'self_replacement',
+  parse(line, original) {
+    if (!/^If ~ would be put into a graveyard from anywhere, exile it instead\.$/.test(line)) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'graveyard_to_exile' } };
+    return node;
+  },
+};
+
 /** "~ enters with two +1/+1 counters on it." — CR 614.1c: a replacement effect on how it enters. */
 export const entersWithCountersRule: GrammarRule = {
   id: 'enters_with_counters',
@@ -358,7 +434,29 @@ export const entersWithCountersRule: GrammarRule = {
   },
 };
 
-export const GRAMMAR_RULES: GrammarRule[] = [entersWithCountersRule, continuousRule, triggeredRule, activatedRule, spellRule];
+/** "As an additional cost to cast this spell, sacrifice a creature." — CR 601.2f / CR 118.8. */
+export const additionalCostRule: GrammarRule = {
+  id: 'additional_cost',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^As an additional cost to cast ~, (.+)\.$/.exec(line);
+    if (!env || !m) return null;
+    const cost = choiceCost(m[1]!.replace(/^\w/, (c) => c.toUpperCase()), new Binder(env));
+    if (!cost) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'additional_cost', cost } };
+    return node;
+  },
+};
+
+export const GRAMMAR_RULES: GrammarRule[] = [
+  entersWithCountersRule,
+  selfReplacementRule,
+  additionalCostRule,
+  continuousRule,
+  triggeredRule,
+  activatedRule,
+  spellRule,
+];
 
 export { splitSentences };
 export type { AbilityNode };

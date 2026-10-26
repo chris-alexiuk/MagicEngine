@@ -1,4 +1,5 @@
-import type { CardDef, EffectNode, KeywordInstance, RuleFlag, TargetSpec } from '@mtg/schema';
+import type { CardDef, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
 export type ObjectId = string;
@@ -102,6 +103,14 @@ export interface GameObject {
   x?: number;
   /** CR 701.37b: monstrous until it leaves the battlefield. */
   monstrous?: true;
+  /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. */
+  exileOnLeave?: true;
+  /** How it was cast, kept as the spell becomes a permanent ("if it was kicked", "if you cast it"). */
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true };
+  /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
+  baseController?: PlayerId;
+  /** "If that creature would die this turn, exile it instead" — the turn it applies. */
+  exileIfDiesTurn?: number;
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -167,10 +176,16 @@ export interface CompiledProgram {
 export interface TriggerInfo {
   object?: ObjectRef;
   player?: PlayerId;
+  /** A stack entry the trigger is about (an ability that targeted something, for ward). */
+  entry?: string;
+  /** CR 603.10a: the object as it last existed on the battlefield. */
+  lki?: { counters: Record<string, number> };
 }
 
 interface StackBase {
   controller: PlayerId;
+  /** CR 603.4: an intervening "if", checked again as it resolves. */
+  condition?: ConditionNode;
   /** Absent when the players resolve it by hand. */
   program?: CompiledProgram;
   /** Chosen targets, one list per target spec. */
@@ -202,7 +217,39 @@ export interface ContinuousEffect {
   toughness?: number;
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
-  until: 'eot';
+  /** Layer 2 (CR 613.1b): this player controls the objects. */
+  control?: PlayerId;
+  /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
+  until: 'eot' | 'game';
+}
+
+/** CR 603.7: a delayed triggered ability waiting for its moment ("at the beginning of the next end step"). */
+export interface DelayedTrigger {
+  id: string;
+  controller: PlayerId;
+  source: ObjectRef;
+  sourceName: string;
+  text: string;
+  step: 'end' | 'upkeep';
+  createdTurn: number;
+  createdStep: Step;
+  effects: EffectNode[];
+  /** CR 603.7c: it affects the same objects the original ability did. */
+  targets: TargetRef[][];
+  info?: TriggerInfo;
+}
+
+/** CR 615: a prevention effect from a resolved spell or ability, this turn only. */
+export interface PreventionShield {
+  id: string;
+  turn: number;
+  /** Damage to this player or object; absent means any. */
+  to?: TargetRef;
+  /** Damage from this object; absent means any source. */
+  by?: TargetRef;
+  /** "all", or how much is left of "the next N damage" (CR 615.7). */
+  amount: number | 'all';
+  combat?: true;
 }
 
 /** A triggered ability waiting to be put on the stack (CR 603.3). */
@@ -211,11 +258,11 @@ export interface PendingTrigger {
   controller: PlayerId;
   source: ObjectRef;
   sourceName: string;
-  card: string;
-  face: number;
-  /** Index into the face's abilities. */
-  ability: number;
+  /** The ability itself (printed, or defined by a keyword). */
+  ability: TriggeredAbility;
   info: TriggerInfo;
+  /** Targets fixed in advance (a delayed trigger affects what its creator did, CR 603.7c). */
+  boundTargets?: TargetRef[][];
 }
 
 /** A spell or ability partway through resolving, waiting on a player's choice. */
@@ -266,7 +313,9 @@ export type PendingChoice =
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
-  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string };
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string }
+  /** CR 701.21a: the player chooses permanents they control to sacrifice. */
+  | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number };
 
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
@@ -285,7 +334,8 @@ export type ChoiceAnswer =
   | { kind: 'discard'; objects: ObjectId[] }
   | { kind: 'may'; yes: boolean }
   | { kind: 'pay'; pay: boolean }
-  | { kind: 'search'; objects: ObjectId[] };
+  | { kind: 'search'; objects: ObjectId[] }
+  | { kind: 'sacrifice'; objects: ObjectId[] };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -294,11 +344,17 @@ export type ManualOp =
   | { kind: 'counters'; object: ObjectId; counter: string; delta: number }
   | { kind: 'draw'; count: number };
 
+/** Choices made while paying costs that need them (CR 601.2h): what to sacrifice, what to discard. */
+export interface CostChoices {
+  sacrifice?: ObjectId[];
+  discard?: ObjectId[];
+}
+
 export type Action =
   | { type: 'pass'; player: PlayerId }
   | { type: 'choose'; player: PlayerId; answer: ChoiceAnswer }
   | { type: 'play_land'; player: PlayerId; object: ObjectId; face?: number }
-  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor }
+  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor; costs?: CostChoices }
   | {
       type: 'cast';
       player: PlayerId;
@@ -306,10 +362,14 @@ export type Action =
       face?: number;
       x?: number;
       autoTap?: boolean;
+      /** CR 702.33a: pay the kicker cost too. */
+      kicked?: boolean;
       /** One list per target the spell asks for (CR 601.2c). */
       targets?: Target[][];
       /** Chosen modes of a modal spell, by index (CR 700.2a). */
       modes?: number[];
+      /** What to sacrifice or discard for additional costs (CR 601.2f). */
+      costs?: CostChoices;
     }
   | {
       type: 'activate';
@@ -321,6 +381,7 @@ export type Action =
       autoTap?: boolean;
       targets?: Target[][];
       modes?: number[];
+      costs?: CostChoices;
     }
   | { type: 'activate_manual'; player: PlayerId; object: ObjectId; line: number; autoTap?: boolean }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
@@ -337,7 +398,20 @@ export type GameEvent =
   | { type: 'priority'; player: PlayerId }
   | { type: 'passed'; player: PlayerId }
   /** `controller` is who controlled it just before it moved (for "a creature you control dies", CR 603.10a). */
-  | { type: 'moved'; object: ObjectId; from: ZoneName; to: ZoneName; controller: PlayerId; card: string; face: number; token?: true }
+  | {
+      type: 'moved';
+      object: ObjectId;
+      from: ZoneName;
+      to: ZoneName;
+      controller: PlayerId;
+      card: string;
+      face: number;
+      token?: true;
+      /** Counters it had, when it left the battlefield (CR 603.10a look-back). */
+      counters?: Record<string, number>;
+    }
+  | { type: 'control_changed'; object: ObjectId; controller: PlayerId }
+  | { type: 'prevented'; source: ObjectId; amount: number }
   | { type: 'created'; object: ObjectId; controller: PlayerId }
   | { type: 'attached'; object: ObjectId; to: ObjectId }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
@@ -345,6 +419,8 @@ export type GameEvent =
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
   | { type: 'fizzled'; entry: StackEntry }
   | { type: 'regenerated'; object: ObjectId }
+  /** A spell (object) or ability (entry) was put on the stack targeting this object. */
+  | { type: 'became_target'; object: ObjectId; spell?: ObjectId; entry?: string; controller: PlayerId }
   | { type: 'transformed'; object: ObjectId; face: number }
   | { type: 'scried'; player: PlayerId; top: number; bottom: number }
   | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
@@ -409,6 +485,13 @@ export interface GameState {
   resolving: Resolution | null;
   /** CR 613.7: the timestamp clock. */
   clock: number;
+  /** Delayed triggered abilities (CR 603.7). */
+  delayed: DelayedTrigger[];
+  /** Prevention shields (CR 615). */
+  prevention: PreventionShield[];
+  /** What happened this turn, and how many spells each player cast last turn. */
+  turnLog: TurnLog;
+  lastTurnSpells: Record<PlayerId, number>;
   winner: PlayerId | null;
   over: boolean;
   rng: number;

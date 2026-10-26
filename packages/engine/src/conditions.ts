@@ -1,0 +1,124 @@
+import type { ConditionNode, ObjectFilter } from '@mtg/schema';
+import { matchesFilter } from './characteristics.js';
+import type { EffectContext } from './registry.js';
+import { refObjects } from './resolve.js';
+import type { GameEvent, GameState, PlayerId } from './types.js';
+import { livePlayers, zoneList } from './zones.js';
+
+/** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
+export const CONDITION_TYPES: readonly string[] = [
+  'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
+  'counters',
+];
+
+/** What happened this turn, for conditions like "if a creature died this turn". */
+export interface TurnLog {
+  creatureDied: boolean;
+  attacked: PlayerId[];
+  gainedLife: PlayerId[];
+  lostLife: PlayerId[];
+  spellsCast: Record<PlayerId, number>;
+  noncreatureCast: PlayerId[];
+}
+
+export function newTurnLog(): TurnLog {
+  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [] };
+}
+
+/** Records the events of one batch in the turn log. */
+export function logTurnEvents(g: GameState, events: GameEvent[]): void {
+  const log = g.turnLog;
+  for (const e of events) {
+    switch (e.type) {
+      case 'moved':
+        if (e.from === 'battlefield' && e.to === 'graveyard' && g.cards[e.card]?.faces[e.face]?.types.includes('Creature')) log.creatureDied = true;
+        break;
+      case 'attacks_declared':
+        if (e.attacks.length && !log.attacked.includes(g.active)) log.attacked.push(g.active);
+        break;
+      case 'life':
+        if (e.delta > 0 && !log.gainedLife.includes(e.player)) log.gainedLife.push(e.player);
+        if (e.delta < 0 && !log.lostLife.includes(e.player)) log.lostLife.push(e.player);
+        break;
+      case 'cast': {
+        log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
+        const o = g.objects[e.object];
+        const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
+        if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);
+        break;
+      }
+    }
+  }
+}
+
+const cmp = (v: number, c: ConditionNode) =>
+  (c.min === undefined || v >= Number(c.min)) &&
+  (c.max === undefined || v <= Number(c.max)) &&
+  (c.op === undefined || (c.op === 'ge' ? v >= Number(c.n) : c.op === 'le' ? v <= Number(c.n) : v === Number(c.n)));
+
+/** Whether a condition is true now, for the spell or ability in `ctx`. */
+export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean {
+  const { g, controller } = ctx;
+  const source = ctx.source;
+  switch (cond.type) {
+    case 'kicked':
+      // CR 702.33d: the spell (or the permanent it became) was kicked.
+      return Boolean(source?.cast?.kicked);
+    case 'cast_by_you':
+      return source?.cast?.by === controller && (!cond.fromHand || source.cast.from === 'hand');
+    case 'self_tapped':
+      return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);
+    case 'your_turn':
+      return (g.active === controller) === Boolean(cond.value);
+    case 'count': {
+      const players =
+        cond.who === 'you' ? [controller] : livePlayers(g).filter((p) => p !== controller);
+      const counts = players.map(
+        (p) =>
+          g.zones.battlefield.filter((id) => {
+            const o = g.objects[id]!;
+            return o.controller === p && matchesFilter(g, o, cond.filter as ObjectFilter, { controller: p, source: source ?? null });
+          }).length,
+      );
+      // "an opponent controls" — any of them; "each opponent controls" — all of them.
+      return cond.who === 'any_opponent' ? counts.some((n) => cmp(n, cond)) : counts.length > 0 && counts.every((n) => cmp(n, cond));
+    }
+    case 'life':
+      return cmp(g.players[controller]!.life, cond);
+    case 'hand':
+      return cmp(zoneList(g, 'hand', controller).length, cond);
+    case 'graveyard':
+      return cmp(zoneList(g, 'graveyard', controller).length, cond);
+    case 'this_turn': {
+      const log = g.turnLog;
+      switch (cond.event) {
+        case 'creature_died':
+          return log.creatureDied;
+        case 'you_attacked':
+          return log.attacked.includes(controller);
+        case 'you_gained_life':
+          return log.gainedLife.includes(controller);
+        case 'opponent_lost_life':
+          return log.lostLife.some((p) => p !== controller);
+        case 'you_cast_noncreature':
+          return log.noncreatureCast.includes(controller);
+        default:
+          return false;
+      }
+    }
+    case 'spells_last_turn': {
+      const counts = Object.values(g.lastTurnSpells);
+      if (cond.max !== undefined) return counts.reduce((a, b) => a + b, 0) <= Number(cond.max);
+      return counts.some((n) => n >= Number(cond.perPlayerMin));
+    }
+    case 'counters': {
+      // "if it had no -1/-1 counters on it" asks about the object as it last existed on the battlefield (CR 603.10a).
+      const of = cond.of as { ref: string };
+      const lki = of.ref === 'trigger_object' ? ctx.trigger?.lki : undefined;
+      const counters = lki?.counters ?? refObjects(ctx, cond.of as never)[0]?.counters ?? {};
+      return cmp(counters[String(cond.counter)] ?? 0, cond);
+    }
+    default:
+      return false;
+  }
+}

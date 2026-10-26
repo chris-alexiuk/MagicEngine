@@ -3,7 +3,9 @@ import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, s
 import { emptyPool } from './mana.js';
 import { canAttach, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
-import { collectTriggers, stackTriggers } from './triggers.js';
+import { evalCondition, newTurnLog } from './conditions.js';
+import { applyControlEffects } from './control.js';
+import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
 import type { ChoiceAnswer, GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
 import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, setTapped, zoneList } from './zones.js';
@@ -34,6 +36,7 @@ export function settle(g: GameState, events: GameEvent[]): void {
     if (g.over) return;
     collectTriggers(g, events);
     if (g.pending || !g.started) return;
+    applyControlEffects(g, events);
     checkStateBasedActions(g, events);
     if (g.over || g.pending) return;
     if (g.priority === null) return;
@@ -100,6 +103,15 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
     }
   }
 
+  // CR 603.4: an intervening "if" is checked again; if it's false now, the ability does nothing.
+  if (entry.kind === 'ability' && entry.condition) {
+    const source = g.objects[entry.source.id];
+    const ok = source ? evalCondition(entry.condition, triggerContext(g, entry.controller, source, entry.trigger ?? {})) : false;
+    if (!ok) {
+      finishResolution(g, entry, events);
+      return;
+    }
+  }
   const targets = recheckTargets(g, entry);
   if (!targets) {
     // CR 608.2b: every target is illegal, so it doesn't resolve. A spell goes to its owner's graveyard.
@@ -214,6 +226,9 @@ export function endStep(g: GameState, events: GameEvent[]): void {
 }
 
 export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): void {
+  // Remember last turn's spells (werewolves, CR 702.145-style conditions); start a fresh log.
+  g.lastTurnSpells = g.turnLog.spellsCast;
+  g.turnLog = newTurnLog();
   g.turn++;
   g.active = player;
   g.extraCleanup = false;
@@ -299,7 +314,9 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
     o.damage = 0;
     delete o.regenShields;
   }
-  g.effects = g.effects.filter((e) => e.until !== 'eot');
+  g.effects = g.effects.filter((e) => e.until !== 'eot' && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
+  g.prevention = [];
+  applyControlEffects(g, events);
   // CR 514.3a: if state-based actions happen now, players get priority and another cleanup step follows.
   const acted = checkStateBasedActions(g, events);
   if (g.over || g.pending) return;

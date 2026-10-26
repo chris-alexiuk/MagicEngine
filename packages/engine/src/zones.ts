@@ -69,11 +69,19 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number } = {},
+  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number> } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
+  // CR 614.1a: "exile it instead" replaces the move — flashback (CR 702.34a), "if it would die this turn",
+  // and "if ~ would be put into a graveyard from anywhere".
+  if (from === 'stack' && o.exileOnLeave) to = 'exile';
+  if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
+  if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
+  delete o.exileOnLeave;
   const controllerBefore = o.controller;
+  const countersBefore = from === 'battlefield' ? { ...o.counters } : undefined;
+  const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;
   removeFromCurrentZone(g, o);
 
@@ -91,8 +99,12 @@ export function moveObject(
   delete o.activatedTurn;
   delete o.triggeredTurn;
   delete o.monstrous;
+  delete o.exileIfDiesTurn;
+  delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;
   else delete o.x;
+  if (castInfo) o.cast = castInfo;
+  else delete o.cast;
   o.controller = to === 'battlefield' || to === 'stack' ? (opts.controller ?? o.controller) : o.owner;
   o.face = opts.face ?? (to === 'battlefield' || to === 'stack' ? o.face : 0);
 
@@ -105,6 +117,10 @@ export function moveObject(
     } else list.push(id);
   }
   if (to === 'battlefield') {
+    // CR 110.2: it's controlled by the player under whose control it entered.
+    o.baseController = o.controller;
+    // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
+    for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     const face = faceOf(g, o);
     // CR 306.5b: a planeswalker enters with loyalty counters equal to its printed loyalty.
     if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = Number(face.loyalty);
@@ -121,6 +137,7 @@ export function moveObject(
     card: o.card,
     face: from === 'battlefield' || from === 'stack' ? faceBefore : o.face,
     ...(o.token ? { token: true as const } : {}),
+    ...(countersBefore ? { counters: countersBefore } : {}),
   });
 }
 
@@ -140,6 +157,7 @@ export function createObject(g: GameState, card: string, owner: PlayerId, zone: 
     damage: 0,
     counters: {},
     timestamp: ++g.clock,
+    ...(zone === 'battlefield' ? { baseController: owner } : {}),
   };
   g.objects[id] = o;
   zoneList(g, zone, owner).push(id);
@@ -156,6 +174,12 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): v
   }
   moveObject(g, top, 'hand', events);
   events.push({ type: 'drew', player, object: top });
+}
+
+/** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
+function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {
+  const face = faceOf(g, o);
+  return [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])].some((a) => a.kind === 'static' && a.effect.type === tag);
 }
 
 export function setTapped(g: GameState, id: ObjectId, tapped: boolean, events: GameEvent[]): void {

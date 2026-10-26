@@ -19,6 +19,12 @@ const CARDS = [
   card('Pridemate', 'Creature — Cat', 'Whenever you gain life, put a +1/+1 counter on this creature.', { power: '2', toughness: '2' }),
   card('Healing Salve', 'Instant', 'You gain 3 life.'),
   card('Flash Bear', 'Creature — Bear', 'Flash', { power: '2', toughness: '2' }),
+  card('Edict', 'Sorcery', 'Each opponent sacrifices a creature.'),
+  card('Altar', 'Artifact', 'Sacrifice a creature: Add {C}{C}.'),
+  card('Seer', 'Creature — Vampire', 'Sacrifice another creature: Scry 1.', { power: '1', toughness: '1' }),
+  card('Costly Insight', 'Sorcery', 'As an additional cost to cast this spell, sacrifice a creature.\nDraw two cards.'),
+  card('Mad Insight', 'Sorcery', 'As an additional cost to cast this spell, discard a card.\nDraw two cards.'),
+  card('Eldrazi', 'Creature — Eldrazi', 'Annihilator 1', { power: '4', toughness: '4' }),
   makeCard({
     name: 'Daybreak Ranger // Nightfall Predator',
     layout: 'transform',
@@ -177,5 +183,62 @@ describe('mana and keyword actions', () => {
     g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Healing Salve', 'hand'), autoTap: true }));
     g = passRound(g);
     expect(g.objects[cat]!.counters['+1/+1']).toBe(1);
+  });
+});
+
+describe('sacrifice and discard choices (CR 701.21, CR 601.2f)', () => {
+  it('CR 701.21a: each opponent chooses what to sacrifice; with one choice there’s nothing to ask', () => {
+    let g = setup();
+    const [a, b] = [give(g, 'bob', 'Grizzly Bears', 'battlefield'), give(g, 'bob', 'Flash Bear', 'battlefield')];
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Edict', 'hand'), autoTap: true }));
+    expect(g.pending).toMatchObject({ kind: 'sacrifice', player: 'bob', count: 1, candidates: [a, b] });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'sacrifice', objects: [b] } });
+    expect([g.objects[a]!.zone, g.objects[b]!.zone]).toEqual(['battlefield', 'graveyard']);
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Edict', 'hand'), autoTap: true }));
+    expect(g.pending).toBeNull();
+    expect(g.objects[a]!.zone).toBe('graveyard');
+  });
+
+  it('a mana ability that costs a sacrifice', () => {
+    let g = setup(0);
+    const altar = give(g, 'alice', 'Altar', 'battlefield');
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    expect(illegal(g, { type: 'activate_mana', player: 'alice', object: altar, ability: 0 })).toMatch(/Choose 1 permanent/);
+    g = act(g, { type: 'activate_mana', player: 'alice', object: altar, ability: 0, costs: { sacrifice: [bear] } });
+    expect(g.players.alice!.pool.C).toBe(2);
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+  });
+
+  it('“Sacrifice another creature” can’t sacrifice the source', () => {
+    const g = setup(0);
+    const seer = give(g, 'alice', 'Seer', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: seer, ability: 0, costs: { sacrifice: [seer] } })).toMatch(/Choose 1/);
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    act(g, { type: 'activate', player: 'alice', object: seer, ability: 0, costs: { sacrifice: [bear] } });
+  });
+
+  it('CR 601.2f: an additional cost to cast — sacrifice or discard — is paid with the spell', () => {
+    let g = setup();
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    const spell = give(g, 'alice', 'Costly Insight', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, autoTap: true })).toMatch(/sacrifice/);
+    g = act(g, { type: 'cast', player: 'alice', object: spell, autoTap: true, costs: { sacrifice: [bear] } });
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+    g = passRound(g);
+    const mad = give(g, 'alice', 'Mad Insight', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: mad, autoTap: true, costs: { discard: [mad] } })).toMatch(/discard/);
+  });
+
+  it('CR 702.86a: annihilator — the defending player sacrifices permanents', () => {
+    let g = setup();
+    const eldrazi = give(g, 'alice', 'Eldrazi', 'battlefield');
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    give(g, 'bob', 'Forest', 'battlefield');
+    g = passRound(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: eldrazi, target: { kind: 'player', player: 'bob' } }] } });
+    g = passRound(g);
+    expect(g.pending).toMatchObject({ kind: 'sacrifice', player: 'bob', count: 1 });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'sacrifice', objects: [theirs] } });
+    expect(g.objects[theirs]!.zone).toBe('graveyard');
   });
 });

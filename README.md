@@ -31,7 +31,7 @@ pnpm dev             # http://localhost:5173
 
 ## Scripts
 
-`pnpm test` · `pnpm typecheck` · `pnpm build` · `pnpm rules:trace` (regenerates the rules trace) · `pnpm rules:check` · `pnpm cards:reparse` (re-runs the grammar over the built card DB and checks the compiler/engine contract) · `pnpm fuzz` (random games with the built card DB)
+`pnpm test` · `pnpm typecheck` · `pnpm build` · `pnpm rules:trace` (regenerates the rules trace) · `pnpm rules:check` · `pnpm rules:subtypes` / `pnpm rules:keywords` (regenerate the subtype lists and keyword definitions the compiler reads from the Comprehensive Rules) · `pnpm cards:reparse` (re-runs the grammar over the built card DB and checks the compiler/engine contract) · `pnpm fuzz` (random games with the built card DB)
 
 The **Reference data** workflow refreshes the Comprehensive Rules and rebuilds the full card DB weekly, on demand, and whenever the parsers change. The card DB and coverage report land on the `reports` branch.
 

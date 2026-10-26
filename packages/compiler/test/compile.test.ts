@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { CORE_NODES, imageUrl, nodeTags } from '@mtg/schema';
+import { CORE_NODES, faceAbilities, imageUrl, nodeTags } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
 import { compileCards } from '../src/compile.js';
 import { buildCoverage, coverageMarkdown, templateOf } from '../src/coverage.js';
@@ -73,16 +73,18 @@ describe('compileCards', () => {
     expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
     expect(byName('Kinnan, Bonder Prodigy').automation).toBe('manual'); // mana-ability triggers aren't compiled yet
     expect(byName('Breeding Pool').automation).toBe('partial'); // intrinsic mana works; the shock clause is manual
-    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('partial'); // escape keyword parsed
+    // Escape is recorded but not applied yet, and the other lines are unparsed.
+    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('manual');
+    expect(byName('Uro, Titan of Nature\'s Wrath').faces[0]!.manualKeywords).toEqual(['Escape—{G}{G}{U}{U}, Exile five other cards from your graveyard.']);
   });
 });
 
 describe('the compiler/engine contract', () => {
   it('emits only node tags the engine core handles (schema CORE_NODES)', () => {
-    const seen = { effects: new Set<string>(), statics: new Set<string>(), triggers: new Set<string>(), costs: new Set<string>() };
+    const seen = { effects: new Set<string>(), statics: new Set<string>(), triggers: new Set<string>(), costs: new Set<string>(), conditions: new Set<string>() };
     for (const card of [...db.cards, ...db.tokens]) {
       for (const face of card.faces) {
-        for (const a of face.abilities) {
+        for (const a of faceAbilities(face)) {
           const tags = nodeTags(a);
           for (const k of Object.keys(seen) as (keyof typeof seen)[]) for (const t of tags[k]) seen[k].add(t);
         }

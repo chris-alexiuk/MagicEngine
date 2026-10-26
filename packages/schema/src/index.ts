@@ -11,6 +11,8 @@
 
 export const SCHEMA_VERSION = 2 as const;
 
+export { SUBTYPES } from './subtypes.js';
+
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
 export const COLORS: readonly Color[] = ['W', 'U', 'B', 'R', 'G'];
 
@@ -77,6 +79,8 @@ export interface FaceDef {
   abilities: AbilityNode[];
   /** Oracle lines the compiler could not turn into AST; resolved manually in play. */
   unparsed: string[];
+  /** Keyword lines the engine doesn't apply yet (the keywords are still listed); resolved manually in play. */
+  manualKeywords?: string[];
   /** Image path relative to the Scryfall image CDN; see imageUrl(). */
   img?: string;
 }
@@ -90,6 +94,8 @@ export interface KeywordInstance {
   text?: string;
   /** The parameter parsed as an object description, e.g. "Enchant creature you control" (CR 702.5a). */
   filter?: ObjectFilter;
+  /** What the keyword means, compiled from its definition in CR 702 (prowess → a triggered ability). */
+  abilities?: AbilityNode[];
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +145,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   timing?: 'sorcery';
   /** "Activate only once each turn." */
   oncePerTurn?: true;
+  /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a). */
+  zone?: 'hand' | 'graveyard';
 }
 
 export interface TriggeredAbility extends AbilityBase, Program {
@@ -146,6 +154,8 @@ export interface TriggeredAbility extends AbilityBase, Program {
   trigger: TriggerNode;
   /** "This ability triggers only once each turn." */
   oncePerTurn?: true;
+  /** CR 603.4: an intervening "if" — checked as it triggers and again as it resolves. */
+  condition?: ConditionNode;
 }
 
 export interface StaticAbility extends AbilityBase {
@@ -177,6 +187,12 @@ export interface EffectNode {
 }
 
 export interface TriggerNode {
+  type: string;
+  [param: string]: unknown;
+}
+
+/** A condition in an "if" clause (CR 603.4 intervening "if", or "If …, …" in effect text). */
+export interface ConditionNode {
   type: string;
   [param: string]: unknown;
 }
@@ -303,6 +319,8 @@ export interface ContinuousEffectNode extends EffectNode {
   toughness?: number;
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
+  /** Layer 2: the source's controller controls the affected permanents. */
+  control?: 'you';
 }
 
 /** A token as created: a face definition plus a name (CR 111.4). */
@@ -318,23 +336,62 @@ export const CORE_NODES = {
   effects: [
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'destroy', 'move', 'counter', 'tap', 'untap',
     'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
-    'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search',
+    'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
+    'delayed', 'gain_control', 'exile_if_dies', 'prevent',
   ],
-  statics: ['enters_tapped', 'enters_with_counters', 'continuous'],
-  triggers: ['enters', 'dies', 'leaves', 'attacks', 'blocks', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw'],
-  costs: ['sacrifice_self', 'pay_life'],
+  conditions: [
+    'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
+    'counters',
+  ],
+  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile'],
+  triggers: [
+    'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
+    'becomes_target',
+  ],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard'],
+  /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
+  keywords: [
+    'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
+    'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
+    'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
+    'flashback',
+    // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
+    'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
+    'kicker',
+  ],
 } as const;
 
+/** Whether the engine applies this keyword instance (some need a parameter it understands). */
+export function keywordSupported(kw: KeywordInstance): boolean {
+  // Defined by abilities the compiler read from the CR (prowess, cycling, equip…).
+  if (kw.abilities?.length) return true;
+  if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
+  // Enchant with a quality the compiler could read; flashback with a mana cost.
+  if (kw.id === 'enchant') return Boolean(kw.filter);
+  if (kw.id === 'flashback' || kw.id === 'kicker') return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  return true;
+}
+
+/** A face's abilities, including those its keywords stand for. */
+export function faceAbilities(face: FaceDef): AbilityNode[] {
+  return [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])];
+}
+
 /** Every node tag used by one ability, by kind — for checking the CORE_NODES invariant. */
-export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]; triggers: string[]; costs: string[] } {
-  const out = { effects: [] as string[], statics: [] as string[], triggers: [] as string[], costs: [] as string[] };
+export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]; triggers: string[]; costs: string[]; conditions: string[] } {
+  const out = { effects: [] as string[], statics: [] as string[], triggers: [] as string[], costs: [] as string[], conditions: [] as string[] };
   const visit = (list: EffectNode[] | undefined) => {
     for (const e of list ?? []) {
       out.effects.push(e.type);
-      if (Array.isArray(e.effects)) visit(e.effects as EffectNode[]);
+      for (const key of ['effects', 'then', 'else']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
+      if (e.cond) out.conditions.push((e.cond as ConditionNode).type);
     }
   };
-  if (a.kind === 'static') out.statics.push(a.effect.type);
+  if (a.kind === 'triggered' && a.condition) out.conditions.push(a.condition.type);
+  if (a.kind === 'static') {
+    out.statics.push(a.effect.type);
+    if (a.effect.type === 'additional_cost') out.costs.push((a.effect.cost as EffectNode).type);
+  }
   else {
     visit(a.effects);
     for (const m of a.modes?.options ?? []) visit(m.effects);
@@ -368,7 +425,7 @@ export type LineStatus = 'auto' | 'manual' | 'reminder';
 
 /** Pairs each printed oracle line with whether the engine runs it or a player resolves it. */
 export function annotateOracle(face: FaceDef): { text: string; status: LineStatus }[] {
-  const unparsed = new Set(face.unparsed);
+  const unparsed = new Set([...face.unparsed, ...(face.manualKeywords ?? [])]);
   return face.oracle
     .split('\n')
     .filter((line) => line.trim() !== '')

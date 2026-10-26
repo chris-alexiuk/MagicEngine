@@ -488,6 +488,7 @@ export function dealDamage(
   combat: boolean,
   events: GameEvent[],
 ): number {
+  amount = prevent(g, source, to, amount, combat, events);
   if (amount <= 0) return 0;
   const infect = hasKeyword(g, source, 'infect');
   if (to.kind === 'player') {
@@ -538,6 +539,31 @@ export function dealDamage(
   }
   // CR 702.2b: any damage from a deathtouch source makes the creature subject to destruction.
   if (hasKeyword(g, source, 'deathtouch')) o.deathtouched = true;
+  return amount;
+}
+
+/** CR 615: applies prevention shields to damage about to be dealt; returns what's left. */
+function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
+  if (amount <= 0 || !g.prevention.length) return amount;
+  const left0 = amount;
+  for (const p of g.prevention) {
+    if (amount <= 0) break;
+    if (p.turn !== g.turn || (p.combat && !combat)) continue;
+    if (p.to) {
+      const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
+      if (!hit) continue;
+    }
+    if (p.by && !(p.by.kind === 'object' && p.by.id === source.id && p.by.zcc === source.zcc)) continue;
+    if (p.amount === 'all') amount = 0;
+    else {
+      // CR 615.7: a shield prevents that much and is used up.
+      const used = Math.min(p.amount, amount);
+      p.amount -= used;
+      amount -= used;
+    }
+  }
+  g.prevention = g.prevention.filter((p) => p.amount === 'all' || p.amount > 0);
+  if (amount < left0) events.push({ type: 'prevented', source: source.id, amount: left0 - amount });
   return amount;
 }
 

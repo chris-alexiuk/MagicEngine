@@ -1,4 +1,4 @@
-import type { ActivatedAbility, Cost, FaceDef } from '@mtg/schema';
+import type { ActivatedAbility, Cost, EffectNode, FaceDef } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
 import {
@@ -11,18 +11,19 @@ import {
   playerLoses,
   settle,
 } from './flow.js';
-import { parseManaCost, payFromPool } from './mana.js';
+import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { autoTap, checkOtherCosts, payOtherCosts, runManaAbility } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets } from './targets.js';
-import { answerTriggerTargets } from './triggers.js';
+import { announceTargets, answerTriggerTargets } from './triggers.js';
 import {
   RulesError,
   type Action,
   type ApplyResult,
   type ChoiceAnswer,
   type CompiledProgram,
+  type CostChoices,
   type GameEvent,
   type GameObject,
   type GameState,
@@ -67,7 +68,7 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'choose':
       return choose(g, a.player, a.answer, events);
     case 'activate_mana':
-      return activateMana(g, a.player, a.object, a.ability, a.choice, events);
+      return activateMana(g, a.player, a.object, a.ability, a.choice, events, a.costs);
     case 'manual':
       return manual(g, a.player, a.op, events);
   }
@@ -81,9 +82,9 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'play_land':
       return playLand(g, a.player, a.object, a.face ?? 0, events);
     case 'cast':
-      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events);
+      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false);
     case 'activate':
-      return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes }, events);
+      return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes, costs: a.costs ?? {} }, events);
     case 'activate_manual':
       return activateManual(g, a.player, a.object, a.line, a.autoTap ?? false, events);
   }
@@ -160,6 +161,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'may':
     case 'pay':
     case 'search':
+    case 'sacrifice':
       // A choice made while a spell or ability resolves: carry on resolving with it.
       if (!g.resolving) throw new RulesError('Nothing is resolving.');
       g.pending = null;
@@ -207,6 +209,7 @@ function activateMana(
   index: number,
   choice: number | ManaColor | undefined,
   events: GameEvent[],
+  costs: CostChoices = {},
 ): void {
   // CR 605.3a: mana abilities can be activated with priority, or while something asks for a mana payment.
   const paying = (g.pending?.kind === 'manual_resolution' || g.pending?.kind === 'pay') && g.pending.player === player;
@@ -214,7 +217,7 @@ function activateMana(
     if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose.`);
     if (g.priority !== player) throw new RulesError('You don’t have priority.');
   }
-  runManaAbility(g, player, id, index, choice, events);
+  runManaAbility(g, player, id, index, choice, events, costs);
   // CR 117.3c: a player who activates an ability receives priority afterward.
   if (!paying) givePriority(g, player);
 }
@@ -244,6 +247,25 @@ function spellProgram(face: FaceDef, modes: number[] | undefined): CompiledProgr
   return flatten(programs, modes);
 }
 
+function addCost(into: ManaCost, extra: ManaCost): void {
+  into.generic += extra.generic;
+  into.x += extra.x;
+  into.hybrid.push(...extra.hybrid);
+  into.unsupported.push(...extra.unsupported);
+  for (const [c, n] of Object.entries(extra.specific)) into.specific[c as ManaColor] = (into.specific[c as ManaColor] ?? 0) + (n ?? 0);
+}
+
+/** A face's additional costs to cast (CR 601.2f), from its "As an additional cost…" lines. */
+export function additionalCosts(face: FaceDef): EffectNode[] {
+  return face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'additional_cost' ? [a.effect.cost as EffectNode] : []));
+}
+
+/** The flashback cost, if the face has flashback with a mana cost the engine can pay. */
+export function flashbackCost(face: FaceDef): string | null {
+  const kw = face.keywords.find((k) => k.id === 'flashback');
+  return kw?.cost && /^(\{[^}]+\})+$/.test(kw.cost) ? kw.cost : null;
+}
+
 function cast(
   g: GameState,
   player: PlayerId,
@@ -254,6 +276,8 @@ function cast(
   chosenTargets: Target[][] | undefined,
   modes: number[] | undefined,
   events: GameEvent[],
+  costChoices: CostChoices,
+  kicked: boolean,
 ): void {
   const o = obj(g, id);
   const def = g.cards[o.card]!;
@@ -261,8 +285,10 @@ function cast(
   if (!face) throw new RulesError('That card has no such face.');
   // CR 903.8: a player may cast a commander they own from the command zone.
   const fromCommandZone = o.zone === 'command' && o.commander === true && o.owner === player;
+  // CR 702.34a: flashback — cast from your graveyard by paying the flashback cost instead.
+  const flashback = o.zone === 'graveyard' && o.owner === player ? flashbackCost(face) : null;
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!fromCommandZone && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!fromCommandZone && !flashback && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 305.9: a land can't be cast as a spell.
@@ -288,25 +314,39 @@ function cast(
         })()
       : [];
 
-  const cost = parseManaCost(face.manaCost);
+  // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
+  const cost = parseManaCost(flashback ?? face.manaCost);
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
+  if (kicked) {
+    // CR 702.33a: the kicker cost is paid in addition (CR 601.2f).
+    const kicker = face.keywords.find((k) => k.id === 'kicker' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+    if (!kicker) throw new RulesError(`${face.name} has no kicker cost the engine can pay.`);
+    addCost(cost, parseManaCost(kicker.cost!));
+  }
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
+  // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
+  const additional: Cost = { other: additionalCosts(face) };
+  checkOtherCosts(g, player, o, additional, costChoices);
   if (wantsAutoTap) autoTap(g, player, cost, x, events);
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
   const left = payFromPool(g.players[player]!.pool, cost, x);
   if (!left) throw new RulesError(`Not enough mana to cast ${face.name}.`);
   g.players[player]!.pool = left;
+  payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
-  // Targets were checked against the card in its old zone; on the stack it's a new object (CR 400.7).
+  // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
+  if (flashback) o.exileOnLeave = true;
+  o.cast = { by: player, from: fromCommandZone ? 'command' : flashback ? 'graveyard' : 'hand', ...(kicked ? { kicked: true as const } : {}) };
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
+  announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 601.2i: a player who had priority when casting gets priority afterward.
   givePriority(g, player);
 }
@@ -320,12 +360,14 @@ interface ActivationChoices {
   autoTap: boolean;
   targets: Target[][] | undefined;
   modes: number[] | undefined;
+  costs: CostChoices;
 }
 
 function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
   const o = obj(g, id);
-  // CR 602.2: only an object's controller can activate its abilities.
-  if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You don’t control that permanent.');
+  // CR 602.2: only an object's controller (or owner, outside the battlefield) can activate its abilities.
+  const yours = o.zone === 'battlefield' ? o.controller === player : (o.zone === 'hand' || o.zone === 'graveyard') && o.owner === player;
+  if (!yours) throw new RulesError('You can’t activate abilities of that object.');
   const ability: ActivatedAbility | undefined = activatedAbilities(g, o)[index];
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such ability.`);
   const name = nameOf(g, o);
@@ -348,7 +390,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     if (!canUseTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
   }
   if (cost.untap && !o.tapped) throw new RulesError(`${name} is already untapped.`);
-  checkOtherCosts(g, player, o, cost);
+  checkOtherCosts(g, player, o, cost, choices.costs);
 
   // CR 602.2b (following CR 601.2b–c): modes and targets.
   const program = flatten([ability], choices.modes);
@@ -359,7 +401,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   const mana = parseManaCost(cost.mana ?? '');
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
-  const usesItself = cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : [];
+  // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
+  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? [])];
   if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself);
   if (cost.mana) {
     const left = payFromPool(g.players[player]!.pool, mana, choices.x);
@@ -375,7 +418,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
-  payOtherCosts(g, player, o, cost, events);
+  payOtherCosts(g, player, o, cost, events, choices.costs);
 
   // CR 602.2: the ability goes on the stack.
   g.stack.push({
@@ -390,6 +433,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     x: choices.x,
   });
   events.push({ type: 'ability_activated', player, source: id, text: ability.text });
+  announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);
 }

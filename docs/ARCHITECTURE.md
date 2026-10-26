@@ -23,6 +23,7 @@ Scryfall Oracle Cards JSON (~150 MB)
 - Self-references ("Kinnan", "this creature") are normalised to `~` before matching, covering old and new templating.
 - The grammar is compositional (`packages/compiler/src/grammar/`): a line is a trigger, cost or static subject plus effect text; effect text is sentences, clauses joined by "and" / ", then", and a subject plus a verb. Noun phrases ("up to two target nonblack creatures an opponent controls") become a target spec or a filter; pronouns ("it", "its controller", "that player") resolve to what they refer to. Subtype names come from CR 205.3 (`pnpm rules:subtypes`).
 - All or nothing: a line compiles completely or not at all, so a compiled card never does half of what it says.
+- **Keywords come from the Comprehensive Rules.** Most keyword abilities are defined in CR 702 as a sentence ("Prowess" means "Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn."). `pnpm rules:keywords` extracts those definitions, and the compiler parses them with the same grammar as card text, attaching the result to the keyword. A keyword starts working as soon as the grammar can read its definition. Keywords with no such definition (flying, trample, flashback, kicker…) are applied natively; the rest are recorded but graded manual (`keywordSupported` in the schema).
 - The coverage report groups unparsed lines into templates ranked by frequency. `pnpm cards:reparse` re-runs the grammar over a built DB in seconds to measure a change.
 
 ## Extensibility
@@ -64,7 +65,9 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Targets and resolution: target rules, fizzling, hexproof/shroud/protection, counterspells, choices during resolution, library search, "unless … pays"
    - ✅ Triggered abilities: enters, dies, leaves, attacks, blocks, combat damage, steps, casting, life gain, drawing
    - ✅ Continuous effects: anthems and lords, granted keywords and restrictions, until-end-of-turn effects; Auras and Equipment
-   - Replacement and prevention effects, control-changing and other layers, delayed triggers, intervening "if" clauses
+   - ✅ Keywords compiled from their CR 702 definitions (prowess, cycling, typecycling, equip, ward, exalted, battle cry, bushido, flanking, afterlife, annihilator, persist, undying…), plus flashback, kicker and changeling natively
+   - ✅ Sacrifice choices (edicts, costs, additional costs), discard costs, conditions ("if"), intervening "if" (CR 603.4), "you may … If you do", delayed triggers (CR 603.7), control changes (layer 2), "exile it instead" replacements, prevention shields
+   - Next: the remaining layers (type, color, P/T setting, text), more replacement effects, copy effects, alternative costs, graveyard and exile zone abilities
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

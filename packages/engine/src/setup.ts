@@ -1,4 +1,5 @@
 import type { CardDef } from '@mtg/schema';
+import { newTurnLog } from './conditions.js';
 import { beginTurn } from './flow.js';
 import { emptyPool } from './mana.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
@@ -85,6 +86,10 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
     triggers: [],
     resolving: null,
     clock: 0,
+    delayed: [],
+    prevention: [],
+    turnLog: newTurnLog(),
+    lastTurnSpells: {},
     winner: null,
     over: false,
     rng: opts.seed | 0,

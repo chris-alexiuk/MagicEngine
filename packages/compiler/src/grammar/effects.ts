@@ -1,5 +1,6 @@
 import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
+import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { parseTokenPhrase } from './tokens.js';
 import { parseAmount, parsePT } from './words.js';
@@ -29,15 +30,58 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     if (!sentences) return null;
     const out: EffectNode[] = [];
     for (let i = 0; i < sentences.length; i++) {
-      const s = sentences[i]!;
+      let s = sentences[i]!;
+      // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
+      if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
+        s = `${s.replace(/, and put /, ', put ')}, then shuffle`;
+        i++;
+      }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
-      const pay = /^You may pay ((?:\{[^}]+\})+)$/.exec(s);
-      const then = pay && sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      // Mana the engine can pay as a resolution-time cost: no {X}, energy, snow or Phyrexian symbols.
+      const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+      const then = sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && then) {
         const inner = parseSentence(capitalise(then[1]!), b);
         if (!inner) return null;
         out.push({ type: 'may_pay', cost: pay[1]!, effects: inner });
         i++;
+        continue;
+      }
+      // CR 118.12: "You may sacrifice a creature. If you do, …" — the first part is done only if possible.
+      const mayDo = /^You may (.+)$/.exec(s);
+      if (mayDo && then) {
+        const first = parseSentence(capitalise(mayDo[1]!), b);
+        const rest = first ? parseSentence(capitalise(then[1]!), b) : null;
+        if (!first || !rest) return null;
+        out.push({ type: 'may_do', effects: first, then: rest });
+        i++;
+        continue;
+      }
+      // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
+      const iff = /^If ([^,]+), (.+)$/.exec(s);
+      const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
+      if (iff && cond) {
+        const yes = parseSentence(capitalise(iff[2]!), b);
+        if (!yes) return null;
+        const node: EffectNode = { type: 'if', cond, effects: yes };
+        const otherwise = sentences[i + 1] ? /^Otherwise, (.+)$/.exec(sentences[i + 1]!) : null;
+        if (otherwise) {
+          const no = parseSentence(capitalise(otherwise[1]!), b);
+          if (!no) return null;
+          node.else = no;
+          i++;
+        }
+        out.push(node);
+        continue;
+      }
+      // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
+      const delayed =
+        /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ?? /^At the beginning of the next (end step|turn's upkeep), (.+)$/.exec(s);
+      if (delayed) {
+        const [what, when] = delayed[0].startsWith('At ') ? [delayed[2]!, delayed[1]!] : [delayed[1]!, delayed[2]!];
+        const inner = parseSentence(capitalise(what), b);
+        if (!inner) return null;
+        out.push({ type: 'delayed', step: when === 'end step' ? 'end' : 'upkeep', effects: inner });
         continue;
       }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
@@ -61,7 +105,7 @@ function capitalise(s: string): string {
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 118.12a: "[Do something] unless [a player] pays [cost]."
-  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{[^}]+\})+)$/.exec(s);
+  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
   if (unless) {
     return attempt(b, (b) => {
       const inner = parseSentence(unless[1]!, b);
@@ -128,7 +172,14 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
   },
-  gain(args, who) {
+  gain(args, who, b, imperative) {
+    // Layer 2 (CR 613.1b): "Gain control of target creature until end of turn."
+    const control = /^control of (.+?)( until end of turn)?$/.exec(args);
+    if (control) {
+      if (!imperative) return null;
+      const what = parseObjectRef(control[1]!, b);
+      return what ? [{ type: 'gain_control', what: what.ref, ...(control[2] ? { until: 'eot' } : {}) }] : null;
+    }
     const m = /^(\S+) life$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
@@ -170,7 +221,17 @@ const VERBS: Record<string, VerbHandler> = {
     return [node];
   },
   sacrifice(args, who, b) {
-    // Only specific objects for now ("sacrifice ~", "sacrifice it"); choosing one needs a prompt.
+    // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
+    const choice = /^(a|an|one|two|three|four|five|\d+|another) (.+)$/.exec(args);
+    if (choice) {
+      const pf = parseFilter(choice[2]!, b);
+      const amount = choice[1] === 'another' ? 1 : parseAmount(choice[1]!);
+      // A numeral comes from a keyword definition ("sacrifices N permanents" with N = 1), so either number is fine.
+      if (!pf || typeof amount !== 'number' || (pf.plural !== amount > 1 && !/^\d+$/.test(choice[1]!))) return null;
+      if (choice[1] === 'another') pf.filter.other = true;
+      return [{ type: 'sacrifice_choice', who, filter: pf.filter, amount }];
+    }
+    // Specific objects: "sacrifice ~", "sacrifice it".
     const what = parseObjectRef(args, b);
     if (!what || what.targeted || what.ref.ref === 'all' || who.ref !== 'you') return null;
     return [{ type: 'sacrifice', what: what.ref }];
@@ -204,13 +265,15 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(hand[1]!, b);
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
-    const field = /^(.+?) to the battlefield( tapped)?( under your control)?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?( under (?:your|its owner's|their owners') control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
       const node: EffectNode = { type: 'move', what: what.ref, to: 'battlefield' };
       if (field[2]) node.tapped = true;
-      if (field[3]) node.under = 'you';
+      if (field[3] === ' under your control') node.under = 'you';
+      // CR 122.6: "with a -1/-1 counter on it" — it enters with the counter.
+      if (field[4]) node.counters = { [field[5]!.replace(/−/g, '-')]: parseAmount(field[4]!) };
       return [node];
     }
     return null;
@@ -266,6 +329,31 @@ const VERB_ALT = Object.keys(VERB_FORMS)
 const IMPERATIVE = new RegExp(`^(${VERB_ALT}) (.+)$`, 'i');
 const WITH_SUBJECT = new RegExp(`^(.+?) (${VERB_ALT}) (.+)$`);
 
+/** Replacement and prevention effects created by a resolving spell (CR 614, CR 615). */
+function parseReplacement(c: string, b: Binder): EffectNode[] | null {
+  // CR 614.1a: "If that creature would die this turn, exile it instead."
+  const dies = /^If (.+?) would die this turn, exile it instead$/.exec(c);
+  if (dies) {
+    const what = parseObjectRef(dies[1]!, b);
+    return what ? [{ type: 'exile_if_dies', what: what.ref }] : null;
+  }
+  // CR 615.1a: prevention. "Prevent all combat damage that would be dealt this turn."
+  if (/^Prevent all combat damage that would be dealt this turn$/.test(c)) return [{ type: 'prevent', amount: 'all', combat: true }];
+  const next = /^Prevent the next (\S+) damage that would be dealt to (.+?) this turn$/.exec(c);
+  if (next) {
+    const amount = parseAmount(next[1]!);
+    const to = parseRecipients(next[2]!, b);
+    return amount !== null && to?.length === 1 ? [{ type: 'prevent', amount, to: to[0] }] : null;
+  }
+  const all = /^Prevent all (combat )?damage that would be dealt (?:to|by) (.+?) this turn$/.exec(c);
+  if (all) {
+    const to = parseRecipients(all[2]!, b);
+    const by = /dealt by/.test(c);
+    return to?.length === 1 ? [{ type: 'prevent', amount: 'all', ...(all[1] ? { combat: true } : {}), [by ? 'by' : 'to']: to[0] }] : null;
+  }
+  return null;
+}
+
 /** Keyword actions that are a whole clause on their own. */
 function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 701.16a: "Investigate" means "Create a Clue token."
@@ -290,7 +378,7 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
 
 function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
   // Object-subject clauses first: damage, pumps, restrictions.
-  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b);
+  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
   if (special) return { effects: special, subject: null };
 
   const imp = IMPERATIVE.exec(c);

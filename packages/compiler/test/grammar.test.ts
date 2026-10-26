@@ -140,8 +140,22 @@ describe('triggered abilities', () => {
     });
   });
 
-  it('leaves intervening "if" clauses for later (CR 603.4)', () => {
-    expect(parse('When this creature enters, if you control a Forest, draw a card.', 'Creature — Elf').unparsed).toHaveLength(1);
+  it('CR 603.4: intervening "if" clauses become a condition on the trigger', () => {
+    expect(one('When this creature enters, if you control a Forest, draw a card.', 'Creature — Elf')).toMatchObject({
+      trigger: { type: 'enters' },
+      condition: { type: 'count', who: 'you', filter: { subtypes: ['Forest'] }, min: 1 },
+    });
+    // Conditions the grammar doesn't know leave the line unparsed.
+    expect(parse('When this creature enters, if you descended this turn, draw a card.', 'Creature — Elf').unparsed).toHaveLength(1);
+  });
+
+  it('keywords whose definitions use conditions: persist (CR 702.79a)', () => {
+    const kw = parse('Persist', 'Creature — Elf').keywords[0]!;
+    expect(kw.abilities![0]).toMatchObject({
+      trigger: { type: 'dies', subject: { ref: 'self' } },
+      condition: { type: 'counters', of: { ref: 'trigger_object' }, counter: '-1/-1', max: 0 },
+      effects: [{ type: 'move', what: { ref: 'trigger_object' }, to: 'battlefield', counters: { '-1/-1': 1 } }],
+    });
   });
 });
 

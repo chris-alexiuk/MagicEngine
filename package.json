@@ -14,6 +14,7 @@
     "rules:trace": "pnpm --filter @mtg/rules cli trace",
     "rules:check": "pnpm --filter @mtg/rules cli trace --check",
     "rules:subtypes": "pnpm --filter @mtg/rules cli subtypes",
+    "rules:keywords": "pnpm --filter @mtg/rules cli keywords",
     "cards:reparse": "pnpm --filter @mtg/compiler reparse -- ../../apps/web/public/cards.json.gz",
     "fuzz": "pnpm --filter @mtg/engine fuzz -- ../../apps/web/public/cards.json.gz",
     "demo": "pnpm --filter @mtg/engine demo -- ../../apps/web/public/cards.json.gz ../../.cache/replay.json && node tools/replay/build.cjs tools/replay/template.html .cache/replay.json docs/rules/rules.json .cache/replay.html"

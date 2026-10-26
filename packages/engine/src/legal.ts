@@ -1,10 +1,12 @@
-import type { AddManaEffect, FaceDef } from '@mtg/schema';
+import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
 import { parseManaCost } from './mana.js';
+import { additionalCosts, flashbackCost } from './actions.js';
+import { discardCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
-import type { Action, CompiledProgram, GameObject, GameState, PlayerId, Target } from './types.js';
+import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
 import { faceOf, zoneList } from './zones.js';
 
 /**
@@ -37,8 +39,35 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.unsupported.length || cost.x > 0) return; // X spells need a value; the UI asks for one
       if (!planAutoTap(g, player, cost)) return;
       const choice = defaultSpellChoice(g, player, o, face);
-      if (!choice) return;
-      out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice });
+      const costs = defaultCostChoices(g, player, o, additionalCosts(face));
+      if (!choice || !costs) return;
+      out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(costs) });
+    });
+  }
+
+  // CR 702.34a: flashback spells in the graveyard.
+  for (const id of zoneList(g, 'graveyard', player)) {
+    const o = g.objects[id]!;
+    const face = g.cards[o.card]!.faces[0]!;
+    const fb = flashbackCost(face);
+    if (!fb) continue;
+    const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+    if (!instantSpeed && !mainPhaseEmptyStack) continue;
+    if (!planAutoTap(g, player, parseManaCost(fb))) continue;
+    const choice = defaultSpellChoice(g, player, o, face);
+    const costs = defaultCostChoices(g, player, o, additionalCosts(face));
+    if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
+  }
+  // Abilities that work from the hand (cycling, CR 702.29a).
+  for (const id of zoneList(g, 'hand', player)) {
+    const o = g.objects[id]!;
+    activatedAbilities(g, o).forEach((ab, ability) => {
+      const mana = parseManaCost(ab.cost.mana ?? '');
+      if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana))) return;
+      if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
+      const choice = defaultProgramChoice(g, player, o, [ab]);
+      const costs = defaultCostChoices(g, player, o, ab.cost.other ?? []);
+      if (choice && costs) out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
     });
   }
 
@@ -48,14 +77,22 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
     if (o.controller !== player) continue;
     manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
-      if (ab.cost.mana || ab.cost.other) return;
+      if (ab.cost.mana) return;
+      let costs: CostChoices = {};
+      if (ab.cost.other) {
+        if (ab.cost.other.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
+        const picked = defaultCostChoices(g, player, o, ab.cost.other);
+        if (!picked) return;
+        costs = picked;
+      }
+      const extra = withCosts(costs);
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color").
       const effect = ab.effects[0] as AddManaEffect | undefined;
       if (effect?.anyColor) {
-        for (const choice of ['W', 'U', 'B', 'R', 'G'] as const) out.push({ type: 'activate_mana', player, object: id, ability, choice });
+        for (const choice of ['W', 'U', 'B', 'R', 'G'] as const) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
-        effect.options.forEach((_, choice) => out.push({ type: 'activate_mana', player, object: id, ability, choice }));
-      } else out.push({ type: 'activate_mana', player, object: id, ability });
+        effect.options.forEach((_, choice) => out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra }));
+      } else out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
     });
     activatedAbilities(g, o).forEach((ab, ability) => {
       const { cost } = ab;
@@ -67,10 +104,12 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
       const mana = parseManaCost(cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0) return;
-      if (cost.mana && !planAutoTap(g, player, mana, 0, cost.tap ? [id] : [])) return;
+      const costs = defaultCostChoices(g, player, o, cost.other ?? []);
+      if (!costs) return;
+      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? [])])) return;
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
-      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice });
+      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
     });
     faceOf(g, o).unparsed.forEach((line, i) => {
       if (line.includes(': ')) out.push({ type: 'activate_manual', player, object: id, line: i, autoTap: true });
@@ -79,7 +118,28 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
   return out;
 }
 
-type Choice = { targets?: Target[][]; modes?: number[] };
+type Choice = { targets?: Target[][]; modes?: number[]; costs?: CostChoices };
+
+/** A default way to pay sacrifice/discard costs (the first candidates), or null if they can't be paid. */
+function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, other: EffectNode[]): CostChoices | null {
+  const sacrifice: ObjectId[] = [];
+  const discard: ObjectId[] = [];
+  for (const c of other) {
+    const n = Number(c.amount ?? 1);
+    if (c.type === 'sacrifice') {
+      const pick = sacrificeCandidates(g, player, c, source).filter((id) => !sacrifice.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      sacrifice.push(...pick);
+    } else if (c.type === 'discard') {
+      const pick = discardCandidates(g, player, source).filter((id) => !discard.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      discard.push(...pick);
+    }
+  }
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}) };
+}
+
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard ? { costs } : {});
 
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
   const modal = programs.find((p) => p.modes);
