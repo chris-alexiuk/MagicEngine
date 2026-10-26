@@ -157,6 +157,10 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
   } else if (/^cards?$/.test(lower)) {
     if (!f.zone || f.zone === 'battlefield') return null; // cards in hand/library/graveyard need the zone stated
     plural = lower.endsWith('s');
+  } else if (/^commanders?$/.test(lower)) {
+    // CR 903.3
+    f.commander = true;
+    plural = lower.endsWith('s');
   } else if (/^tokens?$/.test(lower)) {
     f.token = true;
     plural = lower.endsWith('s');

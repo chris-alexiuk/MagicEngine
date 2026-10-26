@@ -47,6 +47,10 @@ interface ActiveEffect {
   pt?: () => [number, number];
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
   set?: { layer: '7a' | '7b'; pt: () => [number | null, number | null] };
+  /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained). */
+  types?: { types: string[]; subtypes: string[]; retain: boolean };
+  /** Layer 5: colors it becomes. */
+  colors?: Color[];
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
@@ -84,9 +88,21 @@ export function printedAbilities(face: FaceDef): AbilityNode[] {
   return [...face.abilities, ...keywordAbilities(face.keywords)];
 }
 
+/** Whether the object has a gated ability now: a Class level (CR 716.2a), a leveler's striation (CR 711.2a). */
+export function gateOpen(g: GameState, o: GameObject, a: AbilityNode): boolean {
+  if (!a.gate) return true;
+  if (a.gate.type === 'class_level') return (o.classLevel ?? 1) >= Number(a.gate.min ?? 1);
+  return evalCondition(a.gate, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} });
+}
+
+/** The abilities printed on an object (and its printed keywords) that it has right now. */
+export function objectAbilities(g: GameState, o: GameObject): AbilityNode[] {
+  return printedAbilities(faceOf(g, o)).filter((a) => gateOpen(g, o, a));
+}
+
 /** Every ability an object has now: printed, and those its current keywords stand for (granted ones too). */
 export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
-  return [...faceOf(g, o).abilities, ...keywordAbilities(chars(g, o).keywords)];
+  return [...faceOf(g, o).abilities.filter((a) => gateOpen(g, o, a)), ...keywordAbilities(chars(g, o).keywords)];
 }
 
 /**
@@ -175,7 +191,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
   for (const id of g.zones.battlefield) {
     const source = g.objects[id];
     if (!source) continue;
-    for (const ability of printedAbilities(faceOf(g, source))) {
+    for (const ability of objectAbilities(g, source)) {
       if (ability.kind !== 'static' || ability.effect.type !== 'continuous') continue;
       const e = (ability as StaticAbility).effect as ContinuousEffectNode;
       if (!staticConditionHolds(g, e, source)) continue;
@@ -211,6 +227,9 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
   return g.effects.map((e) => ({
     timestamp: e.timestamp,
     ...(e.power !== undefined ? { pt: (): [number, number] => [e.power ?? 0, e.toughness ?? 0] } : {}),
+    ...(e.setPower !== undefined ? { set: { layer: '7b' as const, pt: (): [number, number] => [e.setPower!, e.setToughness ?? 0] } } : {}),
+    ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
+    ...(e.colors ? { colors: e.colors } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
@@ -274,6 +293,20 @@ function layered(g: GameState, o: GameObject): Characteristics {
     effectsMemo = { g, list: [...staticEffects(g), ...resolvedEffects(g)].sort((a, b) => a.timestamp - b.timestamp) };
   }
   const effects = effectsMemo.list;
+  // CR 613.1d: layer 4 — type-changing effects.
+  for (const e of effects) {
+    if (!e.types || !e.applies(o, c)) continue;
+    if (e.types.retain) {
+      c.types = [...new Set([...c.types, ...e.types.types])];
+      c.subtypes = [...new Set([...c.subtypes, ...e.types.subtypes])];
+    } else {
+      c.types = [...e.types.types];
+      c.subtypes = [...e.types.subtypes];
+    }
+    if (c.types.includes('Creature')) c.hasPT = true;
+  }
+  // CR 613.1e: layer 5 — color-changing effects.
+  for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
   const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat) && e.applies(o, c));
   for (const e of inLayer6) {
@@ -320,8 +353,10 @@ function withCounters(c: Characteristics, o: GameObject): Characteristics {
   return c;
 }
 
+/** Whether it has a card type now (CR 613.1d: type-changing effects included). */
 export function hasType(g: GameState, o: GameObject, type: string): boolean {
-  return faceOf(g, o).types.includes(type);
+  if (o.zone !== 'battlefield') return faceOf(g, o).types.includes(type);
+  return chars(g, o).types.includes(type);
 }
 
 export function hasKeyword(g: GameState, o: GameObject, id: string): boolean {
@@ -389,6 +424,7 @@ export function matchesFilter(
   if (f.other && ctx.source && ctx.source.id === o.id) return false;
   if (f.tapped !== undefined && o.tapped !== f.tapped) return false;
   if (f.token !== undefined && Boolean(o.token) !== f.token) return false;
+  if (f.commander && !o.commander) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);
@@ -437,7 +473,7 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
       if (color) out.push(intrinsicManaAbility(color));
     }
   }
-  for (const a of face.abilities) if (a.kind === 'activated' && a.mana) out.push(a);
+  for (const a of face.abilities) if (a.kind === 'activated' && a.mana && gateOpen(g, o, a)) out.push(a);
   return out;
 }
 

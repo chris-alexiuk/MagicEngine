@@ -1,8 +1,8 @@
-import type { AbilityNode, KeywordInstance } from '@mtg/schema';
+import type { AbilityNode, ConditionNode, KeywordInstance } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
-import { capitalise, subtypeOf } from './grammar/words.js';
+import { capitalise, subtypeOf, TYPE_NOUNS } from './grammar/words.js';
 import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
 import { KeywordRegistry } from './keywords.js';
 import { CORE_RULES } from './rules/index.js';
@@ -71,11 +71,57 @@ export class ParserRegistry {
     };
     const result: ParseResult = { keywords: [], abilities: [], unparsed: [], manualKeywords: [] };
     const lines = text.split('\n').map(stripReminder);
+    // Abilities below a class level bar (CR 716.2a) or a level symbol (CR 711.2a) exist only at that level.
+    let gate: ConditionNode | undefined;
+    const isClass = /\bClass\b/.test(ctx.typeLine);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
       if (line === '') continue; // pure reminder text, e.g. a basic land's "({T}: Add {G}.)"
 
+      // CR 716.2a: "[Cost]: Level N" — "This Class's level becomes N. Activate only if this Class is level N-1
+      // and only as a sorcery." What follows is the level N ability.
+      const level = isClass ? /^((?:\{[^}]+\})+): Level (\d+)$/.exec(line) : null;
+      if (level) {
+        const n = Number(level[2]);
+        result.abilities.push({
+          kind: 'activated',
+          text: line,
+          cost: { mana: level[1]! },
+          effects: [{ type: 'class_level', level: n }],
+          timing: 'sorcery',
+          activateIf: { type: 'class_level', exactly: n - 1 },
+        });
+        gate = { type: 'class_level', min: n };
+        continue;
+      }
+      // CR 711.2a/b: "LEVEL 1-3" / "LEVEL 4+", then that striation's P/T and abilities.
+      const striation = /^LEVEL (\d+)(?:-(\d+)|\+)$/.exec(line);
+      if (striation) {
+        gate = { type: 'counters', of: { ref: 'self' }, counter: 'level', min: Number(striation[1]), ...(striation[2] ? { max: Number(striation[2]) } : {}) };
+        continue;
+      }
+      const pt = gate?.counter === 'level' ? /^(\d+)\/(\d+)$/.exec(line) : null;
+      if (pt) {
+        result.abilities.push({
+          kind: 'static',
+          text: line,
+          gate,
+          effect: { type: 'continuous', affected: { ref: 'self' }, setPower: Number(pt[1]), setToughness: Number(pt[2]), setLayer: '7b' },
+        });
+        continue;
+      }
+
       const kws = this.keywords.parseLine(line);
+      if (kws && gate) {
+        // A keyword at a level: "it has [abilities]" while the level holds (granted, layer 6).
+        for (const kw of kws) {
+          const abilities = this.expandKeyword(kw, env);
+          if (abilities) kw.abilities = abilities;
+        }
+        if (!kws.every(keywordSupported)) result.manualKeywords.push(line);
+        else result.abilities.push({ kind: 'static', text: line, gate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: kws } });
+        continue;
+      }
       if (kws) {
         for (const kw of kws) {
           // CR 702.5a / CR 303.4a: what an Aura can enchant is also what the Aura spell targets.
@@ -93,11 +139,12 @@ export class ParserRegistry {
 
       // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
       const block = [line];
-      if (/\bchoose (?:one|two|three|one or both|one or more|any number) —$/i.test(line)) {
+      if (/\bchoose (?:one|two|three|one or both|one or more|any number) —$/i.test(line) || /^Choose (?:one|two)\. If .+ instead\.$/.test(line)) {
         while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
       }
 
       const node = this.parseBlock(block, env);
+      if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
     }
@@ -121,7 +168,8 @@ export class ParserRegistry {
    * with the same grammar as card text. Null when any part of the definition doesn't parse.
    */
   expandKeyword(kw: KeywordInstance, env: ParseContext): AbilityNode[] | null {
-    const def = KEYWORD_DEFINITIONS[kw.id];
+    // The CR names some keywords with their connecting word ("Affinity for [text]", CR 702.41a).
+    const def = KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
     if (!def) return null;
     const printed = keywordText(def.pattern, kw);
     if (printed === null) return null;
@@ -149,8 +197,21 @@ function keywordText(template: string, kw: KeywordInstance): string | null {
       return t === 'Type' ? capitalise(words) : words;
     })
     .replace(/\[quality\]/g, () => kw.text ?? ((ok = false), ''))
+    // "for each [text]" reads the plural keyword text ("Affinity for artifacts") as one: "for each artifact".
+    .replace(/for each \[text\]/g, () => (kw.text ? `for each ${singular(kw.text)}` : ((ok = false), '')))
+    .replace(/\[text\]/g, () => kw.text ?? ((ok = false), ''))
     .replace(/\bN\b/g, () => (kw.n !== undefined ? String(kw.n) : kw.text === 'X' ? 'X' : ((ok = false), '')));
   return ok ? out : null;
+}
+
+/** "artifacts" → "artifact", "Plains" → "Plains", "Equipment" → "Equipment" (the last word only). */
+function singular(text: string): string {
+  const words = text.split(' ');
+  const last = words[words.length - 1]!;
+  const type = TYPE_NOUNS[last.toLowerCase()];
+  const sub = subtypeOf(capitalise(last));
+  words[words.length - 1] = type ? type.toLowerCase() : sub ?? last.replace(/s$/, '');
+  return words.join(' ');
 }
 
 export { stripReminder };

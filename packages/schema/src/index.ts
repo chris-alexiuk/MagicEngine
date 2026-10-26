@@ -110,6 +110,11 @@ export interface AbilityBase {
   kind: string;
   /** The oracle line this ability was compiled from (reminder text removed). */
   text: string;
+  /**
+   * The object has this ability only while this holds: a Class level (CR 716.2a) or a leveler's
+   * striation (CR 711.2a).
+   */
+  gate?: ConditionNode;
 }
 
 /**
@@ -128,6 +133,8 @@ export interface ModeChoice {
   min: number;
   max: number;
   options: ModeOption[];
+  /** "If you control a commander as you cast this spell, you may choose both instead." */
+  bonus?: { condition: ConditionNode; max: number };
 }
 
 export interface ModeOption {
@@ -139,6 +146,8 @@ export interface ModeOption {
 }
 
 export interface ActivatedAbility extends AbilityBase, Program {
+  /** "Activate only if this Class is level 1" (CR 716.2a). */
+  activateIf?: ConditionNode;
   kind: 'activated';
   cost: Cost;
   /** True for mana abilities (CR 605): they don't use the stack. */
@@ -255,6 +264,8 @@ export interface ObjectFilter {
   power?: Compare;
   toughness?: Compare;
   manaValue?: Compare;
+  /** CR 903.3: a commander. */
+  commander?: true;
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
   chosenType?: true;
   chosenColor?: true;
@@ -343,6 +354,8 @@ export interface AddManaEffect extends EffectNode {
   options?: string[][];
   /** "Add N mana of any one color" style. */
   anyColor?: number;
+  /** CR 903.4: "any color in your commander's color identity" — only those colors. */
+  identity?: true;
 }
 
 export interface EntersTappedEffect extends EffectNode {
@@ -427,6 +440,40 @@ export interface CostModifierNode extends EffectNode {
   condition?: ConditionNode;
 }
 
+/**
+ * CR 614.1a: "If a creature an opponent controls would die, exile it instead." / "If a card or token would
+ * be put into your graveyard from anywhere, exile it instead." (Rest in Peace and friends.)
+ */
+export interface ExileInsteadNode extends EffectNode {
+  type: 'exile_instead';
+  /** Whose graveyard (by owner), from the source controller's point of view. */
+  owner?: 'you' | 'opponents' | 'each';
+  /** Only objects like this. */
+  filter?: ObjectFilter;
+  /** Only when dying (from the battlefield). */
+  dies?: true;
+}
+
+/**
+ * CR 614.1a: replacement effects that change how much happens — "If you would gain life, you gain twice
+ * that much life instead", token and counter doublers, "it deals double that damage instead".
+ */
+export interface QuantityReplacementNode extends EffectNode {
+  type: 'replace_quantity';
+  event: 'gain_life' | 'tokens' | 'counters' | 'damage';
+  op: 'double' | 'triple' | 'plus';
+  n?: number;
+  /** gain_life: who gains; tokens: under whose control; counters: who puts them (from the source controller's view). */
+  who?: 'you' | 'opponents' | 'each';
+  /** counters: what they're put on; damage: the source. */
+  filter?: ObjectFilter;
+  /** counters: which kind (any if absent). */
+  counter?: string;
+  /** damage: only to opponents and their permanents; only noncombat damage. */
+  toOpponents?: true;
+  noncombat?: true;
+}
+
 /** Rules changes for players (CR 402.2, CR 305.2, CR 614.10): "You have no maximum hand size." */
 /**
  * look_at_top: the player may look at their library's top card any time; top_revealed: everyone sees it;
@@ -464,18 +511,18 @@ export const CORE_NODES = {
     'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
-    'proliferate', 'connive', 'amass', 'exile_top',
+    'proliferate', 'connive', 'amass', 'exile_top', 'class_level',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level',
   ],
-  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier'],
+  statics: ['enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead'],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
-    'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter',
+    'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
@@ -533,6 +580,8 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     }
   };
   if (a.kind === 'triggered' && a.condition) cond(a.condition);
+  if (a.gate) cond(a.gate);
+  if (a.kind === 'activated' && a.activateIf) cond(a.activateIf);
   if (a.kind === 'static') {
     out.statics.push(a.effect.type);
     amounts(a.effect);

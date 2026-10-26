@@ -1,5 +1,5 @@
 import type { ContinuousEffectNode, StaticAbility } from '@mtg/schema';
-import { printedAbilities, staticConditionHolds } from './characteristics.js';
+import { objectAbilities, staticConditionHolds } from './characteristics.js';
 import { removeFromCombat } from './permanents.js';
 import type { GameEvent, GameState, PlayerId } from './types.js';
 import { faceOf } from './zones.js';
@@ -15,7 +15,7 @@ export function applyControlEffects(g: GameState, events: GameEvent[]): void {
   const changes: { timestamp: number; object: string; zcc: number; to: PlayerId }[] = [];
   for (const id of g.zones.battlefield) {
     const source = g.objects[id]!;
-    for (const a of printedAbilities(faceOf(g, source))) {
+    for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'continuous') continue;
       const e = (a as StaticAbility).effect as ContinuousEffectNode;
       if (e.control !== 'you' || e.affected.ref !== 'attached' || !source.attachedTo || !staticConditionHolds(g, e, source)) continue;

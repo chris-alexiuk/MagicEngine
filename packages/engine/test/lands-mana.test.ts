@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { manaAbilities, parseManaCost, payFromPool } from '../src/index.js';
-import { emptyPool } from '../src/mana.js';
-import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
+import { legalActions, manaAbilities, parseManaCost, payFromPool } from '../src/index.js';
+import { anyColorChoices, emptyPool } from '../src/mana.js';
+import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 describe('playing lands', () => {
   it('CR 305.1 / CR 116.3: play a land in your main phase and keep priority', () => {
@@ -133,5 +133,39 @@ describe('paying mana costs', () => {
 
   it('flags symbols that need player decisions not supported yet', () => {
     expect(parseManaCost('{G/P}').unsupported).toEqual(['G/P']);
+  });
+});
+
+describe('Commander mana and modes (CR 903.4)', () => {
+  const tower = makeCard({ name: 'Command Tower Lite', type_line: 'Land', oracle_text: "{T}: Add one mana of any color in your commander's color identity." });
+  const will = makeCard({
+    name: 'Commander Will',
+    type_line: 'Instant',
+    mana_cost: '{G}',
+    oracle_text: 'Choose one. If you control a commander as you cast this spell, you may choose both instead.\n• You gain 2 life.\n• Draw a card.',
+  });
+  const deck = [...Array.from({ length: 40 }, () => 'Forest'), 'Kinnan, Bonder Prodigy', 'Command Tower Lite', 'Commander Will'];
+
+  it('CR 903.4: Command Tower makes only colors in the commander’s identity', () => {
+    const g = toStep(start({ format: 'commander', extra: [tower, will], decks: { alice: deck, bob: deck }, commanders: { alice: ['Kinnan, Bonder Prodigy'] } }), 'main1');
+    const t = give(g, 'alice', 'Command Tower Lite', 'battlefield');
+    const choices = legalActions(g, 'alice').filter((a) => a.type === 'activate_mana' && a.object === t).map((a) => (a as { choice: string }).choice);
+    expect(choices.sort()).toEqual(['G', 'U']); // Kinnan is green-blue
+    expect(illegal(g, { type: 'activate_mana', player: 'alice', object: t, ability: 0, choice: 'R' })).toMatch(/mana/);
+    // Bob has no commander: no mana at all (CR 903.4f).
+    expect(anyColorChoices(g, 'bob', true)).toEqual([]);
+  });
+
+  it('“If you control a commander as you cast this spell, you may choose both instead.”', () => {
+    let g = toStep(start({ format: 'commander', extra: [tower, will], decks: { alice: deck, bob: deck }, commanders: { alice: ['Kinnan, Bonder Prodigy'] } }), 'main1');
+    give(g, 'alice', 'Forest', 'battlefield');
+    const spell = give(g, 'alice', 'Commander Will', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, autoTap: true, modes: [0, 1] })).toMatch(/mode/);
+    const kinnan = g.zones.command.find((id) => g.objects[id]!.commander)!;
+    g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: kinnan, to: 'battlefield' } });
+    const hand = g.zones.hand.alice!.length;
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: spell, autoTap: true, modes: [0, 1] }));
+    expect(g.players.alice!.life).toBe(42);
+    expect(g.zones.hand.alice!.length).toBe(hand);
   });
 });

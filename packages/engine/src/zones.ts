@@ -1,7 +1,7 @@
-import type { FaceDef } from '@mtg/schema';
+import type { ExileInsteadNode, FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
-import { chars } from './characteristics.js';
+import { chars, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
@@ -80,6 +80,7 @@ export function moveObject(
   if (from === 'stack' && o.exileOnLeave) to = 'exile';
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
+  if (to === 'graveyard' && exiledInstead(g, o, from)) to = 'exile';
   delete o.exileOnLeave;
   const controllerBefore = o.controller;
   const countersBefore = from === 'battlefield' ? { ...o.counters } : undefined;
@@ -109,6 +110,7 @@ export function moveObject(
   delete o.chosen;
   delete o.exiledBy;
   delete o.skipUntap;
+  delete o.classLevel;
   delete o.exileIfDiesTurn;
   delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;
@@ -198,6 +200,22 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): v
 }
 
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
+/** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
+function exiledInstead(g: GameState, o: GameObject, from: ZoneName): boolean {
+  for (const id of g.zones.battlefield) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || a.effect.type !== 'exile_instead') continue;
+      const e = a.effect as ExileInsteadNode;
+      if (e.dies && from !== 'battlefield') continue;
+      if (e.owner === 'you' ? o.owner !== source.controller : e.owner === 'opponents' ? o.owner === source.controller : false) continue;
+      if (e.filter && !matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true })) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {
   const face = faceOf(g, o);
   return [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])].some((a) => a.kind === 'static' && a.effect.type === tag);

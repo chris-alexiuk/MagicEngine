@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -141,6 +141,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'monstrous':
       // CR 701.37b
       return Boolean(source?.monstrous && source.zone === 'battlefield');
+    case 'class_level': {
+      // CR 716.2d: a permanent with no level is level 1.
+      const level = source?.classLevel ?? 1;
+      return cond.exactly !== undefined ? level === Number(cond.exactly) : level >= Number(cond.min ?? 1);
+    }
     case 'monarch':
       // CR 725: "if you're the monarch" / "if there is no monarch".
       return cond.none ? !g.monarch : g.monarch === controller;

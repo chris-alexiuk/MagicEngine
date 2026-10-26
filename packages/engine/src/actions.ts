@@ -1,6 +1,7 @@
-import type { ActivatedAbility, Cost, EffectNode, FaceDef } from '@mtg/schema';
+import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
+import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
   completeManualResolution,
@@ -243,7 +244,7 @@ const CASTABLE_ALT_FACES = new Set(['split', 'modal_dfc', 'adventure']);
  * What a spell will do and target. Instants and sorceries whose every line compiled run
  * automatically; an Aura targets what it can enchant (CR 303.4a). Anything else is resolved by hand.
  */
-function spellProgram(face: FaceDef, modes: number[] | undefined): CompiledProgram | null {
+function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: ConditionNode) => boolean): CompiledProgram | null {
   if (isPermanentCard(face)) {
     const enchant = face.subtypes.includes('Aura') ? face.keywords.find((k) => k.id === 'enchant' && k.filter) : undefined;
     if (modes?.length) throw new RulesError(`${face.name} isn’t modal.`);
@@ -254,7 +255,7 @@ function spellProgram(face: FaceDef, modes: number[] | undefined): CompiledProgr
     if (modes?.length) throw new RulesError(`${face.name} is resolved by hand; choose its modes as it resolves.`);
     return null;
   }
-  return flatten(programs, modes);
+  return flatten(programs, modes, holds);
 }
 
 function addCost(into: ManaCost, extra: ManaCost): void {
@@ -317,7 +318,8 @@ function cast(
   }
 
   // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
-  const program = spellProgram(face, modes);
+  // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
+  const program = spellProgram(face, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }));
   const targets = program
     ? chooseTargets(g, player, program.specs, chosenTargets, o)
     : chosenTargets?.some((t) => t.length)
@@ -397,6 +399,10 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   }
   // CR 602.5d: "Activate only as a sorcery."
   if (ability.timing === 'sorcery' && !sorcerySpeed) throw new RulesError(`That ability can only be activated as a sorcery.`);
+  // "Activate only if this Class is level 1" (CR 716.2a) and other conditions on activating.
+  if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
+    throw new RulesError('That ability can’t be activated now.');
+  }
   if (ability.oncePerTurn && o.activatedTurn?.[index] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
   if (cost.tap) {
     // CR 118.3 / CR 302.6

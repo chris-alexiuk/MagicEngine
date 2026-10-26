@@ -113,6 +113,8 @@ export interface GameObject {
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
   exileIfDiesTurn?: number;
+  /** CR 716.2: a Class's level (1 if it has none, CR 716.2d). */
+  classLevel?: number;
   /** "It doesn't untap during its controller's next untap step": how many untap steps it skips. */
   skipUntap?: number;
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
@@ -230,6 +232,15 @@ export interface ContinuousEffect {
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
   combat?: CombatRules;
+  /** Layer 4: card types and subtypes it becomes; added to its own if `retainTypes` (CR 205.1b). */
+  types?: string[];
+  subtypes?: string[];
+  retainTypes?: boolean;
+  /** Layer 5: the colors it becomes. */
+  colors?: Color[];
+  /** Layer 7b: power and toughness set to these values. */
+  setPower?: number;
+  setToughness?: number;
   /** Layer 2 (CR 613.1b): this player controls the objects. */
   control?: PlayerId;
   /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
@@ -386,6 +397,8 @@ export type ManualOp =
 export interface CostChoices {
   sacrifice?: ObjectId[];
   discard?: ObjectId[];
+  /** CR 702.122a: the creatures tapped to crew a Vehicle. */
+  crew?: ObjectId[];
 }
 
 export type Action =
@@ -467,6 +480,7 @@ export type GameEvent =
   /** CR 614.12: a choice made as a permanent entered. */
   | { type: 'chosen'; object: ObjectId; choice: string }
   | { type: 'player_counters'; player: PlayerId; counter: string; delta: number }
+  | { type: 'class_level'; object: ObjectId; level: number }
   /** CR 725.3: a player became the monarch. */
   | { type: 'monarch'; player: PlayerId }
   /** CR 701.44b: a permanent explored. */

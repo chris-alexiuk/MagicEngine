@@ -363,3 +363,38 @@ describe('slice 5', () => {
     });
   });
 });
+
+describe('slice 6', () => {
+  it('CR 614.1a: replacements that change an amount, and "exile it instead"', () => {
+    expect(one('If you would gain life, you gain twice that much life instead.', 'Enchantment')).toMatchObject({ effect: { type: 'replace_quantity', event: 'gain_life', op: 'double' } });
+    expect(one('If one or more +1/+1 counters would be put on a creature you control, that many plus one +1/+1 counters are put on it instead.', 'Enchantment')).toMatchObject({
+      effect: { event: 'counters', counter: '+1/+1', op: 'plus', n: 1, filter: { types: ['Creature'], controller: 'you' } },
+    });
+    expect(one('If an effect would create one or more tokens under your control, it creates twice that many of those tokens instead.', 'Enchantment')).toMatchObject({ effect: { event: 'tokens', op: 'double' } });
+    expect(one('If a source would deal damage to a permanent or player, it deals double that damage to that permanent or player instead.', 'Enchantment')).toMatchObject({ effect: { event: 'damage', op: 'double' } });
+    expect(one('If a creature an opponent controls would die, exile it instead.', 'Creature — Vampire')).toMatchObject({ effect: { type: 'exile_instead', dies: true, filter: { controller: 'opponent' } } });
+  });
+
+  it('CR 613.1d: "becomes a 3/3 green Elemental creature … It\'s still a land."', () => {
+    expect(one("{1}{G}: Until end of turn, this land becomes a 3/3 green Elemental creature with trample. It's still a land.", 'Land')).toMatchObject({
+      effects: [{ type: 'modify', types: ['Creature'], subtypes: ['Elemental'], colors: ['G'], setPower: 3, setToughness: 3, keywords: [{ id: 'trample' }], retainTypes: true, until: 'eot' }],
+    });
+  });
+
+  it('Commander: Command Tower, and "you may choose both instead"', () => {
+    expect(one("{T}: Add one mana of any color in your commander's color identity.", 'Land')).toMatchObject({ effects: [{ type: 'add_mana', anyColor: 1, identity: true }] });
+    const r = parse('Choose one. If you control a commander as you cast this spell, you may choose both instead.\n• Draw a card.\n• You gain 2 life.');
+    expect(r.unparsed).toEqual([]);
+    expect(r.abilities[0]).toMatchObject({ modes: { max: 1, bonus: { max: 2, condition: { type: 'count', filter: { commander: true } } } } });
+  });
+
+  it('CR 716.2a / CR 711.2a: Class levels and leveler striations gate their abilities', () => {
+    const c = parse('{1}{G}: Level 2\nCreatures you control get +1/+1.', 'Enchantment — Class', 'Ranger Class');
+    expect(c.abilities).toMatchObject([{ activateIf: { type: 'class_level', exactly: 1 }, timing: 'sorcery' }, { gate: { type: 'class_level', min: 2 } }]);
+    const l = parse('LEVEL 2-6\n3/3\nFirst strike', 'Creature — Monk', 'Monk');
+    expect(l.abilities).toMatchObject([
+      { gate: { counter: 'level', min: 2, max: 6 }, effect: { setPower: 3, setToughness: 3, setLayer: '7b' } },
+      { gate: { counter: 'level', min: 2, max: 6 }, effect: { keywords: [{ id: 'first_strike' }] } },
+    ]);
+  });
+});

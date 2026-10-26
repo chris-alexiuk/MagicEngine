@@ -183,3 +183,25 @@ describe('activated abilities (CR 602)', () => {
     expect(illegal(g, { type: 'activate', player: 'alice', object: jace, ability: 0, targets: [[]] })).toMatch(/already activated/);
   });
 });
+
+describe('layers 4 and 5: “becomes a creature” (CR 613.1d–e)', () => {
+  const tarPit = makeCard({
+    name: 'Tar Pit Lite',
+    type_line: 'Land',
+    oracle_text: "{T}: Add {U} or {B}.\n{1}{U}{B}: Until end of turn, this land becomes a 3/2 blue and black Elemental creature. It's still a land. It can't be blocked this turn.",
+  });
+  it('a manland becomes a creature until end of turn, and is still a land', () => {
+    let g = toStep(start({ extra: [...CARDS, tarPit] }), 'main1');
+    const pit = give(g, 'alice', 'Tar Pit Lite', 'battlefield');
+    g.players.alice!.pool.U = 2;
+    g.players.alice!.pool.B = 1;
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: pit, ability: 0 }));
+    expect(chars(g, g.objects[pit]!)).toMatchObject({ types: ['Land', 'Creature'], subtypes: ['Elemental'], colors: ['U', 'B'], power: 3, toughness: 2 });
+    expect(chars(g, g.objects[pit]!).rules.has('cant_be_blocked')).toBe(true);
+    // An anthem applies to it now (layer 7c after 4).
+    give(g, 'alice', 'Glorious Anthem', 'battlefield');
+    expect(power(g, g.objects[pit]!)).toBe(4);
+    g = toStep(g, 'upkeep', 'bob');
+    expect(chars(g, g.objects[pit]!)).toMatchObject({ types: ['Land'], colors: [] });
+  });
+});

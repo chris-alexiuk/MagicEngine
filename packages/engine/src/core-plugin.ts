@@ -1,12 +1,13 @@
-import type { AddManaEffect, AsEntersNode, CombatRules, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
+import { replaceQuantity } from './quantities.js';
 import { chars, hasKeyword, hasRule, matchesFilter } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { MANA_COLORS, manaOption } from './mana.js';
+import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
 import { attach, createToken, destroy, sacrifice } from './permanents.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
@@ -45,6 +46,8 @@ function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'):
 
 /** Splits "+1/+1" counters from others and fires the event. */
 function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: number): void {
+  // CR 614.1a: "that many plus one +1/+1 counters are put on it instead", counter doublers.
+  n = replaceQuantity(ctx.g, 'counters', n, { player: ctx.controller, object: o, counter });
   if (n <= 0) return;
   o.counters[counter] = (o.counters[counter] ?? 0) + n;
   ctx.events.push({ type: 'counters', object: o.id, counter, delta: n });
@@ -58,6 +61,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (effect.anyColor) {
       const color = typeof ctx.choice === 'string' ? ctx.choice : undefined;
       if (!color || color === 'C' || !MANA_COLORS.includes(color)) return false;
+      // CR 903.4f: only a color in the commander's color identity.
+      if (effect.identity && !anyColorChoices(ctx.g, ctx.controller, true).includes(color)) return false;
       mana = Array.from({ length: effect.anyColor }, () => color);
     } else if (effect.options) {
       const index = typeof ctx.choice === 'number' ? ctx.choice : effect.options.length === 1 ? 0 : -1;
@@ -199,8 +204,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.keywords) ? { keywords: node.keywords as KeywordInstance[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
-      // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2).
-      until: 'eot',
+      // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
+      ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
+      ...(Array.isArray(node.colors) ? { colors: node.colors as Color[] } : {}),
+      ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
+      // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
+      until: node.until === 'game' ? 'game' : 'eot',
     });
     return true;
   },
@@ -212,7 +221,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
     if (node.attachTo && !attachTo) return true; // nothing to attach it to: it isn't created
     for (const p of players) {
-      for (let i = 0; i < n; i++) {
+      // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
+      const count = replaceQuantity(ctx.g, 'tokens', n, { player: p });
+      for (let i = 0; i < count; i++) {
         const t = createToken(ctx.g, face, p, ctx.events, { tapped: Boolean(node.tapped) });
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
       }
@@ -368,6 +379,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (play) (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn: lastTurnOf(g, ctx.controller, play.until) });
       }
     }
+    return true;
+  },
+
+  class_level(node, ctx) {
+    // CR 716.2a: "This Class's level becomes N."
+    const o = refObjects(ctx, { ref: 'self' })[0];
+    if (!o || o.zone !== 'battlefield') return true;
+    o.classLevel = Number(node.level);
+    ctx.events.push({ type: 'class_level', object: o.id, level: o.classLevel });
     return true;
   },
 
@@ -684,6 +704,8 @@ function feasible(e: EffectNode, ctx: EffectContext): boolean {
 function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
   // "Players can't gain life."
   if (n <= 0 || playerRule(ctx.g, p, 'cant_gain_life')) return;
+  // CR 614.1a: "If you would gain life, you gain twice that much life instead."
+  n = replaceQuantity(ctx.g, 'gain_life', n, { player: p });
   const ps = ctx.g.players[p]!;
   ps.life += n;
   ctx.events.push({ type: 'life', player: p, delta: n, life: ps.life });
@@ -830,6 +852,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
+  // CR 716.2a: "When this Class becomes level 2"
+  becomes_level(t, check) {
+    const e = check.event;
+    if (e.type !== 'class_level' || e.object !== check.source.id || e.level !== Number(t.level) || check.sourceLeft) return [];
+    return [{ object: refTo(check.source) }];
+  },
   // CR 714.2b: a chapter ability triggers as the lore count goes from below N to at least N.
   chapter(t, check) {
     const e = check.event;
@@ -913,7 +941,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {
@@ -934,9 +962,11 @@ export const corePlugin: MechanicPlugin = {
       queueAsEnters(g, o, node as AsEntersNode);
     },
     // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
-    enters_with_counters(node, o) {
+    enters_with_counters(node, o, g) {
       // CR 107.3m: X is the X paid for the spell that became this permanent.
-      const n = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      const base = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.
+      const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter: String(node.counter) });
       if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;
     },
   },

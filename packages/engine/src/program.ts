@@ -1,4 +1,4 @@
-import type { ActivatedAbility, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
+import type { ActivatedAbility, ConditionNode, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
 import { abilitiesOf } from './characteristics.js';
 import { canAutomate } from './registry.js';
 import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
@@ -8,7 +8,7 @@ import { RulesError, type CompiledProgram, type GameObject, type GameState } fro
  * list of target specs and effects the engine runs. Target indexes in later programs
  * are shifted so every effect points at the right spec.
  */
-export function flatten(programs: Program[], modes: number[] | undefined): CompiledProgram {
+export function flatten(programs: Program[], modes: number[] | undefined, holds?: (c: ConditionNode) => boolean): CompiledProgram {
   const specs: TargetSpec[] = [];
   const effects: EffectNode[] = [];
   const add = (targets: TargetSpec[] | undefined, list: EffectNode[]) => {
@@ -24,8 +24,10 @@ export function flatten(programs: Program[], modes: number[] | undefined): Compi
       const chosen = modes ?? [];
       if (usedModes) throw new RulesError('Only one modal choice is supported per spell or ability.');
       usedModes = true;
-      if (chosen.length < p.modes.min || chosen.length > p.modes.max) {
-        throw new RulesError(`Choose ${p.modes.min === p.modes.max ? p.modes.min : `${p.modes.min}–${p.modes.max}`} mode(s).`);
+      // "If you control a commander as you cast this spell, you may choose both instead."
+      const max = p.modes.bonus && holds?.(p.modes.bonus.condition) ? Math.max(p.modes.max, p.modes.bonus.max) : p.modes.max;
+      if (chosen.length < p.modes.min || chosen.length > max) {
+        throw new RulesError(`Choose ${p.modes.min === max ? p.modes.min : `${p.modes.min}–${max}`} mode(s).`);
       }
       if (new Set(chosen).size !== chosen.length || chosen.some((m) => !p.modes!.options[m])) {
         throw new RulesError('Choose each mode at most once.');

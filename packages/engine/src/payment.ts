@@ -1,6 +1,6 @@
 import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, manaAbilities, matchesFilter } from './characteristics.js';
+import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
@@ -9,7 +9,7 @@ import { moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -17,6 +17,14 @@ export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNod
   return g.zones.battlefield.filter((id) => {
     const p = g.objects[id]!;
     return p.controller === player && matchesFilter(g, p, filter, { controller: player, source });
+  });
+}
+
+/** CR 702.122a: creatures that could crew a Vehicle. */
+export function crewCandidates(g: GameState, player: PlayerId, vehicle: GameObject): ObjectId[] {
+  return g.zones.battlefield.filter((id) => {
+    const o = g.objects[id]!;
+    return id !== vehicle.id && o.controller === player && !o.tapped && hasType(g, o, 'Creature');
   });
 }
 
@@ -63,6 +71,13 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     } else if (c.type === 'pay_energy') {
       // CR 107.14: paying {E} removes an energy counter from you.
       if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
+    } else if (c.type === 'crew') {
+      // CR 702.122a: untapped creatures you control (not this one) with total power N or greater.
+      const chosen = choices.crew ?? [];
+      const ok = crewCandidates(g, player, o);
+      if (new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError('Choose untapped creatures you control to crew it.');
+      const total = chosen.reduce((n, id) => n + power(g, g.objects[id]!), 0);
+      if (total < Number(c.power)) throw new RulesError(`Crewing needs total power ${c.power} or greater.`);
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -97,6 +112,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       moveObject(g, o.id, 'exile', events);
     } else if (c.type === 'pay_energy') {
       payEnergy(g, player, Number(c.amount), events);
+    } else if (c.type === 'crew') {
+      for (const id of choices.crew ?? []) setTapped(g, id, true, events);
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       moveObject(g, o.id, 'graveyard', events);

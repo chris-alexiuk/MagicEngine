@@ -1,5 +1,5 @@
 import type { Color, CostModifierNode, FaceDef, StaticAbility } from '@mtg/schema';
-import { matchesFilter, printedAbilities } from './characteristics.js';
+import { matchesFilter, objectAbilities, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import type { ManaCost } from './mana.js';
 import type { EffectContext } from './registry.js';
@@ -17,8 +17,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
   const changes: { n: number; color?: Color; change: 'less' | 'more' }[] = [];
   const ctxFor = (controller: PlayerId, source: GameObject): EffectContext => ({ g, controller, source, events: [], targets: [], x: 0, memo: {} });
 
-  // CR 113.6e: the spell's own ability works wherever it's cast from.
-  for (const a of face.abilities) {
+  // CR 113.6e: the spell's own ability works wherever it's cast from (including keywords like affinity, CR 702.41a).
+  for (const a of printedAbilities(face)) {
     if (a.kind !== 'static' || a.effect.type !== 'cost_modifier') continue;
     const e = a.effect as CostModifierNode;
     if (!e.self) continue;
@@ -28,7 +28,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
   }
   for (const id of g.zones.battlefield) {
     const source = g.objects[id]!;
-    for (const a of printedAbilities(faceOf(g, source))) {
+    for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cost_modifier') continue;
       const e = (a as StaticAbility).effect as CostModifierNode;
       if (e.self) continue;

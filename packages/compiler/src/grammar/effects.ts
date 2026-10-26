@@ -5,7 +5,7 @@ import { parseCombatRule } from './combat.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { parseTokenPhrase } from './tokens.js';
-import { parseAmount, parsePT, subtypeOf } from './words.js';
+import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
  * Effect text → effect nodes, compositionally:
@@ -101,6 +101,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
+      // CR 205.1b: "It's still a land." — the earlier "becomes a creature" keeps its other types.
+      if (/^(?:It's|They're) still (?:a land|lands|an artifact|artifacts|an enchantment|a planeswalker)$/.test(s)) {
+        const last = out[out.length - 1];
+        if (!last || last.type !== 'modify' || !last.types) return null;
+        last.retainTypes = true;
+        continue;
+      }
       if (/^(?:It|They) can't be regenerated$/.test(s)) {
         const last = out[out.length - 1];
         if (!last || last.type !== 'destroy') return null;
@@ -195,7 +202,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
   }
-  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
+  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
 
   const whole = attempt(b, (b) => parseClause(s, b, null));
@@ -515,9 +522,48 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   return null;
 }
 
+/**
+ * "This land becomes a 3/3 green Elemental creature with trample until end of turn." Layers 4 (types),
+ * 5 (colors), 6 (abilities) and 7b (P/T), CR 613.1d–f / 613.4b. Types replace the old ones unless
+ * it's "still a land" or "in addition to its other types" (CR 205.1b).
+ */
+function parseBecomes(c: string, b: Binder): EffectNode[] | null {
+  const m = /^(.+?) becomes? an? (?:(\d+|X)\/(\d+|X) )?(.+?)(?: with (.+?))?( that's still an? (?:land|planeswalker|artifact|enchantment))?( in addition to its other types)?( until end of turn)?$/.exec(c);
+  if (!m) return null;
+  // Without a P/T it keeps its own ("This Vehicle becomes an artifact creature", CR 702.122a).
+  if (!m[2] && !/\bcreature$/.test(m[4]!)) return null;
+  return attempt(b, (b) => {
+    const what = parseObjectRef(m[1]!, b);
+    if (!what) return null;
+    const words = m[4]!.replace(/ and /g, ' ').split(' ');
+    if (words[words.length - 1] !== 'creature') return null;
+    const colors: string[] = [];
+    const types: string[] = [];
+    const subtypes: string[] = [];
+    for (const w of words) {
+      if (COLOR_WORDS[w]) colors.push(COLOR_WORDS[w]!);
+      else if (TYPE_NOUNS[w] && TYPE_NOUNS[w]!.toLowerCase() === w) types.push(TYPE_NOUNS[w]!);
+      else if (subtypeOf(w) === w) subtypes.push(w);
+      else return null;
+    }
+    const pt = (v: string) => (v === 'X' ? 'X' : Number(v));
+    const node: EffectNode = { type: 'modify', what: what.ref, types, subtypes, ...(m[2] ? { setPower: pt(m[2]), setToughness: pt(m[3]!) } : {}), until: m[8] ? 'eot' : 'game' };
+    // An artifact that becomes an artifact creature is still what it was (CR 205.1b).
+    if (!m[2] && types.includes('Artifact')) node.retainTypes = true;
+    if (colors.length) node.colors = colors;
+    if (m[6] || m[7]) node.retainTypes = true;
+    if (m[5]) {
+      const kws = parseKeywordList(m[5], b);
+      if (!kws) return null;
+      node.keywords = kws;
+    }
+    return [node];
+  });
+}
+
 function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
   // Object-subject clauses first: damage, pumps, restrictions.
-  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
+  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
   if (special) return { effects: special, subject: null };
 
   const imp = IMPERATIVE.exec(c);

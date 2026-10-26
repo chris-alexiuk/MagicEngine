@@ -1,6 +1,6 @@
 import type { AddManaEffect } from '@mtg/schema';
 import { canUseTapAbilities, manaAbilities } from './characteristics.js';
-import { type ManaCost, manaOption, shortfall } from './mana.js';
+import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
 import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
 
 export interface PlannedActivation {
@@ -33,7 +33,7 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       const effect = ab.effects[0] as AddManaEffect;
       if (effect.type !== 'add_mana') return;
       if (effect.anyColor) {
-        for (const c of ['W', 'U', 'B', 'R', 'G'] as ManaColor[]) {
+        for (const c of anyColorChoices(g, player, effect.identity)) {
           modes.push({ ability, mana: Array.from({ length: effect.anyColor }, () => c), choice: c });
         }
       } else {

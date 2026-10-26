@@ -335,3 +335,53 @@ describe('more rules for players', () => {
     expect(g.players.bob!.lost).toBe(false);
   });
 });
+
+describe('levels (CR 711, CR 716)', () => {
+  const klass = makeCard({
+    name: 'Ranger Class Lite',
+    type_line: 'Enchantment — Class',
+    mana_cost: '{G}',
+    oracle_text: '(Gain the next level as a sorcery to add its ability.)\nWhen this Class enters, draw a card.\n{1}{G}: Level 2\nCreatures you control get +1/+1.\n{G}: Level 3\nWhen this Class becomes level 3, you gain 5 life.',
+  });
+  const monk = makeCard({
+    name: 'Leveling Monk',
+    type_line: 'Creature — Human Monk',
+    mana_cost: '{W}',
+    power: '1',
+    toughness: '1',
+    oracle_text: 'Level up {1}\nLEVEL 2-6\n3/3\nFirst strike\nLEVEL 7+\n4/4\nDouble strike',
+  });
+  it('CR 716.2a: a Class gains levels in order, as a sorcery, and has each level’s abilities', () => {
+    let g = toStep(start({ extra: [klass, monk] }), 'main1');
+    for (let i = 0; i < 4; i++) give(g, 'alice', 'Forest', 'battlefield');
+    const c = give(g, 'alice', 'Ranger Class Lite', 'battlefield');
+    const bears = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    expect(power(g, g.objects[bears]!)).toBe(2);
+    // Level 3 needs level 2 first.
+    expect(illegal(g, { type: 'activate', player: 'alice', object: c, ability: 1, autoTap: true })).toMatch(/can’t be activated/);
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: c, ability: 0, autoTap: true }));
+    expect(g.objects[c]!.classLevel).toBe(2);
+    expect(power(g, g.objects[bears]!)).toBe(3);
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: c, ability: 1, autoTap: true }));
+    expect(g.stack).toMatchObject([{ kind: 'ability', sourceName: 'Ranger Class Lite' }]);
+    g = passRound(g);
+    expect(g.players.alice!.life).toBe(25);
+  });
+
+  it('CR 711.2a: a leveler has its striation’s P/T and abilities', () => {
+    let g = toStep(start({ extra: [klass, monk] }), 'main1');
+    const m = give(g, 'alice', 'Leveling Monk', 'battlefield');
+    expect(chars(g, g.objects[m]!)).toMatchObject({ power: 1, toughness: 1 });
+    g.objects[m]!.counters.level = 2;
+    expect(chars(g, g.objects[m]!)).toMatchObject({ power: 3, toughness: 3 });
+    expect(hasKeyword(g, g.objects[m]!, 'first_strike')).toBe(true);
+    g.objects[m]!.counters.level = 7;
+    expect(chars(g, g.objects[m]!)).toMatchObject({ power: 4, toughness: 4 });
+    expect(hasKeyword(g, g.objects[m]!, 'first_strike')).toBe(false);
+    expect(hasKeyword(g, g.objects[m]!, 'double_strike')).toBe(true);
+    // Level up: a sorcery-speed level counter.
+    for (let i = 0; i < 2; i++) give(g, 'alice', 'Forest', 'battlefield');
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: m, ability: 0, autoTap: true }));
+    expect(g.objects[m]!.counters.level).toBe(8);
+  });
+});

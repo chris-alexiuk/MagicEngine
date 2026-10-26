@@ -8,6 +8,8 @@ import type {
   ContinuousEffectNode,
   Cost,
   CostModifierNode,
+  QuantityReplacementNode,
+  ExileInsteadNode,
   ObjectFilter,
   PlayerRule,
   PlayerRuleNode,
@@ -59,6 +61,15 @@ function modeCount(word: string, options: number): { min: number; max: number } 
  */
 export function parseProgram(text: string, b: Binder): Program | null {
   const [head, ...bullets] = text.split('\n');
+  // "Choose one. If you control a commander as you cast this spell, you may choose both instead."
+  const bonus = /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|three) instead\.$/.exec(head!.trim());
+  if (bonus) {
+    const cond = parseCondition(bonus[2]!, b);
+    const inner = cond && parseProgram([`Choose ${bonus[1]} —`, ...bullets].join('\n'), b);
+    if (!cond || !inner?.modes) return null;
+    const max = bonus[3] === 'both' ? 2 : bonus[3] === 'three' ? 3 : inner.modes.options.length;
+    return { ...inner, modes: { ...inner.modes, bonus: { condition: cond, max } } };
+  }
   const modal = MODAL_HEADER.exec(head!.trim());
   if (modal) {
     if (bullets.length < 2 || !bullets.every((l) => l.startsWith('• '))) return null;
@@ -139,6 +150,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
+    // CR 702.122a (crew): "Tap any number of other untapped creatures you control with total power N or greater".
+    else if (/^[Tt]ap any number of (?:other )?untapped creatures you control with total power (\d+) or greater$/.test(item)) {
+      (cost.other ??= []).push({ type: 'crew', power: Number(/power (\d+)/.exec(item)![1]) });
+    }
     // CR 107.14: "Pay {E}{E}" removes energy counters from you.
     else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
@@ -244,6 +259,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
   }
 
+  // CR 716.2a: "When this Class becomes level 2"
+  const level = /^~ becomes level (\d+)$/.exec(t);
+  if (level) return { trigger: { type: 'becomes_level', level: Number(level[1]) }, it: { ref: 'self' }, player: null };
   // CR 702.21a (ward): "becomes the target of a spell or ability an opponent controls".
   const targeted = /^~ becomes the target of a spell or ability(?: an opponent controls)?$/.exec(t);
   if (targeted) {
@@ -661,6 +679,100 @@ export const costModifierRule: GrammarRule = {
   },
 };
 
+/** "twice that many", "that many plus one", "double that damage", "triple that damage". */
+function quantityOp(text: string): { op: 'double' | 'triple' | 'plus'; n?: number } | null {
+  if (/^(?:twice that (?:many|much)|double that)/.test(text)) return { op: 'double' };
+  if (/^triple that/.test(text)) return { op: 'triple' };
+  const plus = /^that (?:many|much)(?: \w+)? plus (\w+)/.exec(text);
+  const n = plus ? parseAmount(plus[1]!) : null;
+  return typeof n === 'number' ? { op: 'plus', n } : null;
+}
+
+/**
+ * CR 614.1a: replacement effects that change an amount — life gained, tokens created, counters put on
+ * something, damage dealt ("If you would gain life, you gain twice that much life instead.").
+ */
+export const quantityReplacementRule: GrammarRule = {
+  id: 'replace_quantity',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env) return null;
+    const b = new Binder(env);
+    const make = (node: Omit<QuantityReplacementNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'replace_quantity', ...node } });
+    const life = /^If you would gain life, you gain (.+?) instead\.$/.exec(line);
+    if (life) {
+      const op = quantityOp(life[1]!);
+      return op && /\blife\b/.test(life[1]!) ? make({ event: 'gain_life', who: 'you', ...op }) : null;
+    }
+    const tokens =
+      /^If (?:one or more|an effect would create one or more) tokens would be created under your control, (.+?) of those tokens are created instead\.$/.exec(line) ??
+      /^If an effect would create one or more tokens under your control, it creates (.+?) of those tokens instead\.$/.exec(line) ??
+      /^If you would create one or more tokens, create (.+?) of those tokens instead\.$/.exec(line);
+    if (tokens) {
+      const op = quantityOp(tokens[1]!);
+      return op ? make({ event: 'tokens', who: 'you', ...op }) : null;
+    }
+    const counters = /^If one or more (\S+) counters would be put on (.+?), (.+?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
+    if (counters) {
+      const op = quantityOp(counters[3]!);
+      const pf = parseFilter(counters[2]!.replace(/^(?:a|an) /, ''), b);
+      return op && pf && !pf.plural ? make({ event: 'counters', counter: counters[1]!, filter: pf.filter, ...op }) : null;
+    }
+    const put = /^If you would put one or more (?:(\S+) )?counters on (.+?), put (.+?) (?:of each of those kinds of counters|\S+ counters) on (?:that \w+(?: or \w+)?|it) instead\.$/.exec(line);
+    if (put) {
+      const op = quantityOp(put[3]!);
+      const target = put[2]!.replace(/^(?:a|an) /, '');
+      const pf = target === 'permanent or player' ? { filter: {}, plural: false } : parseFilter(target, b);
+      return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
+    }
+    const damage = /^If (a|another) (.*?)source( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
+    if (damage) {
+      const op = quantityOp(damage[6]!);
+      if (!op) return null;
+      const filter: ObjectFilter = {};
+      const adjective = damage[2]!.trim();
+      if (adjective) {
+        const color = COLOR_WORDS[adjective];
+        if (!color) return null;
+        filter.colors = [color];
+      }
+      if (damage[1] === 'another') filter.other = true;
+      if (damage[3]) filter.controller = 'you';
+      return make({
+        event: 'damage',
+        filter,
+        ...op,
+        ...(damage[4] ? { noncombat: true as const } : {}),
+        ...(damage[5]!.startsWith('an opponent') ? { toOpponents: true as const } : {}),
+      });
+    }
+    return null;
+  },
+};
+
+/** CR 614.1a: "If a creature an opponent controls would die, exile it instead.", Rest in Peace. */
+export const exileInsteadRule: GrammarRule = {
+  id: 'exile_instead',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env) return null;
+    const make = (node: Omit<ExileInsteadNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'exile_instead', ...node } });
+    const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line);
+    if (dies) {
+      const pf = parseFilter(dies[1]!, new Binder(env));
+      if (!pf || pf.plural) return null;
+      if (/^another /.test(line.slice(3))) pf.filter.other = true;
+      return make({ dies: true, filter: pf.filter });
+    }
+    const gy = /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line);
+    if (gy) {
+      const owner = gy[2] === 'your' ? 'you' : gy[2] === 'a' ? 'each' : 'opponents';
+      return make({ owner, ...(gy[1] === 'nontoken creature' ? { filter: { types: ['Creature'], token: false } } : {}) });
+    }
+    return null;
+  },
+};
+
 /** Static replacement effects about this object (CR 614.1a): "If ~ would be put into a graveyard from anywhere, exile it instead." */
 export const selfReplacementRule: GrammarRule = {
   id: 'self_replacement',
@@ -787,6 +899,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   asEntersRule,
   deckRule,
   costModifierRule,
+  quantityReplacementRule,
+  exileInsteadRule,
   selfReplacementRule,
   additionalCostRule,
   continuousRule,

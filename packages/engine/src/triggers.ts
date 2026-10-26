@@ -1,5 +1,5 @@
 import type { TriggeredAbility } from '@mtg/schema';
-import { abilitiesOf, printedAbilities } from './characteristics.js';
+import { abilitiesOf, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
@@ -29,6 +29,7 @@ import { livePlayers } from './zones.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
+  'class_level',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
@@ -43,6 +44,11 @@ interface Candidate {
 }
 
 export function collectTriggers(g: GameState, events: GameEvent[]): void {
+  // Matching doesn't change characteristics, so lookups share one cache.
+  withCharsCache(() => collect(g, events));
+}
+
+function collect(g: GameState, events: GameEvent[]): void {
   const from = cursors.get(events) ?? 0;
   cursors.set(events, events.length);
   if (!g.started || g.over) return;

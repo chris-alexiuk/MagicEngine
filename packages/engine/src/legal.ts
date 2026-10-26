@@ -1,13 +1,14 @@
 import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, isPermanentCard, manaAbilities, withCharsCache } from './characteristics.js';
-import { manaOption, parseManaCost } from './mana.js';
+import { canUseTapAbilities, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
+import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
 import { additionalCosts, flashbackCost } from './actions.js';
-import { discardCandidates, sacrificeCandidates } from './payment.js';
+import { crewCandidates, discardCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
+import { evalCondition } from './conditions.js';
 import { mayPlayFrom, playableFromExile } from './permissions.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { faceOf, zoneList } from './zones.js';
@@ -102,7 +103,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color").
       const effect = ab.effects[0] as AddManaEffect | undefined;
       if (effect?.anyColor) {
-        for (const choice of ['W', 'U', 'B', 'R', 'G'] as const) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
+        for (const choice of anyColorChoices(g, player, effect.identity)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
         effect.options.forEach((opt, choice) => {
           if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
@@ -111,6 +112,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     });
     activatedAbilities(g, o).forEach((ab, ability) => {
       const { cost } = ab;
+      if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if ((ab.timing === 'sorcery' || cost.loyalty !== undefined) && !sorcerySpeed) return;
       if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
@@ -139,6 +141,7 @@ type Choice = { targets?: Target[][]; modes?: number[]; costs?: CostChoices };
 function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, other: EffectNode[]): CostChoices | null {
   const sacrifice: ObjectId[] = [];
   const discard: ObjectId[] = [];
+  const crew: ObjectId[] = [];
   for (const c of other) {
     const n = Number(c.amount ?? 1);
     if (c.type === 'sacrifice') {
@@ -151,11 +154,22 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       discard.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
+    else if (c.type === 'crew') {
+      // The strongest creatures first, until there's enough power.
+      const options = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!));
+      let total = 0;
+      for (const id of options) {
+        if (total >= Number(c.power)) break;
+        crew.push(id);
+        total += power(g, g.objects[id]!);
+      }
+      if (total < Number(c.power)) return null;
+    }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew ? { costs } : {});
 
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
   const modal = programs.find((p) => p.modes);

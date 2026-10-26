@@ -1,4 +1,4 @@
-import type { GameObject, ManaColor, ManaPool } from './types.js';
+import type { GameObject, GameState, ManaColor, ManaPool, PlayerId } from './types.js';
 
 export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
 
@@ -11,6 +11,27 @@ export function manaOption(option: string[], source: GameObject | undefined): Ma
     out.push(c as ManaColor);
   }
   return out;
+}
+
+/**
+ * CR 903.4: a player's commander color identity — the combined identity of their commanders.
+ * Without a commander it's undefined, and "any color in your commander's color identity" makes no mana (CR 903.4f).
+ */
+export function commanderIdentity(g: GameState, player: PlayerId): ManaColor[] {
+  const out = new Set<ManaColor>();
+  for (const o of Object.values(g.objects)) {
+    if (!o.commander || o.owner !== player) continue;
+    for (const c of g.cards[o.card]?.colorIdentity ?? []) out.add(c as ManaColor);
+  }
+  return [...out];
+}
+
+/** The colors an "any color" mana ability can make for this player. */
+export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined): ManaColor[] {
+  const all: ManaColor[] = ['W', 'U', 'B', 'R', 'G'];
+  if (!identity) return all;
+  const allowed = commanderIdentity(g, player);
+  return all.filter((c) => allowed.includes(c));
 }
 
 export function emptyPool(): ManaPool {

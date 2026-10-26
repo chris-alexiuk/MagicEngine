@@ -13,6 +13,7 @@ import {
   type PlayerId,
 } from './types.js';
 import { playerRule } from './player-rules.js';
+import { replaceQuantity } from './quantities.js';
 import { faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
@@ -530,9 +531,10 @@ function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent
     // CR 702.15b / CR 120.3f: lifelink — the source's controller gains the damage dealt.
     if (dealt > 0 && hasKeyword(g, source, 'lifelink')) lifeGain.set(source.controller, (lifeGain.get(source.controller) ?? 0) + dealt);
   }
-  for (const [player, amount] of lifeGain) {
+  for (const [player, dealt] of lifeGain) {
     const ps = g.players[player]!;
     if (playerRule(g, player, 'cant_gain_life')) continue;
+    const amount = replaceQuantity(g, 'gain_life', dealt, { player });
     ps.life += amount;
     events.push({ type: 'life', player, delta: amount, life: ps.life });
   }
@@ -547,6 +549,8 @@ export function dealDamage(
   combat: boolean,
   events: GameEvent[],
 ): number {
+  // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
+  amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
   amount = prevent(g, source, to, amount, combat, events);
   if (amount <= 0) return 0;
   const infect = hasKeyword(g, source, 'infect');

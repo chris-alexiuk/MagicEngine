@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chars, power, toughness, type GameState, type Target } from '../src/index.js';
+import { chars, legalActions, power, toughness, type GameState, type Target } from '../src/index.js';
 import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 const creature = (name: string, oracle_text: string, pt = '2', type = 'Creature — Human Monk') =>
@@ -160,5 +160,32 @@ describe('keywords defined by the Comprehensive Rules (CR 702)', () => {
     expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Shock', 'graveyard'), autoTap: true, targets: [[{ kind: 'player', player: 'bob' }]] })).toMatch(
       /from your hand/,
     );
+  });
+});
+
+describe('more keywords from their CR 702 definitions', () => {
+  const vehicle = makeCard({ name: 'Smuggler Cart', type_line: 'Artifact — Vehicle', oracle_text: 'Crew 2', mana_cost: '{2}', power: '3', toughness: '3' });
+  const frog = makeCard({ name: 'Frogmite Again', type_line: 'Artifact Creature — Frog', oracle_text: 'Affinity for artifacts', mana_cost: '{4}', power: '2', toughness: '2' });
+  const trinket = makeCard({ name: 'Trinket', type_line: 'Artifact', oracle_text: '', mana_cost: '{1}' });
+
+  it('CR 702.122a: crew taps creatures with enough total power; the Vehicle becomes an artifact creature until end of turn', () => {
+    let g = toStep(start({ extra: [vehicle, frog, trinket] }), 'main1');
+    const cart = give(g, 'alice', 'Smuggler Cart', 'battlefield');
+    const elves = give(g, 'alice', 'Llanowar Elves', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: cart, ability: 0, costs: { crew: [elves] } })).toMatch(/total power 2/);
+    const bears = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    expect(legalActions(g, 'alice')).toContainEqual(expect.objectContaining({ type: 'activate', object: cart, costs: { crew: [bears] } }));
+    g = passRound(act(g, { type: 'activate', player: 'alice', object: cart, ability: 0, costs: { crew: [bears] } }));
+    expect(g.objects[bears]!.tapped).toBe(true);
+    expect(chars(g, g.objects[cart]!)).toMatchObject({ types: ['Artifact', 'Creature'], subtypes: ['Vehicle'], power: 3 });
+    g = toStep(g, 'upkeep', 'bob');
+    expect(chars(g, g.objects[cart]!).types).toEqual(['Artifact']);
+  });
+
+  it('CR 702.41a: affinity for artifacts', () => {
+    const g = toStep(start({ extra: [vehicle, frog, trinket] }), 'main1');
+    for (let i = 0; i < 4; i++) give(g, 'alice', 'Trinket', 'battlefield');
+    const r = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Frogmite Again', 'hand'), autoTap: true });
+    expect(r.stack).toHaveLength(1);
   });
 });

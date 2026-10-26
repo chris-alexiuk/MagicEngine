@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { CORE_NODES, faceAbilities, imageUrl, nodeTags } from '@mtg/schema';
+import { CORE_NODES, faceAbilities, imageUrl, manualModes, nodeTags } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
 import { compileCards } from '../src/compile.js';
 import { buildCoverage, coverageMarkdown, templateOf } from '../src/coverage.js';
@@ -110,8 +110,9 @@ describe('coverage report', () => {
     expect(templateOf('Lightning Bolt deals 3 damage to any target.', 'Lightning Bolt', 'Lightning Bolt')).toBe(
       '~ deals N damage to any target.',
     );
-    const commanderMana = report.topTemplates.find((t) => t.template.includes("commander's color identity"));
-    expect(commanderMana).toMatchObject({ count: 2 });
+    // Every unparsed line lands in some template, and the counts add up.
+    const lines = db.cards.flatMap((c) => c.faces.flatMap((f) => [...f.unparsed, ...manualModes(f)])).length;
+    expect(report.topTemplates.reduce((n, t) => n + t.count, 0)).toBe(lines);
     expect(coverageMarkdown(report)).toContain('| full |');
   });
 

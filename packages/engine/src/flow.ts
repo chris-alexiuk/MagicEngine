@@ -1,4 +1,4 @@
-import { hasRule, hasType, isPermanentCard, hasKeyword, toughness } from './characteristics.js';
+import { hasRule, hasType, isPermanentCard, hasKeyword, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAttach, destroy } from './permanents.js';
@@ -392,67 +392,70 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     const vanish: string[] = [];
     let changed = false;
 
-    for (const p of livePlayers(g)) {
-      const ps = g.players[p]!;
-      // "You can't lose the game." (CR 104.3a: conceding still works.)
-      if (playerRule(g, p, 'cant_lose')) {
+    // Checking doesn't change anything that characteristics depend on, so lookups share one cache.
+    withCharsCache(() => {
+      for (const p of livePlayers(g)) {
+        const ps = g.players[p]!;
+        // "You can't lose the game." (CR 104.3a: conceding still works.)
+        if (playerRule(g, p, 'cant_lose')) {
+          ps.drewFromEmptyLibrary = false;
+          continue;
+        }
+        // CR 704.5a: 0 or less life loses (unless "you don't lose the game for having 0 or less life").
+        if (ps.life <= 0 && !playerRule(g, p, 'no_lose_for_life')) losers.push({ player: p, reason: 'life total 0 or less' });
+        // CR 704.5b: attempted to draw from an empty library.
+        else if (ps.drewFromEmptyLibrary) losers.push({ player: p, reason: 'drew from an empty library' });
+        // CR 704.5c: ten or more poison counters.
+        else if (ps.poison >= 10) losers.push({ player: p, reason: 'ten poison counters' });
+        // CR 704.6c: in Commander, 21 or more combat damage from the same commander.
+        else if (g.config.format === 'commander' && Object.values(g.commanderDamage[p] ?? {}).some((n) => n >= 21)) {
+          losers.push({ player: p, reason: '21 combat damage from one commander' });
+        }
         ps.drewFromEmptyLibrary = false;
-        continue;
       }
-      // CR 704.5a: 0 or less life loses (unless "you don't lose the game for having 0 or less life").
-      if (ps.life <= 0 && !playerRule(g, p, 'no_lose_for_life')) losers.push({ player: p, reason: 'life total 0 or less' });
-      // CR 704.5b: attempted to draw from an empty library.
-      else if (ps.drewFromEmptyLibrary) losers.push({ player: p, reason: 'drew from an empty library' });
-      // CR 704.5c: ten or more poison counters.
-      else if (ps.poison >= 10) losers.push({ player: p, reason: 'ten poison counters' });
-      // CR 704.6c: in Commander, 21 or more combat damage from the same commander.
-      else if (g.config.format === 'commander' && Object.values(g.commanderDamage[p] ?? {}).some((n) => n >= 21)) {
-        losers.push({ player: p, reason: '21 combat damage from one commander' });
-      }
-      ps.drewFromEmptyLibrary = false;
-    }
 
-    for (const o of Object.values(g.objects)) {
-      // CR 704.5d: a token outside the battlefield ceases to exist.
-      if (o.token && o.zone !== 'battlefield') vanish.push(o.id);
-    }
+      for (const o of Object.values(g.objects)) {
+        // CR 704.5d: a token outside the battlefield ceases to exist.
+        if (o.token && o.zone !== 'battlefield') vanish.push(o.id);
+      }
 
-    for (const id of g.zones.battlefield) {
-      const o = g.objects[id]!;
-      // CR 704.5q: +1/+1 and -1/-1 counters annihilate in pairs.
-      const plus = o.counters['+1/+1'] ?? 0;
-      const minus = o.counters['-1/-1'] ?? 0;
-      if (plus > 0 && minus > 0) {
-        const n = Math.min(plus, minus);
-        o.counters['+1/+1'] = plus - n;
-        o.counters['-1/-1'] = minus - n;
-        changed = true;
+      for (const id of g.zones.battlefield) {
+        const o = g.objects[id]!;
+        // CR 704.5q: +1/+1 and -1/-1 counters annihilate in pairs.
+        const plus = o.counters['+1/+1'] ?? 0;
+        const minus = o.counters['-1/-1'] ?? 0;
+        if (plus > 0 && minus > 0) {
+          const n = Math.min(plus, minus);
+          o.counters['+1/+1'] = plus - n;
+          o.counters['-1/-1'] = minus - n;
+          changed = true;
+        }
+        if (hasType(g, o, 'Creature')) {
+          const t = toughness(g, o);
+          // CR 704.5f: toughness 0 or less goes to the graveyard.
+          if (t <= 0) toGraveyard.add(id);
+          // CR 704.5g: lethal damage destroys it; CR 702.12b: unless it's indestructible.
+          else if (o.damage >= t && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
+          // CR 704.5h: damage from a deathtouch source destroys it too.
+          else if (o.deathtouched && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
+        }
+        delete o.deathtouched;
+        // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
+        if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
+        // CR 714.4: a Saga that has finished its chapters is sacrificed.
+        if (sagaDone(g, o)) toGraveyard.add(id);
+        const face = faceOf(g, o);
+        if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
+          // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.
+          const to = o.attachedTo && g.objects[o.attachedTo.id];
+          if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);
+        } else if (o.attachedTo && face.subtypes.includes('Equipment')) {
+          // CR 704.5n: an Equipment attached illegally becomes unattached and stays on the battlefield.
+          const to = g.objects[o.attachedTo.id];
+          if (!to || to.zcc !== o.attachedTo.zcc || !canAttach(g, o, to)) unattach.push(id);
+        }
       }
-      if (hasType(g, o, 'Creature')) {
-        const t = toughness(g, o);
-        // CR 704.5f: toughness 0 or less goes to the graveyard.
-        if (t <= 0) toGraveyard.add(id);
-        // CR 704.5g: lethal damage destroys it; CR 702.12b: unless it's indestructible.
-        else if (o.damage >= t && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
-        // CR 704.5h: damage from a deathtouch source destroys it too.
-        else if (o.deathtouched && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
-      }
-      delete o.deathtouched;
-      // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
-      if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
-      // CR 714.4: a Saga that has finished its chapters is sacrificed.
-      if (sagaDone(g, o)) toGraveyard.add(id);
-      const face = faceOf(g, o);
-      if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
-        // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.
-        const to = o.attachedTo && g.objects[o.attachedTo.id];
-        if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);
-      } else if (o.attachedTo && face.subtypes.includes('Equipment')) {
-        // CR 704.5n: an Equipment attached illegally becomes unattached and stays on the battlefield.
-        const to = g.objects[o.attachedTo.id];
-        if (!to || to.zcc !== o.attachedTo.zcc || !canAttach(g, o, to)) unattach.push(id);
-      }
-    }
+    });
 
     // CR 704.5j: the legend rule — needs the controller's choice, handled one group at a time.
     const legendGroup = findLegendRuleGroup(g, toGraveyard);
