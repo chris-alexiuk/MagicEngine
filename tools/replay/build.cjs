@@ -1,0 +1,11 @@
+const fs = require('fs');
+const [tpl, replayPath, rulesPath, out] = process.argv.slice(2);
+const replay = JSON.parse(fs.readFileSync(replayPath, 'utf8'));
+const rules = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
+const ids = new Set(replay.frames.flatMap((f) => f.log.map((l) => l.rule).filter(Boolean)));
+const subset = { _date: rules.effectiveDate };
+for (const id of ids) subset[id] = rules.rules[id] ? rules.rules[id].text : null;
+const safe = (o) => JSON.stringify(o).replace(/</g, '\\u003c');
+const html = fs.readFileSync(tpl, 'utf8').replace('/*REPLAY*/', () => safe(replay)).replace('/*RULES*/', () => safe(subset));
+fs.writeFileSync(out, html);
+console.log(`${out}: ${(html.length / 1e6).toFixed(2)} MB, ${ids.size} rules embedded`);

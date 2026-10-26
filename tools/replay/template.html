@@ -1,0 +1,595 @@
+<title>Gruul vs Orzhov</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a playmat seen from above — Bob's side at the top, Alice's at the bottom, the stack between
+   them, the narrated log on the right. Same visual system as the MagicEngine app: teal felt, brass for
+   what the engine is doing, mana colors as the only other color, parchment proxies for cards. */
+:root {
+  --mat: #16302f;
+  --mat-2: #1c3b3a;
+  --mat-3: #244a49;
+  --line: #34605e;
+  --ink: #ebf1ec;
+  --ink-2: #a9c0ba;
+  --ink-3: #809b96;
+  --brass: #d8ae5e;
+  --brass-soft: rgba(216, 174, 94, 0.16);
+  --paper: #e9e3d3;
+  --paper-ink: #24211b;
+  --paper-line: rgba(36, 33, 27, 0.22);
+  --hurt: #ec9e7e;
+  --heal: #98c291;
+  --w: #f4eed0; --u: #a5c8e8; --b: #bbb0aa; --r: #ec9e7e; --g: #98c291; --c: #cfcac2;
+  --pip-ink: #1f2321;
+  --ui: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --rules: 'Crimson Pro', Georgia, 'Times New Roman', serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--mat); color: var(--ink); }
+body {
+  margin: 0;
+  font-family: var(--ui);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 0;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+.page { max-width: 1320px; margin: 0 auto; display: grid; gap: 14px; }
+
+/* Header */
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.head h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.015em; text-wrap: balance; }
+.head p { margin: 0; color: var(--ink-2); font-size: 14px; max-width: 70ch; }
+.result { color: var(--brass); }
+
+/* Phase track (CR 500.1: five phases) */
+.track { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: center; }
+.turnbox { display: grid; gap: 2px; min-width: 128px; }
+.turnbox .n { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.turnbox .who { font-size: 18px; font-weight: 600; }
+.phases { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.phase { display: grid; gap: 4px; flex: 1 1 auto; }
+.phase .label { font-size: 11px; color: var(--ink-3); letter-spacing: 0.04em; }
+.steps { display: flex; gap: 2px; }
+.step {
+  flex: 1 1 0;
+  min-width: 54px;
+  padding: 5px 6px;
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+  background: var(--mat-2);
+  color: var(--ink-3);
+  border-radius: 4px;
+}
+.step.on { background: var(--brass); color: var(--paper-ink); font-weight: 600; }
+.step.skipped { opacity: 0.45; }
+
+/* Board + log */
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.board {
+  display: grid;
+  gap: 0;
+  background: var(--mat-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.side { display: grid; gap: 10px; padding: 14px; }
+.side.top { border-bottom: 1px dashed var(--line); }
+.side.bottom { border-top: 1px dashed var(--line); }
+
+.strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.pname { font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; letter-spacing: 0.02em; }
+.badge.turn { background: var(--mat-3); color: var(--ink); }
+.badge.prio { background: var(--brass); color: var(--paper-ink); }
+.badge.wait { background: var(--brass-soft); color: var(--brass); border: 1px solid rgba(216,174,94,.5); }
+.life { display: flex; align-items: baseline; gap: 6px; }
+.life b { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; }
+.life span { font-size: 12px; color: var(--ink-3); }
+.life.hurt b { color: var(--hurt); }
+.life.heal b { color: var(--heal); }
+.counts { display: flex; gap: 12px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.pool { display: inline-flex; gap: 2px; }
+
+.hand { display: flex; flex-wrap: wrap; gap: 4px; }
+.hcard {
+  border: 0;
+  background: var(--paper);
+  color: var(--paper-ink);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 12px;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  cursor: pointer;
+}
+.hand .lbl { font-size: 12px; color: var(--ink-3); align-self: center; margin-right: 4px; }
+
+.row { display: flex; flex-wrap: wrap; gap: 16px 10px; min-height: 30px; align-items: flex-start; }
+.lands { gap: 5px; }
+.land {
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 999px;
+  background: var(--mat-3);
+  font-size: 12px;
+  color: var(--ink);
+  transition: opacity .2s;
+}
+.land.tapped { opacity: 0.45; }
+.land.tapped::after { content: '↷'; font-size: 11px; color: var(--ink-3); }
+
+/* Creature proxies: true card proportions */
+.tile {
+  position: relative;
+  width: 104px;
+  aspect-ratio: 5 / 7;
+  max-width: 100%;
+  border: 0;
+  padding: 7px 7px 6px;
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--paper-ink);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,.35), 0 8px 16px -10px rgba(0,0,0,.7);
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+.tile .tname { font-size: 11px; font-weight: 650; line-height: 1.15; }
+.tile .tcost { display: flex; gap: 1px; }
+.tile .tkw { font-family: var(--rules); font-size: 11px; line-height: 1.15; color: rgba(36,33,27,.85); border-top: 1px solid var(--paper-line); padding-top: 3px; flex: 1; text-transform: capitalize; }
+.tile .tpt { align-self: flex-end; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tile.tapped { transform: rotate(10deg); filter: saturate(.6) brightness(.85); }
+.tile.sick::before {
+  content: 'new'; position: absolute; top: -7px; left: 6px; font-size: 10px; font-weight: 600;
+  background: var(--mat-3); color: var(--ink-2); border-radius: 999px; padding: 0 6px;
+}
+.tile.attacking { box-shadow: 0 0 0 2px var(--brass), 0 10px 20px -10px rgba(0,0,0,.8); }
+.top .tile.attacking { transform: translateY(10px); }
+.bottom .tile.attacking { transform: translateY(-10px); }
+.top .tile.attacking.tapped { transform: translateY(10px) rotate(10deg); }
+.bottom .tile.attacking.tapped { transform: translateY(-10px) rotate(10deg); }
+.tile.blocking { box-shadow: 0 0 0 2px var(--ink-2), 0 10px 20px -10px rgba(0,0,0,.8); }
+.tag {
+  position: absolute; left: 3px; right: 3px; bottom: -9px; text-align: center;
+  font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-radius: 999px; padding: 1px 6px;
+}
+.tag.atk { background: var(--brass); color: var(--paper-ink); }
+.tag.blk { background: var(--ink-2); color: var(--paper-ink); }
+.dmg {
+  position: absolute; top: 34%; right: -6px; font-size: 11px; font-weight: 700;
+  background: var(--hurt); color: var(--paper-ink); border-radius: 999px; padding: 1px 6px;
+}
+.empty { font-size: 12px; color: var(--ink-3); align-self: center; }
+
+/* Center: the stack */
+.center { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; min-height: 52px; background: var(--mat); }
+.center .clabel { font-size: 12px; color: var(--ink-3); }
+.stackitem { display: inline-flex; gap: 8px; align-items: center; background: var(--paper); color: var(--paper-ink); padding: 5px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.stackitem small { font-weight: 400; color: rgba(36,33,27,.7); }
+.waiting { font-size: 13px; color: var(--brass); }
+
+/* Log */
+.logcol { display: grid; gap: 12px; position: sticky; top: env(safe-area-inset-top, 0px); }
+.panel { background: var(--mat-2); border: 1px solid var(--line); border-radius: 14px; }
+.panel h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); padding: 12px 14px 0; }
+.log { max-height: 440px; overflow-y: auto; padding: 8px 6px 10px 14px; display: grid; gap: 1px; font-size: 13.5px; scrollbar-color: var(--line) transparent; }
+.ll { display: flex; gap: 8px; align-items: baseline; padding: 2px 6px 2px 0; border-radius: 4px; }
+.ll.cur { background: var(--brass-soft); }
+.ll.k-turn { margin-top: 8px; font-weight: 650; color: var(--ink); font-size: 14px; }
+.ll.k-step { color: var(--ink-3); font-size: 12px; }
+.ll.k-death { color: var(--hurt); }
+.ll.k-life { color: var(--heal); }
+.ll.k-end { color: var(--brass); font-weight: 600; }
+.ll.k-manual { color: var(--ink); font-style: italic; }
+.ll .txt { flex: 1; min-width: 0; }
+.cr {
+  border: 1px solid var(--line); background: transparent; color: var(--ink-2); cursor: pointer;
+  font-size: 11px; padding: 0 6px; border-radius: 4px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cr:hover, .cr.on { border-color: var(--brass); color: var(--brass); }
+.detail { padding: 10px 14px 14px; font-size: 14px; display: grid; gap: 6px; }
+.detail .dname { font-weight: 650; font-size: 16px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.detail .dtype { color: var(--ink-2); font-size: 13px; }
+.detail .dtext { font-family: var(--rules); font-size: 16px; line-height: 1.4; white-space: pre-line; }
+.detail .dmeta { font-size: 12px; color: var(--ink-3); }
+.detail .hint { color: var(--ink-3); font-size: 13px; }
+.ruletext { font-family: var(--rules); font-size: 16px; line-height: 1.4; }
+
+/* Mana symbols */
+.pip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15em; height: 1.15em; border-radius: 50%;
+  font-size: 0.78em; font-weight: 700; line-height: 1; color: var(--pip-ink);
+  box-shadow: 0 1px 0 rgba(0,0,0,.4); vertical-align: middle; flex: none;
+}
+.pip-W { background: var(--w); } .pip-U { background: var(--u); } .pip-B { background: var(--b); }
+.pip-R { background: var(--r); } .pip-G { background: var(--g); } .pip-C, .pip-N { background: var(--c); }
+
+/* Controls */
+.controls {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  padding: 10px 0 max(12px, env(safe-area-inset-bottom, 0px));
+  background: var(--mat);
+  border-top: 1px solid var(--line);
+}
+.btns { display: flex; gap: 6px; }
+.btn {
+  background: var(--mat-3); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 12px; cursor: pointer; font-size: 14px; font-weight: 500; white-space: nowrap;
+}
+.btn:hover { border-color: var(--ink-3); }
+.btn.primary { background: var(--brass); color: var(--paper-ink); border-color: var(--brass); min-width: 84px; font-weight: 600; }
+.scrub { flex: 1 1 220px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.scrub input { flex: 1; min-width: 0; accent-color: var(--brass); }
+.scrub output { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.opts { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.opts select { background: var(--mat-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; }
+.opts label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+@media (max-width: 980px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .logcol { position: static; }
+  .log { max-height: 300px; }
+}
+@media (max-width: 560px) {
+  body { font-size: 14px; }
+  .track { grid-template-columns: 1fr; }
+  .phase .label { display: none; }
+  .step { min-width: 0; padding: 4px 2px; font-size: 0; height: 8px; }
+  .step.on { font-size: 0; }
+  .tile { width: 80px; padding: 5px 5px 4px; }
+  .tile .tname { font-size: 10px; }
+  .tile .tkw { font-size: 10px; }
+  .side { padding: 12px 10px; }
+  .btn { padding: 6px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile, .land { transition: none; }
+}
+</style>
+
+<div class="page">
+  <header class="head">
+    <h1>Gruul vs Orzhov</h1>
+    <p id="summary"></p>
+  </header>
+
+  <section class="track" aria-label="Turn and step">
+    <div class="turnbox"><span class="n" id="turnNo"></span><span class="who" id="turnWho"></span></div>
+    <div class="phases" id="phases"></div>
+  </section>
+
+  <div class="main">
+    <section class="board" aria-label="Table">
+      <div class="side top" id="sideTop"></div>
+      <div class="center" id="center"></div>
+      <div class="side bottom" id="sideBottom"></div>
+    </section>
+
+    <aside class="logcol">
+      <section class="panel">
+        <h2>What happened</h2>
+        <div class="log" id="log" aria-live="polite"></div>
+      </section>
+      <section class="panel">
+        <h2 id="detailTitle">Details</h2>
+        <div class="detail" id="detail"><p class="hint">Select a card, or a rule number in the log, to read it here.</p></div>
+      </section>
+    </aside>
+  </div>
+
+  <nav class="controls" aria-label="Replay controls">
+    <div class="btns">
+      <button class="btn" id="prevTurn" type="button" title="Previous turn">⏮</button>
+      <button class="btn" id="back" type="button" title="Back one moment">◀</button>
+      <button class="btn primary" id="play" type="button">Play</button>
+      <button class="btn" id="fwd" type="button" title="Forward one moment">▶</button>
+      <button class="btn" id="nextTurn" type="button" title="Next turn">⏭</button>
+    </div>
+    <div class="scrub">
+      <input type="range" id="scrubber" min="0" value="0" aria-label="Position in the game">
+      <output id="pos"></output>
+    </div>
+    <div class="opts">
+      <label for="speed">Speed
+        <select id="speed">
+          <option value="1800">Slow</option>
+          <option value="1000" selected>Normal</option>
+          <option value="500">Fast</option>
+          <option value="200">Very fast</option>
+        </select>
+      </label>
+      <label for="every"><input type="checkbox" id="every"> Every priority pass</label>
+    </div>
+  </nav>
+</div>
+
+<script type="application/json" id="replay-data">/*REPLAY*/</script>
+<script type="application/json" id="rules-data">/*RULES*/</script>
+<script>
+(() => {
+  const R = JSON.parse(document.getElementById('replay-data').textContent);
+  const RULES = JSON.parse(document.getElementById('rules-data').textContent);
+  const F = R.frames;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const nameOf = (p) => R.players.find((x) => x.id === p)?.name ?? p;
+  const card = (id) => R.cards[R.objects[id]];
+  const cardName = (id) => R.objects[id];
+
+  const PHASES = [
+    ['Beginning', [['untap', 'Untap'], ['upkeep', 'Upkeep'], ['draw', 'Draw']]],
+    ['Main', [['main1', 'Main 1']]],
+    ['Combat', [['beginning_of_combat', 'Begin'], ['declare_attackers', 'Attack'], ['declare_blockers', 'Block'], ['combat_damage', 'Damage'], ['end_of_combat', 'End']]],
+    ['Main', [['main2', 'Main 2']]],
+    ['Ending', [['end', 'End'], ['cleanup', 'Cleanup']]],
+  ];
+  const PENDING = {
+    mulligan: 'deciding on a mulligan',
+    bottom_cards: 'putting cards on the bottom',
+    declare_attackers: 'declaring attackers',
+    declare_blockers: 'declaring blockers',
+    assign_combat_damage: 'assigning combat damage',
+    discard_to_hand_size: 'discarding to seven',
+    manual_resolution: 'resolving a spell by hand',
+    legend_rule: 'choosing a legend to keep',
+  };
+
+  const pips = (cost) =>
+    [...String(cost || '').matchAll(/\{([^}]+)\}/g)]
+      .map((m) => {
+        const s = m[1];
+        const cls = /^[WUBRGC]$/.test(s) ? s : 'N';
+        const label = /^[WUBRG]$/.test(s) ? '' : s;
+        return `<span class="pip pip-${cls}" title="{${esc(s)}}">${esc(label)}</span>`;
+      })
+      .join('');
+  const LAND_COLOR = { Forest: 'G', Mountain: 'R', Plains: 'W', Swamp: 'B', Island: 'U' };
+
+  // "Meaningful" moments: anything beyond a bare priority pass or step change.
+  const MEANINGFUL = new Set(['turn', 'play', 'combat', 'damage', 'life', 'death', 'manual', 'end']);
+  const isStop = (i) => i === 0 || i === F.length - 1 || F[i].log.some((l) => MEANINGFUL.has(l.kind) || /mulligan|keeps/.test(l.text));
+  const stops = F.map((_, i) => i).filter(isStop);
+  const turnStarts = F.map((f, i) => (f.log.some((l) => l.kind === 'turn') ? i : -1)).filter((i) => i >= 0);
+
+  let idx = 0;
+  let playing = false;
+  let timer = null;
+  let selectedRule = null;
+  const everyPass = () => $('every').checked;
+
+  function nextIndex(from, dir) {
+    if (everyPass()) return Math.max(0, Math.min(F.length - 1, from + dir));
+    if (dir > 0) return stops.find((i) => i > from) ?? F.length - 1;
+    return [...stops].reverse().find((i) => i < from) ?? 0;
+  }
+
+  // ---------------------------------------------------------------- rendering
+  function renderTrack(f) {
+    $('turnNo').textContent = f.turn ? `Turn ${f.turn}` : 'Opening hands';
+    $('turnWho').textContent = f.turn ? `${nameOf(f.active)}’s turn` : 'Mulligans';
+    $('phases').innerHTML = PHASES.map(
+      ([label, steps]) =>
+        `<div class="phase"><span class="label">${label}</span><div class="steps">${steps
+          .map(([id, s]) => `<span class="step${f.turn && f.step === id ? ' on' : ''}" title="${esc(s)}">${esc(s)}</span>`)
+          .join('')}</div></div>`,
+    ).join('');
+  }
+
+  function tile(b, f) {
+    const c = card(b.id);
+    const name = cardName(b.id);
+    // "New" only matters to the player whose turn it is (summoning sickness, CR 302.6).
+    const cls = ['tile', b.tapped && 'tapped', b.sick && c.pt && b.ctrl === f.active && 'sick', b.attacking && 'attacking', b.blocking && 'blocking'].filter(Boolean).join(' ');
+    const tag = b.attacking
+      ? `<span class="tag atk">→ ${esc(R.objects[b.attacking] ?? nameOf(b.attacking))}</span>`
+      : b.blocking
+        ? `<span class="tag blk">blocks ${esc(cardName(b.blocking))}</span>`
+        : '';
+    return `<button type="button" class="${cls}" data-card="${esc(name)}" aria-label="${esc(name)}${b.tapped ? ', tapped' : ''}">
+      <span class="tname">${esc(name)}</span>
+      <span class="tcost">${pips(c.cost)}</span>
+      <span class="tkw">${esc((c.kw || []).join(', '))}</span>
+      <span class="tpt">${esc(c.pt || '')}</span>
+      ${b.damage ? `<span class="dmg">${b.damage}</span>` : ''}${tag}
+    </button>`;
+  }
+
+  function land(b) {
+    const name = cardName(b.id);
+    const col = LAND_COLOR[name] ?? 'C';
+    return `<button type="button" class="land${b.tapped ? ' tapped' : ''}" data-card="${esc(name)}"><span class="pip pip-${col}"></span>${esc(name)}</button>`;
+  }
+
+  function side(f, pid, prev) {
+    const p = f.players.find((x) => x.id === pid);
+    const before = prev?.players.find((x) => x.id === pid);
+    const mine = f.battlefield.filter((b) => b.ctrl === pid);
+    const lands = mine.filter((b) => card(b.id).land);
+    const creatures = mine.filter((b) => !card(b.id).land);
+    const lifeCls = before && before.life !== p.life ? (p.life < before.life ? ' hurt' : ' heal') : '';
+    const badges = [
+      f.turn && f.active === pid ? '<span class="badge turn">Active</span>' : '',
+      f.priority === pid ? '<span class="badge prio">Priority</span>' : '',
+      f.pending && f.pending.player === pid ? `<span class="badge wait">${esc(PENDING[f.pending.kind] ?? f.pending.kind)}</span>` : '',
+    ].join('');
+    const strip = `<div class="strip">
+      <span class="pname">${esc(nameOf(pid))} ${badges}</span>
+      <span class="life${lifeCls}"><b>${p.life}</b><span>life</span></span>
+      <span class="counts"><span>Library ${p.library}</span><span>Graveyard ${p.graveyard.length}</span>${p.pool ? `<span class="pool">Pool ${pips(p.pool)}</span>` : ''}</span>
+    </div>`;
+    const hand = `<div class="hand"><span class="lbl">Hand</span>${
+      p.hand.length
+        ? p.hand.map((id) => `<button type="button" class="hcard" data-card="${esc(cardName(id))}">${esc(cardName(id))} ${pips(card(id).cost)}</button>`).join('')
+        : '<span class="empty">empty</span>'
+    }</div>`;
+    const cRow = `<div class="row">${creatures.length ? creatures.map((b) => tile(b, f)).join('') : '<span class="empty">No creatures</span>'}</div>`;
+    const lRow = `<div class="row lands">${lands.length ? lands.map(land).join('') : '<span class="empty">No lands</span>'}</div>`;
+    return pid === R.players[1].id ? strip + hand + lRow + cRow : cRow + lRow + hand + strip;
+  }
+
+  function renderCenter(f) {
+    const parts = [];
+    if (f.stack.length) {
+      parts.push('<span class="clabel">Stack</span>');
+      for (const s of [...f.stack].reverse()) {
+        const label = s.id ? cardName(s.id) : s.text;
+        parts.push(`<span class="stackitem">${esc(label)} ${s.id ? pips(card(s.id).cost) : ''}<small>${esc(nameOf(s.ctrl))}</small></span>`);
+      }
+    } else {
+      parts.push('<span class="clabel">Stack empty</span>');
+    }
+    if (f.pending) parts.push(`<span class="waiting">${esc(nameOf(f.pending.player))} is ${esc(PENDING[f.pending.kind] ?? f.pending.kind)}</span>`);
+    $('center').innerHTML = parts.join('');
+  }
+
+  let logRendered = -1;
+  function renderLog() {
+    const box = $('log');
+    if (idx < logRendered) {
+      box.innerHTML = '';
+      logRendered = -1;
+    }
+    const frag = [];
+    for (let i = logRendered + 1; i <= idx; i++) {
+      for (const l of F[i].log) {
+        frag.push(
+          `<div class="ll k-${l.kind}" data-frame="${i}"><span class="txt">${esc(l.text)}</span>${
+            l.rule ? `<button type="button" class="cr" data-rule="${l.rule}">CR ${l.rule}</button>` : ''
+          }</div>`,
+        );
+      }
+    }
+    box.insertAdjacentHTML('beforeend', frag.join(''));
+    logRendered = idx;
+    // Highlight the lines produced since the previous stop.
+    const prevStop = everyPass() ? idx - 1 : ([...stops].reverse().find((s) => s < idx) ?? -1);
+    box.querySelectorAll('.ll.cur').forEach((n) => n.classList.remove('cur'));
+    box.querySelectorAll('.ll').forEach((n) => {
+      const fi = Number(n.dataset.frame);
+      if (fi > prevStop && fi <= idx) n.classList.add('cur');
+    });
+    requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+  }
+
+  function render() {
+    const f = F[idx];
+    const prev = idx > 0 ? F[idx - 1] : null;
+    renderTrack(f);
+    $('sideTop').innerHTML = side(f, R.players[1].id, prev);
+    $('sideBottom').innerHTML = side(f, R.players[0].id, prev);
+    renderCenter(f);
+    renderLog();
+    $('scrubber').max = String(F.length - 1);
+    $('scrubber').value = String(idx);
+    $('pos').textContent = `${idx} / ${F.length - 1}`;
+  }
+
+  // ---------------------------------------------------------------- details panel
+  function showCard(name) {
+    const c = R.cards[name];
+    if (!c) return;
+    const auto = { full: 'The engine runs all of this card.', partial: 'The engine runs some of this card; players resolve the rest.', manual: 'Players resolve this card’s text by hand.' }[c.automation];
+    $('detailTitle').textContent = 'Card';
+    $('detail').innerHTML = `<div class="dname"><span>${esc(name)}</span><span>${pips(c.cost)}</span></div>
+      <div class="dtype">${esc(c.type)}${c.pt ? ` · ${esc(c.pt)}` : ''}</div>
+      ${c.text ? `<div class="dtext">${esc(c.text)}</div>` : ''}
+      <div class="dmeta">${esc(auto)}</div>`;
+  }
+  function showRule(id) {
+    const text = RULES[id];
+    $('detailTitle').textContent = `Comprehensive Rules ${id}`;
+    $('detail').innerHTML = `<div class="ruletext">${esc(text ?? 'Rule text unavailable.')}</div>
+      <div class="dmeta">From the Comprehensive Rules effective ${esc(RULES._date || '')}. The engine cites this rule where it implements it.</div>`;
+    document.querySelectorAll('.cr.on').forEach((n) => n.classList.remove('on'));
+    document.querySelectorAll(`.cr[data-rule="${CSS.escape(id)}"]`).forEach((n) => n.classList.add('on'));
+  }
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-card], [data-rule]');
+    if (!t) return;
+    if (t.dataset.rule) showRule(t.dataset.rule);
+    else showCard(t.dataset.card);
+  });
+
+  // ---------------------------------------------------------------- controls
+  function go(i) {
+    idx = Math.max(0, Math.min(F.length - 1, i));
+    render();
+    if (idx >= F.length - 1) stop();
+  }
+  function tick() {
+    if (idx >= F.length - 1) return stop();
+    go(nextIndex(idx, 1));
+    timer = setTimeout(tick, Number($('speed').value) * (everyPass() ? 0.35 : 1));
+  }
+  let fresh = true;
+  function start() {
+    if (fresh || idx >= F.length - 1) go(0);
+    fresh = false;
+    playing = true;
+    $('play').textContent = 'Pause';
+    timer = setTimeout(tick, 250);
+  }
+  function stop() {
+    playing = false;
+    clearTimeout(timer);
+    $('play').textContent = idx >= F.length - 1 ? 'Replay' : 'Play';
+  }
+  $('play').addEventListener('click', () => (playing ? stop() : start()));
+  const touch = () => { fresh = false; $('play').textContent = playing ? 'Pause' : 'Play'; };
+  $('fwd').addEventListener('click', () => { stop(); touch(); go(nextIndex(idx, 1)); });
+  $('back').addEventListener('click', () => { stop(); touch(); go(nextIndex(idx, -1)); });
+  $('nextTurn').addEventListener('click', () => { stop(); touch(); go(turnStarts.find((i) => i > idx) ?? F.length - 1); });
+  $('prevTurn').addEventListener('click', () => {
+    stop();
+    touch();
+    const prior = [...turnStarts].reverse().find((i) => i < idx);
+    go(prior ?? 0);
+  });
+  $('scrubber').addEventListener('input', (e) => { stop(); touch(); go(Number(e.target.value)); });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, select')) return;
+    if (e.key === 'ArrowRight') { stop(); touch(); go(nextIndex(idx, 1)); }
+    else if (e.key === 'ArrowLeft') { stop(); touch(); go(nextIndex(idx, -1)); }
+    else if (e.key === ' ') { e.preventDefault(); playing ? stop() : start(); }
+  });
+
+  const m = R.meta;
+  $('summary').innerHTML = `A full game played by two simple bots and run entirely by the MagicEngine rules engine: ${m.actions} actions over ${m.turns} turns. <span class="result">${esc(m.winner)} wins.</span> Every moment below is the engine’s state after one action.`;
+  // Open on the game's biggest combat (most blockers declared) so the first view shows the engine at work;
+  // Play starts from the opening hands.
+  let best = 0;
+  let bestBlocks = -1;
+  F.forEach((f, i) => {
+    const n = f.log.filter((l) => / blocks: /.test(l.text)).reduce((k, l) => k + (l.text.match(/ blocks /g) || []).length, 0);
+    if (n > bestBlocks) { bestBlocks = n; best = i; }
+  });
+  idx = best;
+  render();
+  $('play').textContent = 'Play from start';
+  const firstBlocker = F[best].battlefield.find((b) => b.blocking);
+  showCard(firstBlocker ? cardName(firstBlocker.id) : 'Colossal Dreadmaw');
+})();
+</script>
