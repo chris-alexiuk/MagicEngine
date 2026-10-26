@@ -200,3 +200,98 @@ describe('activated and static abilities', () => {
     ]);
   });
 });
+
+describe('static abilities, slice 3', () => {
+  it('CR 611.3a: conditions in front of a static ability', () => {
+    expect(one('During your turn, this creature has first strike.', 'Creature — Human')).toMatchObject({
+      effect: { type: 'continuous', affected: { ref: 'self' }, keywords: [{ id: 'first_strike' }], condition: { type: 'your_turn', value: true } },
+    });
+    expect(one('As long as this creature is equipped, it gets +2/+0 and has menace.', 'Creature — Human')).toMatchObject({
+      effect: { affected: { ref: 'self' }, power: 2, keywords: [{ id: 'menace' }], condition: { type: 'has_attached', subtype: 'Equipment' } },
+    });
+    expect(one('As long as enchanted permanent is a creature, it gets -1/-1 and can’t block.', 'Enchantment — Aura')).toMatchObject({
+      effect: { affected: { ref: 'attached' }, power: -1, rules: ['cant_block'], condition: { type: 'is', of: { ref: 'attached' }, filter: { types: ['Creature'] } } },
+    });
+    expect(one('As long as you have 30 or more life and an opponent has 10 or less life, this creature gets +6/+6.', 'Creature — Vampire')).toMatchObject({
+      effect: { condition: { type: 'and', all: [{ type: 'life', op: 'ge', n: 30 }, { type: 'life', op: 'le', n: 10, who: 'any_opponent' }] } },
+    });
+  });
+
+  it('a condition after the effect: "~ gets +2/+2 as long as …"', () => {
+    expect(one('This creature gets +2/+2 as long as seven or more cards are in your graveyard.', 'Creature — Zombie')).toMatchObject({
+      effect: { power: 2, condition: { type: 'graveyard', op: 'ge', n: 7 } },
+    });
+    expect(one('This creature has reach as long as it has a +1/+1 counter on it.', 'Creature — Dog')).toMatchObject({
+      effect: { keywords: [{ id: 'reach' }], condition: { type: 'counters', of: { ref: 'self' }, counter: '+1/+1', min: 1 } },
+    });
+  });
+
+  it('rules for players: hand size, extra lands, skipping the draw, the top of the library', () => {
+    expect(one('You have no maximum hand size.', 'Land')).toMatchObject({ effect: { type: 'player_rule', who: 'you', rule: 'no_max_hand_size' } });
+    expect(one('You may play two additional lands on each of your turns.', 'Enchantment')).toMatchObject({ effect: { rule: 'extra_lands', amount: 2 } });
+    expect(one('Skip your draw step.', 'Enchantment')).toMatchObject({ effect: { rule: 'skip_draw' } });
+    expect(one('You may look at the top card of your library any time.', 'Artifact')).toMatchObject({ effect: { rule: 'look_at_top' } });
+  });
+
+  it('CR 614.12: lands that check, or ask, as they enter', () => {
+    expect(one('This land enters tapped unless you control a Plains or an Island.', 'Land')).toMatchObject({
+      effect: { type: 'enters_tapped', unless: { type: 'count', who: 'you', filter: { subtypes: ['Plains', 'Island'] }, min: 1 } },
+    });
+    expect(one('This land enters tapped unless you control two or fewer other lands.', 'Land')).toMatchObject({
+      effect: { unless: { type: 'count', filter: { types: ['Land'], other: true }, max: 2 } },
+    });
+    expect(one("As this land enters, you may pay 2 life. If you don't, it enters tapped.", 'Land — Forest Island')).toMatchObject({
+      effect: { type: 'as_enters', choice: 'pay_life', amount: 2 },
+    });
+    expect(one('This land enters tapped. As it enters, choose a color other than green.', 'Land')).toMatchObject({
+      effect: { type: 'as_enters', choice: 'color', except: 'G', tapped: true },
+    });
+    expect(one('Creatures you control of the chosen type get +1/+1.', 'Artifact')).toMatchObject({
+      effect: { affected: { filter: { types: ['Creature'], controller: 'you', chosenType: true } } },
+    });
+    expect(one('{T}: Add {G} or one mana of the chosen color.', 'Land')).toMatchObject({ effects: [{ type: 'add_mana', options: [['G'], ['chosen']] }] });
+  });
+
+  it('CR 509.1b–c: blocking restrictions and requirements', () => {
+    expect(one("This creature can't be blocked by creatures with power 2 or less.", 'Creature — Rogue')).toMatchObject({
+      effect: { combat: { cantBeBlockedBy: { types: ['Creature'], power: { op: 'le', n: 2 } } } },
+    });
+    expect(one('This creature can block only creatures with flying.', 'Creature — Bird')).toMatchObject({ effect: { combat: { canBlockOnly: { keywords: ['flying'] } } } });
+    expect(one("This creature can't be blocked except by three or more creatures.", 'Creature — Ogre')).toMatchObject({ effect: { combat: { minBlockers: 3 } } });
+    expect(one('All creatures able to block this creature do so.', 'Creature — Beast')).toMatchObject({ effect: { combat: { mustBeBlocked: 'all' } } });
+    expect(one('Target creature gets +3/+3 until end of turn and must be blocked this turn if able.')).toMatchObject({
+      effects: [{ type: 'modify', power: 3 }, { type: 'modify', combat: { mustBeBlocked: 'one' } }],
+    });
+  });
+});
+
+describe('effects, slice 3', () => {
+  it('CR 113.6m: abilities that work from the graveyard', () => {
+    expect(one('{2}{B}: Return this card from your graveyard to your hand.', 'Creature — Zombie')).toMatchObject({
+      zone: 'graveyard',
+      effects: [{ type: 'move', what: { ref: 'self' }, to: 'hand' }],
+    });
+    expect(one('When this creature dies, return this card from your graveyard to your hand.', 'Creature — Spirit')).toMatchObject({
+      effects: [{ type: 'move', what: { ref: 'trigger_object' } }],
+    });
+    expect(one('When this creature dies, return this card from your graveyard to your hand.', 'Creature — Spirit')).not.toHaveProperty('zone');
+    expect(one('{1}, Exile this card from your graveyard: Draw a card.', 'Creature — Skeleton')).toMatchObject({ zone: 'graveyard', cost: { other: [{ type: 'exile_self' }] } });
+    expect(one('Return target permanent card from your graveyard to your hand.', 'Sorcery')).toMatchObject({
+      targets: [{ filter: { zone: 'graveyard', types: ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] } }],
+    });
+  });
+
+  it('keyword actions: adapt (CR 701.46a), explore (CR 701.44a), the monarch (CR 725)', () => {
+    expect(one('{2}{G}: Adapt 2.', 'Creature — Mutant')).toMatchObject({
+      effects: [{ type: 'if', cond: { type: 'counters', counter: '+1/+1', max: 0 }, effects: [{ type: 'add_counters', amount: 2 }] }],
+    });
+    expect(one('When this creature enters, it explores.', 'Creature — Merfolk')).toMatchObject({ effects: [{ type: 'explore', what: { ref: 'self' } }] });
+    expect(one('When this creature enters, you become the monarch.', 'Creature — Human')).toMatchObject({ effects: [{ type: 'become_monarch', who: { ref: 'you' } }] });
+  });
+
+  it('CR 610.3: exile until ~ leaves the battlefield', () => {
+    expect(one('When this enchantment enters, exile target nonland permanent an opponent controls until this enchantment leaves the battlefield.', 'Enchantment')).toMatchObject({
+      effects: [{ type: 'move', to: 'exile', until: 'source_leaves' }],
+    });
+  });
+});

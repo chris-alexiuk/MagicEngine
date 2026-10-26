@@ -2,7 +2,10 @@ import type {
   AbilityNode,
   ActivatedAbility,
   ConditionNode,
+  AsEntersNode,
+  ContinuousEffectNode,
   Cost,
+  PlayerRuleNode,
   EffectNode,
   ModeChoice,
   Program,
@@ -16,10 +19,11 @@ import type {
 import type { GrammarRule } from '../parser.js';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
-import { parseCondition } from './conditions.js';
+import { parseCombatRule } from './combat.js';
+import { conditionSubject, parseCondition } from './conditions.js';
 import { parseEffectText, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
-import { parseAmount, parsePT } from './words.js';
+import { COLOR_WORDS, parseAmount, parsePT } from './words.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
 function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
@@ -126,6 +130,7 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (MANA_RUN.test(item)) mana += item;
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
+    else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
     else {
       const life = /^[Pp]ay (\d+) life$/.exec(item);
@@ -136,6 +141,11 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
   if (mana) cost.mana = mana;
   return cost;
 }
+
+/** Effects that never stop for a player's choice (for the extra effects of mana abilities). */
+const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mill', 'add_counters', 'tap', 'untap', 'create_token', 'add_mana']);
+const noChoices = (e: EffectNode): boolean =>
+  e.type === 'if' ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices) : NO_CHOICE.has(e.type);
 
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
@@ -153,8 +163,10 @@ export const activatedRule: GrammarRule = {
     if (!cost) return null;
     let effectText = line.slice(colon + 2);
     const node: ActivatedAbility = { kind: 'activated', text: original, cost, effects: [] };
-    // A cost of discarding this card means it's activated from the hand (channel, cycling).
+    // A cost of discarding this card means it's activated from the hand (channel, cycling);
+    // exiling it from your graveyard, from the graveyard (CR 113.6m).
     if (cost.other?.some((c) => c.type === 'discard_self')) node.zone = 'hand';
+    if (cost.other?.some((c) => c.type === 'exile_self')) node.zone = 'graveyard';
     for (let changed = true; changed; ) {
       changed = false;
       for (const [re, set] of ACTIVATION_LIMITS) {
@@ -175,7 +187,8 @@ export const activatedRule: GrammarRule = {
         const b = new Binder(env);
         b.it = { ref: 'self' };
         const rest = mana[2] ? parseEffectText(mana[2], b) : [];
-        if (!rest || b.targets.length) return null;
+        // A mana ability resolves at once (CR 605.3b), so its other effects can't stop to ask anything.
+        if (!rest || b.targets.length || !rest.every(noChoices)) return null;
         return { ...node, effects: [effect, ...rest], mana: true };
       }
     }
@@ -183,6 +196,11 @@ export const activatedRule: GrammarRule = {
     b.it = { ref: 'self' };
     const program = parseProgram(effectText, b);
     if (!program) return null;
+    if (b.selfZone) {
+      // "{2}{B}: Return ~ from your graveyard to your hand."
+      if (node.zone && node.zone !== b.selfZone) return null;
+      node.zone = b.selfZone;
+    }
     return { ...node, ...program };
   },
 };
@@ -315,6 +333,9 @@ export const triggeredRule: GrammarRule = {
         if (!trig) return null;
         b.it = trig.it;
         b.player = trig.player;
+        // CR 113.6m: "When ~ dies, return ~ from your graveyard…" — the trigger put it there; it's the card that died.
+        const selfLeaves = (trig.trigger.type === 'dies' || trig.trigger.type === 'leaves') && (trig.trigger.subject as Ref).ref === 'self';
+        if (selfLeaves) b.named['~ from your graveyard'] = { ref: 'trigger_object' };
         let effectText = body.slice(comma.index! + 2);
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
@@ -332,11 +353,12 @@ export const triggeredRule: GrammarRule = {
         }
         effectText = effectText.replace(/^\w/, (c) => c.toUpperCase());
         const program = parseProgram(effectText, b);
-        return program ? { trig, program, oncePerTurn, condition } : null;
+        return program ? { trig, program, oncePerTurn, condition, zone: b.selfZone } : null;
       });
       if (r) {
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
         if (r.oncePerTurn) node.oncePerTurn = true;
+        if (r.zone) node.zone = r.zone;
         if (r.condition) node.condition = r.condition;
         return node;
       }
@@ -359,6 +381,8 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't be countered": ['cant_be_countered'],
   "doesn't untap during your untap step": ['doesnt_untap'],
   "doesn't untap during its controller's untap step": ['doesnt_untap'],
+  "can attack as though it didn't have defender": ['can_attack_with_defender'],
+  "can attack as though they didn't have defender": ['can_attack_with_defender'],
 };
 
 /** "Creatures you control get +1/+1.", "Equipped creature has flying.", "~ can't block." (CR 611.3) */
@@ -367,42 +391,119 @@ export const continuousRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     if (!env || !line.endsWith('.') || /["“”]/.test(line)) return null;
-    const body = line.slice(0, -1);
     const b = new Binder(env);
-    // Layer 2 (CR 613.1b): "You control enchanted creature." (Control Magic).
-    const control = /^You control (enchanted (?:creature|permanent|artifact|land|planeswalker))$/.exec(body);
-    if (control) {
-      const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'attached' }, control: 'you' } };
-      return node;
+    // Conditions in front: "During your turn, …", "As long as [condition], …" (CR 611.3a: checked continuously).
+    const conds: ConditionNode[] = [];
+    let rest = line.slice(0, -1);
+    for (;;) {
+      const during = /^During (your turn|turns other than yours), (.+)$/i.exec(rest);
+      if (during) {
+        conds.push({ type: 'your_turn', value: during[1]!.toLowerCase() === 'your turn' });
+        rest = during[2]!;
+        continue;
+      }
+      // "~ gets +2/+2 as long as there are seven or more cards in your graveyard." (the condition last)
+      const trailing = /^(.+?) as long as (.+)$/.exec(rest);
+      if (trailing && !/^As long as /i.test(rest)) {
+        const cond = attempt(b, (b) => parseCondition(trailing[2]!, b));
+        if (!cond) return null;
+        conds.push(cond);
+        rest = trailing[1]!;
+        break;
+      }
+      const asLong = /^As long as (.+)$/i.exec(rest);
+      if (!asLong) break;
+      const tail = asLong[1]!;
+      let found = false;
+      for (let i = tail.indexOf(', '); i >= 0 && !found; i = tail.indexOf(', ', i + 1)) {
+        const cond = attempt(b, (b) => parseCondition(tail.slice(0, i), b));
+        if (cond) {
+          conds.push(cond);
+          b.it = conditionSubject(cond) ?? b.it;
+          rest = tail.slice(i + 2);
+          found = true;
+        }
+      }
+      if (!found) return null;
     }
-    // Subject, then a predicate.
-    const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|attacks? each combat if able|doesn't untap during .+)$/.exec(body);
-    if (!m) return null;
-    const subject = parseObjectRef(m[1]!, b, 'static');
-    if (!subject) return null;
-    const effect: EffectNode = { type: 'continuous', affected: subject.ref };
-    const flags = STATIC_FLAGS[m[2]!];
-    if (flags) {
+    const effect: ContinuousEffectNode | PlayerRuleNode | null = parseContinuous(rest, b) ?? parsePlayerRule(rest);
+    if (!effect) return null;
+    if (conds.length) effect.condition = conds.length === 1 ? conds[0]! : { type: 'and', all: conds };
+    const node: StaticAbility = { kind: 'static', text: original, effect };
+    return node;
+  },
+};
+
+/** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
+function parsePlayerRule(body: string): PlayerRuleNode | null {
+  const who = (w: string): PlayerRuleNode['who'] | null =>
+    w === 'You' || w === 'you' ? 'you' : /^each player$/i.test(w) ? 'each' : /^(?:each opponent|your opponents)$/i.test(w) ? 'opponents' : null;
+  const hand = /^(You|Each player|Each opponent|Your opponents) ha(?:s|ve) no maximum hand size$/.exec(body);
+  if (hand) return { type: 'player_rule', who: who(hand[1]!)!, rule: 'no_max_hand_size' };
+  const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
+  if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
+  if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
+  // CR 401.5: looking at, or playing with, the top card of your library revealed.
+  if (/^You may look at the top card of your library (?:any time|at any time)$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'look_at_top' };
+  if (/^Play with the top card of your library revealed$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'top_revealed' };
+  return null;
+}
+
+/** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
+function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
+  // Layer 2 (CR 613.1b): "You control enchanted creature." (Control Magic).
+  const control = /^You control (enchanted (?:creature|permanent|artifact|land|planeswalker))$/.exec(body);
+  if (control) return { type: 'continuous', affected: { ref: 'attached' }, control: 'you' };
+  // CR 509.1c: "All creatures able to block ~ do so." (lure)
+  const lure = /^All creatures able to block (.+) do so$/.exec(body);
+  if (lure) {
+    const subject = parseObjectRef(lure[1]!, b, 'static');
+    return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
+  }
+  // Subject, then a predicate.
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+)$/.exec(body);
+  if (!m) return null;
+  const subject = parseObjectRef(m[1]!, b, 'static');
+  if (!subject) return null;
+  const effect: ContinuousEffectNode = { type: 'continuous', affected: subject.ref };
+  // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
+  for (const part of m[2]!.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |doesn't )/)) {
+    const get = /^gets? (\S+)$/.exec(part);
+    const has = /^ha(?:s|ve) (.+)$/.exec(part);
+    const flags = STATIC_FLAGS[part];
+    const combat = flags ? null : parseCombatRule(part, b);
+    if (combat) {
+      effect.combat = { ...effect.combat, ...combat };
+    } else if (flags) {
       // A spell's "can't be countered" works on the stack; other flags are about permanents.
       if (flags.includes('cant_be_countered') && subject.ref.ref !== 'self') return null;
-      effect.rules = flags;
-    } else {
-      for (const part of m[2]!.split(/ and (?=ha(?:s|ve) |gets? )/)) {
-        const get = /^gets? (\S+)$/.exec(part);
-        const has = /^ha(?:s|ve) (.+)$/.exec(part);
-        if (get && effect.power === undefined) {
-          const pt = parsePT(get[1]!);
-          if (!pt) return null;
-          effect.power = pt.power;
-          effect.toughness = pt.toughness;
-        } else if (has && !effect.keywords) {
-          const kws = parseKeywordList(has[1]!, b);
-          if (!kws) return null;
-          effect.keywords = kws;
-        } else return null;
-      }
-    }
-    const node: StaticAbility = { kind: 'static', text: original, effect };
+      effect.rules = [...(effect.rules ?? []), ...flags];
+    } else if (get && effect.power === undefined) {
+      const pt = parsePT(get[1]!);
+      if (!pt) return null;
+      effect.power = pt.power;
+      effect.toughness = pt.toughness;
+    } else if (has && !effect.keywords) {
+      const kws = parseKeywordList(has[1]!, b);
+      if (!kws) return null;
+      effect.keywords = kws;
+    } else return null;
+  }
+  return effect;
+}
+
+/**
+ * Deck-construction rules (CR 113.6n): "~ can be your commander." (CR 903.3a), "A deck can have any
+ * number of cards named ~." They work before the game begins, so in a game there's nothing to do.
+ */
+export const deckRule: GrammarRule = {
+  id: 'deck_rule',
+  parse(line, original) {
+    const m =
+      /^~ can be your commander\.$/.exec(line) ??
+      /^A deck can have (?:any number of|up to \w+) cards named ~\.$/.exec(line);
+    if (!m) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'deck_rule' } };
     return node;
   },
 };
@@ -414,6 +515,61 @@ export const selfReplacementRule: GrammarRule = {
     if (!/^If ~ would be put into a graveyard from anywhere, exile it instead\.$/.test(line)) return null;
     const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'graveyard_to_exile' } };
     return node;
+  },
+};
+
+/** "This land enters tapped unless you control a Plains or an Island." (CR 614.1d, checked as it enters, CR 614.12) */
+export const entersTappedUnlessRule: GrammarRule = {
+  id: 'enters_tapped_unless',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^~ enters(?: the battlefield)? tapped unless (.+)\.$/.exec(line);
+    if (!env || !m) return null;
+    const unless = parseCondition(m[1]!, new Binder(env));
+    if (!unless) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_tapped', unless } };
+    return node;
+  },
+};
+
+/**
+ * "As ~ enters, you may pay 2 life. If you don't, it enters tapped." and other choices made
+ * as a permanent enters (CR 614.12): reveal a card, choose a color, choose a creature type.
+ */
+export const asEntersRule: GrammarRule = {
+  id: 'as_enters',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^(~ enters tapped\. )?As (?:~|it) enters, (.+)\.$/.exec(line);
+    if (!env || !m) return null;
+    const what = m[2]!;
+    const orTapped = / If you don't, (?:it|~) enters tapped$/;
+    let node: AsEntersNode | null = null;
+    const pay = /^you may pay (\d+) life\.( If you don't, (?:it|~) enters tapped)$/.exec(what);
+    if (pay) node = { type: 'as_enters', choice: 'pay_life', amount: Number(pay[1]) };
+    const reveal = /^you may reveal (?:a|an) (.+?) from your hand\.( If you don't, (?:it|~) enters tapped)$/.exec(what);
+    if (reveal) {
+      const pf = parseFilter(`${reveal[1]!.replace(/ or an? /g, ' or ')} in your hand`, new Binder(env));
+      if (!pf || pf.plural) return null;
+      node = { type: 'as_enters', choice: 'reveal', filter: pf.filter };
+    }
+    const color = /^choose a color(?: other than (\w+))?$/.exec(what);
+    if (color) {
+      node = { type: 'as_enters', choice: 'color' };
+      if (color[1]) {
+        const c = COLOR_WORDS[color[1]];
+        if (!c) return null;
+        node.except = c;
+      }
+    }
+    if (what === 'choose a creature type') node = { type: 'as_enters', choice: 'creature_type' };
+    if (!node || (orTapped.test(what) !== (node.choice === 'pay_life' || node.choice === 'reveal'))) return null;
+    if (m[1]) {
+      if (node.choice === 'pay_life' || node.choice === 'reveal') return null;
+      node.tapped = true;
+    }
+    const ability: StaticAbility = { kind: 'static', text: original, effect: node };
+    return ability;
   },
 };
 
@@ -450,6 +606,9 @@ export const additionalCostRule: GrammarRule = {
 
 export const GRAMMAR_RULES: GrammarRule[] = [
   entersWithCountersRule,
+  entersTappedUnlessRule,
+  asEntersRule,
+  deckRule,
   selfReplacementRule,
   additionalCostRule,
   continuousRule,

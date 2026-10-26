@@ -3,12 +3,12 @@ import { matchesFilter } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { refObjects } from './resolve.js';
 import type { GameEvent, GameState, PlayerId } from './types.js';
-import { livePlayers, zoneList } from './zones.js';
+import { faceOf, livePlayers, zoneList } from './zones.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -80,10 +80,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
             return o.controller === p && matchesFilter(g, o, cond.filter as ObjectFilter, { controller: p, source: source ?? null });
           }).length,
       );
+      // "your opponents control" — all of theirs together.
+      if (cond.who === 'opponents_total') return cmp(counts.reduce((a, b) => a + b, 0), cond);
       // "an opponent controls" — any of them; "each opponent controls" — all of them.
       return cond.who === 'any_opponent' ? counts.some((n) => cmp(n, cond)) : counts.length > 0 && counts.every((n) => cmp(n, cond));
     }
     case 'life':
+      // "an opponent has 10 or less life"
+      if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
+      if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       return cmp(g.players[controller]!.life, cond);
     case 'hand':
       return cmp(zoneList(g, 'hand', controller).length, cond);
@@ -116,8 +121,34 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const of = cond.of as { ref: string };
       const lki = of.ref === 'trigger_object' ? ctx.trigger?.lki : undefined;
       const counters = lki?.counters ?? refObjects(ctx, cond.of as never)[0]?.counters ?? {};
-      return cmp(counters[String(cond.counter)] ?? 0, cond);
+      // No kind named: "a counter on it" — any kind.
+      const n = cond.counter === undefined ? Object.values(counters).reduce((a, b) => a + b, 0) : (counters[String(cond.counter)] ?? 0);
+      return cmp(n, cond);
     }
+    case 'is': {
+      // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human".
+      const [o] = refObjects(ctx, cond.of as never);
+      return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
+    }
+    case 'has_attached': {
+      // "~ is equipped" (CR 301.5) / "~ is enchanted" (CR 303.4): an Equipment or Aura is attached to it.
+      if (!source || source.zone !== 'battlefield') return false;
+      return g.zones.battlefield.some((id) => {
+        const a = g.objects[id]!;
+        return a.attachedTo?.id === source.id && a.attachedTo.zcc === source.zcc && faceOf(g, a).subtypes.includes(String(cond.subtype));
+      });
+    }
+    case 'monstrous':
+      // CR 701.37b
+      return Boolean(source?.monstrous && source.zone === 'battlefield');
+    case 'monarch':
+      // CR 725: "if you're the monarch" / "if there is no monarch".
+      return cond.none ? !g.monarch : g.monarch === controller;
+    case 'opponents':
+      // CR 102.3: in multiplayer games, every other player is an opponent.
+      return cmp(livePlayers(g).filter((p) => p !== controller).length, cond);
+    case 'and':
+      return (cond.all as ConditionNode[]).every((c) => evalCondition(c, ctx));
     default:
       return false;
   }

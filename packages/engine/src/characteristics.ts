@@ -3,6 +3,8 @@ import type {
   AbilityNode,
   ActivatedAbility,
   Color,
+  CombatRules,
+  ConditionNode,
   ContinuousEffectNode,
   FaceDef,
   KeywordInstance,
@@ -11,6 +13,7 @@ import type {
   RuleFlag,
   StaticAbility,
 } from '@mtg/schema';
+import { evalCondition } from './conditions.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import { faceOf } from './zones.js';
 
@@ -29,6 +32,8 @@ export interface Characteristics {
   toughness: number;
   /** Restrictions and requirements from continuous effects ("can't block"). */
   rules: Set<RuleFlag>;
+  /** Blocking restrictions and requirements (CR 509.1b–c). */
+  combat: CombatRules[];
   /** Whether it has a power and toughness at all (creatures, Vehicles…). */
   hasPT: boolean;
 }
@@ -40,6 +45,7 @@ interface ActiveEffect {
   toughness?: number;
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
+  combat?: CombatRules;
   /** Does it apply to `o`, whose characteristics so far are `c`? */
   applies(o: GameObject, c: Characteristics): boolean;
 }
@@ -59,6 +65,7 @@ function printed(face: FaceDef): Characteristics {
     power: Number(face.power ?? 0) || 0,
     toughness: Number(face.toughness ?? 0) || 0,
     rules: new Set(),
+    combat: [],
     hasPT: face.power !== undefined,
   };
 }
@@ -78,6 +85,42 @@ export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
   return [...faceOf(g, o).abilities, ...keywordAbilities(chars(g, o).keywords)];
 }
 
+/**
+ * Conditional static abilities being checked right now. A condition can look at
+ * characteristics ("as long as you control a creature with power 4 or greater"), which
+ * look at static abilities again; while its own condition is being checked, an
+ * ability doesn't apply. (A simplification of dependency, CR 613.8.)
+ */
+const checking: [ConditionalNode, string][] = [];
+/** Condition results for the duration of one outermost chars() call, so nested lookups stay linear. */
+let conditionMemo: Map<ConditionalNode, Map<string, boolean>> | null = null;
+
+/** A static ability's effect that may carry a condition. */
+type ConditionalNode = { condition?: ConditionNode };
+let charsDepth = 0;
+
+/** Whether a static ability's condition holds now ("As long as …", "During your turn, …"; CR 611.3a). */
+export function staticConditionHolds(g: GameState, e: ConditionalNode, source: GameObject): boolean {
+  if (!e.condition) return true;
+  const key = `${source.id}:${source.zcc}`;
+  const cached = conditionMemo?.get(e)?.get(key);
+  if (cached !== undefined) return cached;
+  if (checking.some(([n, k]) => n === e && k === key)) return false;
+  checking.push([e, key]);
+  let holds: boolean;
+  try {
+    holds = evalCondition(e.condition, { g, controller: source.controller, source, events: [], targets: [], x: 0, memo: {} });
+  } finally {
+    checking.pop();
+  }
+  if (conditionMemo) {
+    let m = conditionMemo.get(e);
+    if (!m) conditionMemo.set(e, (m = new Map()));
+    m.set(key, holds);
+  }
+  return holds;
+}
+
 /** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3). */
 function staticEffects(g: GameState): ActiveEffect[] {
   const out: ActiveEffect[] = [];
@@ -87,12 +130,14 @@ function staticEffects(g: GameState): ActiveEffect[] {
     for (const ability of printedAbilities(faceOf(g, source))) {
       if (ability.kind !== 'static' || ability.effect.type !== 'continuous') continue;
       const e = (ability as StaticAbility).effect as ContinuousEffectNode;
+      if (!staticConditionHolds(g, e, source)) continue;
       out.push({
         // CR 613.7a: a static ability's effect has the timestamp of the object it's on.
         timestamp: source.timestamp,
         ...(e.power !== undefined ? { power: e.power, toughness: e.toughness ?? 0 } : {}),
         ...(e.keywords ? { keywords: e.keywords } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
+        ...(e.combat ? { combat: e.combat } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
       });
@@ -120,6 +165,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.power !== undefined ? { power: e.power, toughness: e.toughness ?? 0 } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
+    ...(e.combat ? { combat: e.combat } : {}),
     // CR 611.2c: locked to the objects it affected when it was created.
     applies: (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc),
   }));
@@ -132,6 +178,16 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
  * Layers 1–5, 7a, 7b, 7d and dependency (rule 613.8) arrive with the effects that need them.
  */
 export function chars(g: GameState, o: GameObject): Characteristics {
+  if (charsDepth === 0) conditionMemo = new Map();
+  charsDepth++;
+  try {
+    return layered(g, o);
+  } finally {
+    if (--charsDepth === 0) conditionMemo = null;
+  }
+}
+
+function layered(g: GameState, o: GameObject): Characteristics {
   const c = printed(faceOf(g, o));
   if (o.zone === 'stack') {
     // A spell's own "can't be countered" works while it's on the stack.
@@ -145,10 +201,11 @@ export function chars(g: GameState, o: GameObject): Characteristics {
 
   const effects = [...staticEffects(g), ...resolvedEffects(g)].sort((a, b) => a.timestamp - b.timestamp);
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
-  const inLayer6 = effects.filter((e) => (e.keywords || e.rules) && e.applies(o, c));
+  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat) && e.applies(o, c));
   for (const e of inLayer6) {
     if (e.keywords) c.keywords.push(...e.keywords);
     for (const r of e.rules ?? []) c.rules.add(r);
+    if (e.combat) c.combat.push(e.combat);
   }
   // CR 613.4c: layer 7c — effects and counters that modify power and toughness.
   for (const e of effects) {
@@ -249,6 +306,9 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(g.cards[o.card]?.cmc ?? 0, f.manaValue)) return false;
+  // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
+  if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
+  if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
   return true;
 }
 

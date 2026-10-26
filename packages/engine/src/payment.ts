@@ -9,7 +9,7 @@ import { moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -58,6 +58,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (g.players[player]!.life < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} life to pay.`);
     } else if (c.type === 'discard_self') {
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
+    } else if (c.type === 'exile_self') {
+      if (o.zone !== 'graveyard' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your graveyard.`);
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -87,6 +89,9 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'sacrifice_self') {
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       moveObject(g, o.id, 'graveyard', events);
+    } else if (c.type === 'exile_self') {
+      // CR 701.13a
+      moveObject(g, o.id, 'exile', events);
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       moveObject(g, o.id, 'graveyard', events);
@@ -129,9 +134,13 @@ export function runManaAbility(
   payOtherCosts(g, player, o, ability.cost, events, costChoices);
 
   // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
-  for (const e of ability.effects) {
+  const queue = [...ability.effects];
+  while (queue.length) {
+    const e = queue.shift()!;
     const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: 0, memo: {} });
-    if (ok !== true) throw new RulesError('Choose which mana to add.');
+    // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
+    if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
+    else if (ok !== true) throw new RulesError(e.type === 'add_mana' ? 'Choose which mana to add.' : 'That mana ability can’t be resolved automatically.');
   }
 }
 

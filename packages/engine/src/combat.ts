@@ -1,4 +1,4 @@
-import { canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, power, toughness } from './characteristics.js';
+import { canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import {
   RulesError,
   type AttackTarget,
@@ -73,8 +73,8 @@ function canAttack(g: GameState, o: GameObject): boolean {
     !o.tapped &&
     !hasType(g, o, 'Battle') &&
     canUseTapAbilities(g, o) &&
-    // CR 702.3b: a creature with defender can't attack.
-    !hasKeyword(g, o, 'defender') &&
+    // CR 702.3b: a creature with defender can't attack (unless an effect says it can anyway).
+    (!hasKeyword(g, o, 'defender') || hasRule(g, o, 'can_attack_with_defender')) &&
     !hasRule(g, o, 'cant_attack')
   );
 }
@@ -198,7 +198,30 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
     });
     if (matches) return `${aName} has ${kw.text}walk.`;
   }
+  // CR 509.1b: restrictions from continuous effects — on the attacker, then on the blocker.
+  for (const r of chars(g, attacker).combat) {
+    const ctx = { controller: attacker.controller, source: attacker };
+    if (r.cantBeBlockedBy && matchesFilter(g, blocker, r.cantBeBlockedBy, ctx)) return `${aName} can’t be blocked by ${nameOf(g, blocker)}.`;
+    if (r.blockableOnlyBy && !matchesFilter(g, blocker, r.blockableOnlyBy, ctx)) return `${aName} can’t be blocked by ${nameOf(g, blocker)}.`;
+  }
+  for (const r of chars(g, blocker).combat) {
+    if (r.canBlockOnly && !matchesFilter(g, attacker, r.canBlockOnly, { controller: blocker.controller, source: blocker })) {
+      return `${nameOf(g, blocker)} can’t block ${aName}.`;
+    }
+  }
   return null;
+}
+
+/** The fewest and most blockers an attacker can have: menace (CR 702.111b) and "can't be blocked except by three or more". */
+function blockerLimits(g: GameState, attacker: GameObject): { min: number; max: number } {
+  const c = chars(g, attacker);
+  let min = c.keywords.some((k) => k.id === 'menace') ? 2 : 1;
+  let max = Infinity;
+  for (const r of c.combat) {
+    if (r.minBlockers) min = Math.max(min, r.minBlockers);
+    if (r.maxBlockers) max = Math.min(max, r.maxBlockers);
+  }
+  return { min, max };
 }
 
 /** Called as the declare blockers step begins: queue every attacked player who could block. */
@@ -230,6 +253,63 @@ export function promptNextBlocker(g: GameState): void {
   g.pending = null;
 }
 
+/**
+ * Why a block declaration isn't legal, or null (CR 509.1a–c): restrictions first, then
+ * requirements ("must be blocked if able", "All creatures able to block ~ do so"), which must be
+ * obeyed as far as possible without breaking a restriction.
+ */
+export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: { blocker: ObjectId; attacker: ObjectId }[]): string | null {
+  const c = g.combat!;
+  const used = new Set<ObjectId>();
+  const perAttacker = new Map<ObjectId, ObjectId[]>();
+  for (const { blocker, attacker } of blocks) {
+    const b = g.objects[blocker];
+    const a = g.objects[attacker];
+    if (!b || !canBlockAtAll(g, b, player)) return `${b ? nameOf(g, b) : blocker} can’t block.`;
+    // CR 509.1a: each blocker blocks one attacking creature.
+    if (used.has(blocker)) return `${nameOf(g, b)} can only block one creature.`;
+    used.add(blocker);
+    const state = c.attackers[attacker];
+    // CR 802.4a: only creatures attacking you or your planeswalkers.
+    if (!a || !state || !stillThere(g, attacker, state.zcc) || defenderOf(g, state.target) !== player) {
+      return `${nameOf(g, b)} can only block a creature attacking you or your planeswalkers.`;
+    }
+    const problem = evasionProblem(g, b, a);
+    if (problem) return `${nameOf(g, b)} can’t block ${nameOf(g, a)}: ${problem}`;
+    perAttacker.set(attacker, [...(perAttacker.get(attacker) ?? []), blocker]);
+  }
+  for (const [attacker, list] of perAttacker) {
+    const a = g.objects[attacker]!;
+    const { min, max } = blockerLimits(g, a);
+    // CR 702.111b: menace — can't be blocked except by two or more creatures (and the like).
+    if (list.length < min) return min === 2 && hasKeyword(g, a, 'menace') ? `${nameOf(g, a)} has menace and needs two or more blockers.` : `${nameOf(g, a)} needs ${min} or more blockers.`;
+    if (list.length > max) return `${nameOf(g, a)} can’t be blocked by more than ${max === 1 ? 'one creature' : `${max} creatures`}.`;
+  }
+
+  // CR 509.1c: requirements.
+  const attackers = attackingCreatures(g).filter((o) => defenderOf(g, c.attackers[o.id]!.target) === player);
+  const potential = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => canBlockAtAll(g, o, player));
+  const able = (b: GameObject, a: GameObject) => !evasionProblem(g, b, a);
+  const requirement = (a: GameObject, kind: 'one' | 'all') => chars(g, a).combat.some((r) => r.mustBeBlocked === kind);
+  // A requirement that can't be met without breaking "needs N blockers" doesn't apply.
+  const reachable = (a: GameObject) => potential.filter((b) => able(b, a)).length >= blockerLimits(g, a).min;
+  const lures = attackers.filter((a) => requirement(a, 'all') && reachable(a));
+  const blocking = new Map(blocks.map((x) => [x.blocker, x.attacker]));
+  for (const b of potential) {
+    const target = blocking.get(b.id);
+    if (target && lures.some((l) => l.id === target)) continue;
+    const lure = lures.find((l) => able(b, l) && (perAttacker.get(l.id)?.length ?? 0) < blockerLimits(g, l).max);
+    if (lure) return `${nameOf(g, b)} must block ${nameOf(g, lure)} if able.`;
+  }
+  for (const a of attackers.filter((x) => requirement(x, 'one') && reachable(x))) {
+    if (perAttacker.has(a.id)) continue;
+    // Blocking it would obey this requirement; a creature already blocking a lure is obeying another one.
+    const free = potential.find((b) => able(b, a) && !lures.some((l) => l.id === blocking.get(b.id)));
+    if (free) return `${nameOf(g, a)} must be blocked if able.`;
+  }
+  return null;
+}
+
 export function declareBlockers(
   g: GameState,
   player: PlayerId,
@@ -237,31 +317,8 @@ export function declareBlockers(
   events: GameEvent[],
 ): void {
   const c = g.combat!;
-  const used = new Set<ObjectId>();
-  const perAttacker = new Map<ObjectId, ObjectId[]>();
-  for (const { blocker, attacker } of blocks) {
-    const b = g.objects[blocker];
-    const a = g.objects[attacker];
-    if (!b || !canBlockAtAll(g, b, player)) throw new RulesError(`${b ? nameOf(g, b) : blocker} can’t block.`);
-    // CR 509.1a: each blocker blocks one attacking creature.
-    if (used.has(blocker)) throw new RulesError(`${nameOf(g, b)} can only block one creature.`);
-    used.add(blocker);
-    const state = c.attackers[attacker];
-    // CR 802.4a: only creatures attacking you or your planeswalkers.
-    if (!a || !state || !stillThere(g, attacker, state.zcc) || defenderOf(g, state.target) !== player) {
-      throw new RulesError(`${nameOf(g, b)} can only block a creature attacking you or your planeswalkers.`);
-    }
-    const problem = evasionProblem(g, b, a);
-    if (problem) throw new RulesError(`${nameOf(g, b)} can’t block ${nameOf(g, a)}: ${problem}`);
-    perAttacker.set(attacker, [...(perAttacker.get(attacker) ?? []), blocker]);
-  }
-  for (const [attacker, list] of perAttacker) {
-    // CR 702.111b: menace — can't be blocked except by two or more creatures.
-    if (list.length === 1 && hasKeyword(g, g.objects[attacker]!, 'menace')) {
-      throw new RulesError(`${nameOf(g, g.objects[attacker]!)} has menace and needs two or more blockers.`);
-    }
-  }
-
+  const problem = blockDeclarationProblem(g, player, blocks);
+  if (problem) throw new RulesError(problem);
   for (const { blocker, attacker } of blocks) {
     // CR 509.1g: it becomes a blocking creature.
     c.blockers[blocker] = { zcc: g.objects[blocker]!.zcc, blocking: attacker };

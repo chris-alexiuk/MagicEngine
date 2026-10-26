@@ -1,5 +1,6 @@
 import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
+import { parseCombatRule } from './combat.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { parseTokenPhrase } from './tokens.js';
@@ -132,7 +133,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const l = parseClause(left, b, null);
       if (!l) return null;
-      const rest = parseSentenceWithSubject(right, b, l.subject);
+      // "Target creature gets +3/+3 until end of turn and must be blocked this turn if able": the object goes on.
+      const rest = parseSentenceWithSubject(right, b, l.subject) ?? (!l.subject && b.it ? attempt(b, (b) => parseClause(`it ${right}`, b, null))?.effects ?? null : null);
       return rest ? [...l.effects, ...rest] : null;
     });
     if (r) return r;
@@ -255,8 +257,11 @@ const VERBS: Record<string, VerbHandler> = {
   destroy: objectVerb('destroy'),
   exile(args, who, b, imperative) {
     if (!imperative) return null;
-    const what = parseObjectRef(args, b);
-    return what ? [{ type: 'move', what: what.ref, to: 'exile' }] : null;
+    // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
+    const until = / until ~ leaves the battlefield$/.exec(args);
+    const what = parseObjectRef(until ? args.slice(0, until.index) : args, b);
+    if (!what) return null;
+    return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: 'source_leaves' } : {}) }];
   },
   return(args, who, b, imperative) {
     if (!imperative) return null;
@@ -367,6 +372,31 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const amount = parseAmount(monstrosity[1]!);
     return amount !== null ? [{ type: 'monstrosity', amount }] : null;
   }
+  // CR 701.46a: "Adapt N" means "If this permanent has no +1/+1 counters on it, put N +1/+1 counters on it."
+  const adapt = /^adapt (\S+)$/i.exec(c);
+  if (adapt) {
+    const amount = parseAmount(adapt[1]!);
+    if (amount === null || amount === undefined) return null;
+    return [
+      {
+        type: 'if',
+        cond: { type: 'counters', of: { ref: 'self' }, counter: '+1/+1', max: 0 },
+        effects: [{ type: 'add_counters', what: { ref: 'self' }, counter: '+1/+1', amount }],
+      },
+    ];
+  }
+  // CR 701.44a: "~ explores", "target creature you control explores".
+  const explore = /^(.+?) explores$/i.exec(c);
+  if (explore) {
+    const what = parseObjectRef(explore[1]!, b);
+    return what && !what.plural ? [{ type: 'explore', what: what.ref }] : null;
+  }
+  // CR 725.1: "you become the monarch", "target player becomes the monarch".
+  const monarch = /^(.+?) becomes? the monarch$/i.exec(c);
+  if (monarch) {
+    const who = parsePlayerRef(monarch[1]!, b);
+    return who ? [{ type: 'become_monarch', who }] : null;
+  }
   // CR 701.27a: transforming turns a double-faced permanent over.
   const transform = /^transform (~|it)$/i.exec(c);
   if (transform && (transform[1] === '~' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
@@ -465,6 +495,21 @@ const RESTRICTIONS: Record<string, RuleFlag[]> = {
 
 /** "Target creature can't block this turn." */
 function parseRestriction(c: string, b: Binder): EffectNode[] | null {
+  // "Target creature must be blocked this turn if able." / "~ can't be blocked by more than one creature this turn."
+  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can block only .+? this turn)$/.exec(c);
+  if (combat) {
+    const r = attempt(b, (b) => {
+      const rule = parseCombatRule(combat[2]!.replace(' this turn', ''), b);
+      const what = rule && parseObjectRef(combat[1]!, b);
+      return what && rule ? [{ type: 'modify', what: what.ref, combat: rule, until: 'eot' }] : null;
+    });
+    if (r) return r;
+  }
+  const lure = /^All creatures able to block (.+?) this turn do so$/.exec(c);
+  if (lure) {
+    const what = parseObjectRef(lure[1]!, b);
+    return what ? [{ type: 'modify', what: what.ref, combat: { mustBeBlocked: 'all' }, until: 'eot' }] : null;
+  }
   const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) this turn$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {

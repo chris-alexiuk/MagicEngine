@@ -99,6 +99,7 @@ export function moveObject(
   delete o.activatedTurn;
   delete o.triggeredTurn;
   delete o.monstrous;
+  delete o.chosen;
   delete o.exileIfDiesTurn;
   delete o.baseController;
   if (opts.x !== undefined) o.x = opts.x;

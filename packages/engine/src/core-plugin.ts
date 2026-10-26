@@ -1,10 +1,11 @@
-import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AddManaEffect, AsEntersNode, CombatRules, ConditionNode, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES } from '@mtg/schema';
+import { queueAsEnters } from './as-enters.js';
 import { hasKeyword, hasRule, matchesFilter } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { MANA_COLORS } from './mana.js';
+import { MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
 import { attach, createToken, destroy, sacrifice } from './permanents.js';
 import { installPlugin, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
@@ -48,7 +49,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const index = typeof ctx.choice === 'number' ? ctx.choice : effect.options.length === 1 ? 0 : -1;
       const option = effect.options[index];
       if (!option) return false;
-      mana = option as ManaColor[];
+      mana = manaOption(option, ctx.source) ?? undefined;
     }
     if (!mana) return false;
     const pool = ctx.g.players[ctx.controller]!.pool;
@@ -108,6 +109,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const counters = node.counters as Record<string, number> | undefined;
         moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}) });
         if (node.tapped) setTapped(ctx.g, o.id, true, ctx.events);
+      } else if (node.until === 'source_leaves') {
+        // CR 610.3a: if the source has already left the battlefield, the object doesn't move at all.
+        const src = ctx.source;
+        if (!src || src.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && src.zcc !== ctx.sourceZcc)) continue;
+        if (o.zone !== 'battlefield') continue;
+        moveObject(ctx.g, o.id, 'exile', ctx.events);
+        (ctx.g.exiledUntil ??= []).push({ source: { id: src.id, zcc: src.zcc }, object: { id: o.id, zcc: o.zcc } });
       } else {
         // CR 701.13a: exile moves it to the exile zone from wherever it is.
         if (o.zone === 'stack' && o.id !== ctx.source?.id) continue;
@@ -169,6 +177,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(typeof node.power === 'number' ? { power: node.power, toughness: Number(node.toughness ?? 0) } : {}),
       ...(Array.isArray(node.keywords) ? { keywords: node.keywords as KeywordInstance[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
+      ...(node.combat ? { combat: node.combat as CombatRules } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2).
       until: 'eot',
     });
@@ -278,6 +287,48 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (o.zone !== 'battlefield' || o.monstrous) continue;
       addCounters(ctx, o, '+1/+1', amountOf(ctx, node.amount));
       o.monstrous = true;
+    }
+    return true;
+  },
+
+  explore(node, ctx) {
+    // CR 701.44a: reveal the top card of your library. A land goes into your hand; otherwise put a
+    // +1/+1 counter on the permanent, then you may put the card into your graveyard.
+    const memo = ctx.memo as { card?: string; explorer?: string };
+    const answer = answerOf(ctx, 'may');
+    if (answer && memo.card) {
+      const card = ctx.g.objects[memo.card];
+      if (answer.yes && card?.zone === 'library') moveObject(ctx.g, card.id, 'graveyard', ctx.events);
+      return true;
+    }
+    const [o] = refObjects(ctx, ref(node, 'what'));
+    if (!o) return true;
+    const player = o.controller;
+    const top = zoneList(ctx.g, 'library', player)[0];
+    if (!top) {
+      // CR 701.44b: it still explores, with nothing revealed (and so not a land).
+      if (o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', 1);
+      ctx.events.push({ type: 'explored', object: o.id, land: false });
+      return true;
+    }
+    ctx.events.push({ type: 'revealed', player, objects: [top] });
+    const land = ctx.g.cards[ctx.g.objects[top]!.card]!.faces[0]!.types.includes('Land');
+    ctx.events.push({ type: 'explored', object: o.id, land });
+    if (land) {
+      moveObject(ctx.g, top, 'hand', ctx.events);
+      return true;
+    }
+    if (o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', 1);
+    memo.card = top;
+    return { ask: { kind: 'may', player, text: `put ${nameOf(ctx.g, ctx.g.objects[top]!)} into your graveyard`, sourceName: sourceName(ctx) } };
+  },
+
+  become_monarch(node, ctx) {
+    // CR 725.3: only one player is the monarch; the current one stops being it.
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      if (ctx.g.monarch === p) continue;
+      ctx.g.monarch = p;
+      ctx.events.push({ type: 'monarch', player: p });
     }
     return true;
   },
@@ -672,12 +723,27 @@ export const corePlugin: MechanicPlugin = {
   effects,
   triggers,
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
-  // "exile it instead" in moveObject.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile'],
+  // "exile it instead" in moveObject, rules for players in player-rules.ts.
+  // Deck-construction rules (CR 113.6n) do nothing during a game.
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
-    enters_tapped(_node, o) {
+    enters_tapped(node, o, g) {
+      if (node.unless) {
+        // CR 614.12: checked as it would enter — it isn't on the battlefield yet for "you control two or more other lands".
+        const i = g.zones.battlefield.indexOf(o.id);
+        if (i >= 0) g.zones.battlefield.splice(i, 1);
+        try {
+          if (evalCondition(node.unless as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+        } finally {
+          if (i >= 0) g.zones.battlefield.splice(i, 0, o.id);
+        }
+      }
       o.tapped = true;
+    },
+    // CR 614.12: "As ~ enters, …" — the choice is asked for before anyone gets priority.
+    as_enters(node, o, g) {
+      queueAsEnters(g, o, node as AsEntersNode);
     },
     // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
     enters_with_counters(node, o) {

@@ -33,6 +33,8 @@ import {
   type PlayerId,
   type Target,
 } from './types.js';
+import { landsAllowed } from './player-rules.js';
+import { answerAsEnters } from './as-enters.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 
 /**
@@ -155,6 +157,9 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'trigger_targets':
       answerTriggerTargets(g, player, answer.modes, answer.targets, events);
       return;
+    case 'as_enters':
+      answerAsEnters(g, player, answer, events);
+      return;
     case 'scry':
     case 'surveil':
     case 'discard':
@@ -187,8 +192,8 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   if (g.active !== player) throw new RulesError('You can only play lands during your own turn.');
   if (g.step !== 'main1' && g.step !== 'main2') throw new RulesError('Lands can only be played during a main phase.');
   if (g.stack.length > 0) throw new RulesError('Lands can only be played while the stack is empty.');
-  // CR 305.2: normally one land per turn.
-  if (g.players[player]!.landsPlayedThisTurn >= 1) throw new RulesError('You’ve already played a land this turn.');
+  // CR 305.2: normally one land per turn; continuous effects may allow more (CR 305.2a).
+  if (g.players[player]!.landsPlayedThisTurn >= landsAllowed(g, player)) throw new RulesError('You’ve already played a land this turn.');
 
   g.players[player]!.landsPlayedThisTurn++;
   // CR 116.2a: playing a land is a special action — it goes straight onto the battlefield.

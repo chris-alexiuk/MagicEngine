@@ -26,6 +26,8 @@ export class Binder {
   player: Ref | null = null;
   /** Other phrases with a fixed meaning in this ability ("the blocking creature"). */
   named: Record<string, Ref> = {};
+  /** Set when the text moves this object out of a zone ("return ~ from your graveyard"): the ability works there (CR 113.6m). */
+  selfZone: 'graveyard' | null = null;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -35,6 +37,7 @@ export class Binder {
     b.it = this.it;
     b.player = this.player;
     b.named = this.named;
+    b.selfZone = this.selfZone;
     return b;
   }
 
@@ -43,6 +46,7 @@ export class Binder {
     this.it = other.it;
     this.player = other.player;
     this.named = other.named;
+    this.selfZone = other.selfZone;
   }
 
   addTarget(spec: TargetSpec): Ref {

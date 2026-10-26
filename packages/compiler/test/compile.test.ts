@@ -52,7 +52,8 @@ describe('compileCards', () => {
     expect(delver.faces[1]!.img).toMatch(/^back\//);
 
     const valakut = byName('Valakut Awakening // Valakut Stoneforge');
-    expect(valakut.faces[1]!.abilities[0]).toMatchObject({ mana: true });
+    expect(valakut.faces[1]!.abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'as_enters', choice: 'pay_life', amount: 3 } });
+    expect(valakut.faces[1]!.abilities[1]).toMatchObject({ mana: true });
   });
 
   it('stores compact image paths that rebuild into Scryfall URLs', () => {
@@ -72,7 +73,7 @@ describe('compileCards', () => {
     expect(byName('Counterspell').automation).toBe('full');
     expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
     expect(byName('Kinnan, Bonder Prodigy').automation).toBe('manual'); // mana-ability triggers aren't compiled yet
-    expect(byName('Breeding Pool').automation).toBe('partial'); // intrinsic mana works; the shock clause is manual
+    expect(byName('Breeding Pool').automation).toBe('full'); // intrinsic mana, and the shock clause (CR 614.12)
     // Escape is recorded but not applied yet, and the other lines are unparsed.
     expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('manual');
     expect(byName('Uro, Titan of Nature\'s Wrath').faces[0]!.manualKeywords).toEqual(['Escape—{G}{G}{U}{U}, Exile five other cards from your graveyard.']);

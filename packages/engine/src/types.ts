@@ -1,4 +1,4 @@
-import type { CardDef, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { AsEntersNode, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
@@ -111,6 +111,8 @@ export interface GameObject {
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
   exileIfDiesTurn?: number;
+  /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
+  chosen?: { color?: Color; creatureType?: string };
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -217,6 +219,7 @@ export interface ContinuousEffect {
   toughness?: number;
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
+  combat?: CombatRules;
   /** Layer 2 (CR 613.1b): this player controls the objects. */
   control?: PlayerId;
   /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
@@ -315,7 +318,22 @@ export type PendingChoice =
   /** CR 701.23a: the player looks through their library for cards matching the description. */
   | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
-  | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number };
+  | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
+  /**
+   * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
+   * (reveal lists the cards that qualify); color / creature_type: pick one of `options`.
+   */
+  | {
+      kind: 'as_enters';
+      player: PlayerId;
+      object: ObjectId;
+      sourceName: string;
+      text: string;
+      choice: AsEntersNode['choice'];
+      amount?: number;
+      candidates?: ObjectId[];
+      options?: string[];
+    };
 
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
@@ -335,7 +353,9 @@ export type ChoiceAnswer =
   | { kind: 'may'; yes: boolean }
   | { kind: 'pay'; pay: boolean }
   | { kind: 'search'; objects: ObjectId[] }
-  | { kind: 'sacrifice'; objects: ObjectId[] };
+  | { kind: 'sacrifice'; objects: ObjectId[] }
+  /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
+  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -424,6 +444,14 @@ export type GameEvent =
   | { type: 'transformed'; object: ObjectId; face: number }
   | { type: 'scried'; player: PlayerId; top: number; bottom: number }
   | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
+  /** CR 701.20a: cards shown to every player. */
+  | { type: 'revealed'; player: PlayerId; objects: ObjectId[] }
+  /** CR 614.12: a choice made as a permanent entered. */
+  | { type: 'chosen'; object: ObjectId; choice: string }
+  /** CR 725.3: a player became the monarch. */
+  | { type: 'monarch'; player: PlayerId }
+  /** CR 701.44b: a permanent explored. */
+  | { type: 'explored'; object: ObjectId; land: boolean }
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
   | { type: 'land_played'; player: PlayerId; object: ObjectId }
@@ -489,6 +517,12 @@ export interface GameState {
   delayed: DelayedTrigger[];
   /** Prevention shields (CR 615). */
   prevention: PreventionShield[];
+  /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
+  exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
+  /** CR 725: the player who is the monarch, once someone has become it. */
+  monarch?: PlayerId | null;
+  /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
+  asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode }[];
   /** What happened this turn, and how many spells each player cast last turn. */
   turnLog: TurnLog;
   lastTurnSpells: Record<PlayerId, number>;

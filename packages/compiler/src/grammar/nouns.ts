@@ -13,6 +13,8 @@ export interface ParsedFilter {
 }
 
 const PLURAL_HEADS = new Set(['permanents', 'spells', 'cards', 'tokens']);
+/** CR 110.4: the permanent card types. */
+const PERMANENT_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
 
 /** Post-modifiers, peeled off the end of a phrase one at a time. */
 const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boolean][] = [
@@ -20,6 +22,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
+  [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
   [/ (?:from|in) an opponent's graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
   [/ (?:from|in) (?:a|any|target player's) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
@@ -88,7 +92,7 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
 
   // "noncreature, nonland permanent": a comma between "non-" words is "and".
   rest = rest.replace(/,\s+(?=non)/g, ' ');
-  const parts = rest.split(/,\s*or\s+|\s+or\s+|,\s+/);
+  const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/);
   const last = parts[parts.length - 1]!;
   const head = parseHeadPhrase(last, f);
   if (!head) return null;
@@ -187,10 +191,13 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     else if (SUPERTYPE_WORDS[w]) (f.supertypes ??= []).push(SUPERTYPE_WORDS[w]!);
     else if (TYPE_NOUNS[w] && w === TYPE_NOUNS[w]!.toLowerCase()) adjTypes.push(TYPE_NOUNS[w]!);
     else if (w === 'token') f.token = true;
+    // "permanent card" (CR 110.4b): a card with a permanent type.
+    else if (w === 'permanent' && /^cards?$/.test(lower)) f.types = [...PERMANENT_TYPES];
     else if (subtypeOf(raw) === raw) (f.subtypes ??= []).push(raw);
     else return null;
   }
 
+  if (f.types && adjTypes.length) return null; // "permanent creature card"
   if (headType) {
     f.types = [headType];
     if (adjTypes.length) f.allTypes = adjTypes;
@@ -226,6 +233,11 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
     if (named) return set(b, { ref: named, plural: false, targeted: false });
+    // "return ~ from your graveyard to your hand": the ability functions from the graveyard (CR 113.6m).
+    if (t === '~ from your graveyard') {
+      b.selfZone = 'graveyard';
+      return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
+    }
     if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|those)/i.test(t), targeted: false } : null;
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
       return set(b, { ref: { ref: 'attached' }, plural: false, targeted: false });

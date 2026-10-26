@@ -13,6 +13,7 @@ import { gunzipSync } from 'node:zlib';
 import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef } from '@mtg/schema';
 import {
+  blockDeclarationProblem,
   activatedAbilities,
   apply,
   blockProblem,
@@ -193,8 +194,11 @@ function decide(g: GameState): { action: Action; note?: string } | null {
         return { action: { type: 'choose', player: me, answer: { kind: 'legend_rule', keep: p.objects[0]! } } };
       case 'declare_attackers':
         return { action: { type: 'choose', player: me, answer: { kind: 'declare_attackers', attacks: chooseAttacks(g, me, p.attackers) } } };
-      case 'declare_blockers':
-        return { action: { type: 'choose', player: me, answer: { kind: 'declare_blockers', blocks: chooseBlocks(g, me, p.blockers, p.attackers) } } };
+      case 'declare_blockers': {
+        const blocks = chooseBlocks(g, me, p.blockers, p.attackers);
+        // The heuristic doesn't know about requirements ("must be blocked if able"); fall back to none.
+        return { action: { type: 'choose', player: me, answer: { kind: 'declare_blockers', blocks: blockDeclarationProblem(g, me, blocks) ? [] : blocks } } };
+      }
       case 'assign_combat_damage':
         return {
           action: {
@@ -229,6 +233,12 @@ function decide(g: GameState): { action: Action; note?: string } | null {
       }
       case 'search':
         return { action: { type: 'choose', player: me, answer: { kind: 'search', objects: p.candidates.slice(0, p.count) } } };
+      case 'as_enters': {
+        // Pay life for an untapped land while it's cheap; reveal when possible; otherwise the first option.
+        if (p.choice === 'pay_life') return { action: { type: 'choose', player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life > 10 } } };
+        if (p.choice === 'reveal') return { action: { type: 'choose', player: me, answer: { kind: 'as_enters', reveal: p.candidates?.[0] ?? null } } };
+        return { action: { type: 'choose', player: me, answer: { kind: 'as_enters', choice: p.options![0]! } } };
+      }
     }
   }
 

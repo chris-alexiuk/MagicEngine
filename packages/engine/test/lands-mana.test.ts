@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { manaAbilities, parseManaCost, payFromPool } from '../src/index.js';
 import { emptyPool } from '../src/mana.js';
-import { act, give, illegal, start, toStep } from './helpers.js';
+import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
 
 describe('playing lands', () => {
   it('CR 305.1 / CR 116.3: play a land in your main phase and keep priority', () => {
@@ -48,6 +48,10 @@ describe('playing lands', () => {
     expect(illegal(g, { type: 'play_land', player: 'alice', object: valakut })).toMatch(/isn’t a land/);
     g = act(g, { type: 'play_land', player: 'alice', object: valakut, face: 1 });
     expect(g.objects[valakut]).toMatchObject({ zone: 'battlefield', face: 1 });
+    // CR 614.12: "As Valakut Stoneforge enters, you may pay 3 life. If you don't, it enters tapped."
+    expect(g.pending).toMatchObject({ kind: 'as_enters', choice: 'pay_life', amount: 3 });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', pay: true } });
+    expect(g.players.alice!.life).toBe(17);
     g = act(g, { type: 'activate_mana', player: 'alice', object: valakut, ability: 0 });
     expect(g.players.alice!.pool.R).toBe(1);
   });
@@ -69,6 +73,17 @@ describe('mana abilities', () => {
     expect(g.stack).toEqual([]);
     expect(g.players.alice!.pool.G).toBe(1);
     expect(g.objects[elves]!.tapped).toBe(true);
+  });
+
+  it('CR 605.1a: a mana ability can do other things too, conditions included', () => {
+    const tom = makeCard({ name: 'Mutant Druid', type_line: 'Creature — Mutant', oracle_text: '{T}: Add {G}. If you control another Mutant, you gain 1 life.', mana_cost: '{G}', power: '1', toughness: '1' });
+    let g = toStep(start({ extra: [tom] }), 'main1');
+    const a = give(g, 'alice', 'Mutant Druid', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: a, ability: 0 });
+    expect(g.players.alice).toMatchObject({ life: 20, pool: { G: 1 } });
+    const b = give(g, 'alice', 'Mutant Druid', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: b, ability: 0 });
+    expect(g.players.alice).toMatchObject({ life: 21, pool: { G: 2 } });
   });
 
   it('CR 118.3: a tapped permanent can’t be tapped again to pay a cost', () => {

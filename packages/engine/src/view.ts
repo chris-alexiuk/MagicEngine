@@ -1,4 +1,5 @@
 import type { CardDef } from '@mtg/schema';
+import { playerRule } from './player-rules.js';
 import type { GameObject, GameState, ObjectId, PendingChoice, PlayerId } from './types.js';
 
 /**
@@ -43,6 +44,11 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   // CR 701.22a / CR 701.25a: a player who scries or surveils looks at those cards.
   if (g.pending && g.pending.player === viewer && (g.pending.kind === 'scry' || g.pending.kind === 'surveil')) {
     for (const id of g.pending.objects) visible.add(id);
+  }
+  // CR 401.5: "You may look at the top card of your library any time." / "Play with the top card of your library revealed."
+  for (const p of g.order) {
+    const top = g.zones.library[p]?.[0];
+    if (top && ((p === viewer && playerRule(g, p, 'look_at_top')) || playerRule(g, p, 'top_revealed'))) visible.add(top);
   }
   // CR 701.23a: a player searching their library looks at all of it.
   if (g.pending?.kind === 'search' && g.pending.player === viewer) {

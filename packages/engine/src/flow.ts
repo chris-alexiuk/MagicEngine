@@ -5,6 +5,8 @@ import { canAttach, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
+import { playerRule } from './player-rules.js';
+import { promptAsEnters } from './as-enters.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
 import type { ChoiceAnswer, GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
@@ -34,11 +36,15 @@ export function givePriority(g: GameState, player: PlayerId): void {
 export function settle(g: GameState, events: GameEvent[]): void {
   for (let guard = 0; guard < 1000; guard++) {
     if (g.over) return;
+    returnExiledUntil(g, events);
     collectTriggers(g, events);
     if (g.pending || !g.started) return;
+    // CR 614.12: choices for permanents that just entered ("As ~ enters, …").
+    if (promptAsEnters(g)) return;
     applyControlEffects(g, events);
     checkStateBasedActions(g, events);
     if (g.over || g.pending) return;
+    if (returnExiledUntil(g, events)) continue;
     if (g.priority === null) return;
     if (g.triggers.length) {
       // CR 117.5: triggered abilities are put on the stack after state-based actions, then check again.
@@ -51,6 +57,25 @@ export function settle(g: GameState, events: GameEvent[]): void {
     return;
   }
   throw new Error('settle did not converge');
+}
+
+/**
+ * CR 610.3: once the permanent leaves the battlefield, what it exiled "until ~ leaves the
+ * battlefield" returns — under its owner's control (CR 610.3c). True if anything changed.
+ */
+function returnExiledUntil(g: GameState, events: GameEvent[]): boolean {
+  if (!g.exiledUntil?.length) return false;
+  let changed = false;
+  for (const link of [...g.exiledUntil]) {
+    const src = g.objects[link.source.id];
+    if (src && src.zone === 'battlefield' && src.zcc === link.source.zcc) continue;
+    g.exiledUntil = g.exiledUntil.filter((l) => l !== link);
+    const o = g.objects[link.object.id];
+    if (!o || o.zone !== 'exile' || o.zcc !== link.object.zcc) continue;
+    moveObject(g, o.id, 'battlefield', events, { controller: o.owner });
+    changed = true;
+  }
+  return changed;
 }
 
 /**
@@ -262,8 +287,9 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       // CR 103.8a: in a two-player game the starting player skips the draw step of their first turn.
       // CR 103.8c: in other multiplayer games, nobody skips it.
       const skip = g.turn === 1 && g.order.length === 2;
-      // CR 504.1: the active player draws a card.
-      if (!skip) drawCard(g, g.active, events);
+      // CR 504.1: the active player draws a card — unless they skip it (CR 614.10: "Skip your draw step" is
+      // "instead of drawing, do nothing"; the step still happens for priority).
+      if (!skip && !playerRule(g, g.active, 'skip_draw')) drawCard(g, g.active, events);
       break;
     }
     case 'beginning_of_combat':
@@ -300,7 +326,7 @@ function startCleanup(g: GameState, events: GameEvent[]): void {
   // CR 514.1 / CR 402.2: discard down to maximum hand size.
   const hand = zoneList(g, 'hand', g.active);
   const excess = hand.length - g.config.maxHandSize;
-  if (excess > 0) {
+  if (excess > 0 && !playerRule(g, g.active, 'no_max_hand_size')) {
     g.pending = { kind: 'discard_to_hand_size', player: g.active, count: excess };
     return;
   }
@@ -478,6 +504,12 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   if (g.combat) g.combat.toDeclareBlockers = g.combat.toDeclareBlockers.filter((p) => p !== player);
 
   const remaining = livePlayers(g);
+  // CR 725.4: if the monarch leaves the game, the active player becomes the monarch
+  // (or, if the active player is the one leaving, the next player in turn order).
+  if (g.monarch === player && remaining.length) {
+    g.monarch = g.active !== player && remaining.includes(g.active) ? g.active : nextPlayer(g, player);
+    events.push({ type: 'monarch', player: g.monarch });
+  }
   if (remaining.length <= 1) {
     // CR 104.2a: a player wins once all their opponents have left the game.
     g.winner = remaining[0] ?? null;

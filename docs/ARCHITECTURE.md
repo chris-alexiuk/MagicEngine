@@ -50,6 +50,9 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
 - **Resolution** runs the effects in order and can stop for a choice (scry, discard, "you may", "unless … pays", search); the answer resumes it. Effects reach their subjects through references, with last-known information for objects that moved.
 - **Triggers** are detected from events in batches, look back in time for leaves-the-battlefield abilities (CR 603.10a), and go on the stack in APNAP order before anyone gets priority.
 - **Characteristics** go through the layer system: printed values, then continuous effects from static abilities (not locked in) and resolved spells (locked in), in layer and timestamp order. Layers 6 and 7c are implemented so far; the rest arrive with the effects that need them.
+- **Conditional statics** ("As long as …", "During your turn, …") are checked every time characteristics are computed (CR 611.3a). A condition that itself looks at characteristics can't see its own ability while it's being checked, which stops loops; results are memoised for the duration of one outermost lookup.
+- **"As ~ enters" choices** (shocklands, reveal lands, "choose a color/creature type", CR 614.12) are recorded as the permanent enters and asked for before anyone gets priority or triggers go on the stack. No player can act in between, so it's the same as choosing as it enters. The answer is remembered on the permanent ("of the chosen type", "one mana of the chosen color").
+- **Rules for players** ("no maximum hand size", "an additional land", "skip your draw step", "look at the top card of your library") are static abilities read where the rule applies (`player-rules.ts`).
 - `scripts/fuzz.ts` plays random games with random decks from the full card pool and checks every action and the state's invariants.
 - Every implemented rule is cited as `CR x.y` in code and tests; [docs/rules/TRACE.md](rules/TRACE.md) shows coverage by section. See [docs/rules/README.md](rules/README.md).
 
@@ -67,7 +70,8 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Continuous effects: anthems and lords, granted keywords and restrictions, until-end-of-turn effects; Auras and Equipment
    - ✅ Keywords compiled from their CR 702 definitions (prowess, cycling, typecycling, equip, ward, exalted, battle cry, bushido, flanking, afterlife, annihilator, persist, undying…), plus flashback, kicker and changeling natively
    - ✅ Sacrifice choices (edicts, costs, additional costs), discard costs, conditions ("if"), intervening "if" (CR 603.4), "you may … If you do", delayed triggers (CR 603.7), control changes (layer 2), "exile it instead" replacements, prevention shields
-   - Next: the remaining layers (type, color, P/T setting, text), more replacement effects, copy effects, alternative costs, graveyard and exile zone abilities
+   - ✅ Conditional statics ("as long as", "during your turn"), player rules (hand size, extra lands, skip draw, top of library), lands that check or ask as they enter (checklands, fastlands, shocklands, reveal lands, "choose a color"), abilities that work from the graveyard (CR 113.6m), exile until ~ leaves (CR 610.3), adapt, explore, the monarch (CR 725), blocking restrictions and requirements (CR 509.1b–c)
+   - Next: the remaining layers (type, color, P/T setting, text), more replacement effects, copy effects, alternative costs, modal "choose N" variants, blockers that block several creatures
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

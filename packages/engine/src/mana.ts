@@ -1,6 +1,17 @@
-import type { ManaColor, ManaPool } from './types.js';
+import type { GameObject, ManaColor, ManaPool } from './types.js';
 
 export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
+
+/** One way an ability makes mana, with "chosen" read from the source (CR 614.12); null if nothing was chosen. */
+export function manaOption(option: string[], source: GameObject | undefined): ManaColor[] | null {
+  const out: ManaColor[] = [];
+  for (const sym of option) {
+    const c = sym === 'chosen' ? source?.chosen?.color : sym;
+    if (!c || !MANA_COLORS.includes(c as ManaColor)) return null;
+    out.push(c as ManaColor);
+  }
+  return out;
+}
 
 export function emptyPool(): ManaPool {
   return { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };

@@ -29,9 +29,12 @@ export function parseManaProduction(text: string): AddManaEffect | null {
   const anyOne = /^(two|three|four|five) mana of any one color$/.exec(text);
   if (anyOne) return { type: 'add_mana', anyColor: ['two', 'three', 'four', 'five'].indexOf(anyOne[1]!) + 2 };
   if (PRODUCED_RUN.test(text)) return { type: 'add_mana', options: [symbols(text)] };
+  // "one mana of the chosen color" (CR 614.12: chosen as the source entered).
+  const CHOSEN = 'one mana of the chosen color';
+  if (text === CHOSEN) return { type: 'add_mana', options: [['chosen']] };
   const alternatives = text.split(/,? or |, /);
-  if (alternatives.length > 1 && alternatives.every((a) => PRODUCED_RUN.test(a))) {
-    return { type: 'add_mana', options: alternatives.map(symbols) };
+  if (alternatives.length > 1 && alternatives.every((a) => PRODUCED_RUN.test(a) || a === CHOSEN)) {
+    return { type: 'add_mana', options: alternatives.map((a) => (a === CHOSEN ? ['chosen'] : symbols(a))) };
   }
   return null;
 }

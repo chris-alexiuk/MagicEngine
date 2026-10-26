@@ -17,7 +17,9 @@ import type { CardDB, CardDef, Color } from '@mtg/schema';
 import {
   activatedAbilities,
   apply,
+  blockDeclarationProblem,
   blockProblem,
+  chars,
   createGame,
   flatten,
   hasKeyword,
@@ -40,6 +42,7 @@ const opt = (name: string, d: string) => {
 const dbPath = args[0];
 if (!dbPath) throw new Error('usage: fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players N]');
 const GAMES = Number(opt('--games', '40'));
+let lastSizes = '';
 const SEED = Number(opt('--seed', '1'));
 const PLAYERS = opt('--players', 'mixed');
 const VERBOSE = args.includes('--verbose');
@@ -154,6 +157,10 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       const k = Math.floor(rnd() * (xs.length + 1));
       return { player: me, answer: { kind: 'surveil', top: xs.slice(0, k), graveyard: xs.slice(k) } };
     }
+    case 'as_enters':
+      if (p.choice === 'pay_life') return { player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life >= (p.amount ?? 0) && rnd() < 0.6 } };
+      if (p.choice === 'reveal') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };
+      return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };
     case 'declare_attackers': {
       const attacks = p.attackers
         .filter((id) => hasRule(g, g.objects[id]!, 'attacks_each_combat') || rnd() < 0.6)
@@ -161,13 +168,35 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'declare_attackers', attacks } };
     }
     case 'declare_blockers': {
-      const blocks: { blocker: string; attacker: string }[] = [];
-      for (const blocker of p.blockers) {
-        if (rnd() < 0.5) continue;
-        const options = p.attackers.filter((a) => !blockProblem(g, g.objects[blocker]!, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace'));
-        if (options.length) blocks.push({ blocker, attacker: pick(options) });
+      const random = () => {
+        const blocks: { blocker: string; attacker: string }[] = [];
+        for (const blocker of p.blockers) {
+          if (rnd() < 0.5) continue;
+          const options = p.attackers.filter((a) => !blockProblem(g, g.objects[blocker]!, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace'));
+          if (options.length) blocks.push({ blocker, attacker: pick(options) });
+        }
+        return blocks;
+      };
+      // Requirements first (CR 509.1c): lures get every creature able to block them; "must be blocked" gets one.
+      const forced = () => {
+        const must = (a: string, kind: 'one' | 'all') => chars(g, g.objects[a]!).combat.some((r) => r.mustBeBlocked === kind);
+        const blocks: { blocker: string; attacker: string }[] = [];
+        for (const blocker of p.blockers) {
+          const lure = p.attackers.find((a) => must(a, 'all') && !blockProblem(g, g.objects[blocker]!, g.objects[a]!));
+          if (lure) blocks.push({ blocker, attacker: lure });
+        }
+        for (const a of p.attackers.filter((x) => must(x, 'one'))) {
+          if (blocks.some((x) => x.attacker === a)) continue;
+          const free = p.blockers.find((b) => !blocks.some((x) => x.blocker === b) && !blockProblem(g, g.objects[b]!, g.objects[a]!));
+          if (free) blocks.push({ blocker: free, attacker: a });
+        }
+        return blocks;
+      };
+      for (let k = 0; k < 12; k++) {
+        const blocks = k < 10 ? random() : k === 10 ? forced() : [];
+        if (!blockDeclarationProblem(g, me, blocks)) return { player: me, answer: { kind: 'declare_blockers', blocks } };
       }
-      return { player: me, answer: { kind: 'declare_blockers', blocks } };
+      return { player: me, answer: { kind: 'declare_blockers', blocks: forced() } };
     }
     case 'assign_combat_damage':
       return { player: me, answer: { kind: 'assign_combat_damage', assignments: Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested])) } };
@@ -273,7 +302,8 @@ for (let game = 0; game < GAMES; game++) {
     else if (g.priority) {
       const options = legalActions(g, g.priority);
       const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual');
-      const chosen = active.length && rnd() < 0.75 ? pick(active) : options[0]!;
+      // Bots don't pile up a huge stack (free abilities like "{0}: …" would otherwise loop for thousands of actions).
+      const chosen = active.length && g.stack.length < 20 && rnd() < 0.75 ? pick(active) : options[0]!;
       offered = true;
       action = rnd() < 0.5 ? randomiseTargets(g, chosen) : chosen;
       // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
@@ -295,7 +325,8 @@ for (let game = 0; game < GAMES; game++) {
       failures.push({ game, kind: 'invariant', detail: `no decision possible in ${g.step}` });
       break;
     }
-    const label = JSON.stringify(action).slice(0, 300);
+    const objectId = (action as { object?: string }).object;
+    const label = JSON.stringify(action).slice(0, 300) + (objectId && g.objects[objectId] ? ` [${g.objects[objectId]!.card}]` : '');
     let r;
     try {
       r = apply(g, action);
@@ -339,10 +370,22 @@ for (let game = 0; game < GAMES; game++) {
     }
   }
   turns += g.turn;
+  if (process.env.FUZZ_SIZES) {
+    const { cards: _c, ...rest } = g;
+    lastSizes = Object.entries(rest)
+      .map(([k, v]) => [k, JSON.stringify(v)?.length ?? 0] as const)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([k, n]) => `${k}=${n}`)
+      .join(' ');
+    console.log(`game ${game} sizes: ${lastSizes}`);
+    if (g.stack.length) console.log(`  stack ${g.stack.length}: ` + g.stack.slice(-3).map((e) => `${e.kind} ${(e as { sourceName?: string }).sourceName ?? ''} ${JSON.stringify(e).length}`).join(' | '));
+  }
   if (VERBOSE) console.log(`game ${game}: ${count} players, ${g.turn} turns, winner ${g.winner ?? '-'}`);
 }
 
 const ms = Date.now() - t0;
+if (process.env.FUZZ_SIZES) console.log(lastSizes);
 console.log(`${GAMES} games, ${turns} turns, ${actions} actions in ${(ms / 1000).toFixed(1)} s (${(ms / Math.max(1, actions)).toFixed(2)} ms/action)`);
 console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto}, manual ${stats.manual}, fizzled ${stats.fizzled}, tokens ${stats.tokens}`);
 const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);

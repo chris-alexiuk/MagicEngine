@@ -50,6 +50,7 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
   const batch = events.slice(from).filter((e) => TRIGGER_EVENTS.has(e.type));
   if (!batch.length) return;
   collectDelayed(g, batch);
+  collectMonarch(g, batch);
 
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
   const left = new Map<ObjectId, Candidate>();
@@ -62,13 +63,23 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
     const o = g.objects[id]!;
     return { o, controller: o.controller, face: o.face, left: false };
   });
-  const candidates = [...present, ...left.values()];
+  // CR 113.6m: cards in graveyards whose abilities say they work from there ("return ~ from your graveyard…").
+  const inGraveyards: Candidate[] = [];
+  for (const p of Object.keys(g.zones.graveyard)) {
+    for (const id of g.zones.graveyard[p]!) {
+      const o = g.objects[id]!;
+      if (left.has(id)) continue;
+      const face = g.cards[o.card]?.faces[o.face];
+      if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'graveyard')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
+    }
+  }
+  const candidates = [...present, ...left.values(), ...inGraveyards];
 
   // Each candidate's triggered abilities: printed and from keywords (granted ones too, while it's on the battlefield).
   const withAbilities = candidates.flatMap((c) => {
     const face = g.cards[c.o.card]?.faces[c.face];
     if (!face) return [];
-    const abilities = c.left ? printedAbilities(face) : abilitiesOf(g, c.o);
+    const abilities = c.left || c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);
     return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];
   });
 
@@ -77,6 +88,8 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
       const face = c.face;
       c.abilities.forEach((ability, index) => {
         if (ability.kind !== 'triggered') return;
+        // Each ability triggers only from the zone it works in.
+        if ((ability.zone ?? 'battlefield') !== (c.left ? 'battlefield' : c.o.zone)) return;
         if (c.left && !LOOK_BACK.has(ability.trigger.type)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
@@ -100,6 +113,34 @@ export function collectTriggers(g: GameState, events: GameEvent[]): void {
           });
         }
       });
+    }
+  }
+}
+
+/** CR 725.2: the monarch's two inherent triggered abilities. They have no source. */
+const MONARCH_DRAW: TriggeredAbility = {
+  kind: 'triggered',
+  text: "At the beginning of the monarch's end step, that player draws a card.",
+  trigger: { type: 'phase', step: 'end', whose: 'you' },
+  effects: [{ type: 'draw', amount: 1, who: { ref: 'you' } }],
+};
+const MONARCH_STEAL: TriggeredAbility = {
+  kind: 'triggered',
+  text: "Whenever a creature deals combat damage to the monarch, its controller becomes the monarch.",
+  trigger: { type: 'deals_combat_damage', subject: { ref: 'all', filter: { types: ['Creature'] } }, to: 'player' },
+  effects: [{ type: 'become_monarch', who: { ref: 'you' } }],
+};
+
+function collectMonarch(g: GameState, batch: GameEvent[]): void {
+  if (!g.monarch) return;
+  const push = (controller: PlayerId, ability: TriggeredAbility) =>
+    // CR 725.2: controlled by the player who was the monarch (or whose creature dealt the damage).
+    g.triggers.push({ id: `t${g.nextId++}`, controller, source: { id: 'monarch', zcc: 0 }, sourceName: 'The monarch', ability, info: {} });
+  for (const e of batch) {
+    if (e.type === 'step' && e.step === 'end' && g.active === g.monarch) push(g.monarch, MONARCH_DRAW);
+    if (e.type === 'damage' && e.combat && e.to.kind === 'player' && e.to.player === g.monarch) {
+      const o = g.objects[e.source];
+      if (o && o.controller !== g.monarch && g.cards[o.card]?.faces[o.face]?.types.includes('Creature')) push(o.controller, MONARCH_STEAL);
     }
   }
 }

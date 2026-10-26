@@ -1,12 +1,13 @@
 import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
-import { parseManaCost } from './mana.js';
+import { manaOption, parseManaCost } from './mana.js';
 import { additionalCosts, flashbackCost } from './actions.js';
 import { discardCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ObjectId, PlayerId, Target } from './types.js';
+import { landsAllowed } from './player-rules.js';
 import { faceOf, zoneList } from './zones.js';
 
 /**
@@ -28,7 +29,7 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
     def.faces.forEach((face, faceIndex) => {
       if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
       if (face.types.includes('Land')) {
-        if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < 1 && (faceIndex === 0 || def.layout === 'modal_dfc')) {
+        if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc')) {
           out.push({ type: 'play_land', player, object: id, ...(faceIndex ? { face: faceIndex } : {}) });
         }
         return;
@@ -58,8 +59,8 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
     if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
   }
-  // Abilities that work from the hand (cycling, CR 702.29a).
-  for (const id of zoneList(g, 'hand', player)) {
+  // Abilities that work from the hand (cycling, CR 702.29a) or the graveyard (CR 113.6m).
+  for (const id of [...zoneList(g, 'hand', player), ...zoneList(g, 'graveyard', player)]) {
     const o = g.objects[id]!;
     activatedAbilities(g, o).forEach((ab, ability) => {
       const mana = parseManaCost(ab.cost.mana ?? '');
@@ -91,8 +92,10 @@ export function legalActions(g: GameState, player: PlayerId): Action[] {
       if (effect?.anyColor) {
         for (const choice of ['W', 'U', 'B', 'R', 'G'] as const) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
-        effect.options.forEach((_, choice) => out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra }));
-      } else out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
+        effect.options.forEach((opt, choice) => {
+          if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
+        });
+      } else if (!effect?.options || manaOption(effect.options[0]!, o)) out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
     });
     activatedAbilities(g, o).forEach((ab, ability) => {
       const { cost } = ab;
