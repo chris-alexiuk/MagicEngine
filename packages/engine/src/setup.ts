@@ -18,6 +18,8 @@ export interface PlayerSetup {
   name: string;
   /** Card keys (into `cards`), one entry per physical card. */
   deck: string[];
+  /** Commander card keys from the deck (two for partners). CR 903.3 */
+  commanders?: string[];
 }
 
 export interface NewGameOptions {
@@ -76,6 +78,9 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
     started: false,
     opening: null,
     extraCleanup: false,
+    combat: null,
+    commanderDamage: {},
+    commanderCasts: {},
     winner: null,
     over: false,
     rng: opts.seed | 0,
@@ -99,6 +104,13 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
     for (const zone of ['library', 'hand', 'graveyard'] as const) g.zones[zone][p.id] = [];
     // CR 108.3: the owner of a card is the player who started the game with it in their deck.
     for (const key of p.deck) createObject(g, key, p.id, 'library');
+    for (const key of p.commanders ?? []) {
+      const id = g.zones.library[p.id]!.find((oid) => g.objects[oid]!.card === key && !g.objects[oid]!.commander);
+      if (!id) throw new RulesError(`${p.name}’s commander ${key} isn’t in their deck.`);
+      g.objects[id]!.commander = true;
+      // CR 903.6: each commander starts the game face up in the command zone.
+      moveObject(g, id, 'command', events);
+    }
   }
 
   // CR 103.1: determine the starting player; turn order proceeds from them.

@@ -82,6 +82,10 @@ export interface GameObject {
   damage: number;
   counters: Record<string, number>;
   token?: true;
+  /** Designated as its owner's commander (CR 903.3). Survives zone changes. */
+  commander?: true;
+  /** Dealt damage by a deathtouch source since state-based actions were last checked (CR 704.5h). */
+  deathtouched?: true;
   /** Loyalty abilities activated this turn (once-per-turn limit). */
   loyaltyActivatedTurn?: number;
 }
@@ -90,6 +94,47 @@ export interface GameObject {
 export interface ObjectRef {
   id: ObjectId;
   zcc: number;
+}
+
+/** CR 506.3: only a player, a planeswalker, or a battle can be attacked. Battles arrive later. */
+export type AttackTarget = { kind: 'player'; player: PlayerId } | { kind: 'planeswalker'; object: ObjectId };
+
+export type DamageRecipient = { kind: 'player'; player: PlayerId } | { kind: 'permanent'; object: ObjectId };
+
+export interface DamageAssignment {
+  to: DamageRecipient;
+  amount: number;
+}
+
+export interface AttackerState {
+  zcc: number;
+  target: AttackTarget;
+  /** CR 509.1h: stays blocked even if its blockers leave combat. */
+  blocked: boolean;
+  blockers: ObjectRef[];
+}
+
+export interface CombatState {
+  attackers: Record<ObjectId, AttackerState>;
+  /** Blocker id → the attacker it blocks. */
+  blockers: Record<ObjectId, { zcc: number; blocking: ObjectId }>;
+  attackersDeclared: boolean;
+  /** Defending players still to declare blockers, in APNAP order (CR 802.4). */
+  toDeclareBlockers: PlayerId[];
+  /** Creatures that had first strike or double strike when a first-strike damage step began (CR 510.4). */
+  firstStrikers: ObjectId[] | null;
+  /** Which damage step is current: the extra first-strike step or the regular one. */
+  damageStep: 'first' | 'regular' | null;
+}
+
+export interface DamageChoice {
+  attacker: ObjectId;
+  power: number;
+  /** Blockers that can be assigned damage. */
+  blockers: ObjectId[];
+  /** With trample: the attacked player or planeswalker, which can take damage past lethal. */
+  trampleTarget: DamageRecipient | null;
+  suggested: DamageAssignment[];
 }
 
 export type StackEntry =
@@ -101,14 +146,20 @@ export type PendingChoice =
   | { kind: 'bottom_cards'; player: PlayerId; count: number }
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
-  | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string };
+  | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
+  | { kind: 'declare_attackers'; player: PlayerId; attackers: ObjectId[]; targets: AttackTarget[] }
+  | { kind: 'declare_blockers'; player: PlayerId; blockers: ObjectId[]; attackers: ObjectId[] }
+  | { kind: 'assign_combat_damage'; player: PlayerId; choices: DamageChoice[] };
 
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
   | { kind: 'bottom_cards'; objects: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
   | { kind: 'legend_rule'; keep: ObjectId }
-  | { kind: 'manual_resolution'; done: true };
+  | { kind: 'manual_resolution'; done: true }
+  | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
+  | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
+  | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -147,6 +198,9 @@ export type GameEvent =
   | { type: 'life'; player: PlayerId; delta: number; life: number }
   | { type: 'counters'; object: ObjectId; counter: string; delta: number }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
+  | { type: 'attacks_declared'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
+  | { type: 'blocks_declared'; player: PlayerId; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
+  | { type: 'damage'; source: ObjectId; to: DamageRecipient; amount: number; combat: boolean }
   | { type: 'player_lost'; player: PlayerId; reason: string }
   | { type: 'game_over'; winner: PlayerId | null };
 
@@ -182,6 +236,12 @@ export interface GameState {
   opening: { undecided: PlayerId[]; mulligans: PlayerId[]; bottoms: { player: PlayerId; count: number }[] } | null;
   /** A cleanup step in which SBAs happened gets another cleanup step. */
   extraCleanup: boolean;
+  /** Present during the combat phase. */
+  combat: CombatState | null;
+  /** Combat damage dealt to each player by each commander (CR 903.10a). */
+  commanderDamage: Record<PlayerId, Record<ObjectId, number>>;
+  /** How many times each player has cast each commander from the command zone (CR 903.8). */
+  commanderCasts: Record<ObjectId, number>;
   winner: PlayerId | null;
   over: boolean;
   rng: number;

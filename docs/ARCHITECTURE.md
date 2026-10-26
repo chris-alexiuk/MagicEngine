@@ -48,7 +48,7 @@ AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords 
 1. ✅ Card pipeline, image cache, card browser
 2. Engine core, 2-player same-screen
    - ✅ Setup and London mulligan, turn structure, priority, stack, land plays, mana abilities, casting and resolution, state-based actions, cleanup, manual resolution, player views
-   - Combat (attackers, blockers, damage, combat keywords)
+   - ✅ Combat: attackers (incl. multiple opponents and planeswalkers), blockers with evasion and protection, first/double strike, trample, deathtouch, lifelink, infect, wither, toxic; commanders in the command zone with tax, and commander damage
    - Same-screen table UI
 3. Effects system: triggers, statics and layers, replacement effects; parser v1
 4. 4-player Commander and online play via the server

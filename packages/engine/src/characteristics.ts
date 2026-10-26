@@ -66,3 +66,41 @@ export function canUseTapAbilities(g: GameState, o: GameObject): boolean {
   if (!hasType(g, o, 'Creature')) return true;
   return !o.sick || hasKeyword(g, o, 'haste');
 }
+
+const COLOR_WORDS: Record<string, string> = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };
+const TYPE_WORDS: Record<string, string> = {
+  creatures: 'Creature',
+  artifacts: 'Artifact',
+  enchantments: 'Enchantment',
+  instants: 'Instant',
+  sorceries: 'Sorcery',
+  planeswalkers: 'Planeswalker',
+  lands: 'Land',
+};
+
+/** CR 702.16g: "protection from A and from B" is two protection abilities. */
+export function protectionQualities(g: GameState, o: GameObject): string[] {
+  return faceOf(g, o)
+    .keywords.filter((k) => k.id === 'protection' && k.text)
+    .flatMap((k) => k.text!.split(/\s*(?:,\s*)?and from\s+|,\s*from\s+/))
+    .map((q) => q.trim().toLowerCase());
+}
+
+/**
+ * Whether `o` has protection from `source` (CR 702.16a). Colors, multicolored/monocolored,
+ * card types and creature types are understood; CR 702.16j: "everything" covers every source.
+ * Qualities that need a choice ("the color of your choice") are left to players.
+ */
+export function hasProtectionFrom(g: GameState, o: GameObject, source: GameObject): boolean {
+  const face = faceOf(g, source);
+  return protectionQualities(g, o).some((q) => {
+    if (q === 'everything') return true;
+    if (COLOR_WORDS[q]) return face.colors.includes(COLOR_WORDS[q] as (typeof face.colors)[number]);
+    if (q === 'multicolored') return face.colors.length > 1;
+    if (q === 'monocolored') return face.colors.length === 1;
+    if (q === 'colorless') return face.colors.length === 0;
+    if (TYPE_WORDS[q]) return face.types.includes(TYPE_WORDS[q]!);
+    const singular = q.replace(/(?:ies)$/, 'y').replace(/s$/, '');
+    return face.subtypes.some((t) => t.toLowerCase() === singular);
+  });
+}

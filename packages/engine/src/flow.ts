@@ -1,4 +1,5 @@
 import { isPermanentCard, hasKeyword, hasType, toughness } from './characteristics.js';
+import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAutomate, runEffect } from './registry.js';
 import type { GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
@@ -147,9 +148,18 @@ export function endStep(g: GameState, events: GameEvent[]): void {
     return;
   }
   let next = nextStepAfter(g.step);
-  // CR 508.8: if no creatures are declared as attackers, skip the declare blockers and combat damage steps.
-  // Attacking arrives in a later milestone, so no creature is ever declared as an attacker yet.
-  if (next === 'declare_blockers') next = 'end_of_combat';
+  if (g.step === 'declare_attackers' && g.combat && Object.keys(g.combat.attackers).length === 0) {
+    // CR 508.8: no attackers — skip the declare blockers and combat damage steps.
+    next = 'end_of_combat';
+  }
+  if (g.step === 'combat_damage' && needsSecondDamageStep(g)) {
+    // CR 510.4: after a first-strike damage step, the phase gets a second combat damage step.
+    next = 'combat_damage';
+  }
+  if (g.step === 'end_of_combat') {
+    // CR 511.3: as the end of combat step ends, everything is removed from combat.
+    g.combat = null;
+  }
   beginStep(g, next ?? 'cleanup', events);
 }
 
@@ -191,6 +201,24 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       if (!skip) drawCard(g, g.active, events);
       break;
     }
+    case 'beginning_of_combat':
+      // CR 507.1: with every opponent defending (CR 802.2), there's no defending player to choose.
+      g.combat = newCombat();
+      break;
+    case 'declare_attackers':
+      // CR 508.1: the active player declares attackers before anyone gets priority.
+      if (promptAttackers(g)) return;
+      break;
+    case 'declare_blockers':
+      // CR 509.1: the defending players declare blockers before anyone gets priority.
+      startBlockers(g);
+      if (g.pending) return;
+      break;
+    case 'combat_damage':
+      // CR 510.1 / CR 510.2: damage is assigned, then dealt, before anyone gets priority.
+      startCombatDamage(g, events);
+      if (g.pending) return;
+      break;
     case 'cleanup': {
       startCleanup(g, events);
       return;
@@ -252,6 +280,10 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       else if (ps.drewFromEmptyLibrary) losers.push({ player: p, reason: 'drew from an empty library' });
       // CR 704.5c: ten or more poison counters.
       else if (ps.poison >= 10) losers.push({ player: p, reason: 'ten poison counters' });
+      // CR 704.6c: in Commander, 21 or more combat damage from the same commander.
+      else if (g.config.format === 'commander' && Object.values(g.commanderDamage[p] ?? {}).some((n) => n >= 21)) {
+        losers.push({ player: p, reason: '21 combat damage from one commander' });
+      }
       ps.drewFromEmptyLibrary = false;
     }
 
@@ -277,7 +309,10 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         if (t <= 0) toGraveyard.add(id);
         // CR 704.5g: lethal damage destroys it; CR 702.12b: unless it's indestructible.
         else if (o.damage >= t && !hasKeyword(g, o, 'indestructible')) toGraveyard.add(id);
+        // CR 704.5h: damage from a deathtouch source destroys it too.
+        else if (o.deathtouched && !hasKeyword(g, o, 'indestructible')) toGraveyard.add(id);
       }
+      delete o.deathtouched;
       // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
       if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
     }
@@ -348,7 +383,9 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   for (const o of Object.values(g.objects)) if (o.owner === player) removeObjectEntirely(g, o.id);
   g.stack = g.stack.filter((e) => e.controller !== player);
   for (const zone of ['library', 'hand', 'graveyard'] as const) g.zones[zone][player] = [];
-  if (g.pending && g.pending.player === player) g.pending = null;
+  const theirChoice = g.pending && g.pending.player === player ? g.pending.kind : null;
+  if (theirChoice) g.pending = null;
+  if (g.combat) g.combat.toDeclareBlockers = g.combat.toDeclareBlockers.filter((p) => p !== player);
 
   const remaining = livePlayers(g);
   if (remaining.length <= 1) {
@@ -361,6 +398,11 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   }
   // CR 800.4a: if the leaving player had priority, it passes to the next player still in the game.
   if (g.priority === player) g.priority = nextPlayer(g, player);
+  if (theirChoice === 'declare_blockers' && g.active !== player) {
+    // The next defending player declares; once everyone has, the active player gets priority.
+    promptNextBlocker(g);
+    if (!g.pending) givePriority(g, g.active);
+  }
   g.passed = g.passed.filter((p) => p !== player);
   // Simplification until the full multiplayer turn rules land: if the active player leaves,
   // their turn ends and the next player's turn begins.

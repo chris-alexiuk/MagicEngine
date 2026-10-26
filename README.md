@@ -2,7 +2,7 @@
 
 A browser-based Magic: The Gathering rules engine for 2–4 player games, Commander first. Cards are compiled from Scryfall data without hand-scripting; anything the engine can't run yet is still playable by resolving it manually.
 
-Status: milestone 2 of 6 in progress. The engine runs turns, priority, the stack, mana, casting and state-based actions; combat and the table UI are next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [rules trace](docs/rules/TRACE.md).
+Status: milestone 2 of 6 in progress. The engine runs turns, priority, the stack, mana, casting, combat and state-based actions; the table UI is next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [rules trace](docs/rules/TRACE.md).
 
 ## Quick start
 

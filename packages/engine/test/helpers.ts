@@ -41,6 +41,8 @@ export interface StartOptions {
   decks?: Record<PlayerId, string[]>;
   /** Stop at the mulligan decision instead of keeping every hand. */
   mulligan?: boolean;
+  /** Commander card keys per player (Commander games). */
+  commanders?: Record<PlayerId, string[]>;
 }
 
 export function start(opts: StartOptions = {}): GameState {
@@ -55,6 +57,7 @@ export function start(opts: StartOptions = {}): GameState {
       id,
       name: id[0]!.toUpperCase() + id.slice(1),
       deck: opts.decks?.[id] ?? [...Array.from({ length: 40 }, () => 'Forest'), ...extras],
+      ...(opts.commanders?.[id] ? { commanders: opts.commanders[id] } : {}),
     })),
     cards,
     format: opts.format ?? 'constructed',

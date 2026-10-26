@@ -1,4 +1,5 @@
 import { planAutoTap } from './autotap.js';
+import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, manaAbilities } from './characteristics.js';
 import {
   checkStateBasedActions,
@@ -85,16 +86,17 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
   if (!p || p.player !== player) throw new RulesError('You have no choice to make.');
   if (p.kind !== answer.kind) throw new RulesError(`Expected a ${p.kind} answer.`);
 
-  switch (p.kind) {
+  switch (answer.kind) {
     case 'mulligan':
     case 'bottom_cards':
       answerOpening(g, player, answer, events);
       return;
     case 'discard_to_hand_size': {
-      const ids = (answer as { objects: ObjectId[] }).objects;
+      const count = (p as Extract<typeof p, { kind: 'discard_to_hand_size' }>).count;
+      const ids = answer.objects;
       const hand = zoneList(g, 'hand', player);
-      if (ids.length !== p.count || new Set(ids).size !== ids.length || !ids.every((id) => hand.includes(id))) {
-        throw new RulesError(`Choose exactly ${p.count} card(s) from your hand to discard.`);
+      if (ids.length !== count || new Set(ids).size !== ids.length || !ids.every((id) => hand.includes(id))) {
+        throw new RulesError(`Choose exactly ${count} card(s) from your hand to discard.`);
       }
       g.pending = null;
       // CR 514.1: the active player discards down to their maximum hand size.
@@ -103,11 +105,11 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       return;
     }
     case 'legend_rule': {
-      const keep = (answer as { keep: ObjectId }).keep;
-      if (!p.objects.includes(keep)) throw new RulesError('Choose one of the legendary permanents to keep.');
+      const objects = (p as Extract<typeof p, { kind: 'legend_rule' }>).objects;
+      if (!objects.includes(answer.keep)) throw new RulesError('Choose one of the legendary permanents to keep.');
       g.pending = null;
       // CR 704.5j: the rest go to their owners' graveyards.
-      for (const id of p.objects) if (id !== keep) moveObject(g, id, 'graveyard', events);
+      for (const id of objects) if (id !== answer.keep) moveObject(g, id, 'graveyard', events);
       if (g.step === 'cleanup' && g.priority === null) {
         checkStateBasedActions(g, events);
         if (!g.pending && !g.over) {
@@ -119,6 +121,23 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     }
     case 'manual_resolution':
       completeManualResolution(g, events);
+      return;
+    case 'declare_attackers':
+      g.pending = null;
+      declareAttackers(g, answer.attacks, events);
+      // CR 508.2: then the active player gets priority.
+      givePriority(g, g.active);
+      return;
+    case 'declare_blockers':
+      declareBlockers(g, player, answer.blocks, events);
+      promptNextBlocker(g);
+      // CR 509.2: once blockers are declared, the active player gets priority.
+      if (!g.pending) givePriority(g, g.active);
+      return;
+    case 'assign_combat_damage':
+      assignCombatDamage(g, answer.assignments, events);
+      // CR 510.3: then the active player gets priority.
+      givePriority(g, g.active);
       return;
   }
 }
@@ -227,8 +246,10 @@ function cast(
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
-  // CR 601.3: casting from anywhere other than your hand needs a rule or effect that allows it.
-  if (o.zone !== 'hand' || o.owner !== player) throw new RulesError('You can only cast spells from your hand.');
+  // CR 903.8: a player may cast a commander they own from the command zone.
+  const fromCommandZone = o.zone === 'command' && o.commander === true && o.owner === player;
+  // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
+  if (!fromCommandZone && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 305.9: a land can't be cast as a spell.
@@ -245,6 +266,8 @@ function cast(
   }
 
   const cost = parseManaCost(face.manaCost);
+  // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
+  if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
@@ -255,6 +278,7 @@ function cast(
   if (!left) throw new RulesError(`Not enough mana to cast ${face.name}.`);
   g.players[player]!.pool = left;
 
+  if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
   g.stack.push({ kind: 'spell', object: id, controller: player, x });
