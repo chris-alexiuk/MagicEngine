@@ -66,6 +66,8 @@ export interface PlayerState {
   lost: boolean;
   mulligans: number;
   keptHand: boolean;
+  /** Clock values at the beginning of this player's last two upkeeps (CR 702.30a echo). */
+  upkeeps?: number[];
 }
 
 export interface GameObject {
@@ -97,6 +99,8 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** When it came under its controller's control (a clock value; CR 702.30a echo). */
+  arrived?: number;
   /** CR 707.2: the card (and face) whose copiable values this permanent has, if it's a copy. */
   copyOf?: { card: string; face: number };
   /** CR 303.4: the player an Aura with "enchant player" is attached to. */
@@ -425,6 +429,12 @@ export interface CostChoices {
   crew?: ObjectId[];
   /** Cards exiled to pay a cost ("Exile five other cards from your graveyard", escape). */
   exile?: ObjectId[];
+  /** CR 702.51a: creatures tapped to help cast a spell with convoke. */
+  convoke?: ObjectId[];
+  /** CR 702.66a: cards exiled from your graveyard for a spell with delve. */
+  delve?: ObjectId[];
+  /** CR 702.126a: artifacts tapped for a spell with improvise. */
+  improvise?: ObjectId[];
 }
 
 export type Action =

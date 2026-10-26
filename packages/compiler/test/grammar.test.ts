@@ -524,3 +524,22 @@ describe('costs chosen as a spell is cast (CR 118.9, CR 601.2f)', () => {
     expect(one("You may pay {R} rather than pay this spell's mana cost.", 'Instant')).toMatchObject({ effect: { type: 'cast_option', id: 'alt', kind: 'alternative' } });
   });
 });
+
+describe('upkeep costs and paying with permanents', () => {
+  it('cumulative upkeep (CR 702.24a) and echo (CR 702.30a) from their definitions', () => {
+    expect(parse('Cumulative upkeep {1}', 'Enchantment', 'Remora').keywords[0]!.abilities).toMatchObject([
+      {
+        trigger: { type: 'phase', step: 'upkeep', whose: 'you' },
+        condition: { type: 'is', of: { ref: 'self' } },
+        effects: [{ type: 'add_counters', counter: 'age' }, { type: 'may_pay', cost: '{1}', times: { kind: 'counters', counter: 'age' }, else: [{ type: 'sacrifice' }] }],
+      },
+    ]);
+    expect(parse('Echo {2}{G}', 'Creature — Beast', 'Beast').keywords[0]!.abilities).toMatchObject([
+      { condition: { type: 'arrived_since_upkeep' }, effects: [{ type: 'unless_pays', cost: '{2}{G}', effects: [{ type: 'sacrifice' }] }] },
+    ]);
+  });
+
+  it('convoke, delve and improvise are applied natively', () => {
+    for (const kw of ['Convoke', 'Delve', 'Improvise']) expect(parse(kw, 'Sorcery', 'Spell').manualKeywords).toEqual([]);
+  });
+});

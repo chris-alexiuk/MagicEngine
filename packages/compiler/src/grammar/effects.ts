@@ -50,6 +50,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // CR 702.24a (cumulative upkeep): "You may pay {1} for each age counter on it. If you don't, sacrifice it."
+      const payEach = /^(?:Then )?[Yy]ou may pay ((?:\{(?:\d+|[WUBRGC])\})+) for each (.+)$/.exec(s);
+      const dont = sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (payEach && dont) {
+        const times = parseForEach(payEach[2]!, b);
+        const otherwise = times ? parseSentence(capitalise(dont[1]!), b) : null;
+        if (!times || !otherwise) return null;
+        out.push({ type: 'may_pay', cost: payEach[1]!, times, effects: [], else: otherwise });
+        i++;
+        continue;
+      }
       // CR 118.12: "You may sacrifice a creature. If you do, …" — the first part is done only if possible.
       const mayDo = /^You may (.+)$/.exec(s);
       if (mayDo && then) {

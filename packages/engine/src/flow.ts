@@ -295,6 +295,11 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
   g.step = step;
   g.priority = null;
   g.passed = [];
+  // CR 702.30a (echo): when the active player's upkeeps began.
+  if (step === 'upkeep') {
+    const ps = g.players[g.active]!;
+    ps.upkeeps = [...(ps.upkeeps ?? []).slice(-1), ++g.clock];
+  }
   events.push({ type: 'step', step });
 
   switch (step) {

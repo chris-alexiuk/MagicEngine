@@ -1,7 +1,8 @@
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
+import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
+import { helperChoices } from './helpers-cost.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
 import { additionalCosts, castOptions, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
@@ -50,11 +51,21 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const cost = parseManaCost(face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
       if (cost.unsupported.length || cost.x > 0) return; // X spells need a value; the UI asks for one
-      if (!planAutoTap(g, player, cost)) return;
+      // Convoke, improvise, delve: what they can cover, if mana alone isn't enough.
+      const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
+      let help: CostChoices = {};
+      if (!planAutoTap(g, player, cost)) {
+        if (!helpers.length) return;
+        help = helperChoices(g, player, o, helpers, cost);
+        const rest = { ...cost, specific: { ...cost.specific } };
+        payWithHelpersDry(g, help, rest);
+        if (!planAutoTap(g, player, rest, 0, [...(help.convoke ?? []), ...(help.improvise ?? [])])) return;
+      }
       const choice = defaultSpellChoice(g, player, o, face);
       const costs = defaultCostChoices(g, player, o, additionalCosts(face));
       if (!choice || !costs) return;
-      out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(costs) });
+      const all = { ...costs, ...help };
+      out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
     });
     // CR 118.9 / 601.2f: the same spell for an alternative cost, or with an optional additional one.
     if (o.zone === 'hand') out.push(...optionCasts(g, player, o, mainPhaseEmptyStack, false));
@@ -222,7 +233,17 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise ? { costs } : {});
+
+/** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
+function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {
+  for (const id of help.convoke ?? []) {
+    const color = chars(g, g.objects[id]!).colors.find((c) => (cost.specific[c as ManaColor] ?? 0) > 0) as ManaColor | undefined;
+    if (color) cost.specific[color] = cost.specific[color]! - 1;
+    else cost.generic--;
+  }
+  cost.generic -= (help.improvise?.length ?? 0) + (help.delve?.length ?? 0);
+}
 
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
   const modal = programs.find((p) => p.modes);

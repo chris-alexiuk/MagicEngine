@@ -1,4 +1,5 @@
 import { auraTargetSpec } from './permanents.js';
+import { payWithHelpers } from './helpers-cost.js';
 import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
@@ -373,12 +374,16 @@ function cast(
   }
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, face, cost);
+  // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
+  const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
+  const helping = costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length;
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
   const additional: Cost = { other: [...additionalCosts(face), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
   checkOtherCosts(g, player, o, additional, costChoices);
+  if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
   if (wantsAutoTap) autoTap(g, player, cost, x, events);
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.

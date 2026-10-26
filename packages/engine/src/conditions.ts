@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -64,6 +64,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'kicked':
       // CR 702.33d: the spell (or the permanent it became) was kicked.
       return Boolean(source?.cast?.kicked);
+    case 'arrived_since_upkeep': {
+      // CR 702.30a: it came under your control after your previous upkeep began (or you've had none).
+      const upkeeps = g.players[controller]?.upkeeps ?? [];
+      const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
+      return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
+    }
     case 'paid':
       // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
       return Boolean(source?.cast?.paid?.includes(String(cond.cost)));

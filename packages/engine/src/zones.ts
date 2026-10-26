@@ -128,6 +128,7 @@ export function moveObject(
   o.sick = to === 'battlefield';
   // CR 613.7d: an object receives a timestamp as it enters a zone.
   o.timestamp = ++g.clock;
+  if (to === 'battlefield') o.arrived = o.timestamp;
   delete o.loyaltyActivatedTurn;
   delete o.attachedTo;
   delete o.attachedToPlayer;

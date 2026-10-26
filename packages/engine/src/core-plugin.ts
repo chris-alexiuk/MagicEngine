@@ -520,13 +520,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   may_pay(node, ctx) {
     // CR 118.12: "You may pay {2}. If you do, …" — the payment is a cost paid on resolution.
+    // "You may pay {1} for each age counter on it. If you don't, sacrifice it." (CR 702.24a).
     const answer = answerOf(ctx, 'pay');
-    const cost = String(node.cost);
+    const n = node.times ? (ctx.memo.times as number | undefined) ?? amountOf(ctx, node.times) : 1;
+    ctx.memo.times = n;
+    const cost = String(node.cost).repeat(Math.max(0, n));
+    const otherwise = (node.else as EffectNode[] | undefined) ?? [];
+    if (!cost) return { expand: node.effects as EffectNode[] };
     if (!answer) {
-      const text = `pay ${cost}: ${describeEffects(node.effects as EffectNode[])}`;
+      const text = `pay ${cost}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
       return { ask: { kind: 'pay', player: ctx.controller, cost, text, sourceName: sourceName(ctx) } };
     }
-    if (!answer.pay) return { expand: [] };
+    if (!answer.pay) return { expand: otherwise };
     payDuringResolution(ctx.g, ctx.controller, cost, ctx.events);
     return { expand: node.effects as EffectNode[] };
   },

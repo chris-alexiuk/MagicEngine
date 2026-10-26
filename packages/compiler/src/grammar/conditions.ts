@@ -59,6 +59,10 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // CR 702.30a (echo): "if this permanent came under your control since the beginning of your last upkeep"
+  if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
+  // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
+  if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
   const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
@@ -168,6 +172,7 @@ export function conditionSubject(c: ConditionNode): Ref | null {
     case 'has_attached':
     case 'monstrous':
     case 'paid':
+    case 'arrived_since_upkeep':
       return { ref: 'self' };
     case 'is':
     case 'counters':
