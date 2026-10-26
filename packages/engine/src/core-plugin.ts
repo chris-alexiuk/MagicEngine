@@ -19,7 +19,7 @@ import { installPlugin, type EffectContext, type EffectResult, type MechanicPlug
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
-import { battlefieldZcc, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
+import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
 /**
@@ -270,7 +270,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     if (node.all) {
       // "discards their hand": nothing to choose.
-      for (const p of players) for (const id of [...zoneList(ctx.g, 'hand', p)]) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      for (const p of players) for (const id of [...zoneList(ctx.g, 'hand', p)]) discardCard(ctx.g, id, ctx.events);
       return true;
     }
     const n = amountOf(ctx, node.amount);
@@ -282,14 +282,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (answer.objects.length !== Math.min(n, hand.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => hand.includes(id))) {
         throw new RulesError(`Choose ${Math.min(n, hand.length)} card(s) from your hand to discard.`);
       }
-      for (const id of answer.objects) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      for (const id of answer.objects) discardCard(ctx.g, id, ctx.events);
       done.push(p);
     }
     for (const p of players) {
       if (done.includes(p)) continue;
       const hand = zoneList(ctx.g, 'hand', p);
       if (hand.length <= n) {
-        for (const id of [...hand]) moveObject(ctx.g, id, 'graveyard', ctx.events);
+        for (const id of [...hand]) discardCard(ctx.g, id, ctx.events);
         done.push(p);
         continue;
       }
@@ -478,7 +478,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!discarded) return true;
     const card = ctx.g.objects[discarded]!;
     const nonland = !ctx.g.cards[card.card]!.faces[card.face]!.types.includes('Land');
-    moveObject(ctx.g, discarded, 'graveyard', ctx.events);
+    discardCard(ctx.g, discarded, ctx.events);
     const c = memo.conniver && ctx.g.objects[memo.conniver.id];
     if (nonland && c && c.zcc === memo.conniver!.zcc && c.zone === 'battlefield') addCounters(ctx, c, '+1/+1', 1);
     return true;
@@ -710,6 +710,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const o = refObjects(ctx, ref(node, 'what'))[0];
     if (!o || o.zone === 'stack' || o.zone === 'battlefield' || !castableCard(ctx.g, o)) return true;
     return offerFreeCast(ctx, o.id) ?? true;
+  },
+
+  // CR 702.62a: remove a time counter; when the last is removed, it may be cast without paying its mana cost.
+  suspend_tick(node, ctx) {
+    const o = refObjects(ctx, { ref: 'self' })[0];
+    if (!o || o.zone !== 'exile') return true;
+    if (!ctx.memo.ticked) {
+      ctx.memo.ticked = true;
+      const n = o.counters.time ?? 0;
+      if (n <= 0) return true;
+      o.counters.time = n - 1;
+      ctx.events.push({ type: 'counters', object: o.id, counter: 'time', delta: -1 });
+      if (n - 1 > 0) return true;
+    }
+    if (!castableCard(ctx.g, o)) return true;
+    const answer = answerOf(ctx, 'cast_free');
+    if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} without paying its mana cost?` } };
+    // "If you don't, it remains exiled." A creature spell cast this way gains haste.
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { suspended: true });
+    return true;
+  },
+
+  // CR 702.35a: "its owner may cast it by paying [cost] rather than paying its mana cost. If that player doesn't, they put this card into their graveyard."
+  madness_cast(node, ctx) {
+    const o = refObjects(ctx, { ref: 'self' })[0];
+    if (!o || o.zone !== 'exile') return true;
+    const answer = answerOf(ctx, 'cast_free');
+    if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} for its madness cost?` } };
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { alt: 'madness' });
+    else moveObject(ctx.g, o.id, 'graveyard', ctx.events);
+    return true;
   },
 
   // CR 702.85a: cascade.

@@ -42,7 +42,7 @@ import { landsAllowed, playerRule } from './player-rules.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { mayPlayFrom } from './permissions.js';
-import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
+import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
  * Applies one player action. Pure: the input state is never modified.
@@ -92,6 +92,10 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
       return playLand(g, a.player, a.object, a.face ?? 0, events);
     case 'turn_face_up':
       return turnFaceUp(g, a.player, a.object, a.autoTap ?? false, events);
+    case 'foretell':
+    case 'plot':
+    case 'suspend':
+      return exileToCastLater(g, a.player, a.object, a.type, a.autoTap ?? false, events);
     case 'cast':
       return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? []);
     case 'activate':
@@ -124,7 +128,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       }
       g.pending = null;
       // CR 514.1: the active player discards down to their maximum hand size.
-      for (const id of ids) moveObject(g, id, 'graveyard', events);
+      for (const id of ids) discardCard(g, id, events);
       finishCleanup(g, events);
       return;
     }
@@ -191,6 +195,47 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
 // ---------------------------------------------------------------------------
 // Lands
 // ---------------------------------------------------------------------------
+
+/** The mana a special action from hand costs: foretell {2}, plot and suspend their own cost. */
+export function exileActionCost(face: FaceDef, kind: 'foretell' | 'plot' | 'suspend'): string | null {
+  const kw = face.keywords.find((k) => k.id === kind && k.cost && /^(\{[^}]+\})+$/.test(k.cost) && (kind !== 'suspend' || k.n));
+  if (!kw) return null;
+  return kind === 'foretell' ? '{2}' : kw.cost!;
+}
+
+/** Whether the special action is allowed now (CR 702.143a: your turn; 702.170a: main phase, empty stack; 702.62a: when you could cast it). */
+export function exileActionTiming(g: GameState, player: PlayerId, face: FaceDef, kind: 'foretell' | 'plot' | 'suspend'): boolean {
+  const sorcery = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
+  if (kind === 'foretell') return g.active === player;
+  if (kind === 'plot') return sorcery;
+  const instant = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash') > 0;
+  return instant || sorcery;
+}
+
+/** Foretell, plot, suspend: special actions that exile a card from your hand to cast it later (CR 116.2). */
+function exileToCastLater(g: GameState, player: PlayerId, id: ObjectId, kind: 'foretell' | 'plot' | 'suspend', wantsAutoTap: boolean, events: GameEvent[]): void {
+  const o = obj(g, id);
+  if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`You can only ${kind} a card from your hand.`);
+  const face = faceOf(g, o);
+  const costText = exileActionCost(face, kind);
+  if (!costText) throw new RulesError(`${face.name} can’t be ${kind === 'suspend' ? 'suspended' : `${kind}ted`.replace('tt', 't')}.`);
+  if (!exileActionTiming(g, player, face, kind)) throw new RulesError(`You can’t ${kind} ${face.name} now.`);
+  const cost = parseManaCost(costText);
+  if (wantsAutoTap) autoTap(g, player, cost, 0, events);
+  const left = payFromPool(g.players[player]!.pool, cost, 0);
+  if (!left) throw new RulesError(`Not enough mana to pay ${costText}.`);
+  g.players[player]!.pool = left;
+  moveObject(g, id, 'exile', events);
+  if (kind === 'foretell') o.foretold = g.turn;
+  if (kind === 'plot') o.plotted = g.turn;
+  if (kind === 'suspend') {
+    // CR 702.62a: with N time counters.
+    o.suspended = true;
+    o.counters.time = face.keywords.find((k) => k.id === 'suspend')!.n!;
+  }
+  // CR 116.3: a player who takes a special action receives priority afterward.
+  givePriority(g, player);
+}
 
 /** CR 702.37e / 116.2b: turn a face-down permanent you control face up — a special action. */
 function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: boolean, events: GameEvent[]): void {
@@ -304,6 +349,14 @@ export function additionalCosts(face: FaceDef): EffectNode[] {
 /** CR 118.9 / 601.2f: the alternative and optional additional costs a face offers as it's cast. */
 export function castOptions(face: FaceDef): CastOptionNode[] {
   const out = printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
+  // Casting from exile: foretell (its foretell cost, CR 702.143a), plot (free, CR 702.170d), madness (CR 702.35a).
+  for (const kw of face.keywords) {
+    const mana = kw.cost && /^(\{[^}]+\})+$/.test(kw.cost) ? kw.cost : null;
+    if (!mana) continue;
+    if (kw.id === 'foretell') out.push({ type: 'cast_option', id: 'foretell', kind: 'alternative', cost: { mana }, zone: 'exile' });
+    if (kw.id === 'plot') out.push({ type: 'cast_option', id: 'plot', kind: 'alternative', cost: {}, zone: 'exile' });
+    if (kw.id === 'madness') out.push({ type: 'cast_option', id: 'madness', kind: 'alternative', cost: { mana }, zone: 'exile' });
+  }
   // CR 702.37a / 702.168a: morph, megamorph and disguise cast it face down for {3}.
   for (const kw of face.keywords) {
     if ((FACE_DOWN_KEYWORDS as readonly string[]).includes(kw.id) && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost)) {
@@ -343,8 +396,8 @@ function cast(
   kicked: boolean,
   altId?: string,
   extras: string[] = [],
-  /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost"). */
-  during?: { free: true },
+  /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
+  during?: { free?: boolean; suspended?: true },
 ): void {
   const o = obj(g, id);
   const def = g.cards[o.card]!;
@@ -377,11 +430,18 @@ function cast(
   // CR 702.34a: flashback — cast from your graveyard by paying the flashback cost instead.
   // CR 702.138a: escape — likewise, with its own cost.
   const escape = o.zone === 'graveyard' && o.owner === player && alt?.zone === 'graveyard';
+  // CR 702.143a: a foretold card on a later turn; CR 702.170d: a plotted card on a later turn, as a sorcery.
+  const fromExileAlt =
+    o.zone === 'exile' &&
+    o.owner === player &&
+    ((alt?.id === 'foretell' && o.foretold !== undefined && o.foretold < g.turn) ||
+      (alt?.id === 'plot' && o.plotted !== undefined && o.plotted < g.turn && g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0));
   const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCost(face) : null;
   // "Until the end of your next turn, you may play that card."
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!during && !fromCommandZone && !flashback && !escape && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
@@ -412,7 +472,7 @@ function cast(
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
-  const cost = parseManaCost(during?.free ? '' : (flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost)));
+  const cost = parseManaCost(during?.free || alt?.id === 'plot' ? '' : (flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost)));
   if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
@@ -459,6 +519,8 @@ function cast(
     before,
     ...(kicked ? { kicked: true as const } : {}),
     ...(paid.length ? { paid } : {}),
+    // CR 702.62a: a creature spell cast this way gains haste.
+    ...(during?.suspended ? { suspended: true as const } : {}),
   };
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
@@ -468,8 +530,17 @@ function cast(
 }
 
 /** CR 608.2g: cast a card as an effect resolves, without paying its mana cost. */
-export function castDuringResolution(g: GameState, player: PlayerId, id: ObjectId, targets: Target[][] | undefined, modes: number[] | undefined, events: GameEvent[]): void {
-  cast(g, player, id, 0, 0, false, targets, modes, events, {}, false, undefined, [], { free: true });
+export function castDuringResolution(
+  g: GameState,
+  player: PlayerId,
+  id: ObjectId,
+  targets: Target[][] | undefined,
+  modes: number[] | undefined,
+  events: GameEvent[],
+  opts: { alt?: string; suspended?: true } = {},
+): void {
+  // With an alternative cost (madness) it's paid, tapping for mana as needed; otherwise it's free.
+  cast(g, player, id, 0, 0, Boolean(opts.alt), targets, modes, events, {}, false, opts.alt, [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}) });
 }
 
 /** Whether a card could be cast right now for free: not a land (CR 305.9). */

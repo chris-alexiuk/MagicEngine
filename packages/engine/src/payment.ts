@@ -4,7 +4,7 @@ import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power } from
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
-import { moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
+import { discardCard, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
@@ -106,7 +106,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     if (c.type === 'discard') {
       const n = Number(c.amount ?? 1);
       // CR 701.9a
-      for (const id of choices.discard!.slice(discardUsed, discardUsed + n)) moveObject(g, id, 'graveyard', events);
+      for (const id of choices.discard!.slice(discardUsed, discardUsed + n)) discardCard(g, id, events);
       discardUsed += n;
       continue;
     }
@@ -128,7 +128,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
-      moveObject(g, o.id, 'graveyard', events);
+      discardCard(g, o.id, events);
     }
   }
 }

@@ -62,6 +62,7 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
 - **Paying with permanents and cards**: convoke, improvise and delve (CR 702.51a, 702.126a, 702.66a) are part of paying a spell's cost; the cast action lists the creatures, artifacts or cards used, and the legal-action list fills in what mana alone can't cover.
 - **Face-down cards** (CR 708): morph, megamorph and disguise cast a card face down for {3}; manifest and cloak put cards onto the battlefield face down. The object keeps its own card and a `faceDown` marker; everything that reads its face sees a nameless 2/2 with no abilities (ward {2} for disguise and cloak). Views show other players only a face-down card (CR 708.5). Turning it face up is a special action that pays its morph or disguise cost (or a manifested creature's mana cost); it doesn't enter again (CR 708.8), and anything that leaves face down is revealed (CR 708.9).
 - **Casting as an effect resolves** (CR 608.2g): "you may cast it without paying its mana cost", cascade, discover and rebound ask the player, and on "yes" cast the card right then — from wherever it is, ignoring timing, for no mana (X is 0) — so it goes on the stack above the resolving ability.
+- **Cards cast later from exile**: foretell, plot and suspend are special actions from the hand (CR 116.2) that exile the card and mark it; a foretold card is face down to everyone but its owner. Foretold and plotted cards can be cast from exile on a later turn (the foretell cost; plot for free, as a sorcery). Suspended cards lose a time counter each upkeep and, with the last, may be cast for free — a creature cast this way has haste. Madness exiles a discarded card instead of putting it in the graveyard and lets its owner cast it for the madness cost (CR 702.35a); every discard goes through one function so that applies everywhere.
 - **Emblems** (CR 114) are objects in the command zone; their abilities work from there alongside those of permanents.
 - **Choices made by other players**: "that player may …", "its controller may …" ask the named player. "Each opponent attacking that player does the same" repeats the effects with each of those players acting as "you".
 - **Rules for players** ("no maximum hand size", "an additional land", "skip your draw step", "look at the top card of your library") are static abilities read where the rule applies (`player-rules.ts`).
@@ -94,7 +95,8 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Cumulative upkeep and echo from their definitions; convoke, delve and improvise
    - ✅ Face-down cards: morph, megamorph, disguise, manifest, cloak, "when ~ is turned face up"
    - ✅ Casting for free as an effect resolves: cascade, discover, rebound, "you may cast it without paying its mana cost"
-   - Next: "becomes a copy of", copies of abilities, granted static abilities, madness, suspend, foretell, plot, alternative costs, text-changing effects, blockers that block several creatures, "from the top of your library", static type changes ("is an Island in addition")
+   - ✅ Foretell, plot, suspend, madness
+   - Next: "becomes a copy of", copies of abilities, granted static abilities, alternative costs, text-changing effects, blockers that block several creatures, "from the top of your library", static type changes ("is an Island in addition")
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

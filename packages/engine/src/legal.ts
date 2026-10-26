@@ -5,7 +5,7 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withC
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { additionalCosts, castOptions, faceUpCost, flashbackCost } from './actions.js';
+import { additionalCosts, castOptions, exileActionCost, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -73,6 +73,31 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   }
   // CR 702.138a: escape from the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) out.push(...optionCasts(g, player, g.objects[id]!, mainPhaseEmptyStack, true));
+
+  // Foretell, plot, suspend from the hand (special actions, CR 116.2).
+  for (const id of zoneList(g, 'hand', player)) {
+    const o = g.objects[id]!;
+    const face = g.cards[o.card]!.faces[0]!;
+    for (const kind of ['foretell', 'plot', 'suspend'] as const) {
+      const costText = exileActionCost(face, kind);
+      if (!costText || !exileActionTiming(g, player, face, kind)) continue;
+      if (planAutoTap(g, player, parseManaCost(costText))) out.push({ type: kind, player, object: id, autoTap: true });
+    }
+  }
+  // Foretold and plotted cards in exile, on a later turn.
+  for (const id of g.zones.exile) {
+    const o = g.objects[id]!;
+    if (o.owner !== player || (o.foretold === undefined && o.plotted === undefined)) continue;
+    const face = g.cards[o.card]!.faces[0]!;
+    const opt = castOptions(face).find((x) => x.id === (o.foretold !== undefined ? 'foretell' : 'plot'));
+    if (!opt || (o.foretold ?? o.plotted)! >= g.turn) continue;
+    if (opt.id === 'plot' && !mainPhaseEmptyStack) continue;
+    const instant = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+    if (opt.id === 'foretell' && !instant && !mainPhaseEmptyStack) continue;
+    if (!planAutoTap(g, player, parseManaCost(opt.cost.mana ?? ''))) continue;
+    const choice = defaultSpellChoice(g, player, o, face);
+    if (choice) out.push({ type: 'cast', player, object: id, autoTap: true, alt: opt.id, ...choice });
+  }
 
   // CR 702.37e: turning face-down permanents face up (a special action, any time with priority).
   for (const id of g.zones.battlefield) {
@@ -172,6 +197,8 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
   const out: Action[] = [];
   for (const opt of options) {
+    // From exile (foretell, plot, madness) is listed elsewhere.
+    if (opt.zone === 'exile') continue;
     // CR 702.37c: cast face down, it's a creature spell with no text.
     if ((FACE_DOWN_KEYWORDS as readonly string[]).includes(opt.id)) {
       if (fromGraveyard || !sorcerySpeed) continue;

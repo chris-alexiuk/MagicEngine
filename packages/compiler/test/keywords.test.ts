@@ -20,7 +20,7 @@ describe('keyword lines', () => {
     ['Basic landcycling {1}', [{ id: 'typecycling', text: 'basic land', cost: '{1}' }]],
     ['Swampwalk', [{ id: 'landwalk', text: 'swamp' }]],
     ['Crew 3', [{ id: 'crew', n: 3 }]],
-    ['Suspend 4—{1}{U}', [{ id: 'suspend', cost: '4—{1}{U}' }]],
+    ['Suspend 4—{1}{U}', [{ id: 'suspend', n: 4, cost: '{1}{U}' }]],
     ['Kicker {1}{U} and/or {2}', [{ id: 'kicker', cost: '{1}{U} and/or {2}' }]],
     ['Partner', [{ id: 'partner' }]],
     ['Partner with Pir, Imaginative Rascal', [{ id: 'partner_with', text: 'Pir, Imaginative Rascal' }]],

@@ -31,7 +31,7 @@ import { faceDownFace } from './face-down.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
-  'class_level', 'turned_face_up',
+  'class_level', 'turned_face_up', 'discarded',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);
@@ -66,6 +66,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   if (!batch.length) return;
   collectDelayed(g, batch);
   collectMonarch(g, batch);
+  collectExileKeywords(g, batch);
 
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
   const left = new Map<ObjectId, Candidate>();
@@ -316,6 +317,42 @@ export function announceTargets(entry: StackEntry, events: GameEvent[]): void {
 /** The context a trigger's condition is checked in as it triggers. */
 export function triggerContext(g: GameState, controller: PlayerId, source: GameObject, info: TriggerInfo): EffectContext {
   return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: 0, memo: {}, trigger: info };
+}
+
+/**
+ * Abilities of cards in exile from their keywords: suspend's "At the beginning of your upkeep, … remove a
+ * time counter" (CR 702.62a) and madness's "When this card is exiled this way, its owner may cast it"
+ * (CR 702.35a).
+ */
+function collectExileKeywords(g: GameState, batch: GameEvent[]): void {
+  for (const e of batch) {
+    if (e.type === 'step' && e.step === 'upkeep') {
+      for (const id of g.zones.exile) {
+        const o = g.objects[id]!;
+        if (!o.suspended || o.owner !== g.active || !(o.counters.time ?? 0)) continue;
+        g.triggers.push({
+          id: `t${g.nextId++}`,
+          controller: o.owner,
+          source: { id: o.id, zcc: o.zcc },
+          sourceName: g.cards[o.card]!.faces[0]!.name,
+          ability: { kind: 'triggered', text: 'Suspend — remove a time counter', trigger: { type: 'phase', step: 'upkeep', whose: 'you' }, effects: [{ type: 'suspend_tick' }] },
+          info: {},
+        });
+      }
+    }
+    if (e.type === 'discarded' && e.madness) {
+      const o = g.objects[e.object];
+      if (!o || o.zone !== 'exile') continue;
+      g.triggers.push({
+        id: `t${g.nextId++}`,
+        controller: o.owner,
+        source: { id: o.id, zcc: o.zcc },
+        sourceName: g.cards[o.card]!.faces[0]!.name,
+        ability: { kind: 'triggered', text: 'Madness', trigger: { type: 'discarded' }, effects: [{ type: 'madness_cast' }] },
+        info: {},
+      });
+    }
+  }
 }
 
 /** CR 603.7b: delayed triggers fire the next time their moment comes, once. */

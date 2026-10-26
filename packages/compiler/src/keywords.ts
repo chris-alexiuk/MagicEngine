@@ -139,7 +139,11 @@ export class KeywordRegistry {
           if (/^(\d+|X)$/.test(arg)) return arg === 'X' ? { id: spec.id, text: 'X' } : { id: spec.id, n: Number(arg) };
           break; // a same-named cost spec (e.g. cumulative upkeep {1}) may still match below
         case 'cost':
-          if (isCostArg(arg, emDash, strictCost)) return { id: spec.id, cost: arg };
+          if (isCostArg(arg, emDash, strictCost)) {
+            // "Suspend 4—{1}{U}": a number and a cost (CR 702.62a).
+            const numbered = /^(\d+)—(.+)$/.exec(arg);
+            return numbered ? { id: spec.id, n: Number(numbered[1]), cost: numbered[2]! } : { id: spec.id, cost: arg };
+          }
           break;
         case 'quality':
           if (arg !== '') return { id: spec.id, text: arg };

@@ -358,6 +358,10 @@ for (let game = 0; game < GAMES; game++) {
       // Couldn't afford it: decline instead.
       r = apply(g, { type: 'choose', player: answer.player, answer: { kind: 'pay', pay: false } });
     }
+    if (!r.ok && answer?.answer.kind === 'cast_free' && answer.answer.cast) {
+      // Couldn't cast it (madness's cost, no legal targets): decline instead.
+      r = apply(g, { type: 'choose', player: answer.player, answer: { kind: 'cast_free', cast: false } });
+    }
     if (!r.ok) {
       if (offered || answer) {
         failures.push({ game, kind: 'rejected', detail: r.error, action: label });

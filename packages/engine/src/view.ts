@@ -61,7 +61,7 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   for (const id of visible) {
     const o = g.objects[id];
     if (!o) continue;
-    if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack') && o.controller !== viewer) {
+    if (((o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) || (o.foretold !== undefined && o.zone === 'exile')) && (o.zone === 'exile' ? o.owner : o.controller) !== viewer) {
       // CR 708.5: others see only a face-down card.
       const key = faceDownKey(o);
       objects[id] = { ...structuredClone(o), card: key, face: 0 };

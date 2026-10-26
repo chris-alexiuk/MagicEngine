@@ -146,6 +146,9 @@ export function moveObject(
     events.push({ type: 'revealed', player: o.owner, objects: [o.id] });
   }
   delete o.regenShields;
+  delete o.foretold;
+  delete o.plotted;
+  delete o.suspended;
   delete o.activatedTurn;
   delete o.triggeredTurn;
   delete o.monstrous;
@@ -228,6 +231,18 @@ export function createObject(g: GameState, card: string, owner: PlayerId, zone: 
   g.objects[id] = o;
   zoneList(g, zone, owner).push(id);
   return o;
+}
+
+/**
+ * CR 701.9a: discard a card — from its owner's hand to their graveyard, or to exile for madness
+ * (CR 702.35a: "If a player would discard this card, that player discards it, but exiles it instead").
+ */
+export function discardCard(g: GameState, id: ObjectId, events: GameEvent[]): void {
+  const o = obj(g, id);
+  const face = faceOf(g, o);
+  const madness = face.keywords.some((k) => k.id === 'madness' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+  moveObject(g, id, madness ? 'exile' : 'graveyard', events);
+  events.push({ type: 'discarded', object: id, player: o.owner, ...(madness && o.zone === 'exile' ? { madness: true as const } : {}) });
 }
 
 /** Draws one card. CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions. */

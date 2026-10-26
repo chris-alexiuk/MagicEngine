@@ -409,8 +409,8 @@ export interface CastOptionNode extends EffectNode {
   id: string;
   kind: 'alternative' | 'additional';
   cost: Cost;
-  /** Escape: cast from your graveyard this way (CR 702.138a). */
-  zone?: 'graveyard';
+  /** Escape: cast from your graveyard this way (CR 702.138a); foretell, plot, madness: from exile. */
+  zone?: 'graveyard' | 'exile';
   /** Spectacle: "if an opponent lost life this turn" (CR 702.137a). */
   condition?: ConditionNode;
   /** Entwine: all modes are chosen (CR 702.42a). */
@@ -578,7 +578,7 @@ export const CORE_NODES = {
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
-    'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover',
+    'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -601,7 +601,7 @@ export const CORE_NODES = {
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
-    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise',
+    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker',
@@ -615,7 +615,9 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (kw.id === 'flashback' || kw.id === 'kicker' || kw.id === 'morph' || kw.id === 'megamorph' || kw.id === 'disguise') return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (['flashback', 'kicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  // Suspend N—[cost]
+  if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;
 }
 

@@ -566,3 +566,12 @@ describe('casting as an effect resolves (CR 608.2g)', () => {
     });
   });
 });
+
+describe('cards cast later from exile', () => {
+  it('foretell, plot, suspend and madness with mana costs are applied natively', () => {
+    for (const [line, type] of [['Foretell {1}{R}', 'Instant'], ['Plot {2}{U}', 'Sorcery'], ['Suspend 3—{1}{G}', 'Creature — Beast'], ['Madness {B}', 'Creature — Vampire']] as const) {
+      expect(parse(line, type, 'Card').manualKeywords ?? []).toEqual([]);
+    }
+    expect(parse('Suspend 3—{1}{G}', 'Sorcery', 'Card').keywords).toMatchObject([{ id: 'suspend', n: 3, cost: '{1}{G}' }]);
+  });
+});

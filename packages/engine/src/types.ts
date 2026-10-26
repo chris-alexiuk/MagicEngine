@@ -99,6 +99,12 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** CR 702.143a: foretold (exiled face down from hand) on this turn. */
+  foretold?: number;
+  /** CR 702.170a: plotted on this turn. */
+  plotted?: number;
+  /** CR 702.62a: suspended (in exile with time counters). */
+  suspended?: true;
   /** CR 708: face down, and how it got that way (its own card is still there to turn face up). */
   faceDown?: 'morph' | 'disguise' | 'manifest' | 'cloak';
   /** When it came under its controller's control (a clock value; CR 702.30a echo). */
@@ -124,7 +130,7 @@ export interface GameObject {
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true; paid?: string[] };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; before?: number; copy?: true; paid?: string[]; suspended?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
@@ -450,6 +456,8 @@ export type Action =
   | { type: 'play_land'; player: PlayerId; object: ObjectId; face?: number }
   /** CR 702.37e / 116.2b: turn a face-down permanent you control face up by paying its cost (a special action). */
   | { type: 'turn_face_up'; player: PlayerId; object: ObjectId; autoTap?: boolean }
+  /** Special actions that exile a card from hand to cast later: foretell (CR 702.143a), plot (CR 702.170a), suspend (CR 702.62a). */
+  | { type: 'foretell' | 'plot' | 'suspend'; player: PlayerId; object: ObjectId; autoTap?: boolean }
   | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor; costs?: CostChoices }
   | {
       type: 'cast';
@@ -517,6 +525,8 @@ export type GameEvent =
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
   | { type: 'turned_face_up'; object: ObjectId }
+  /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
+  | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   | { type: 'countered'; object: ObjectId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
