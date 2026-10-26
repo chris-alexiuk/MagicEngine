@@ -223,6 +223,26 @@ function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEven
   const toHand = printedAbilities(faceOf(g, o)).some(
     (a) => a.kind === 'static' && a.effect.type === 'resolve_to_hand' && evalCondition(a.effect.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }),
   );
+  // CR 702.88a (rebound): cast from your hand, it's exiled instead, to be cast again at your next upkeep.
+  const rebound = !toHand && o.cast?.from === 'hand' && printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'rebound');
+  if (rebound) {
+    const controller = o.controller;
+    moveObject(g, o.id, 'exile', events);
+    g.delayed.push({
+      id: `d${g.nextId++}`,
+      controller,
+      source: { id: o.id, zcc: o.zcc },
+      sourceName: nameOf(g, o),
+      text: 'rebound',
+      step: 'upkeep',
+      whose: 'you',
+      createdTurn: g.turn,
+      createdStep: g.step,
+      effects: [{ type: 'cast_free', what: { ref: 'self' } }],
+      targets: [],
+    });
+    return;
+  }
   // CR 608.2n: as the final part of an instant or sorcery's resolution, it goes to its owner's graveyard.
   moveObject(g, o.id, toHand ? 'hand' : 'graveyard', events);
 }

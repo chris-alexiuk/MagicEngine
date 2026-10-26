@@ -19,7 +19,8 @@ import { installPlugin, type EffectContext, type EffectResult, type MechanicPlug
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
-import { battlefieldZcc, drawCard, livePlayers, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
+import { battlefieldZcc, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
+import { castableCard, castDuringResolution } from './actions.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -704,6 +705,24 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 608.2g: "You may cast it without paying its mana cost."
+  cast_free(node, ctx) {
+    const o = refObjects(ctx, ref(node, 'what'))[0];
+    if (!o || o.zone === 'stack' || o.zone === 'battlefield' || !castableCard(ctx.g, o)) return true;
+    return offerFreeCast(ctx, o.id) ?? true;
+  },
+
+  // CR 702.85a: cascade.
+  cascade(node, ctx) {
+    return revealUntilCast(ctx, (o, g) => manaValueOf(g, o) < (ctx.source ? manaValueOf(g, ctx.source) : 0), 'bottom');
+  },
+
+  // CR 701.57a: discover N — like cascade, but with mana value N or less, and to hand if not cast.
+  discover(node, ctx) {
+    const n = Number(node.n ?? 0);
+    return revealUntilCast(ctx, (o, g) => manaValueOf(g, o) <= n, 'hand');
+  },
+
   // CR 114.1: "You get an emblem with "…"".
   emblem(node, ctx) {
     const face: FaceDef = {
@@ -829,6 +848,53 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 function chooserOf(node: EffectNode, ctx: EffectContext): PlayerId | null {
   if (!node.who) return ctx.controller;
   return refPlayers(ctx, node.who as Ref)[0] ?? null;
+}
+
+/**
+ * Asks whether to cast a card for free now; on "yes" casts it (CR 608.2g). Returns the prompt, or null once
+ * answered (or if there's nothing to ask).
+ */
+function offerFreeCast(ctx: EffectContext, id: string): EffectResult | null {
+  const g = ctx.g;
+  const answer = answerOf(ctx, 'cast_free');
+  if (!answer) {
+    return { ask: { kind: 'cast_free', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, g.objects[id]!)} without paying its mana cost?` } };
+  }
+  ctx.memo.castFree = answer.cast;
+  if (answer.cast) castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events);
+  return null;
+}
+
+/** Cascade and discover: exile from the top until a nonland card that qualifies, offer to cast it, then tidy up. */
+function revealUntilCast(ctx: EffectContext, qualifies: (o: GameObject, g: GameState) => boolean, rest: 'bottom' | 'hand'): EffectResult {
+  const g = ctx.g;
+  if (!ctx.memo.exiled) {
+    const exiled: string[] = [];
+    let hit: string | null = null;
+    for (const id of [...zoneList(g, 'library', ctx.controller)]) {
+      moveObject(g, id, 'exile', ctx.events);
+      exiled.push(id);
+      const o = g.objects[id]!;
+      if (!faceOf(g, o).types.includes('Land') && qualifies(o, g)) {
+        hit = id;
+        break;
+      }
+    }
+    ctx.memo.exiled = exiled;
+    ctx.memo.hit = hit;
+  }
+  const hit = ctx.memo.hit as string | null;
+  if (hit && g.objects[hit]?.zone === 'exile' && ctx.memo.castFree === undefined) {
+    const asked = offerFreeCast(ctx, hit);
+    if (asked) return asked;
+  }
+  // Discover: "If you don't, put that card into your hand." (CR 701.57a)
+  if (rest === 'hand' && hit && g.objects[hit]?.zone === 'exile') moveObject(g, hit, 'hand', ctx.events);
+  // The rest go on the bottom in a random order.
+  const left = (ctx.memo.exiled as string[]).filter((id) => g.objects[id]?.zone === 'exile');
+  shuffleInPlace(g, left);
+  for (const id of left) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+  return true;
 }
 
 /** Whether an optional action in "You may [do X]. If you do, …" can be done at all by `chooser`. */
@@ -1113,7 +1179,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

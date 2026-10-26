@@ -1020,6 +1020,20 @@ export const returnIfPaidRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 702.88a (rebound): "If this spell was cast from your hand, instead of putting it into your graveyard
+ * as it resolves, exile it and, at the beginning of your next upkeep, you may cast this card from exile
+ * without paying its mana cost."
+ */
+export const reboundRule: GrammarRule = {
+  id: 'rebound',
+  parse(line, original) {
+    if (line !== "If ~ was cast from your hand, instead of putting it into your graveyard as it resolves, exile it and, at the beginning of your next upkeep, you may cast ~ from exile without paying its mana cost.") return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'rebound' } };
+    return node;
+  },
+};
+
 export const additionalCostRule: GrammarRule = {
   id: 'additional_cost',
   parse(line, original, ctx) {
@@ -1045,6 +1059,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   exileInsteadRule,
   selfReplacementRule,
   castOptionRule,
+  reboundRule,
   resolveToHandRule,
   returnIfPaidRule,
   additionalCostRule,

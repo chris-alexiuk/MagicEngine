@@ -27,7 +27,16 @@ export function splitSentences(text: string): string[] | null {
     .map((s) => s.trim());
 }
 
+/** Keyword definitions read as one effect each (CR 702.85a cascade). */
+const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
+  [
+    /^Exile cards from the top of your library until you exile a nonland card whose mana value is less than ~'s mana value\. You may cast that card without paying its mana cost if the resulting spell's mana value is less than ~'s mana value\. Then put all cards exiled this way that weren't cast on the bottom of your library in a random order\.$/,
+    [{ type: 'cascade' }],
+  ],
+];
+
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
+  for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
   return attempt(b, (b) => {
     const sentences = splitSentences(text);
     if (!sentences) return null;
@@ -297,6 +306,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unless[3]!, effects: inner }] : null;
     });
   }
+  // CR 608.2g: "You may cast it without paying its mana cost" — cast during resolution, timing ignored.
+  const free = /^[Yy]ou may cast (.+?) without paying (?:its|that spell's|~'s) mana cost$/.exec(s);
+  if (free) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(free[1]!.replace(/ from (?:your|a|an opponent's|that player's) graveyard$/, (m) => m), b);
+      if (!what || what.plural) return null;
+      return [{ type: 'cast_free', what: what.ref }];
+    });
+    if (r) return r;
+  }
   const may = /^[Yy]ou may (.+)$/.exec(s);
   if (may) {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
@@ -317,6 +336,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 701.57a: "discover N".
+  const discover = /^[Dd]iscover (\d+)$/.exec(s);
+  if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
   // CR 701.40a / 701.58a: "Manifest the top card of your library", "cloak the top two cards of your library".
   const manifest = /^([Mm]anifest|[Cc]loak) the top (card|two cards|three cards) of your library$/.exec(s);
   if (manifest) {

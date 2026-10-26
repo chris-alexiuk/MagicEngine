@@ -282,6 +282,15 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
   return null;
 }
 
+/** Default targets and modes for casting this card now (e.g. for free, as an effect resolves). */
+export function defaultCastChoice(g: GameState, player: PlayerId, id: ObjectId): { targets?: Target[][]; modes?: number[] } | null {
+  const o = g.objects[id];
+  const face = o ? g.cards[o.card]?.faces[0] : undefined;
+  if (!o || !face) return null;
+  const choice = defaultSpellChoice(g, player, o, face);
+  return choice ? { ...(choice.targets ? { targets: choice.targets } : {}), ...(choice.modes ? { modes: choice.modes } : {}) } : null;
+}
+
 function defaultSpellChoice(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): Choice | null {
   if (isPermanentCard(face)) {
     const aura = auraTargetSpec(face);

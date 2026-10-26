@@ -555,3 +555,14 @@ describe('face-down cards (CR 708)', () => {
     expect(one('Cloak the top two cards of your library.', 'Sorcery')).toMatchObject({ effects: [{ type: 'manifest', amount: 2, cloak: true }] });
   });
 });
+
+describe('casting as an effect resolves (CR 608.2g)', () => {
+  it('cascade and rebound from their definitions; discover; "you may cast it without paying its mana cost"', () => {
+    expect(parse('Cascade', 'Creature — Beast', 'Beast').keywords[0]!.abilities).toMatchObject([{ trigger: { type: 'cast', self: true }, zone: 'stack', effects: [{ type: 'cascade' }] }]);
+    expect(parse('Rebound', 'Sorcery', 'Spell').keywords[0]!.abilities).toMatchObject([{ effect: { type: 'rebound' } }]);
+    expect(one('When this creature enters, discover 3.', 'Creature — Elf')).toMatchObject({ effects: [{ type: 'discover', n: 3 }] });
+    expect(one('Exile target instant or sorcery card from your graveyard. You may cast that card without paying its mana cost.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'move', to: 'exile' }, { type: 'cast_free', what: { ref: 'target', index: 0 } }],
+    });
+  });
+});

@@ -33,6 +33,7 @@ import {
   type PlayerId,
   type Target,
 } from '../src/index.js';
+import { defaultCastChoice } from '../src/legal.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -138,6 +139,10 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'manual_resolution', done: true } };
     case 'may':
       return { player: me, answer: { kind: 'may', yes: rnd() < 0.7 } };
+    case 'cast_free': {
+      const choice = rnd() < 0.8 ? defaultCastChoice(g, me, p.object) : null;
+      return { player: me, answer: choice ? { kind: 'cast_free', cast: true, ...choice } : { kind: 'cast_free', cast: false } };
+    }
     case 'copy_targets': {
       // Keep the targets, or pick new ones where there are enough candidates.
       const fresh = p.prompts.map((pr) => pr.candidates.slice().sort(() => rnd() - 0.5).slice(0, pr.count));
@@ -307,6 +312,7 @@ for (let game = 0; game < GAMES; game++) {
     continue;
   }
 
+  const used = new Map<string, number>();
   for (let i = 0; i < 6000 && !g.over && g.turn <= 40; i++) {
     let action: Action;
     let offered = false;
@@ -314,7 +320,8 @@ for (let game = 0; game < GAMES; game++) {
     if (answer) action = { type: 'choose', player: answer.player, answer: answer.answer };
     else if (g.priority) {
       const options = legalActions(g, g.priority);
-      const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual');
+      // Nor activate the same ability over and over in one turn ("{0}: … gets -1/-0 until end of turn").
+      const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual' && !(a.type === 'activate' && (used.get(`${g.turn}:${a.object}`) ?? 0) >= 6));
       // Bots don't pile up a huge stack (free abilities like "{0}: …" would otherwise loop for thousands of actions).
       const chosen = active.length && g.stack.length < 20 && rnd() < 0.75 ? pick(active) : options[0]!;
       offered = true;
@@ -368,6 +375,7 @@ for (let game = 0; game < GAMES; game++) {
     }
     actions++;
     decided++;
+    if (action.type === 'activate') used.set(`${g.turn}:${action.object}`, (used.get(`${g.turn}:${action.object}`) ?? 0) + 1);
     for (const e of r.events) {
       if (e.type === 'triggered') stats.triggered++;
       if (e.type === 'resolved' && (e.entry.program || e.entry.kind === 'spell')) stats.resolvedAuto++;

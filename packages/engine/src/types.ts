@@ -283,6 +283,8 @@ export interface DelayedTrigger {
   /** CR 603.7c: it affects the same objects the original ability did. */
   targets: TargetRef[][];
   info?: TriggerInfo;
+  /** "at the beginning of your next upkeep" (rebound): only on its controller's turn. */
+  whose?: 'you';
   /** "When you next cast an instant or sorcery spell this turn": fires on that event instead of a step. */
   on?: { who: 'you'; filter: ObjectFilter };
 }
@@ -362,6 +364,8 @@ export type PendingChoice =
   | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
   | { kind: 'discard'; player: PlayerId; count: number }
   | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
+  /** CR 608.2g: cast this card now without paying its mana cost? (cascade, discover, rebound, "you may cast it …") */
+  | { kind: 'cast_free'; player: PlayerId; object: ObjectId; sourceName: string; text: string }
   /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */
   | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][] }
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
@@ -402,6 +406,7 @@ export type ChoiceAnswer =
   | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
   | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][] }
   | { kind: 'copy_targets'; targets?: Target[][] }
+  | { kind: 'cast_free'; cast: boolean; targets?: Target[][]; modes?: number[] }
   /** CR 701.22a: cards to keep on top (first = top) and to put on the bottom. */
   | { kind: 'scry'; top: ObjectId[]; bottom: ObjectId[] }
   /** CR 701.25a: cards to keep on top (first = top) and to put into the graveyard. */

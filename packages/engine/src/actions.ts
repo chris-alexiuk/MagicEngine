@@ -179,6 +179,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'proliferate':
     case 'choose_objects':
     case 'copy_targets':
+    case 'cast_free':
       // A choice made while a spell or ability resolves: carry on resolving with it.
       if (!g.resolving) throw new RulesError('Nothing is resolving.');
       g.pending = null;
@@ -342,6 +343,8 @@ function cast(
   kicked: boolean,
   altId?: string,
   extras: string[] = [],
+  /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost"). */
+  during?: { free: true },
 ): void {
   const o = obj(g, id);
   const def = g.cards[o.card]!;
@@ -378,7 +381,7 @@ function cast(
   // "Until the end of your next turn, you may play that card."
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!fromCommandZone && !flashback && !escape && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!during && !fromCommandZone && !flashback && !escape && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
@@ -389,7 +392,8 @@ function cast(
   // CR 117.1a: instants any time you have priority; anything else during your main phase with an empty stack.
   // CR 702.8a: flash lets a card be cast any time you could cast an instant.
   const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
-  if (!instantSpeed) {
+  // CR 608.2g: casting as an effect resolves ignores timing.
+  if (!instantSpeed && !during) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
       throw new RulesError(`${faceDown ? 'A face-down creature' : face.name} can only be cast during your main phase while the stack is empty.`);
     }
@@ -407,7 +411,9 @@ function cast(
       : [];
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
-  const cost = parseManaCost(flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost));
+  // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
+  const cost = parseManaCost(during?.free ? '' : (flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost)));
+  if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
@@ -438,6 +444,7 @@ function cast(
   payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
+  const castFrom = o.zone;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
   if (faceDown) ensureFaceDownDefs(g);
@@ -448,7 +455,7 @@ function cast(
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
   o.cast = {
     by: player,
-    from: fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile ? 'exile' : 'hand',
+    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile ? 'exile' : 'hand',
     before,
     ...(kicked ? { kicked: true as const } : {}),
     ...(paid.length ? { paid } : {}),
@@ -456,8 +463,19 @@ function cast(
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);
-  // CR 601.2i: a player who had priority when casting gets priority afterward.
-  givePriority(g, player);
+  // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
+  if (!during) givePriority(g, player);
+}
+
+/** CR 608.2g: cast a card as an effect resolves, without paying its mana cost. */
+export function castDuringResolution(g: GameState, player: PlayerId, id: ObjectId, targets: Target[][] | undefined, modes: number[] | undefined, events: GameEvent[]): void {
+  cast(g, player, id, 0, 0, false, targets, modes, events, {}, false, undefined, [], { free: true });
+}
+
+/** Whether a card could be cast right now for free: not a land (CR 305.9). */
+export function castableCard(g: GameState, o: GameObject): boolean {
+  const face = g.cards[o.card]?.faces[0];
+  return Boolean(face && !face.types.includes('Land'));
 }
 
 // ---------------------------------------------------------------------------

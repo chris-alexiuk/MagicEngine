@@ -345,6 +345,7 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
     if (e.type !== 'step') continue;
     for (const d of [...g.delayed]) {
       if (d.on || d.step !== e.step) continue;
+      if (d.whose === 'you' && g.active !== d.controller) continue;
       // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
       if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === 'end') continue;
       g.delayed = g.delayed.filter((x) => x.id !== d.id);
