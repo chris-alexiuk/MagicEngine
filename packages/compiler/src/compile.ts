@@ -138,6 +138,21 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
   return out;
 }
 
+/**
+ * Re-runs the parser over an existing card DB's oracle text, so grammar changes can be
+ * measured against the full card pool without downloading Scryfall data again.
+ */
+export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry): CardDB {
+  const reparse = (card: CardDef): CardDef => {
+    const faces = card.faces.map((f) => {
+      const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine });
+      return { ...f, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed };
+    });
+    return { ...card, faces, automation: automationOf(faces) };
+  };
+  return { ...db, schema: SCHEMA_VERSION, cards: db.cards.map(reparse), tokens: db.tokens.map(reparse) };
+}
+
 function automationOf(faces: FaceDef[]): Automation {
   const unparsed = faces.reduce((n, f) => n + f.unparsed.length, 0);
   if (unparsed === 0) return 'full';

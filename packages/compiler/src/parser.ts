@@ -1,5 +1,7 @@
 import type { AbilityNode, KeywordInstance } from '@mtg/schema';
 import { shortName, stripReminder } from '@mtg/schema';
+import { Binder, type GrammarEnv } from './grammar/binder.js';
+import { parseFilter } from './grammar/nouns.js';
 import { KeywordRegistry } from './keywords.js';
 import { CORE_RULES } from './rules/index.js';
 
@@ -21,6 +23,10 @@ export interface ParseContext {
   cardName: string;
   faceName: string;
   typeLine: string;
+  /** Filled in by the registry for grammar rules that need to recognise keywords. */
+  keywords?: KeywordRegistry;
+  /** Filled in by the registry: compiles another ability text (a token's, say). */
+  parseAbilities?: (text: string, name: string, typeLine: string) => ParseResult;
 }
 
 export interface GrammarRule {
@@ -54,25 +60,47 @@ export class ParserRegistry {
   }
 
   parse(text: string, ctx: ParseContext): ParseResult {
+    const env: ParseContext = {
+      ...ctx,
+      keywords: this.keywords,
+      parseAbilities: (t, name, typeLine) => this.parse(t, { cardName: name, faceName: name, typeLine }),
+    };
     const result: ParseResult = { keywords: [], abilities: [], unparsed: [] };
-    for (const rawLine of text.split('\n')) {
-      const line = stripReminder(rawLine);
+    const lines = text.split('\n').map(stripReminder);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
       if (line === '') continue; // pure reminder text, e.g. a basic land's "({T}: Add {G}.)"
 
       const kws = this.keywords.parseLine(line);
       if (kws) {
+        for (const kw of kws) {
+          // CR 702.5a / CR 303.4a: what an Aura can enchant is also what the Aura spell targets.
+          if (kw.id === 'enchant' && kw.text) {
+            const pf = parseFilter(kw.text, new Binder(env as GrammarEnv));
+            if (pf && !pf.plural) kw.filter = pf.filter;
+          }
+        }
         result.keywords.push(...kws);
         continue;
       }
 
-      const normalised = normaliseSelf(stripAbilityWord(line), ctx);
+      // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
+      const block = [line];
+      if (/\bchoose (?:one|two|three|one or both|one or more|any number) —$/i.test(line)) {
+        while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
+      }
+
+      const normalised = block
+        .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
+        .join('\n');
+      const original = block.join('\n');
       let node: AbilityNode | null = null;
       for (const rule of this.rules) {
-        node = rule.parse(normalised, line, ctx);
+        node = rule.parse(normalised, original, env);
         if (node) break;
       }
       if (node) result.abilities.push(node);
-      else result.unparsed.push(line);
+      else result.unparsed.push(...block);
     }
     return result;
   }
@@ -99,7 +127,8 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`(?<![\\w'])${escapeRegExp(name)}(?![\\w])`, 'g'), '~');
   }
-  out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'g'), '~');
+  // "this creature", "this Aura", "this Equipment" (the subtype words are capitalised).
+  out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'gi'), '~');
   return out;
 }
 

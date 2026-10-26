@@ -108,8 +108,9 @@ describe('planeswalkers', () => {
     g = passRound(g);
     expect(g.objects[jace]!.counters.loyalty).toBe(3);
 
+    // Unparsed lines (resolved by hand): +2, 0 and −12. "−1: Return target creature…" compiles.
     const plusTwo = 0;
-    const minusTwelve = 3;
+    const minusTwelve = 2;
     expect(illegal(g, { type: 'activate_manual', player: 'alice', object: jace, line: minusTwelve })).toMatch(/enough loyalty/);
     g = act(g, { type: 'activate_manual', player: 'alice', object: jace, line: plusTwo });
     expect(g.objects[jace]!.counters.loyalty).toBe(5);
@@ -118,6 +119,8 @@ describe('planeswalkers', () => {
     expect(g.pending).toMatchObject({ kind: 'manual_resolution', player: 'alice' });
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'manual_resolution', done: true } });
     expect(illegal(g, { type: 'activate_manual', player: 'alice', object: jace, line: 1 })).toMatch(/already activated/);
+    // The once-per-turn limit covers compiled loyalty abilities too.
+    expect(illegal(g, { type: 'activate', player: 'alice', object: jace, ability: 0, targets: [[]] })).toMatch(/already activated/);
   });
 
   it('CR 704.5i: a planeswalker with no loyalty goes to the graveyard', () => {

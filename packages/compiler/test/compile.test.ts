@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { imageUrl } from '@mtg/schema';
+import { CORE_NODES, imageUrl, nodeTags } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
 import { compileCards } from '../src/compile.js';
 import { buildCoverage, coverageMarkdown, templateOf } from '../src/coverage.js';
@@ -68,10 +68,30 @@ describe('compileCards', () => {
     expect(byName('Serra Angel').automation).toBe('full');
     expect(byName('Birds of Paradise').automation).toBe('full');
     expect(byName('Bonesplitter').automation).toBe('full');
-    expect(byName('Thornwood Falls').automation).toBe('partial'); // the lifegain trigger is unparsed
-    expect(byName('Counterspell').automation).toBe('manual');
+    expect(byName('Thornwood Falls').automation).toBe('full'); // enters tapped, gain-life trigger, mana ability
+    expect(byName('Counterspell').automation).toBe('full');
+    expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
+    expect(byName('Kinnan, Bonder Prodigy').automation).toBe('manual'); // mana-ability triggers aren't compiled yet
     expect(byName('Breeding Pool').automation).toBe('partial'); // intrinsic mana works; the shock clause is manual
     expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('partial'); // escape keyword parsed
+  });
+});
+
+describe('the compiler/engine contract', () => {
+  it('emits only node tags the engine core handles (schema CORE_NODES)', () => {
+    const seen = { effects: new Set<string>(), statics: new Set<string>(), triggers: new Set<string>(), costs: new Set<string>() };
+    for (const card of [...db.cards, ...db.tokens]) {
+      for (const face of card.faces) {
+        for (const a of face.abilities) {
+          const tags = nodeTags(a);
+          for (const k of Object.keys(seen) as (keyof typeof seen)[]) for (const t of tags[k]) seen[k].add(t);
+        }
+      }
+    }
+    for (const k of Object.keys(seen) as (keyof typeof seen)[]) {
+      expect([...seen[k]].filter((t) => !(CORE_NODES[k] as readonly string[]).includes(t))).toEqual([]);
+    }
+    expect(seen.effects.size).toBeGreaterThan(3);
   });
 });
 

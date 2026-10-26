@@ -1,8 +1,10 @@
-import { isPermanentCard, hasKeyword, hasType, toughness } from './characteristics.js';
+import { hasRule, hasType, isPermanentCard, hasKeyword, toughness } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
-import { canAutomate, runEffect } from './registry.js';
-import type { GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
+import { canAttach, destroy } from './permanents.js';
+import { recheckTargets, runResolution, startResolution } from './resolve.js';
+import { collectTriggers, stackTriggers } from './triggers.js';
+import type { ChoiceAnswer, GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
 import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, setTapped, zoneList } from './zones.js';
 
@@ -24,18 +26,25 @@ export function givePriority(g: GameState, player: PlayerId): void {
 
 /**
  * Runs everything the game does on its own until a player has to act:
- * state-based actions before anyone receives priority (CR 117.5 / CR 704.3).
+ * state-based actions, then triggered abilities go on the stack, before anyone
+ * receives priority (CR 117.5).
  */
 export function settle(g: GameState, events: GameEvent[]): void {
   for (let guard = 0; guard < 1000; guard++) {
-    if (g.over || g.pending || !g.started) return;
+    if (g.over) return;
+    collectTriggers(g, events);
+    if (g.pending || !g.started) return;
     checkStateBasedActions(g, events);
     if (g.over || g.pending) return;
-    if (g.priority !== null) {
-      if (g.players[g.priority]!.lost) g.priority = nextPlayer(g, g.priority);
-      events.push({ type: 'priority', player: g.priority });
-      return;
+    if (g.priority === null) return;
+    if (g.triggers.length) {
+      // CR 117.5: triggered abilities are put on the stack after state-based actions, then check again.
+      stackTriggers(g, events);
+      if (g.pending) return;
+      continue;
     }
+    if (g.players[g.priority]!.lost) g.priority = nextPlayer(g, g.priority);
+    events.push({ type: 'priority', player: g.priority });
     return;
   }
   throw new Error('settle did not converge');
@@ -73,30 +82,69 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
   const entry = g.stack[g.stack.length - 1];
   if (!entry) return;
 
-  if (entry.kind === 'ability') {
+  if (entry.kind === 'ability' && !entry.program) {
     g.pending = { kind: 'manual_resolution', player: entry.controller, text: entry.text, sourceName: entry.sourceName };
     return;
   }
 
-  const o = obj(g, entry.object);
-  const face = faceOf(g, o);
-  if (isPermanentCard(face)) {
-    // CR 608.3a: a permanent spell with no targets enters the battlefield under its controller's control.
-    moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
+  if (entry.kind === 'spell') {
+    const o = obj(g, entry.object);
+    const face = faceOf(g, o);
+    if (isPermanentCard(face)) {
+      resolvePermanentSpell(g, entry, o, events);
+      return;
+    }
+    if (!entry.program) {
+      g.pending = { kind: 'manual_resolution', player: entry.controller, text: face.oracle, sourceName: face.name };
+      return;
+    }
+  }
+
+  const targets = recheckTargets(g, entry);
+  if (!targets) {
+    // CR 608.2b: every target is illegal, so it doesn't resolve. A spell goes to its owner's graveyard.
+    if (entry.kind === 'spell') moveObject(g, entry.object, 'graveyard', events);
+    events.push({ type: 'fizzled', entry });
     finishResolution(g, entry, events);
     return;
   }
+  startResolution(g, entry, targets);
+  continueResolution(g, events);
+}
 
-  const spellAbilities = face.abilities.filter((a) => a.kind === 'spell');
-  const automatic = face.unparsed.length === 0 && spellAbilities.every((a) => canAutomate(a));
-  if (automatic) {
-    // CR 608.2c: follow the instructions in the order written.
-    for (const a of spellAbilities) for (const e of a.effects) runEffect(e, { g, controller: entry.controller, source: o, events });
-    toGraveyardAfterResolving(g, o, events);
-    finishResolution(g, entry, events);
-  } else {
-    g.pending = { kind: 'manual_resolution', player: entry.controller, text: face.oracle, sourceName: face.name };
+/** Runs (or resumes, with a player's answer) the resolving spell or ability. */
+export function continueResolution(g: GameState, events: GameEvent[], answer?: ChoiceAnswer): void {
+  const entry = g.resolving!.entry;
+  if (!runResolution(g, events, answer)) return;
+  if (entry.kind === 'spell') {
+    const o = g.objects[entry.object];
+    if (o && o.zone === 'stack') toGraveyardAfterResolving(g, o, events);
   }
+  finishResolution(g, entry, events);
+}
+
+function resolvePermanentSpell(g: GameState, entry: StackEntry & { kind: 'spell' }, o: GameObject, events: GameEvent[]): void {
+  if (entry.program?.specs.length) {
+    // CR 608.3b: a permanent spell with a target (an Aura) checks it; if it's illegal, the spell doesn't resolve.
+    const targets = recheckTargets(g, entry);
+    const target = targets?.[0]?.[0];
+    const enchanted = target?.kind === 'object' ? g.objects[target.id] : undefined;
+    if (!enchanted) {
+      moveObject(g, o.id, 'graveyard', events);
+      events.push({ type: 'fizzled', entry });
+      finishResolution(g, entry, events);
+      return;
+    }
+    // CR 608.3c: an Aura spell enters attached to the object it targeted.
+    moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
+    o.attachedTo = { id: enchanted.id, zcc: enchanted.zcc };
+    events.push({ type: 'attached', object: o.id, to: enchanted.id });
+    finishResolution(g, entry, events);
+    return;
+  }
+  // CR 608.3a: a permanent spell with no targets enters the battlefield under its controller's control.
+  moveObject(g, o.id, 'battlefield', events, { controller: entry.controller, x: entry.x });
+  finishResolution(g, entry, events);
 }
 
 /** Called when a manual resolution is confirmed. */
@@ -107,8 +155,6 @@ export function completeManualResolution(g: GameState, events: GameEvent[]): voi
   if (entry.kind === 'spell') {
     const o = g.objects[entry.object];
     if (o && o.zone === 'stack') toGraveyardAfterResolving(g, o, events);
-  } else {
-    g.stack.pop();
   }
   finishResolution(g, entry, events);
 }
@@ -118,8 +164,12 @@ function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEven
   moveObject(g, o.id, 'graveyard', events);
 }
 
+const sameEntry = (a: StackEntry, b: StackEntry) =>
+  a === b || (a.kind === 'spell' && b.kind === 'spell' ? a.object === b.object : a.kind === 'ability' && b.kind === 'ability' && a.id === b.id);
+
 function finishResolution(g: GameState, entry: StackEntry, events: GameEvent[]): void {
-  g.stack = g.stack.filter((e) => e !== entry && !(entry.kind === 'spell' && e.kind === 'spell' && e.object === entry.object));
+  // CR 608.2n: an ability is removed from the stack; a spell has already moved.
+  g.stack = g.stack.filter((e) => !sameEntry(e, entry));
   events.push({ type: 'resolved', entry });
   // CR 117.3b: the active player receives priority after a spell or ability resolves.
   givePriority(g, g.active);
@@ -186,8 +236,8 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
         if (o.controller !== g.active) continue;
         // CR 302.6: permanents the active player controls have now been controlled since this turn began.
         o.sick = false;
-        // CR 502.3: the active player untaps their permanents.
-        setTapped(g, id, false, events);
+        // CR 502.3: the active player untaps their permanents, unless an effect says otherwise.
+        if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
       }
       // CR 502.4: no priority in the untap step.
       beginStep(g, 'upkeep', events);
@@ -243,8 +293,13 @@ function startCleanup(g: GameState, events: GameEvent[]): void {
 }
 
 export function finishCleanup(g: GameState, events: GameEvent[]): void {
-  // CR 514.2: damage wears off and "until end of turn" effects end.
-  for (const id of g.zones.battlefield) g.objects[id]!.damage = 0;
+  // CR 514.2: damage wears off and "until end of turn" effects end (regeneration shields too, CR 701.19a).
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    o.damage = 0;
+    delete o.regenShields;
+  }
+  g.effects = g.effects.filter((e) => e.until !== 'eot');
   // CR 514.3a: if state-based actions happen now, players get priority and another cleanup step follows.
   const acted = checkStateBasedActions(g, events);
   if (g.over || g.pending) return;
@@ -267,8 +322,12 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
 export function checkStateBasedActions(g: GameState, events: GameEvent[]): boolean {
   let any = false;
   for (let round = 0; round < 100; round++) {
+    // Events from the previous round can trigger abilities (and leaving objects look back, CR 603.10a).
+    collectTriggers(g, events);
     const losers: { player: PlayerId; reason: string }[] = [];
     const toGraveyard = new Set<string>();
+    const toDestroy = new Set<string>();
+    const unattach: string[] = [];
     const vanish: string[] = [];
     let changed = false;
 
@@ -308,23 +367,37 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         // CR 704.5f: toughness 0 or less goes to the graveyard.
         if (t <= 0) toGraveyard.add(id);
         // CR 704.5g: lethal damage destroys it; CR 702.12b: unless it's indestructible.
-        else if (o.damage >= t && !hasKeyword(g, o, 'indestructible')) toGraveyard.add(id);
+        else if (o.damage >= t && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
         // CR 704.5h: damage from a deathtouch source destroys it too.
-        else if (o.deathtouched && !hasKeyword(g, o, 'indestructible')) toGraveyard.add(id);
+        else if (o.deathtouched && !hasKeyword(g, o, 'indestructible')) toDestroy.add(id);
       }
       delete o.deathtouched;
       // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
       if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
+      const face = faceOf(g, o);
+      if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
+        // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.
+        const to = o.attachedTo && g.objects[o.attachedTo.id];
+        if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);
+      } else if (o.attachedTo && face.subtypes.includes('Equipment')) {
+        // CR 704.5n: an Equipment attached illegally becomes unattached and stays on the battlefield.
+        const to = g.objects[o.attachedTo.id];
+        if (!to || to.zcc !== o.attachedTo.zcc || !canAttach(g, o, to)) unattach.push(id);
+      }
     }
 
     // CR 704.5j: the legend rule — needs the controller's choice, handled one group at a time.
     const legendGroup = findLegendRuleGroup(g, toGraveyard);
 
-    if (!losers.length && !toGraveyard.size && !vanish.length && !changed && !legendGroup) return any;
+    if (!losers.length && !toGraveyard.size && !toDestroy.size && !unattach.length && !vanish.length && !changed && !legendGroup) {
+      return any;
+    }
     any = true;
 
     for (const id of vanish) removeObjectEntirely(g, id);
+    for (const id of unattach) delete g.objects[id]!.attachedTo;
     for (const id of toGraveyard) moveObject(g, id, 'graveyard', events);
+    for (const id of toDestroy) if (!toGraveyard.has(id)) destroy(g, g.objects[id]!, events);
     for (const l of losers) playerLoses(g, l.player, l.reason, events);
     if (g.over) return true;
     if (legendGroup) {

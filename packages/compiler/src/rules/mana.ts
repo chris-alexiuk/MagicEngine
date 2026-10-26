@@ -26,6 +26,8 @@ function symbols(run: string): string[] {
 /** "{G}", "{C}{C}", "{R} or {G}", "{W}, {U}, or {B}", "one mana of any color". */
 export function parseManaProduction(text: string): AddManaEffect | null {
   if (text === 'one mana of any color') return { type: 'add_mana', anyColor: 1 };
+  const anyOne = /^(two|three|four|five) mana of any one color$/.exec(text);
+  if (anyOne) return { type: 'add_mana', anyColor: ['two', 'three', 'four', 'five'].indexOf(anyOne[1]!) + 2 };
   if (PRODUCED_RUN.test(text)) return { type: 'add_mana', options: [symbols(text)] };
   const alternatives = text.split(/,? or |, /);
   if (alternatives.length > 1 && alternatives.every((a) => PRODUCED_RUN.test(a))) {

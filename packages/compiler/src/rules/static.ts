@@ -10,23 +10,3 @@ export const entersTappedRule: GrammarRule = {
     return node;
   },
 };
-
-/** "Equipped creature gets +2/+0." / "Enchanted creature gets -3/-3." — a layer 7c continuous effect. */
-export const attachedPumpRule: GrammarRule = {
-  id: 'attached_pump',
-  parse(line, original) {
-    const m = /^(Equipped|Enchanted) creature gets ([+-]\d+)\/([+-]\d+)\.$/.exec(line);
-    if (!m) return null;
-    const node: StaticAbility = {
-      kind: 'static',
-      text: original,
-      effect: {
-        type: 'modify_pt',
-        affected: { attachedBy: m[1] === 'Equipped' ? 'equipment' : 'aura' },
-        power: Number(m[2]),
-        toughness: Number(m[3]),
-      },
-    };
-    return node;
-  },
-};

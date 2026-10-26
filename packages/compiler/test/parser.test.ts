@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normaliseSelf, ParserRegistry, stripAbilityWord, stripReminder } from '../src/parser.js';
 import type { GrammarRule } from '../src/parser.js';
 
-const ctx = (name: string) => ({ cardName: name, faceName: name, typeLine: '' });
+const ctx = (name: string, typeLine = '') => ({ cardName: name, faceName: name, typeLine });
 const parser = new ParserRegistry();
 
 describe('text helpers', () => {
@@ -55,10 +55,15 @@ describe('core grammar rules', () => {
     expect(r.abilities[0]).toMatchObject({ cost: { mana: '{1}', tap: true } });
   });
 
-  it('leaves mana abilities with extra effects unparsed', () => {
-    const r = parser.parse('{T}: Add {B} or {G}. This land deals 1 damage to you.', ctx('Llanowar Wastes'));
-    expect(r.abilities).toEqual([]);
-    expect(r.unparsed).toHaveLength(1);
+  it('CR 605.1a: mana abilities can have other untargeted effects (painlands)', () => {
+    const r = parser.parse('{T}: Add {B} or {G}. This land deals 1 damage to you.', ctx('Llanowar Wastes', 'Land'));
+    expect(r.unparsed).toEqual([]);
+    expect(r.abilities[0]).toMatchObject({
+      mana: true,
+      effects: [{ type: 'add_mana', options: [['B'], ['G']] }, { type: 'deal_damage', amount: 1, to: { ref: 'you' } }],
+    });
+    // A mana ability can't target (CR 605.1a), so this stays a normal activated ability, unparsed here.
+    expect(parser.parse('{T}: Add {R}. This land deals 1 damage to target player.', ctx('X', 'Land')).unparsed).toHaveLength(1);
   });
 
   it('compiles enters-tapped in both templatings', () => {
@@ -74,24 +79,24 @@ describe('core grammar rules', () => {
     expect(r.keywords).toEqual([{ id: 'equip', cost: '{1}' }]);
     expect(r.abilities[0]).toMatchObject({
       kind: 'static',
-      effect: { type: 'modify_pt', affected: { attachedBy: 'equipment' }, power: 2, toughness: 0 },
+      effect: { type: 'continuous', affected: { ref: 'attached' }, power: 2, toughness: 0 },
     });
   });
 
   it('records unparsed lines verbatim (minus reminder text)', () => {
-    const r = parser.parse('Counter target spell.', ctx('Counterspell'));
-    expect(r.unparsed).toEqual(['Counter target spell.']);
+    const r = parser.parse('Exile the top card of your library. You may play it this turn. (Reminder.)', ctx('Light Up', 'Instant'));
+    expect(r.unparsed).toEqual(['Exile the top card of your library. You may play it this turn.']);
   });
 
   it('accepts plugin grammar rules', () => {
-    const counterRule: GrammarRule = {
-      id: 'counter_target_spell',
-      parse: (line, original) =>
-        line === 'Counter target spell.' ? { kind: 'spell', text: original, effects: [{ type: 'counter', target: 'spell' }] } : null,
+    const proliferateRule: GrammarRule = {
+      id: 'proliferate',
+      parse: (line, original) => (line === 'Proliferate.' ? { kind: 'spell', text: original, effects: [{ type: 'proliferate' }] } : null),
     };
+    expect(parser.parse('Proliferate.', ctx('Tezzeret’s Gambit', 'Sorcery')).unparsed).toEqual(['Proliferate.']);
     const extended = new ParserRegistry();
-    extended.addRule(counterRule);
-    expect(extended.parse('Counter target spell.', ctx('Counterspell')).unparsed).toEqual([]);
-    expect(() => extended.addRule(counterRule)).toThrow(/duplicate/);
+    extended.addRule(proliferateRule);
+    expect(extended.parse('Proliferate.', ctx('Tezzeret’s Gambit', 'Sorcery')).unparsed).toEqual([]);
+    expect(() => extended.addRule(proliferateRule)).toThrow(/duplicate/);
   });
 });

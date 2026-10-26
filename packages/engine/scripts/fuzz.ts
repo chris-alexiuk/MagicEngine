@@ -1,0 +1,352 @@
+/**
+ * Robustness check: random bots play many games with random decks drawn from the
+ * real card pool, and every action is checked.
+ *
+ *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose]
+ *
+ * Failures reported:
+ *   - crash:     the engine threw something other than a rules error
+ *   - rejected:  legalActions() offered an action that apply() then refused
+ *   - invariant: the state broke a structural invariant after an action
+ * Exit code 1 if anything failed.
+ */
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { reparseDB } from '@mtg/compiler';
+import type { CardDB, CardDef, Color } from '@mtg/schema';
+import {
+  activatedAbilities,
+  apply,
+  blockProblem,
+  createGame,
+  flatten,
+  hasKeyword,
+  hasRule,
+  legalActions,
+  spellPrograms,
+  targetCandidates,
+  type Action,
+  type ChoiceAnswer,
+  type GameState,
+  type PlayerId,
+  type Target,
+} from '../src/index.js';
+
+const args = process.argv.slice(2).filter((a) => a !== '--');
+const opt = (name: string, d: string) => {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1]! : d;
+};
+const dbPath = args[0];
+if (!dbPath) throw new Error('usage: fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players N]');
+const GAMES = Number(opt('--games', '40'));
+const SEED = Number(opt('--seed', '1'));
+const PLAYERS = opt('--players', 'mixed');
+const VERBOSE = args.includes('--verbose');
+
+let raw = readFileSync(dbPath);
+if (raw[0] === 0x1f && raw[1] === 0x8b) raw = gunzipSync(raw);
+const db = reparseDB(JSON.parse(raw.toString('utf8')) as CardDB);
+
+// Small deterministic RNG for the bots (separate from the engine's).
+let s = SEED >>> 0;
+const rnd = () => {
+  s = (s + 0x6d2b79f5) >>> 0;
+  let t = s;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+const shuffle = <T>(xs: T[]): T[] => {
+  for (let i = xs.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [xs[i], xs[j]] = [xs[j]!, xs[i]!];
+  }
+  return xs;
+};
+
+// ---------------------------------------------------------------------------
+// Decks: two colors, basics plus random spells the engine can mostly run
+// ---------------------------------------------------------------------------
+
+const BASICS: Record<Color, string> = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+const byName = new Map(db.cards.map((c) => [c.name, c]));
+const pool = db.cards.filter((c) => {
+  const f = c.faces[0]!;
+  if (f.types.includes('Land') || c.cmc > 6 || c.automation === 'manual') return false;
+  if (!c.legal.commander && !c.legal.legacy) return false;
+  if (/\{[^}]*(?:P|S|H|\d\/[WUBRG]|C\/)[^}]*\}/.test(f.manaCost) || /\{X\}/.test(f.manaCost)) return false;
+  return ['normal', 'split', 'adventure', 'transform', 'modal_dfc'].includes(c.layout);
+});
+
+function makeDeck(colors: Color[]): string[] {
+  const spells = shuffle(pool.filter((c) => c.colorIdentity.every((x) => colors.includes(x)))).slice(0, 23);
+  const lands = Array.from({ length: 17 }, (_, i) => BASICS[colors[i % colors.length]!]);
+  return [...lands, ...spells.map((c) => c.name)];
+}
+
+// ---------------------------------------------------------------------------
+// Bots
+// ---------------------------------------------------------------------------
+
+function sample(candidates: Target[], count: number, upTo: boolean): Target[] {
+  const n = upTo ? Math.floor(rnd() * (Math.min(count, candidates.length) + 1)) : count;
+  return shuffle([...candidates]).slice(0, n);
+}
+
+/** Re-picks targets at random for a cast/activate action that came with defaults. */
+function randomiseTargets(g: GameState, a: Action): Action {
+  if ((a.type !== 'cast' && a.type !== 'activate') || !a.targets?.length) return a;
+  const o = g.objects[a.object]!;
+  let specs;
+  try {
+    if (a.type === 'cast') {
+      const face = g.cards[o.card]!.faces[a.face ?? 0]!;
+      const programs = spellPrograms(face);
+      if (!programs) return a;
+      specs = flatten(programs, a.modes).specs;
+    } else {
+      specs = flatten([activatedAbilities(g, o)[a.ability]!], a.modes).specs;
+    }
+  } catch {
+    return a;
+  }
+  return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo))) };
+}
+
+function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | null {
+  const p = g.pending;
+  if (!p) return null;
+  const me = p.player;
+  const hand = () => [...(g.zones.hand[me] ?? [])];
+  switch (p.kind) {
+    case 'mulligan':
+      return { player: me, answer: { kind: 'mulligan', keep: rnd() < 0.85 || g.players[me]!.mulligans >= 2 } };
+    case 'bottom_cards':
+      return { player: me, answer: { kind: 'bottom_cards', objects: shuffle(hand()).slice(0, p.count) } };
+    case 'discard_to_hand_size':
+      return { player: me, answer: { kind: 'discard_to_hand_size', objects: shuffle(hand()).slice(0, p.count) } };
+    case 'discard':
+      return { player: me, answer: { kind: 'discard', objects: shuffle(hand()).slice(0, Math.min(p.count, hand().length)) } };
+    case 'legend_rule':
+      return { player: me, answer: { kind: 'legend_rule', keep: pick(p.objects) } };
+    case 'manual_resolution':
+      return { player: me, answer: { kind: 'manual_resolution', done: true } };
+    case 'may':
+      return { player: me, answer: { kind: 'may', yes: rnd() < 0.7 } };
+    case 'pay':
+      // Try to pay half the time; the main loop falls back to declining if it can't be paid.
+      return { player: me, answer: { kind: 'pay', pay: rnd() < 0.5 } };
+    case 'search': {
+      const n = p.mustFind ? Math.min(p.count, p.candidates.length) : Math.floor(rnd() * (Math.min(p.count, p.candidates.length) + 1));
+      return { player: me, answer: { kind: 'search', objects: shuffle([...p.candidates]).slice(0, n) } };
+    }
+    case 'scry': {
+      const xs = shuffle([...p.objects]);
+      const k = Math.floor(rnd() * (xs.length + 1));
+      return { player: me, answer: { kind: 'scry', top: xs.slice(0, k), bottom: xs.slice(k) } };
+    }
+    case 'surveil': {
+      const xs = shuffle([...p.objects]);
+      const k = Math.floor(rnd() * (xs.length + 1));
+      return { player: me, answer: { kind: 'surveil', top: xs.slice(0, k), graveyard: xs.slice(k) } };
+    }
+    case 'declare_attackers': {
+      const attacks = p.attackers
+        .filter((id) => hasRule(g, g.objects[id]!, 'attacks_each_combat') || rnd() < 0.6)
+        .map((attacker) => ({ attacker, target: pick(p.targets) }));
+      return { player: me, answer: { kind: 'declare_attackers', attacks } };
+    }
+    case 'declare_blockers': {
+      const blocks: { blocker: string; attacker: string }[] = [];
+      for (const blocker of p.blockers) {
+        if (rnd() < 0.5) continue;
+        const options = p.attackers.filter((a) => !blockProblem(g, g.objects[blocker]!, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace'));
+        if (options.length) blocks.push({ blocker, attacker: pick(options) });
+      }
+      return { player: me, answer: { kind: 'declare_blockers', blocks } };
+    }
+    case 'assign_combat_damage':
+      return { player: me, answer: { kind: 'assign_combat_damage', assignments: Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested])) } };
+    case 'trigger_targets': {
+      if (p.modes) {
+        const legal = p.modes.options
+          .map((o, i) => ({ i, o }))
+          .filter(({ o }) => o.prompts.every((pr) => pr.upTo || pr.candidates.length >= pr.count));
+        const n = Math.max(p.modes.min, Math.min(p.modes.max, legal.length, 1 + Math.floor(rnd() * p.modes.max)));
+        const chosen = shuffle(legal).slice(0, n).sort((a, b) => a.i - b.i);
+        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo)));
+        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo))] } };
+      }
+      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo)) } };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Invariants
+// ---------------------------------------------------------------------------
+
+function checkInvariants(g: GameState): string | null {
+  const seen = new Set<string>();
+  const where = (id: string, zone: string, owner?: PlayerId): string | null => {
+    const o = g.objects[id];
+    if (!o) return `${zone} lists missing object ${id}`;
+    if (o.zone !== zone) return `${id} is listed in ${zone} but says ${o.zone}`;
+    if (owner && o.owner !== owner) return `${id} is in ${owner}'s ${zone} but owned by ${o.owner}`;
+    if (seen.has(id)) return `${id} is in two places`;
+    seen.add(id);
+    return null;
+  };
+  for (const p of g.order) {
+    for (const zone of ['library', 'hand', 'graveyard'] as const) {
+      for (const id of g.zones[zone][p] ?? []) {
+        const err = where(id, zone, p);
+        if (err) return err;
+      }
+    }
+    const ps = g.players[p]!;
+    if (!Number.isFinite(ps.life) || Object.values(ps.pool).some((n) => !Number.isInteger(n) || n < 0)) return `bad numbers for ${p}`;
+  }
+  for (const zone of ['battlefield', 'exile', 'command'] as const) {
+    for (const id of g.zones[zone]) {
+      const err = where(id, zone);
+      if (err) return err;
+    }
+  }
+  for (const e of g.stack) {
+    if (e.kind === 'spell') {
+      const err = where(e.object, 'stack');
+      if (err) return err;
+    }
+  }
+  for (const o of Object.values(g.objects)) if (!seen.has(o.id)) return `${o.id} (${o.card}) is in no zone list (${o.zone})`;
+  if (!g.over && !g.pending && g.started && g.priority === null) return 'nobody has priority and nothing is pending';
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+
+interface Failure {
+  game: number;
+  kind: 'crash' | 'rejected' | 'invariant';
+  detail: string;
+  action?: string;
+}
+
+const failures: Failure[] = [];
+let actions = 0;
+let turns = 0;
+let decided = 0;
+const stats = { triggered: 0, resolvedAuto: 0, manual: 0, fizzled: 0, tokens: 0 };
+const t0 = Date.now();
+
+for (let game = 0; game < GAMES; game++) {
+  const count = PLAYERS === 'mixed' ? 2 + (game % 3) : Number(PLAYERS);
+  const ids = ['p1', 'p2', 'p3', 'p4'].slice(0, count);
+  const cards: Record<string, CardDef> = {};
+  const players = ids.map((id) => {
+    const colors = shuffle([...(['W', 'U', 'B', 'R', 'G'] as Color[])]).slice(0, 2);
+    const deck = makeDeck(colors);
+    for (const n of deck) cards[n] = byName.get(n)!;
+    return { id, name: id, deck };
+  });
+  let g: GameState;
+  try {
+    g = createGame({ players, cards, seed: SEED * 1000 + game, format: 'constructed' }).state;
+  } catch (err) {
+    failures.push({ game, kind: 'crash', detail: `createGame: ${String(err)}` });
+    continue;
+  }
+
+  for (let i = 0; i < 6000 && !g.over && g.turn <= 40; i++) {
+    let action: Action;
+    let offered = false;
+    const answer = answerFor(g);
+    if (answer) action = { type: 'choose', player: answer.player, answer: answer.answer };
+    else if (g.priority) {
+      const options = legalActions(g, g.priority);
+      const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual');
+      const chosen = active.length && rnd() < 0.75 ? pick(active) : options[0]!;
+      offered = true;
+      action = rnd() < 0.5 ? randomiseTargets(g, chosen) : chosen;
+      if (action !== chosen) offered = false;
+      if (!offered) {
+        // A randomised version may be illegal; fall back to the offered one if so.
+        try {
+          const r = apply(g, action);
+          if (!r.ok) {
+            action = chosen;
+            offered = true;
+          }
+        } catch {
+          /* reported below */
+        }
+      }
+    } else {
+      failures.push({ game, kind: 'invariant', detail: `no decision possible in ${g.step}` });
+      break;
+    }
+    const label = JSON.stringify(action).slice(0, 300);
+    let r;
+    try {
+      r = apply(g, action);
+    } catch (err) {
+      failures.push({ game, kind: 'crash', detail: (err as Error).stack?.split('\n').slice(0, 4).join(' | ') ?? String(err), action: label });
+      break;
+    }
+    if (!r.ok && answer?.answer.kind === 'pay' && answer.answer.pay) {
+      // Couldn't afford it: decline instead.
+      r = apply(g, { type: 'choose', player: answer.player, answer: { kind: 'pay', pay: false } });
+    }
+    if (!r.ok) {
+      if (offered || answer) {
+        failures.push({ game, kind: 'rejected', detail: r.error, action: label });
+        // Unstick: pass if we can, otherwise give up on this game.
+        if (g.priority && !g.pending) {
+          const p = apply(g, { type: 'pass', player: g.priority });
+          if (p.ok) {
+            g = p.state;
+            continue;
+          }
+        }
+        break;
+      }
+      continue;
+    }
+    actions++;
+    decided++;
+    for (const e of r.events) {
+      if (e.type === 'triggered') stats.triggered++;
+      if (e.type === 'resolved' && (e.entry.program || e.entry.kind === 'spell')) stats.resolvedAuto++;
+      if (e.type === 'fizzled') stats.fizzled++;
+      if (e.type === 'created') stats.tokens++;
+    }
+    if (r.state.pending?.kind === 'manual_resolution') stats.manual++;
+    g = r.state;
+    const bad = checkInvariants(g);
+    if (bad) {
+      failures.push({ game, kind: 'invariant', detail: bad, action: label });
+      break;
+    }
+  }
+  turns += g.turn;
+  if (VERBOSE) console.log(`game ${game}: ${count} players, ${g.turn} turns, winner ${g.winner ?? '-'}`);
+}
+
+const ms = Date.now() - t0;
+console.log(`${GAMES} games, ${turns} turns, ${actions} actions in ${(ms / 1000).toFixed(1)} s (${(ms / Math.max(1, actions)).toFixed(2)} ms/action)`);
+console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto}, manual ${stats.manual}, fizzled ${stats.fizzled}, tokens ${stats.tokens}`);
+const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);
+for (const k of ['crash', 'rejected', 'invariant'] as const) {
+  const list = byKind(k);
+  console.log(`  ${k}: ${list.length}`);
+  const grouped = new Map<string, Failure[]>();
+  for (const f of list) grouped.set(f.detail.slice(0, 160), [...(grouped.get(f.detail.slice(0, 160)) ?? []), f]);
+  for (const [detail, fs] of [...grouped].slice(0, 12)) console.log(`    ×${fs.length} ${detail}\n        e.g. game ${fs[0]!.game}: ${fs[0]!.action ?? ''}`);
+}
+process.exit(failures.length ? 1 : 0);

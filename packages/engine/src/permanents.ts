@@ -1,0 +1,111 @@
+import type { CardDef, FaceDef } from '@mtg/schema';
+import { chars, hasKeyword, hasType, matchesFilter } from './characteristics.js';
+import { onEnterBattlefield } from './registry.js';
+import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
+import { createObject, faceOf, moveObject, nameOf, setTapped } from './zones.js';
+
+/**
+ * CR 701.8a: destroying moves a permanent to its owner's graveyard.
+ * CR 702.12b: indestructible permanents aren't destroyed.
+ * CR 701.19a: a regeneration shield replaces the destruction.
+ * Returns whether it was destroyed.
+ */
+export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean } = {}): boolean {
+  if (o.zone !== 'battlefield') return false;
+  if (hasKeyword(g, o, 'indestructible')) return false;
+  if (!opts.noRegen && (o.regenShields ?? 0) > 0) {
+    // CR 701.19a: instead remove all damage from it, tap it, and remove it from combat.
+    o.regenShields!--;
+    o.damage = 0;
+    delete o.deathtouched;
+    setTapped(g, o.id, true, events);
+    removeFromCombat(g, o.id);
+    events.push({ type: 'regenerated', object: o.id });
+    return false;
+  }
+  moveObject(g, o.id, 'graveyard', events);
+  return true;
+}
+
+/** CR 506.4: a permanent removed from combat stops being an attacking or blocking creature. */
+export function removeFromCombat(g: GameState, id: ObjectId): void {
+  if (!g.combat) return;
+  delete g.combat.attackers[id];
+  delete g.combat.blockers[id];
+  for (const a of Object.values(g.combat.attackers)) a.blockers = a.blockers.filter((b) => b.id !== id);
+}
+
+/** CR 701.21a: its controller moves it from the battlefield to its owner's graveyard. Not destruction. */
+export function sacrifice(g: GameState, o: GameObject, player: PlayerId, events: GameEvent[]): boolean {
+  if (o.zone !== 'battlefield' || o.controller !== player) return false;
+  moveObject(g, o.id, 'graveyard', events);
+  return true;
+}
+
+/**
+ * Whether an Aura or Equipment could be attached to `target`.
+ * CR 301.5: Equipment only to creatures (CR 301.5c: not while it's a creature itself).
+ * CR 303.4: an Aura per its enchant ability (CR 303.4d: never to itself).
+ */
+export function canAttach(g: GameState, attachment: GameObject, target: GameObject): boolean {
+  if (target.zone !== 'battlefield' || target.id === attachment.id) return false;
+  const face = faceOf(g, attachment);
+  if (face.subtypes.includes('Equipment')) {
+    return hasType(g, target, 'Creature') && !hasType(g, attachment, 'Creature');
+  }
+  if (face.subtypes.includes('Aura')) {
+    const enchant = chars(g, attachment).keywords.find((k) => k.id === 'enchant');
+    if (!enchant?.filter) return false;
+    return matchesFilter(g, target, enchant.filter, { controller: attachment.controller, source: attachment });
+  }
+  return false;
+}
+
+/** CR 701.3a: attach it; CR 701.3b: if it can't be attached there, it doesn't move. CR 613.7e: new timestamp. */
+export function attach(g: GameState, attachment: GameObject, target: GameObject, events: GameEvent[]): boolean {
+  if (attachment.zone !== 'battlefield' || !canAttach(g, attachment, target)) return false;
+  if (attachment.attachedTo?.id === target.id && attachment.attachedTo.zcc === target.zcc) return false;
+  attachment.attachedTo = { id: target.id, zcc: target.zcc };
+  attachment.timestamp = ++g.clock;
+  events.push({ type: 'attached', object: attachment.id, to: target.id });
+  return true;
+}
+
+/** Registers a token's definition in the game so it is self-contained and replayable. */
+function tokenCard(g: GameState, face: FaceDef): string {
+  const json = JSON.stringify(face);
+  let h = 0;
+  for (let i = 0; i < json.length; i++) h = (Math.imul(h, 31) + json.charCodeAt(i)) | 0;
+  const key = `token:${face.name}:${(h >>> 0).toString(36)}`;
+  if (!g.cards[key]) {
+    const def: CardDef = {
+      id: key,
+      name: face.name,
+      layout: 'token',
+      cmc: 0,
+      colorIdentity: [...face.colors],
+      faces: [face],
+      legal: {},
+      set: '',
+      rarity: 'token',
+      automation: face.unparsed.length ? 'partial' : 'full',
+    };
+    g.cards[key] = def;
+  }
+  return key;
+}
+
+/** CR 111.2: a token is created on the battlefield under the control of the player who created it. */
+export function createToken(g: GameState, face: FaceDef, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): GameObject {
+  const o = createObject(g, tokenCard(g, face), controller, 'battlefield');
+  o.token = true;
+  o.sick = true;
+  if (opts.tapped) o.tapped = true;
+  onEnterBattlefield(g, o, events);
+  events.push({ type: 'created', object: o.id, controller });
+  return o;
+}
+
+export function describe(g: GameState, o: GameObject): string {
+  return nameOf(g, o);
+}

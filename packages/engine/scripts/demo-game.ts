@@ -4,20 +4,25 @@
  *   tsx scripts/demo-game.ts <cards.json.gz> <out.json> [seed]
  *
  * The bots are demo drivers, not opponents: they play a land, cast their biggest
- * spell, attack when it's safe, block when it's worth it, and resolve Lightning
- * Bolt by hand (the engine can't run its text yet, which shows the manual path).
- * Everything else is the real engine: every frame is the state after one action.
+ * spell, point removal at the best target, attack when it's safe and block when
+ * it's worth it. Everything else is the real engine: every frame is the state
+ * after one action.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
+import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef } from '@mtg/schema';
 import {
+  activatedAbilities,
   apply,
   blockProblem,
   createGame,
+  flatten,
   hasKeyword,
   legalActions,
   power,
+  spellPrograms,
+  targetCandidates,
   toughness,
   type Action,
   type AttackTarget,
@@ -26,6 +31,8 @@ import {
   type GameState,
   type PlayerId,
   type Step,
+  type Target,
+  type TargetPrompt,
 } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
@@ -38,8 +45,8 @@ const DECKS: Record<PlayerId, { name: string; cards: [string, number][] }> = {
     cards: [
       ['Forest', 9], ['Mountain', 8],
       ['Llanowar Elves', 3], ['Grizzly Bears', 3], ['Kalonian Tusker', 2], ['Centaur Courser', 3],
-      ['Gnarled Mass', 2], ['Hill Giant', 2], ['Highland Giant', 2], ['Colossal Dreadmaw', 3],
-      ['Craw Wurm', 1], ['Lightning Bolt', 2],
+      ['Gnarled Mass', 2], ['Hill Giant', 1], ['Elvish Visionary', 2], ['Colossal Dreadmaw', 3],
+      ['Craw Wurm', 1], ['Lightning Bolt', 3],
     ],
   },
   bob: {
@@ -47,8 +54,8 @@ const DECKS: Record<PlayerId, { name: string; cards: [string, number][] }> = {
     cards: [
       ['Plains', 9], ['Swamp', 8],
       ['Savannah Lions', 2], ['Typhoid Rats', 3], ['Knight of Meadowgrain', 2], ['White Knight', 2],
-      ['Child of Night', 3], ['Walking Corpse', 1], ['Vampire Nighthawk', 3], ['Leonin Skyhunter', 2],
-      ['Seraph of Dawn', 2], ['Serra Angel', 2], ['Baneslayer Angel', 1],
+      ['Child of Night', 3], ['Gravedigger', 1], ['Vampire Nighthawk', 3], ['Leonin Skyhunter', 2],
+      ['Pacifism', 2], ['Serra Angel', 2], ['Baneslayer Angel', 1],
     ],
   },
 };
@@ -117,7 +124,51 @@ function chooseBlocks(g: GameState, me: PlayerId, blockers: string[], attackers:
   return blocks;
 }
 
-const resolvedByHand = new Set<string>();
+/** How much the bot wants to point a harmful spell or ability at a target (higher is better, ≤ 0 means don't). */
+function harmScore(g: GameState, me: PlayerId, t: Target, damage: number | null): number {
+  if (t.kind === 'player') return t.player === me ? -100 : g.players[t.player]!.life <= (damage ?? 0) ? 1000 : 1;
+  const o = g.objects[t.object]!;
+  if (o.controller === me) return -100;
+  const isCreature = def(g, o).faces[o.face]!.types.includes('Creature');
+  if (!isCreature) return 0.5;
+  if (damage !== null && toughness(g, o) - o.damage > damage) return -1; // it wouldn't die
+  return 2 + power(g, o) + (hasKeyword(g, o, 'flying') ? 2 : 0);
+}
+
+/** Picks targets: harmful effects at opponents' best stuff, helpful ones at our own. */
+function pickTargets(g: GameState, me: PlayerId, prompts: TargetPrompt[], effects: { type: string; amount?: unknown }[]): Target[][] | null {
+  const harmful = effects.some((e) => ['deal_damage', 'destroy', 'move', 'tap', 'lose_life', 'discard'].includes(e.type));
+  const damage = effects.find((e) => e.type === 'deal_damage')?.amount;
+  return prompts.map((p) => {
+    const scored = p.candidates
+      .map((t) => ({ t, s: harmful ? harmScore(g, me, t, typeof damage === 'number' ? damage : null) : -harmScore(g, me, t, null) }))
+      .sort((a, b) => b.s - a.s);
+    const good = scored.filter((x) => x.s > 0).map((x) => x.t);
+    return (p.upTo ? good : scored.map((x) => x.t)).slice(0, p.count);
+  });
+}
+
+function promptsFor(g: GameState, me: PlayerId, a: Extract<Action, { type: 'cast' | 'activate' }>) {
+  const o = g.objects[a.object]!;
+  const program =
+    a.type === 'cast'
+      ? (() => {
+          const face = def(g, o).faces[a.face ?? 0]!;
+          const enchant = face.keywords.find((k) => k.id === 'enchant' && k.filter);
+          if (enchant) return { specs: [{ what: 'object' as const, filter: enchant.filter!, text: 'enchant' }], effects: [{ type: 'destroy' }] };
+          const programs = spellPrograms(face);
+          return programs ? flatten(programs, a.modes) : null;
+        })()
+      : flatten([activatedAbilities(g, o)[a.ability]!], a.modes);
+  if (!program) return null;
+  const prompts: TargetPrompt[] = program.specs.map((spec) => ({
+    text: spec.text,
+    count: spec.count ?? 1,
+    upTo: Boolean(spec.upTo),
+    candidates: targetCandidates(g, me, spec, o),
+  }));
+  return { prompts, effects: program.effects };
+}
 
 /** One decision for whoever has to act. */
 function decide(g: GameState): { action: Action; note?: string } | null {
@@ -152,29 +203,28 @@ function decide(g: GameState): { action: Action; note?: string } | null {
             answer: { kind: 'assign_combat_damage', assignments: Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested])) },
           },
         };
-      case 'manual_resolution': {
-        const top = g.stack[g.stack.length - 1]!;
-        const key = top.kind === 'spell' ? `${top.object}:${g.objects[top.object]!.zcc}` : top.id;
-        if (p.sourceName === 'Lightning Bolt' && !resolvedByHand.has(key)) {
-          resolvedByHand.add(key);
-          // "Lightning Bolt deals 3 damage to any target": kill the best creature it can, else go face.
-          const opp = opponent(g, me);
-          const victim = creaturesOf(g, opp)
-            .filter((o) => toughness(g, o) - o.damage <= 3)
-            .sort((x, y) => power(g, y) - power(g, x))[0];
-          if (victim && power(g, victim) >= 2) {
-            return {
-              action: { type: 'manual', player: me, op: { kind: 'move', object: victim.id, to: 'graveyard' } },
-              note: `${g.players[me]!.name} resolves Lightning Bolt by hand: 3 damage to ${def(g, victim).name}, which dies`,
-            };
-          }
-          return {
-            action: { type: 'manual', player: me, op: { kind: 'life', target: opp, delta: -3 } },
-            note: `${g.players[me]!.name} resolves Lightning Bolt by hand: 3 damage to ${g.players[opp]!.name}`,
-          };
-        }
+      case 'manual_resolution':
         return { action: { type: 'choose', player: me, answer: { kind: 'manual_resolution', done: true } } };
+      case 'trigger_targets': {
+        const t = g.triggers.find((x) => x.id === p.trigger)!;
+        const ability = def(g, g.objects[t.source.id] ?? ({ card: t.card } as GameObject)).faces[t.face]!.abilities[t.ability]!;
+        const targets = pickTargets(g, me, p.prompts, 'effects' in ability ? ability.effects : []);
+        return { action: { type: 'choose', player: me, answer: { kind: 'trigger_targets', targets: targets ?? [] } } };
       }
+      case 'may':
+        return { action: { type: 'choose', player: me, answer: { kind: 'may', yes: true } } };
+      case 'pay':
+        return { action: { type: 'choose', player: me, answer: { kind: 'pay', pay: false } } };
+      case 'scry':
+        return { action: { type: 'choose', player: me, answer: { kind: 'scry', top: p.objects, bottom: [] } } };
+      case 'surveil':
+        return { action: { type: 'choose', player: me, answer: { kind: 'surveil', top: p.objects, graveyard: [] } } };
+      case 'discard': {
+        const hand = [...g.zones.hand[me]!].sort((x, y) => def(g, g.objects[y]!).cmc - def(g, g.objects[x]!).cmc);
+        return { action: { type: 'choose', player: me, answer: { kind: 'discard', objects: hand.slice(0, p.count) } } };
+      }
+      case 'search':
+        return { action: { type: 'choose', player: me, answer: { kind: 'search', objects: p.candidates.slice(0, p.count) } } };
     }
   }
 
@@ -187,16 +237,18 @@ function decide(g: GameState): { action: Action; note?: string } | null {
     if (land) return { action: land };
     const casts = options
       .filter((a): a is Extract<Action, { type: 'cast' }> => a.type === 'cast')
-      .map((a) => ({ a, card: def(g, g.objects[a.object]!) }))
-      .filter(({ card }) => {
-        if (card.name !== 'Lightning Bolt') return true;
-        const opp = opponent(g, me);
-        const target = creaturesOf(g, opp).some((o) => toughness(g, o) <= 3 && power(g, o) >= 2);
-        return target || g.players[opp]!.life <= 3;
+      .map((a) => {
+        // Re-aim targeted spells; skip them when there's nothing worth hitting.
+        const info = promptsFor(g, me, a);
+        if (!info || !info.prompts.length) return { a, card: def(g, g.objects[a.object]!), worth: true };
+        const targets = pickTargets(g, me, info.prompts, info.effects)!;
+        const harmful = info.effects.some((e) => ['deal_damage', 'destroy'].includes(e.type));
+        const worth = targets.every((ts) => ts.length > 0) && targets.flat().every((t) => harmScore(g, me, t, harmful ? 3 : null) > (harmful ? 1.5 : -50));
+        return { a: { ...a, targets }, card: def(g, g.objects[a.object]!), worth };
       })
+      .filter((x) => x.worth)
       .sort((x, y) => y.card.cmc - x.card.cmc);
-    if (casts[0] && g.step === 'main1') return { action: casts[0].a };
-    if (casts[0] && g.step === 'main2') return { action: casts[0].a };
+    if (casts[0]) return { action: casts[0].a };
   }
   return { action: { type: 'pass', player: me } };
 }
@@ -269,15 +321,20 @@ function narrate(g: GameState, before: GameState, events: GameEvent[], note?: st
       case 'land_played':
         out.push({ text: `${who(e.player)} plays ${name(e.object)}`, rule: '305.1', kind: 'play' });
         break;
-      case 'cast':
-        out.push({ text: `${who(e.player)} casts ${name(e.object)}`, rule: '601.2', kind: 'play' });
+      case 'cast': {
+        const entry = g.stack.find((x) => x.kind === 'spell' && x.object === e.object);
+        const aimed = entry?.targets.flat().map((t) => (t.kind === 'player' ? who(t.player) : name(t.id))) ?? [];
+        out.push({ text: `${who(e.player)} casts ${name(e.object)}${aimed.length ? ` targeting ${aimed.join(', ')}` : ''}`, rule: '601.2', kind: 'play' });
         break;
+      }
       case 'resolved':
         if (e.entry.kind === 'spell') {
           const o = g.objects[e.entry.object];
           const perm = o?.zone === 'battlefield';
-          out.push({ text: `${name(e.entry.object)} resolves`, rule: perm ? '608.3a' : '608.2n', kind: 'play' });
-        }
+          // CR 608.3c: an Aura spell enters attached to what it targeted; CR 608.3a: other permanents just enter.
+          const rule = perm ? (e.entry.program?.specs.length ? '608.3c' : '608.3a') : '608.2n';
+          out.push({ text: `${name(e.entry.object)} resolves`, rule, kind: 'play' });
+        } else out.push({ text: `${e.entry.sourceName}’s ability resolves`, rule: '608.2', kind: 'play' });
         break;
       case 'attacks_declared':
         out.push(
@@ -301,9 +358,17 @@ function narrate(g: GameState, before: GameState, events: GameEvent[], note?: st
         });
         break;
       case 'life':
-        if (e.delta > 0) out.push({ text: `${who(e.player)} gains ${e.delta} life (lifelink)`, rule: '702.15b', kind: 'life' });
+        if (e.delta > 0) out.push({ text: `${who(e.player)} gains ${e.delta} life`, rule: '119.3', kind: 'life' });
         break;
       case 'moved':
+        if (e.from === 'battlefield' && e.to === 'graveyard' && !(g.cards[e.card] ?? before.cards[e.card])!.faces[e.face]!.types.includes('Creature')) {
+          out.push({ text: `${name(e.object)} is put into the graveyard`, rule: '704.5m', kind: 'death' });
+          break;
+        }
+        if (e.from === 'graveyard' && e.to === 'hand') {
+          out.push({ text: `${name(e.object)} returns to ${who(g.objects[e.object]?.owner ?? '')}’s hand`, kind: 'play' });
+          break;
+        }
         if (e.from === 'battlefield' && e.to === 'graveyard') {
           if (note) {
             out.push({ text: `${name(e.object)} is put into the graveyard`, kind: 'death' });
@@ -319,6 +384,15 @@ function narrate(g: GameState, before: GameState, events: GameEvent[], note?: st
           );
           out.push({ text: `${name(e.object)} dies${touched ? ' (deathtouch)' : ''}`, rule: touched ? '704.5h' : '704.5g', kind: 'death' });
         }
+        break;
+      case 'triggered':
+        out.push({ text: `${name(e.source)} triggers: ${e.text}`, rule: '603.3', kind: 'play' });
+        break;
+      case 'attached':
+        out.push({ text: `${name(e.object)} is attached to ${name(e.to)}`, rule: '303.4b', kind: 'play' });
+        break;
+      case 'fizzled':
+        out.push({ text: `${e.entry.kind === 'spell' ? name(e.entry.object) : e.entry.sourceName} doesn’t resolve: its target is gone`, rule: '608.2b', kind: 'info' });
         break;
       case 'player_lost':
         out.push({ text: `${who(e.player)} loses the game (${e.reason})`, rule: e.reason.startsWith('life') ? '704.5a' : '704.5b', kind: 'end' });
@@ -404,7 +478,8 @@ const [dbPath, outPath, seedArg] = process.argv.slice(2).filter((a) => a !== '--
 if (!dbPath || !outPath) throw new Error('usage: demo-game.ts <cards.json.gz> <out.json> [seed]');
 let raw = readFileSync(dbPath);
 if (raw[0] === 0x1f && raw[1] === 0x8b) raw = gunzipSync(raw);
-const db = JSON.parse(raw.toString('utf8')) as CardDB;
+// Recompile the oracle text with the current grammar, so the demo always shows what the engine can do now.
+const db = reparseDB(JSON.parse(raw.toString('utf8')) as CardDB);
 const byName = new Map(db.cards.map((c) => [c.name, c]));
 
 const cards: Record<string, CardDef> = {};

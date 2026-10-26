@@ -57,7 +57,8 @@ describe('compileQuery', () => {
   });
 
   it('filters by automation and legality', () => {
-    expect(names('auto:manual')).toContain('Counterspell');
+    expect(names('auto:manual')).toContain('Kinnan, Bonder Prodigy');
+    expect(names('auto:full')).toContain('Counterspell');
     expect(names('is:gc')).toEqual(['Jace, the Mind Sculptor', 'Kinnan, Bonder Prodigy', 'Rhystic Study', 'Sol Ring']);
     expect(names('banned:modern')).toEqual(['Sol Ring']);
   });

@@ -1,0 +1,103 @@
+import type { ActivatedAbility, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
+import { canAutomate } from './registry.js';
+import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
+import { faceOf } from './zones.js';
+
+/**
+ * Turns the compiled programs of a spell or ability (with modes chosen) into the one
+ * list of target specs and effects the engine runs. Target indexes in later programs
+ * are shifted so every effect points at the right spec.
+ */
+export function flatten(programs: Program[], modes: number[] | undefined): CompiledProgram {
+  const specs: TargetSpec[] = [];
+  const effects: EffectNode[] = [];
+  const add = (targets: TargetSpec[] | undefined, list: EffectNode[]) => {
+    const offset = specs.length;
+    specs.push(...(targets ?? []));
+    effects.push(...list.map((e) => shiftTargets(e, offset)));
+  };
+  let usedModes = false;
+  for (const p of programs) {
+    if (p.modes) {
+      // CR 700.2a / CR 700.2d: the chosen modes, each at most once, followed in printed order.
+      const chosen = modes ?? [];
+      if (usedModes) throw new RulesError('Only one modal choice is supported per spell or ability.');
+      usedModes = true;
+      if (chosen.length < p.modes.min || chosen.length > p.modes.max) {
+        throw new RulesError(`Choose ${p.modes.min === p.modes.max ? p.modes.min : `${p.modes.min}–${p.modes.max}`} mode(s).`);
+      }
+      if (new Set(chosen).size !== chosen.length || chosen.some((m) => !p.modes!.options[m])) {
+        throw new RulesError('Choose each mode at most once.');
+      }
+      for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);
+    }
+    add(p.targets, p.effects);
+  }
+  if (modes?.length && !usedModes) throw new RulesError('That isn’t modal.');
+  return { specs, effects };
+}
+
+function shiftTargets<T>(node: T, offset: number): T {
+  if (offset === 0) return structuredClone(node);
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v)) out[k] = walk(x);
+      if (out.ref === 'target' && typeof out.index === 'number') out.index = out.index + offset;
+      return out;
+    }
+    return v;
+  };
+  return walk(node) as T;
+}
+
+/** Every effect in a program, including those inside modes and "may" wrappers. */
+function allEffects(p: Program): EffectNode[] {
+  const out: EffectNode[] = [];
+  const visit = (list: EffectNode[]) => {
+    for (const e of list) {
+      out.push(e);
+      if (Array.isArray(e.effects)) visit(e.effects as EffectNode[]);
+    }
+  };
+  visit(p.effects);
+  for (const m of p.modes?.options ?? []) visit(m.effects);
+  return out;
+}
+
+/** True when the engine has a handler for every effect a program can produce. */
+export function programRuns(p: Program): boolean {
+  return canAutomate({ effects: allEffects(p) });
+}
+
+/** The spell programs of an instant or sorcery face, or null if players must resolve it (some line unparsed). */
+export function spellPrograms(face: FaceDef): Program[] | null {
+  if (face.unparsed.length) return null;
+  const programs = face.abilities.filter((a) => a.kind === 'spell');
+  return programs.every(programRuns) ? programs : null;
+}
+
+/**
+ * The non-mana activated abilities of a permanent, in a stable order: compiled ones,
+ * then those its keywords define. CR 702.6a: "Equip [cost]" means
+ * "[Cost]: Attach this permanent to target creature you control. Activate only as a sorcery."
+ */
+export function activatedAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
+  const face = faceOf(g, o);
+  const out: ActivatedAbility[] = [];
+  for (const a of face.abilities) if (a.kind === 'activated' && !a.mana && programRuns(a)) out.push(a);
+  for (const kw of face.keywords) {
+    if (kw.id === 'equip' && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost) && face.subtypes.includes('Equipment')) {
+      out.push({
+        kind: 'activated',
+        text: `Equip ${kw.cost}`,
+        cost: { mana: kw.cost },
+        timing: 'sorcery',
+        targets: [{ what: 'object', filter: { types: ['Creature'], controller: 'you' }, text: 'target creature you control' }],
+        effects: [{ type: 'attach', what: { ref: 'self' }, to: { ref: 'target', index: 0 } }],
+      });
+    }
+  }
+  return out;
+}

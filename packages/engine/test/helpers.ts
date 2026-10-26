@@ -100,6 +100,15 @@ export function toStep(g: GameState, step: Step, player?: PlayerId): GameState {
       g = act(g, { type: 'choose', player: p.player, answer: { kind: 'discard_to_hand_size', objects: g.zones.hand[p.player]!.slice(0, p.count) } });
       continue;
     }
+    // So is skipping combat: no attackers, no blockers.
+    if (g.pending?.kind === 'declare_attackers') {
+      g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_attackers', attacks: [] } });
+      continue;
+    }
+    if (g.pending?.kind === 'declare_blockers') {
+      g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      continue;
+    }
     if (g.pending) throw new Error(`stopped by pending ${g.pending.kind} for ${g.pending.player}`);
     if (!g.priority) throw new Error(`no one has priority in ${g.step}`);
     g = act(g, { type: 'pass', player: g.priority });

@@ -2,7 +2,7 @@
 
 A browser-based Magic: The Gathering rules engine for 2–4 player games, Commander first. Cards are compiled from Scryfall data without hand-scripting; anything the engine can't run yet is still playable by resolving it manually.
 
-Status: milestone 2 of 6 in progress. The engine runs turns, priority, the stack, mana, casting, combat and state-based actions; the table UI is next. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [rules trace](docs/rules/TRACE.md).
+Status: milestone 3 of 6 in progress. The engine runs turns, priority, the stack, mana, casting, combat and state-based actions, plus compiled card abilities: targeted spells, triggered and activated abilities, static effects through the layer system, Auras and Equipment. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [rules trace](docs/rules/TRACE.md).
 
 ## Quick start
 
@@ -31,7 +31,7 @@ pnpm dev             # http://localhost:5173
 
 ## Scripts
 
-`pnpm test` · `pnpm typecheck` · `pnpm build` · `pnpm rules:trace` (regenerates the rules trace) · `pnpm rules:check`
+`pnpm test` · `pnpm typecheck` · `pnpm build` · `pnpm rules:trace` (regenerates the rules trace) · `pnpm rules:check` · `pnpm cards:reparse` (re-runs the grammar over the built card DB and checks the compiler/engine contract) · `pnpm fuzz` (random games with the built card DB)
 
 The **Reference data** workflow refreshes the Comprehensive Rules and rebuilds the full card DB weekly, on demand, and whenever the parsers change. The card DB and coverage report land on the `reports` branch.
 

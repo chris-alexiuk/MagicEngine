@@ -1,29 +1,36 @@
-import { planAutoTap } from './autotap.js';
+import type { ActivatedAbility, Cost, FaceDef } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canUseTapAbilities, manaAbilities } from './characteristics.js';
+import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
 import {
   checkStateBasedActions,
   completeManualResolution,
+  continueResolution,
   finishCleanup,
   givePriority,
   passPriority,
   playerLoses,
   settle,
 } from './flow.js';
-import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
-import { runEffect } from './registry.js';
+import { parseManaCost, payFromPool } from './mana.js';
+import { autoTap, checkOtherCosts, payOtherCosts, runManaAbility } from './payment.js';
+import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
+import { chooseTargets } from './targets.js';
+import { answerTriggerTargets } from './triggers.js';
 import {
   RulesError,
   type Action,
   type ApplyResult,
   type ChoiceAnswer,
+  type CompiledProgram,
   type GameEvent,
+  type GameObject,
   type GameState,
   type ManaColor,
   type ManualOp,
   type ObjectId,
   type PlayerId,
+  type Target,
 } from './types.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 
@@ -33,7 +40,10 @@ import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList } from '
  * and leaving the original state untouched.
  */
 export function apply(state: GameState, action: Action): ApplyResult {
-  const g = structuredClone(state);
+  // Card definitions never change during a game (new tokens only add entries), so they're
+  // shared between states rather than copied each action.
+  const { cards, ...rest } = state;
+  const g: GameState = { ...structuredClone(rest), cards: { ...cards } };
   const events: GameEvent[] = [];
   try {
     handle(g, action, events);
@@ -71,7 +81,9 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'play_land':
       return playLand(g, a.player, a.object, a.face ?? 0, events);
     case 'cast':
-      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, events);
+      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events);
+    case 'activate':
+      return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes }, events);
     case 'activate_manual':
       return activateManual(g, a.player, a.object, a.line, a.autoTap ?? false, events);
   }
@@ -139,6 +151,20 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       // CR 510.3: then the active player gets priority.
       givePriority(g, g.active);
       return;
+    case 'trigger_targets':
+      answerTriggerTargets(g, player, answer.modes, answer.targets, events);
+      return;
+    case 'scry':
+    case 'surveil':
+    case 'discard':
+    case 'may':
+    case 'pay':
+    case 'search':
+      // A choice made while a spell or ability resolves: carry on resolving with it.
+      if (!g.resolving) throw new RulesError('Nothing is resolving.');
+      g.pending = null;
+      continueResolution(g, events, answer);
+      return;
   }
 }
 
@@ -183,47 +209,14 @@ function activateMana(
   events: GameEvent[],
 ): void {
   // CR 605.3a: mana abilities can be activated with priority, or while something asks for a mana payment.
-  const resolving = g.pending?.kind === 'manual_resolution' && g.pending.player === player;
-  if (!resolving) {
+  const paying = (g.pending?.kind === 'manual_resolution' || g.pending?.kind === 'pay') && g.pending.player === player;
+  if (!paying) {
     if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose.`);
     if (g.priority !== player) throw new RulesError('You don’t have priority.');
   }
-  const o = obj(g, id);
-  // CR 602.2: only an object's controller can activate its abilities.
-  if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You don’t control that permanent.');
-  const ability = manaAbilities(g, o)[index];
-  if (!ability) throw new RulesError(`${nameOf(g, o)} has no such mana ability.`);
-
-  if (ability.cost.tap) {
-    // CR 118.3: an already tapped permanent can't be tapped to pay a cost.
-    if (o.tapped) throw new RulesError(`${nameOf(g, o)} is already tapped.`);
-    // CR 302.6: summoning sickness.
-    if (!canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
-  }
-  if (ability.cost.untap && !o.tapped) throw new RulesError(`${nameOf(g, o)} is already untapped.`);
-  const pool = g.players[player]!.pool;
-  if (ability.cost.mana) {
-    const left = payFromPool(pool, parseManaCost(ability.cost.mana));
-    if (!left) throw new RulesError('Not enough mana in your pool to activate that.');
-    g.players[player]!.pool = left;
-  }
-  if (ability.cost.tap) setTapped(g, id, true, events);
-  if (ability.cost.untap) setTapped(g, id, false, events);
-
-  // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
-  for (const e of ability.effects) {
-    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events });
-    if (!ok) throw new RulesError('Choose which mana to add.');
-  }
+  runManaAbility(g, player, id, index, choice, events);
   // CR 117.3c: a player who activates an ability receives priority afterward.
-  if (!resolving) givePriority(g, player);
-}
-
-function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: number, events: GameEvent[]): void {
-  // CR 601.2g: the player gets a chance to activate mana abilities before paying.
-  const plan = planAutoTap(g, player, cost, x);
-  if (!plan) throw new RulesError('You don’t have enough untapped mana sources.');
-  for (const step of plan) activateMana(g, player, step.object, step.ability, step.choice, events);
+  if (!paying) givePriority(g, player);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +226,24 @@ function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: number, even
 /** Layouts whose non-front faces can be cast. */
 const CASTABLE_ALT_FACES = new Set(['split', 'modal_dfc', 'adventure']);
 
+/**
+ * What a spell will do and target. Instants and sorceries whose every line compiled run
+ * automatically; an Aura targets what it can enchant (CR 303.4a). Anything else is resolved by hand.
+ */
+function spellProgram(face: FaceDef, modes: number[] | undefined): CompiledProgram | null {
+  if (isPermanentCard(face)) {
+    const enchant = face.subtypes.includes('Aura') ? face.keywords.find((k) => k.id === 'enchant' && k.filter) : undefined;
+    if (modes?.length) throw new RulesError(`${face.name} isn’t modal.`);
+    return enchant ? { specs: [{ what: 'object', filter: enchant.filter!, text: `${enchant.text} to enchant` }], effects: [] } : null;
+  }
+  const programs = spellPrograms(face);
+  if (!programs) {
+    if (modes?.length) throw new RulesError(`${face.name} is resolved by hand; choose its modes as it resolves.`);
+    return null;
+  }
+  return flatten(programs, modes);
+}
+
 function cast(
   g: GameState,
   player: PlayerId,
@@ -240,6 +251,8 @@ function cast(
   faceIndex: number,
   x: number,
   wantsAutoTap: boolean,
+  chosenTargets: Target[][] | undefined,
+  modes: number[] | undefined,
   events: GameEvent[],
 ): void {
   const o = obj(g, id);
@@ -265,6 +278,16 @@ function cast(
     }
   }
 
+  // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
+  const program = spellProgram(face, modes);
+  const targets = program
+    ? chooseTargets(g, player, program.specs, chosenTargets, o)
+    : chosenTargets?.some((t) => t.length)
+      ? (() => {
+          throw new RulesError(`${face.name} is resolved by hand; it doesn’t take targets here.`);
+        })()
+      : [];
+
   const cost = parseManaCost(face.manaCost);
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
@@ -281,9 +304,93 @@ function cast(
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex });
-  g.stack.push({ kind: 'spell', object: id, controller: player, x });
+  // Targets were checked against the card in its old zone; on the stack it's a new object (CR 400.7).
+  g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
   events.push({ type: 'cast', player, object: id });
   // CR 601.2i: a player who had priority when casting gets priority afterward.
+  givePriority(g, player);
+}
+
+// ---------------------------------------------------------------------------
+// Compiled activated abilities (CR 602)
+// ---------------------------------------------------------------------------
+
+interface ActivationChoices {
+  x: number;
+  autoTap: boolean;
+  targets: Target[][] | undefined;
+  modes: number[] | undefined;
+}
+
+function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
+  const o = obj(g, id);
+  // CR 602.2: only an object's controller can activate its abilities.
+  if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You don’t control that permanent.');
+  const ability: ActivatedAbility | undefined = activatedAbilities(g, o)[index];
+  if (!ability) throw new RulesError(`${nameOf(g, o)} has no such ability.`);
+  const name = nameOf(g, o);
+  const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
+  const { cost } = ability;
+
+  if (cost.loyalty !== undefined) {
+    // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn.
+    if (!sorcerySpeed) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
+    if (o.loyaltyActivatedTurn === g.turn) throw new RulesError(`You’ve already activated a loyalty ability of ${name} this turn.`);
+    // CR 606.6: a negative loyalty cost needs at least that many loyalty counters.
+    if ((o.counters.loyalty ?? 0) + cost.loyalty < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
+  }
+  // CR 602.5d: "Activate only as a sorcery."
+  if (ability.timing === 'sorcery' && !sorcerySpeed) throw new RulesError(`That ability can only be activated as a sorcery.`);
+  if (ability.oncePerTurn && o.activatedTurn?.[index] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
+  if (cost.tap) {
+    // CR 118.3 / CR 302.6
+    if (o.tapped) throw new RulesError(`${name} is already tapped.`);
+    if (!canUseTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
+  }
+  if (cost.untap && !o.tapped) throw new RulesError(`${name} is already untapped.`);
+  checkOtherCosts(g, player, o, cost);
+
+  // CR 602.2b (following CR 601.2b–c): modes and targets.
+  const program = flatten([ability], choices.modes);
+  const targets = chooseTargets(g, player, program.specs, choices.targets, o);
+  const source = { id, zcc: o.zcc };
+
+  // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
+  const mana = parseManaCost(cost.mana ?? '');
+  if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
+  if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
+  const usesItself = cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : [];
+  if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself);
+  if (cost.mana) {
+    const left = payFromPool(g.players[player]!.pool, mana, choices.x);
+    if (!left) throw new RulesError('Not enough mana to activate that.');
+    g.players[player]!.pool = left;
+  }
+  if (cost.tap) setTapped(g, id, true, events);
+  if (cost.untap) setTapped(g, id, false, events);
+  if (cost.loyalty !== undefined) {
+    // CR 606.4: the cost is putting on or removing loyalty counters.
+    o.counters.loyalty = (o.counters.loyalty ?? 0) + cost.loyalty;
+    o.loyaltyActivatedTurn = g.turn;
+    events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty });
+  }
+  if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
+  payOtherCosts(g, player, o, cost, events);
+
+  // CR 602.2: the ability goes on the stack.
+  g.stack.push({
+    kind: 'ability',
+    id: `a${g.nextId++}`,
+    source,
+    sourceName: name,
+    controller: player,
+    text: ability.text,
+    program,
+    targets,
+    x: choices.x,
+  });
+  events.push({ type: 'ability_activated', player, source: id, text: ability.text });
+  // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);
 }
 
@@ -361,6 +468,8 @@ function activateManual(
     controller: player,
     text: line,
     manual: true,
+    targets: [],
+    x: 0,
   });
   events.push({ type: 'ability_activated', player, source: id, text: line });
   // CR 117.3c: the activating player receives priority afterward.

@@ -13,6 +13,7 @@ on:
       - packages/rules/src/**
       - packages/compiler/src/**
       - packages/schema/src/**
+      - packages/engine/src/**
       - .github/workflows/data.yml
   schedule:
     - cron: '17 9 * * 1' # Mondays 09:17 UTC
@@ -78,6 +79,15 @@ jobs:
           pnpm cards:build 2>&1 | tee /tmp/cards-build.log
       - name: Coverage summary
         run: cat apps/web/public/coverage.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Compiler/engine contract on every card
+        # Fails if the compiler emitted a node tag the engine has no handler for.
+        run: |
+          set -o pipefail
+          pnpm cards:reparse 2>&1 | tee /tmp/reparse.log
+      - name: Fuzz games with random decks from the full card pool
+        run: |
+          set -o pipefail
+          pnpm fuzz --games 60 --seed "$GITHUB_RUN_NUMBER" 2>&1 | tee /tmp/fuzz.log
       - uses: actions/upload-artifact@v4
         with:
           name: card-db
@@ -96,6 +106,8 @@ jobs:
             [ -f "apps/web/public/$f" ] && cp "apps/web/public/$f" /tmp/reports/
           done
           [ -f /tmp/cards-build.log ] && tail -c 200000 /tmp/cards-build.log > /tmp/reports/build.log
+          [ -f /tmp/reparse.log ] && cp /tmp/reparse.log /tmp/reports/reparse.log
+          [ -f /tmp/fuzz.log ] && cp /tmp/fuzz.log /tmp/reports/fuzz.log
           echo "${{ job.status }}" > /tmp/reports/status.txt
           cd /tmp/reports
           git init -q -b reports

@@ -21,11 +21,11 @@ interface Source {
   modes: Mode[];
 }
 
-function manaSources(g: GameState, player: PlayerId): Source[] {
+function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[]): Source[] {
   const out: Source[] = [];
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (o.controller !== player || o.tapped || !canUseTapAbilities(g, o)) continue;
+    if (o.controller !== player || o.tapped || !canUseTapAbilities(g, o) || exclude.includes(id)) continue;
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {
       // Only simple "{T}: Add …" abilities are used automatically.
@@ -58,10 +58,11 @@ const toActivation = (s: Source, m: Mode): PlannedActivation => ({
  * Greedy: the scarcest colors first, each paid by the least flexible source,
  * then generic mana from whatever is left. Returns null if the cost can't be met.
  */
-export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0): PlannedActivation[] | null {
+/** `exclude`: permanents that can't be tapped for mana here (their own cost taps or sacrifices them). */
+export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = []): PlannedActivation[] | null {
   const need = shortfall(g.players[player]!.pool, cost, x);
   if (!need) return null;
-  const sources = manaSources(g, player);
+  const sources = manaSources(g, player, exclude);
   const used = new Set<ObjectId>();
   const plan: PlannedActivation[] = [];
   let surplus = 0; // extra mana from a source tapped for a color (e.g. the second {C} from Sol Ring)

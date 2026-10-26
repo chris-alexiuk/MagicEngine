@@ -1,0 +1,386 @@
+import type { EffectNode, Ref, RuleFlag } from '@mtg/schema';
+import { attempt, type Binder } from './binder.js';
+import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
+import { parseTokenPhrase } from './tokens.js';
+import { parseAmount, parsePT } from './words.js';
+
+/**
+ * Effect text → effect nodes, compositionally:
+ *   text      = sentence ( ". " sentence )*
+ *   sentence  = clause ( ", then " clause | " and " clause )*   — a later clause may reuse the subject
+ *   clause    = [subject] verb arguments
+ * Everything is all-or-nothing: if any part doesn't parse, the whole text is rejected.
+ */
+
+/** Splits on sentence ends. Quoted abilities aren't supported yet, so text with quotes is rejected. */
+export function splitSentences(text: string): string[] | null {
+  if (/["“”]/.test(text)) return null;
+  const t = text.trim();
+  if (!t.endsWith('.')) return null;
+  return t
+    .slice(0, -1)
+    .split(/\.\s+/)
+    .map((s) => s.trim());
+}
+
+export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
+  return attempt(b, (b) => {
+    const sentences = splitSentences(text);
+    if (!sentences) return null;
+    const out: EffectNode[] = [];
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i]!;
+      // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
+      const pay = /^You may pay ((?:\{[^}]+\})+)$/.exec(s);
+      const then = pay && sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (pay && then) {
+        const inner = parseSentence(capitalise(then[1]!), b);
+        if (!inner) return null;
+        out.push({ type: 'may_pay', cost: pay[1]!, effects: inner });
+        i++;
+        continue;
+      }
+      // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
+      if (/^(?:It|They) can't be regenerated$/.test(s)) {
+        const last = out[out.length - 1];
+        if (!last || last.type !== 'destroy') return null;
+        last.noRegen = true;
+        continue;
+      }
+      const effects = parseSentence(s, b);
+      if (!effects) return null;
+      out.push(...effects);
+    }
+    return out.length ? out : null;
+  });
+}
+
+function capitalise(s: string): string {
+  return s.replace(/^\w/, (c) => c.toUpperCase());
+}
+
+function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // CR 118.12a: "[Do something] unless [a player] pays [cost]."
+  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{[^}]+\})+)$/.exec(s);
+  if (unless) {
+    return attempt(b, (b) => {
+      const inner = parseSentence(unless[1]!, b);
+      const payer = inner ? parsePlayerRef(unless[2]!, b) : null;
+      return inner && payer ? [{ type: 'unless_pays', payer, cost: unless[3]!, effects: inner }] : null;
+    });
+  }
+  const may = /^[Yy]ou may (.+)$/.exec(s);
+  if (may) {
+    const inner = attempt(b, (b) => parseSentence(may[1]!, b));
+    return inner ? [{ type: 'may', effects: inner }] : null;
+  }
+  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
+  if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
+
+  const whole = attempt(b, (b) => parseClause(s, b, null));
+  if (whole) return whole.effects;
+
+  // Try each conjunction as the split point; a clause without a subject reuses the previous one's.
+  const joints = [...s.matchAll(/, then | and then | and |, /g)];
+  for (const j of joints) {
+    const left = s.slice(0, j.index);
+    const right = s.slice(j.index! + j[0].length);
+    const r = attempt(b, (b) => {
+      const l = parseClause(left, b, null);
+      if (!l) return null;
+      const rest = parseSentenceWithSubject(right, b, l.subject);
+      return rest ? [...l.effects, ...rest] : null;
+    });
+    if (r) return r;
+  }
+  return null;
+}
+
+function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
+  const whole = attempt(b, (b) => parseClause(s, b, subject));
+  if (whole) return whole.effects;
+  const joints = [...s.matchAll(/, then | and then | and |, /g)];
+  for (const j of joints) {
+    const r = attempt(b, (b) => {
+      const l = parseClause(s.slice(0, j.index), b, subject);
+      if (!l) return null;
+      const rest = parseSentenceWithSubject(s.slice(j.index! + j[0].length), b, l.subject);
+      return rest ? [...l.effects, ...rest] : null;
+    });
+    if (r) return r;
+  }
+  return null;
+}
+
+interface Clause {
+  effects: EffectNode[];
+  /** The player who performs the action, for a following subjectless clause. */
+  subject: Ref | null;
+}
+
+/** Player verbs: lemma → handler. The subject is the player performing it ("you" when imperative). */
+type VerbHandler = (args: string, who: Ref, b: Binder, imperative: boolean) => EffectNode[] | null;
+
+const VERB_FORMS: Record<string, string> = {};
+const VERBS: Record<string, VerbHandler> = {
+  draw(args, who) {
+    const m = /^(\S+) cards?$/.exec(args);
+    const amount = m && parseAmount(m[1]!);
+    return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
+  },
+  gain(args, who) {
+    const m = /^(\S+) life$/.exec(args);
+    const amount = m && parseAmount(m[1]!);
+    return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
+  },
+  lose(args, who) {
+    const m = /^(\S+) life$/.exec(args);
+    const amount = m && parseAmount(m[1]!);
+    return amount !== null && amount !== undefined ? [{ type: 'lose_life', amount, who }] : null;
+  },
+  discard(args, who) {
+    const m = /^(\S+) cards?$/.exec(args);
+    const amount = m && parseAmount(m[1]!);
+    return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
+  },
+  mill(args, who) {
+    const m = /^(\S+) cards?$/.exec(args);
+    const amount = m && parseAmount(m[1]!);
+    return amount !== null && amount !== undefined ? [{ type: 'mill', amount, who }] : null;
+  },
+  scry(args, who) {
+    const amount = parseAmount(args);
+    return amount !== null && who.ref === 'you' ? [{ type: 'scry', amount }] : null;
+  },
+  surveil(args, who) {
+    const amount = parseAmount(args);
+    return amount !== null && who.ref === 'you' ? [{ type: 'surveil', amount }] : null;
+  },
+  create(args, who, b) {
+    const attached = /^(.+?) attached to (.+)$/.exec(args);
+    const token = parseTokenPhrase(attached ? attached[1]! : args, b);
+    if (!token) return null;
+    const node: EffectNode = { type: 'create_token', amount: token.amount, token: token.face, who };
+    if (token.tapped) node.tapped = true;
+    if (attached) {
+      const to = parseObjectRef(attached[2]!, b);
+      if (!to || to.plural || !token.face.subtypes.includes('Aura')) return null;
+      node.attachTo = to.ref;
+    }
+    return [node];
+  },
+  sacrifice(args, who, b) {
+    // Only specific objects for now ("sacrifice ~", "sacrifice it"); choosing one needs a prompt.
+    const what = parseObjectRef(args, b);
+    if (!what || what.targeted || what.ref.ref === 'all' || who.ref !== 'you') return null;
+    return [{ type: 'sacrifice', what: what.ref }];
+  },
+  put(args, who, b, imperative) {
+    if (!imperative) return null;
+    const counters = /^(\S+) (\S+) counters? on (.+)$/.exec(args);
+    if (counters) {
+      const amount = parseAmount(counters[1]!);
+      const what = parseObjectRef(counters[3]!, b);
+      if (amount === null || !what || !/^[+-]?\w+(?:\/[+-]\d+)?$/.test(counters[2]!)) return null;
+      return [{ type: 'add_counters', what: what.ref, counter: counters[2]!.replace(/−/g, '-'), amount }];
+    }
+    const lib = /^(.+?) on (top|the bottom) of (?:its owner's|their owners'|your) library$/.exec(args);
+    if (lib) {
+      const what = parseObjectRef(lib[1]!, b);
+      return what ? [{ type: 'move', what: what.ref, to: 'library', position: lib[2] === 'top' ? 'top' : 'bottom' }] : null;
+    }
+    return null;
+  },
+  destroy: objectVerb('destroy'),
+  exile(args, who, b, imperative) {
+    if (!imperative) return null;
+    const what = parseObjectRef(args, b);
+    return what ? [{ type: 'move', what: what.ref, to: 'exile' }] : null;
+  },
+  return(args, who, b, imperative) {
+    if (!imperative) return null;
+    const hand = /^(.+?) to (?:its owner's|their owners'|your|its owners') hands?$/.exec(args);
+    if (hand) {
+      const what = parseObjectRef(hand[1]!, b);
+      return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
+    }
+    const field = /^(.+?) to the battlefield( tapped)?( under your control)?$/.exec(args);
+    if (field) {
+      const what = parseObjectRef(field[1]!, b);
+      if (!what) return null;
+      const node: EffectNode = { type: 'move', what: what.ref, to: 'battlefield' };
+      if (field[2]) node.tapped = true;
+      if (field[3]) node.under = 'you';
+      return [node];
+    }
+    return null;
+  },
+  tap: objectVerb('tap'),
+  untap: objectVerb('untap'),
+  counter: objectVerb('counter'),
+  regenerate: objectVerb('regenerate'),
+  search(args, who, b, imperative) {
+    // CR 701.23: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle."
+    if (!imperative) return null;
+    const m =
+      /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
+      /^your library for (.+?), then shuffle and put (?:that card|it) (on top)$/.exec(args);
+    if (!m) return null;
+    const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(m[1]!);
+    if (!q) return null;
+    const amount = q[1] ? 1 : parseAmount(q[2] ?? q[3]!);
+    if (typeof amount !== 'number') return null;
+    const pf = parseFilter(`${q[4]} in your library`, b);
+    if (!pf || pf.plural !== amount > 1) return null;
+    const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
+    const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
+    if (q[2]) node.upTo = true;
+    if (m[3]) node.tapped = true;
+    return [node];
+  },
+  attach(args, who, b, imperative) {
+    const m = /^(~|it) to (.+)$/.exec(args);
+    if (!m || !imperative || (m[1] === 'it' && b.it?.ref !== 'self')) return null;
+    const to = parseObjectRef(m[2]!, b);
+    return to && !to.plural ? [{ type: 'attach', what: { ref: 'self' }, to: to.ref }] : null;
+  },
+};
+
+function objectVerb(type: string): VerbHandler {
+  return (args, _who, b, imperative) => {
+    if (!imperative) return null;
+    const what = parseObjectRef(args, b);
+    return what ? [{ type, what: what.ref }] : null;
+  };
+}
+
+for (const lemma of Object.keys(VERBS)) {
+  VERB_FORMS[lemma] = lemma;
+  VERB_FORMS[lemma.endsWith('y') ? `${lemma.slice(0, -1)}ies` : `${lemma}s`] = lemma;
+}
+VERB_FORMS.scries = 'scry';
+
+const VERB_ALT = Object.keys(VERB_FORMS)
+  .sort((a, b) => b.length - a.length)
+  .join('|');
+const IMPERATIVE = new RegExp(`^(${VERB_ALT}) (.+)$`, 'i');
+const WITH_SUBJECT = new RegExp(`^(.+?) (${VERB_ALT}) (.+)$`);
+
+/** Keyword actions that are a whole clause on their own. */
+function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
+  // CR 701.16a: "Investigate" means "Create a Clue token."
+  if (/^investigate$/i.test(c)) {
+    const clue = parseTokenPhrase('a Clue token', b);
+    return clue ? [{ type: 'create_token', amount: 1, token: clue.face, who: { ref: 'you' } }] : null;
+  }
+  // CR 701.37a: "Monstrosity N".
+  const monstrosity = /^monstrosity (\S+)$/i.exec(c);
+  if (monstrosity) {
+    const amount = parseAmount(monstrosity[1]!);
+    return amount !== null ? [{ type: 'monstrosity', amount }] : null;
+  }
+  // CR 701.27a: transforming turns a double-faced permanent over.
+  const transform = /^transform (~|it)$/i.exec(c);
+  if (transform && (transform[1] === '~' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
+  // CR 106.4: "Add {R}{R}{R}." as an instruction (rituals, triggered mana).
+  const add = /^add ((?:\{[WUBRGC]\})+)$/i.exec(c);
+  if (add) return [{ type: 'add_mana', options: [[...add[1]!.matchAll(/\{([WUBRGC])\}/g)].map((m) => m[1]!)] }];
+  return null;
+}
+
+function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
+  // Object-subject clauses first: damage, pumps, restrictions.
+  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b);
+  if (special) return { effects: special, subject: null };
+
+  const imp = IMPERATIVE.exec(c);
+  if (imp) {
+    const lemma = VERB_FORMS[imp[1]!.toLowerCase()]!;
+    const who = inherited ?? { ref: 'you' };
+    const imperative = who.ref === 'you';
+    // A subjectless verb with a non-"you" subject must agree in form ("draws"), which is fine to skip checking.
+    const effects = attempt(b, (b) => VERBS[lemma]!(imp[2]!, who, b, imperative));
+    if (effects) return { effects, subject: who };
+  }
+
+  const sub = WITH_SUBJECT.exec(c);
+  if (sub) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(sub[1]!, b);
+      if (!who) return null;
+      const lemma = VERB_FORMS[sub[2]!.toLowerCase()]!;
+      const effects = VERBS[lemma]!(sub[3]!, who, b, who.ref === 'you');
+      return effects ? { effects, subject: who } : null;
+    });
+    if (r) return r;
+  }
+  return null;
+}
+
+/** "~ deals 3 damage to any target", "… to target creature and 2 damage to its controller". */
+function parseDamage(c: string, b: Binder): EffectNode[] | null {
+  const m = /^(~|[Ii]t) deals (\S+) damage to (.+)$/.exec(c);
+  if (!m) return null;
+  return attempt(b, (b) => {
+    if (m[1] !== '~' && b.it?.ref !== 'self') return null;
+    const amount = parseAmount(m[2]!);
+    if (amount === null) return null;
+    const out: EffectNode[] = [];
+    const second = /^(.+?) and (\S+) damage to (.+)$/.exec(m[3]!);
+    const first = parseRecipients(second ? second[1]! : m[3]!, b);
+    if (!first) return null;
+    for (const to of first) out.push({ type: 'deal_damage', amount, to });
+    if (second) {
+      const amount2 = parseAmount(second[2]!);
+      const rest = amount2 !== null ? parseRecipients(second[3]!, b) : null;
+      if (!rest || amount2 === null) return null;
+      for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to });
+    }
+    return out;
+  });
+}
+
+/** "Target creature gets +2/+2 and gains trample until end of turn." (CR 611.2a: lasts as stated.) */
+function parsePump(c: string, b: Binder): EffectNode[] | null {
+  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until end of turn$/.exec(c);
+  if (!m) return null;
+  return attempt(b, (b) => {
+    const what = parseObjectRef(m[1]!, b);
+    if (!what) return null;
+    const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)![2]!;
+    const parts = `${verb} ${m[2]}`.split(/ and (?=gets? |gains? |has |have )/);
+    const node: EffectNode = { type: 'modify', what: what.ref, until: 'eot' };
+    for (const part of parts) {
+      const pm = /^(gets?|gains?|has|have) (.+)$/.exec(part);
+      if (!pm) return null;
+      if (/^get/.test(pm[1]!)) {
+        const pt = parsePT(pm[2]!);
+        if (!pt || node.power !== undefined) return null;
+        node.power = pt.power;
+        node.toughness = pt.toughness;
+      } else {
+        const kws = parseKeywordList(pm[2]!, b);
+        if (!kws || node.keywords) return null;
+        node.keywords = kws;
+      }
+    }
+    return [node];
+  });
+}
+
+const RESTRICTIONS: Record<string, RuleFlag[]> = {
+  "can't block": ['cant_block'],
+  "can't attack": ['cant_attack'],
+  "can't attack or block": ['cant_attack', 'cant_block'],
+  "can't be blocked": ['cant_be_blocked'],
+};
+
+/** "Target creature can't block this turn." */
+function parseRestriction(c: string, b: Binder): EffectNode[] | null {
+  const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) this turn$/.exec(c);
+  if (!m) return null;
+  return attempt(b, (b) => {
+    const what = parseObjectRef(m[1]!, b);
+    return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: 'eot' }] : null;
+  });
+}

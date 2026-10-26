@@ -29,7 +29,7 @@ describe('casting spells', () => {
     give(g, 'bob', 'Mountain', 'battlefield');
     g = act(g, { type: 'pass', player: 'alice' });
     expect(g.priority).toBe('bob');
-    g = act(g, { type: 'cast', player: 'bob', object: bolt, autoTap: true });
+    g = act(g, { type: 'cast', player: 'bob', object: bolt, autoTap: true, targets: [[{ kind: 'player', player: 'alice' }]] });
     expect(g.stack).toMatchObject([{ kind: 'spell', object: bolt, controller: 'bob' }]);
   });
 
@@ -84,12 +84,15 @@ describe('casting spells', () => {
   });
 
   it('CR 608.2n: an instant the engine can’t run is resolved by hand, then goes to the graveyard', () => {
-    let { g } = withLands(['Forest', 'Forest']);
-    const spell = give(g, 'alice', 'Counterspell', 'hand');
-    g.cards.Counterspell = { ...g.cards.Counterspell!, faces: [{ ...g.cards.Counterspell!.faces[0]!, manaCost: '{G}{G}' }] };
+    const text = 'Draw three cards, then put two cards from your hand on top of your library in any order.';
+    const storm = makeCard({ name: 'Brainstorm', type_line: 'Instant', mana_cost: '{G}{G}', oracle_text: text });
+    let g = toStep(start({ extra: [storm] }), 'main1');
+    give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    const spell = give(g, 'alice', 'Brainstorm', 'hand');
     g = act(g, { type: 'cast', player: 'alice', object: spell, autoTap: true });
     g = passRound(g);
-    expect(g.pending).toMatchObject({ kind: 'manual_resolution', player: 'alice', text: 'Counter target spell.' });
+    expect(g.pending).toMatchObject({ kind: 'manual_resolution', player: 'alice', text });
     expect(illegal(g, { type: 'pass', player: 'bob' })).toMatch(/Waiting for Alice/);
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'manual_resolution', done: true } });
     expect(g.objects[spell]!.zone).toBe('graveyard');
@@ -98,9 +101,10 @@ describe('casting spells', () => {
   });
 
   it('CR 709.3: a split card is cast as the half the player chooses', () => {
-    let { g } = withLands(['Breeding Pool', 'Breeding Pool']);
+    let { g, lands } = withLands(['Breeding Pool', 'Breeding Pool']);
     const fireIce = give(g, 'alice', 'Fire // Ice', 'hand');
-    g = act(g, { type: 'cast', player: 'alice', object: fireIce, face: 1, autoTap: true });
+    // Ice: "Tap target permanent. Draw a card."
+    g = act(g, { type: 'cast', player: 'alice', object: fireIce, face: 1, autoTap: true, targets: [[{ kind: 'object', object: lands[0]! }]] });
     expect(g.objects[fireIce]!.face).toBe(1);
   });
 
@@ -116,8 +120,10 @@ describe('casting spells', () => {
     let g = toStep(start({ extra: [blaze] }), 'main1');
     for (let i = 0; i < 4; i++) give(g, 'alice', 'Forest', 'battlefield');
     const spell = give(g, 'alice', 'Blaze', 'hand');
-    g = act(g, { type: 'cast', player: 'alice', object: spell, x: 3, autoTap: true });
+    g = act(g, { type: 'cast', player: 'alice', object: spell, x: 3, autoTap: true, targets: [[{ kind: 'player', player: 'bob' }]] });
     expect(g.stack).toMatchObject([{ kind: 'spell', x: 3 }]);
+    g = passRound(g);
+    expect(g.players.bob!.life).toBe(17);
     expect(g.zones.battlefield.filter((id) => g.objects[id]!.tapped)).toHaveLength(4);
   });
 

@@ -6,7 +6,7 @@
 - **Commander is the primary format.** 2-player games are the simpler case.
 - **Cards are data.** Scryfall bulk data is compiled at build time into a compact DB plus an ability AST. No LLM in the pipeline.
 - **Every card is playable on day one.** Lines the compiler can't turn into AST are resolved by players by hand ("manual"); the engine still handles casting, zones and the stack.
-- **License: undecided.** Using Forge's GPL-3.0 card scripts would boost coverage but make the project GPL. Decide at milestone 3, once the coverage report shows what Forge would add.
+- **License: undecided.** Using Forge's GPL-3.0 card scripts would boost coverage but make the project GPL. Decide during milestone 3, now that the coverage report shows what our own grammar reaches.
 
 ## Card pipeline
 
@@ -19,13 +19,17 @@ Scryfall Oracle Cards JSON (~150 MB)
   → cards.json.gz (a few MB) + cards.meta.json + coverage report
 ```
 
-- Each oracle line is checked in order: reminder text stripped → keyword line? → grammar rules → unparsed.
+- Each oracle line is checked in order: reminder text stripped → keyword line? → grammar rules → unparsed. A modal header ("Choose one —") and its bullets are one block.
 - Self-references ("Kinnan", "this creature") are normalised to `~` before matching, covering old and new templating.
-- The coverage report groups unparsed lines into templates ranked by frequency. Each row is a grammar rule waiting to be written.
+- The grammar is compositional (`packages/compiler/src/grammar/`): a line is a trigger, cost or static subject plus effect text; effect text is sentences, clauses joined by "and" / ", then", and a subject plus a verb. Noun phrases ("up to two target nonblack creatures an opponent controls") become a target spec or a filter; pronouns ("it", "its controller", "that player") resolve to what they refer to. Subtype names come from CR 205.3 (`pnpm rules:subtypes`).
+- All or nothing: a line compiles completely or not at all, so a compiled card never does half of what it says.
+- The coverage report groups unparsed lines into templates ranked by frequency. `pnpm cards:reparse` re-runs the grammar over a built DB in seconds to measure a change.
 
 ## Extensibility
 
-AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords and grammar rules through registries; the engine will resolve effects, triggers and keywords through registries keyed by the same tags. A new mechanic is a plugin: keyword spec and/or grammar rules on the compiler side, handlers on the engine side. Nothing in the core switches on card names.
+AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords and grammar rules through registries; the engine resolves effects, trigger conditions, enters-the-battlefield replacements and static tags through registries keyed by the same tags (`installPlugin`). A new mechanic is a plugin: keyword spec and/or grammar rules on the compiler side, handlers on the engine side. Nothing in the core switches on card names.
+
+The contract between the two sides is `CORE_NODES` in `packages/schema`: the tags the engine core handles. Tests on both sides check it, and the data workflow checks every compiled card against it.
 
 ## Storage in the browser
 
@@ -41,6 +45,11 @@ AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords 
 - When a player must decide, `state.pending` says who and what. UI and remote players answer the same way.
 - `viewFor(state, player)` is what the server sends each client: hidden zones become counts.
 - Anything the engine can't run goes through manual resolution: the spell or ability waits on the stack while its controller makes logged manual moves, then confirms.
+- **Targets** are chosen when a spell is cast or an ability activated (in the action), or when a trigger goes on the stack (a prompt). They're rechecked on resolution; with all of them illegal the spell doesn't resolve (CR 608.2b). Hexproof, shroud and protection are enforced.
+- **Resolution** runs the effects in order and can stop for a choice (scry, discard, "you may", "unless … pays", search); the answer resumes it. Effects reach their subjects through references, with last-known information for objects that moved.
+- **Triggers** are detected from events in batches, look back in time for leaves-the-battlefield abilities (CR 603.10a), and go on the stack in APNAP order before anyone gets priority.
+- **Characteristics** go through the layer system: printed values, then continuous effects from static abilities (not locked in) and resolved spells (locked in), in layer and timestamp order. Layers 6 and 7c are implemented so far; the rest arrive with the effects that need them.
+- `scripts/fuzz.ts` plays random games with random decks from the full card pool and checks every action and the state's invariants.
 - Every implemented rule is cited as `CR x.y` in code and tests; [docs/rules/TRACE.md](rules/TRACE.md) shows coverage by section. See [docs/rules/README.md](rules/README.md).
 
 ## Milestones
@@ -50,7 +59,12 @@ AST nodes use open string tags (`kind`, `type`). The compiler resolves keywords 
    - ✅ Setup and London mulligan, turn structure, priority, stack, land plays, mana abilities, casting and resolution, state-based actions, cleanup, manual resolution, player views
    - ✅ Combat: attackers (incl. multiple opponents and planeswalkers), blockers with evasion and protection, first/double strike, trample, deathtouch, lifelink, infect, wither, toxic; commanders in the command zone with tax, and commander damage
    - Same-screen table UI
-3. Effects system: triggers, statics and layers, replacement effects; parser v1
+3. Effects system and parser v1
+   - ✅ Compositional grammar: spells, triggered, activated and static abilities, modal spells, tokens, costs (mana, tap, sacrifice, life, loyalty)
+   - ✅ Targets and resolution: target rules, fizzling, hexproof/shroud/protection, counterspells, choices during resolution, library search, "unless … pays"
+   - ✅ Triggered abilities: enters, dies, leaves, attacks, blocks, combat damage, steps, casting, life gain, drawing
+   - ✅ Continuous effects: anthems and lords, granted keywords and restrictions, until-end-of-turn effects; Auras and Equipment
+   - Replacement and prevention effects, control-changing and other layers, delayed triggers, intervening "if" clauses
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

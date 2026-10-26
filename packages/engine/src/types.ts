@@ -1,4 +1,4 @@
-import type { CardDef } from '@mtg/schema';
+import type { CardDef, EffectNode, KeywordInstance, RuleFlag, TargetSpec } from '@mtg/schema';
 
 export type PlayerId = string;
 export type ObjectId = string;
@@ -88,6 +88,20 @@ export interface GameObject {
   deathtouched?: true;
   /** Loyalty abilities activated this turn (once-per-turn limit). */
   loyaltyActivatedTurn?: number;
+  /** CR 613.7d: set when it enters a zone; orders continuous effects from its static abilities. */
+  timestamp: number;
+  /** The object an Aura or Equipment is attached to (CR 701.3). */
+  attachedTo?: ObjectRef;
+  /** CR 701.19a: regeneration shields until end of turn. */
+  regenShields?: number;
+  /** "Activate only once each turn": ability index → turn it was last activated. */
+  activatedTurn?: Record<number, number>;
+  /** "This ability triggers only once each turn": ability index → turn it last triggered. */
+  triggeredTurn?: Record<number, number>;
+  /** CR 107.3m: the X paid for the spell it was, for its enters abilities. */
+  x?: number;
+  /** CR 701.37b: monstrous until it leaves the battlefield. */
+  monstrous?: true;
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -137,9 +151,94 @@ export interface DamageChoice {
   suggested: DamageAssignment[];
 }
 
+/** A target as a player picks it. */
+export type Target = { kind: 'player'; player: PlayerId } | { kind: 'object'; object: ObjectId };
+
+/** A chosen target as stored: an object target goes stale if the object changes zones (CR 608.2b). */
+export type TargetRef = { kind: 'player'; player: PlayerId } | { kind: 'object'; id: ObjectId; zcc: number };
+
+/** What the engine runs for a spell or ability: target specs and effects, with modes already chosen. */
+export interface CompiledProgram {
+  specs: TargetSpec[];
+  effects: EffectNode[];
+}
+
+/** What a trigger event was about, for "that creature" / "that player" (CR 603.10). */
+export interface TriggerInfo {
+  object?: ObjectRef;
+  player?: PlayerId;
+}
+
+interface StackBase {
+  controller: PlayerId;
+  /** Absent when the players resolve it by hand. */
+  program?: CompiledProgram;
+  /** Chosen targets, one list per target spec. */
+  targets: TargetRef[][];
+  x: number;
+}
+
 export type StackEntry =
-  | { kind: 'spell'; object: ObjectId; controller: PlayerId; x: number }
-  | { kind: 'ability'; id: string; source: ObjectRef; sourceName: string; controller: PlayerId; text: string; manual: true };
+  | (StackBase & { kind: 'spell'; object: ObjectId })
+  | (StackBase & {
+      kind: 'ability';
+      id: string;
+      source: ObjectRef;
+      sourceName: string;
+      text: string;
+      /** True for abilities the engine can't run. */
+      manual?: true;
+      trigger?: TriggerInfo;
+    });
+
+/** A continuous effect from a resolved spell or ability (CR 611.2), locked to the objects it affected (CR 611.2c). */
+export interface ContinuousEffect {
+  id: string;
+  timestamp: number;
+  source: ObjectRef;
+  controller: PlayerId;
+  objects: ObjectRef[];
+  power?: number;
+  toughness?: number;
+  keywords?: KeywordInstance[];
+  rules?: RuleFlag[];
+  until: 'eot';
+}
+
+/** A triggered ability waiting to be put on the stack (CR 603.3). */
+export interface PendingTrigger {
+  id: string;
+  controller: PlayerId;
+  source: ObjectRef;
+  sourceName: string;
+  card: string;
+  face: number;
+  /** Index into the face's abilities. */
+  ability: number;
+  info: TriggerInfo;
+}
+
+/** A spell or ability partway through resolving, waiting on a player's choice. */
+export interface Resolution {
+  /** The stack entry being resolved (it may have left the stack, e.g. a spell that exiles itself). */
+  entry: StackEntry;
+  effects: EffectNode[];
+  index: number;
+  /** Scratch space for the current effect (cleared as each effect finishes). */
+  memo: Record<string, unknown>;
+  /** Targets still legal as it began to resolve (CR 608.2b). */
+  targets: TargetRef[][];
+  /** Controllers of targeted objects as resolution began, for "its controller" after it moves (CR 608.2h). */
+  lki: Record<ObjectId, PlayerId>;
+}
+
+/** A target prompt: the printed phrase and who or what can be chosen. */
+export interface TargetPrompt {
+  text: string;
+  count: number;
+  upTo: boolean;
+  candidates: Target[];
+}
 
 export type PendingChoice =
   | { kind: 'mulligan'; player: PlayerId }
@@ -149,7 +248,25 @@ export type PendingChoice =
   | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
   | { kind: 'declare_attackers'; player: PlayerId; attackers: ObjectId[]; targets: AttackTarget[] }
   | { kind: 'declare_blockers'; player: PlayerId; blockers: ObjectId[]; attackers: ObjectId[] }
-  | { kind: 'assign_combat_damage'; player: PlayerId; choices: DamageChoice[] };
+  | { kind: 'assign_combat_damage'; player: PlayerId; choices: DamageChoice[] }
+  /** CR 603.3c / 603.3d: modes and targets for a triggered ability as it goes on the stack. */
+  | {
+      kind: 'trigger_targets';
+      player: PlayerId;
+      trigger: string;
+      sourceName: string;
+      text: string;
+      prompts: TargetPrompt[];
+      modes?: { min: number; max: number; options: { text: string; prompts: TargetPrompt[] }[] };
+    }
+  | { kind: 'scry'; player: PlayerId; objects: ObjectId[] }
+  | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
+  | { kind: 'discard'; player: PlayerId; count: number }
+  | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
+  /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
+  | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
+  /** CR 701.23a: the player looks through their library for cards matching the description. */
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string };
 
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
@@ -159,7 +276,16 @@ export type ChoiceAnswer =
   | { kind: 'manual_resolution'; done: true }
   | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
   | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
-  | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> };
+  | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
+  | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][] }
+  /** CR 701.22a: cards to keep on top (first = top) and to put on the bottom. */
+  | { kind: 'scry'; top: ObjectId[]; bottom: ObjectId[] }
+  /** CR 701.25a: cards to keep on top (first = top) and to put into the graveyard. */
+  | { kind: 'surveil'; top: ObjectId[]; graveyard: ObjectId[] }
+  | { kind: 'discard'; objects: ObjectId[] }
+  | { kind: 'may'; yes: boolean }
+  | { kind: 'pay'; pay: boolean }
+  | { kind: 'search'; objects: ObjectId[] };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -173,7 +299,29 @@ export type Action =
   | { type: 'choose'; player: PlayerId; answer: ChoiceAnswer }
   | { type: 'play_land'; player: PlayerId; object: ObjectId; face?: number }
   | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor }
-  | { type: 'cast'; player: PlayerId; object: ObjectId; face?: number; x?: number; autoTap?: boolean }
+  | {
+      type: 'cast';
+      player: PlayerId;
+      object: ObjectId;
+      face?: number;
+      x?: number;
+      autoTap?: boolean;
+      /** One list per target the spell asks for (CR 601.2c). */
+      targets?: Target[][];
+      /** Chosen modes of a modal spell, by index (CR 700.2a). */
+      modes?: number[];
+    }
+  | {
+      type: 'activate';
+      player: PlayerId;
+      object: ObjectId;
+      /** Index into activatedAbilities() for that permanent. */
+      ability: number;
+      x?: number;
+      autoTap?: boolean;
+      targets?: Target[][];
+      modes?: number[];
+    }
   | { type: 'activate_manual'; player: PlayerId; object: ObjectId; line: number; autoTap?: boolean }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
   | { type: 'concede'; player: PlayerId };
@@ -188,7 +336,18 @@ export type GameEvent =
   | { type: 'step'; step: Step }
   | { type: 'priority'; player: PlayerId }
   | { type: 'passed'; player: PlayerId }
-  | { type: 'moved'; object: ObjectId; from: ZoneName; to: ZoneName }
+  /** `controller` is who controlled it just before it moved (for "a creature you control dies", CR 603.10a). */
+  | { type: 'moved'; object: ObjectId; from: ZoneName; to: ZoneName; controller: PlayerId; card: string; face: number; token?: true }
+  | { type: 'created'; object: ObjectId; controller: PlayerId }
+  | { type: 'attached'; object: ObjectId; to: ObjectId }
+  | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
+  | { type: 'countered'; object: ObjectId }
+  /** CR 608.2b: every target was illegal, so it didn't resolve. */
+  | { type: 'fizzled'; entry: StackEntry }
+  | { type: 'regenerated'; object: ObjectId }
+  | { type: 'transformed'; object: ObjectId; face: number }
+  | { type: 'scried'; player: PlayerId; top: number; bottom: number }
+  | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
   | { type: 'land_played'; player: PlayerId; object: ObjectId }
@@ -242,6 +401,14 @@ export interface GameState {
   commanderDamage: Record<PlayerId, Record<ObjectId, number>>;
   /** How many times each player has cast each commander from the command zone (CR 903.8). */
   commanderCasts: Record<ObjectId, number>;
+  /** Continuous effects from resolved spells and abilities (CR 611.2). */
+  effects: ContinuousEffect[];
+  /** Triggered abilities waiting to go on the stack (CR 603.3). */
+  triggers: PendingTrigger[];
+  /** The spell or ability that is resolving, when it stopped for a choice. */
+  resolving: Resolution | null;
+  /** CR 613.7: the timestamp clock. */
+  clock: number;
   winner: PlayerId | null;
   over: boolean;
   rng: number;

@@ -9,7 +9,7 @@
  * mechanic adds a new tag + handler without touching these core types.
  */
 
-export const SCHEMA_VERSION = 1 as const;
+export const SCHEMA_VERSION = 2 as const;
 
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
 export const COLORS: readonly Color[] = ['W', 'U', 'B', 'R', 'G'];
@@ -88,11 +88,17 @@ export interface KeywordInstance {
   cost?: string;
   /** Free-form parameter, e.g. the quality in "protection from red". */
   text?: string;
+  /** The parameter parsed as an object description, e.g. "Enchant creature you control" (CR 702.5a). */
+  filter?: ObjectFilter;
 }
 
 // ---------------------------------------------------------------------------
 // Ability AST
 // ---------------------------------------------------------------------------
+//
+// One oracle line compiles to one ability node, or to nothing (then players
+// resolve it by hand). A line is never half-compiled: every node the compiler
+// emits has an engine handler (see CORE_NODES below; both packages test it).
 
 export interface AbilityBase {
   kind: string;
@@ -100,19 +106,46 @@ export interface AbilityBase {
   text: string;
 }
 
-export interface ActivatedAbility extends AbilityBase {
-  kind: 'activated';
-  cost: Cost;
+/**
+ * What a spell or ability does when it resolves: the targets it needs, then its
+ * instructions in the order written (CR 608.2c). Effects point at targets by index.
+ */
+export interface Program {
+  /** CR 115.1: chosen as the spell is cast, the ability activated, or the trigger put on the stack. */
+  targets?: TargetSpec[];
   effects: EffectNode[];
-  /** True for mana abilities (CR 605): they don't use the stack. */
-  mana?: true;
-  timing?: 'sorcery';
+  /** CR 700.2: modal — the chosen modes' targets and effects are used, in printed order. */
+  modes?: ModeChoice;
 }
 
-export interface TriggeredAbility extends AbilityBase {
+export interface ModeChoice {
+  min: number;
+  max: number;
+  options: ModeOption[];
+}
+
+export interface ModeOption {
+  text: string;
+  targets?: TargetSpec[];
+  effects: EffectNode[];
+}
+
+export interface ActivatedAbility extends AbilityBase, Program {
+  kind: 'activated';
+  cost: Cost;
+  /** True for mana abilities (CR 605): they don't use the stack. */
+  mana?: true;
+  /** CR 602.5d: "Activate only as a sorcery." */
+  timing?: 'sorcery';
+  /** "Activate only once each turn." */
+  oncePerTurn?: true;
+}
+
+export interface TriggeredAbility extends AbilityBase, Program {
   kind: 'triggered';
   trigger: TriggerNode;
-  effects: EffectNode[];
+  /** "This ability triggers only once each turn." */
+  oncePerTurn?: true;
 }
 
 export interface StaticAbility extends AbilityBase {
@@ -120,9 +153,8 @@ export interface StaticAbility extends AbilityBase {
   effect: EffectNode;
 }
 
-export interface SpellAbility extends AbilityBase {
+export interface SpellAbility extends AbilityBase, Program {
   kind: 'spell';
-  effects: EffectNode[];
 }
 
 export type AbilityNode = ActivatedAbility | TriggeredAbility | StaticAbility | SpellAbility;
@@ -132,11 +164,13 @@ export interface Cost {
   mana?: string;
   tap?: true;
   untap?: true;
-  /** Non-mana costs (sacrifice, discard, pay life…), as effect nodes. */
+  /** CR 606.4: a loyalty ability's cost, e.g. +1 or -3. */
+  loyalty?: number;
+  /** Non-mana costs, e.g. { type: 'sacrifice_self' } or { type: 'pay_life', amount: 2 }. */
   other?: EffectNode[];
 }
 
-/** Open node: `type` selects the handler in the engine's effect registry. */
+/** Open node: `type` selects the handler in the engine's registries. */
 export interface EffectNode {
   type: string;
   [param: string]: unknown;
@@ -147,7 +181,108 @@ export interface TriggerNode {
   [param: string]: unknown;
 }
 
-/** Core effect shapes the compiler emits today. Plugins add more. */
+// --- Targets, filters and references ----------------------------------------
+
+/** One instance of the word "target" (CR 115.3), possibly for several objects ("two target creatures"). */
+export interface TargetSpec {
+  /** CR 115.4: "any target" means a creature, player, planeswalker or battle. */
+  what: 'any' | 'player' | 'object';
+  /** For objects. */
+  filter?: ObjectFilter;
+  /** For players: "target opponent". */
+  player?: 'opponent' | 'you';
+  /** How many; 1 unless stated. */
+  count?: number;
+  /** CR 115.6: "up to N" allows fewer, including zero. */
+  upTo?: true;
+  /** The printed phrase, for prompts ("target creature you control"). */
+  text: string;
+}
+
+export type ZoneWord = 'battlefield' | 'stack' | 'graveyard' | 'hand' | 'library' | 'exile';
+
+/** Describes a set of objects. Relative words ("you", "another") are relative to the ability's source. */
+export interface ObjectFilter {
+  /** CR 115.2: permanents unless the text says otherwise. */
+  zone?: ZoneWord;
+  /** Any one of these card types ("artifact or enchantment"); omitted = any. */
+  types?: string[];
+  /** All of these card types too ("artifact creature"). */
+  allTypes?: string[];
+  /** Any one of these subtypes. */
+  subtypes?: string[];
+  /** All of these supertypes. */
+  supertypes?: string[];
+  notTypes?: string[];
+  notSubtypes?: string[];
+  notSupertypes?: string[];
+  /** Any one of these colors. */
+  colors?: Color[];
+  notColors?: Color[];
+  colorless?: true;
+  multicolored?: true;
+  controller?: 'you' | 'opponent' | 'not_you';
+  owner?: 'you' | 'opponent';
+  /** "another" / "other": not the source itself. */
+  other?: true;
+  tapped?: boolean;
+  combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
+  token?: boolean;
+  /** "with flying" (any of). */
+  keywords?: string[];
+  /** "without flying". */
+  notKeywords?: string[];
+  power?: Compare;
+  toughness?: Compare;
+  manaValue?: Compare;
+}
+
+export interface Compare {
+  op: 'le' | 'ge' | 'eq';
+  n: number;
+}
+
+/**
+ * Who or what an effect acts on. Pronouns ("it", "that creature", "its controller")
+ * are resolved by the compiler to one of these.
+ */
+export type Ref =
+  /** The source of the ability: the permanent, or the spell itself. */
+  | { ref: 'self' }
+  /** A chosen target (object or player), by index into the program's targets. */
+  | { ref: 'target'; index: number }
+  /** The object a trigger event was about ("Whenever a creature you control dies, … it …"). */
+  | { ref: 'trigger_object' }
+  /** The player a trigger event was about ("deals combat damage to a player, that player …"). */
+  | { ref: 'trigger_player' }
+  /** What the source Aura or Equipment is attached to. */
+  | { ref: 'attached' }
+  /** Every object matching (CR 608.2h: determined as the effect is applied). */
+  | { ref: 'all'; filter: ObjectFilter }
+  | { ref: 'you' }
+  | { ref: 'players'; who: 'each' | 'opponents' }
+  | { ref: 'controller_of'; of: Ref }
+  | { ref: 'owner_of'; of: Ref };
+
+/** A number, or X as paid when casting. */
+export type Amount = number | 'X';
+
+/**
+ * Rules-meaningful restrictions and requirements carried by continuous effects.
+ * Kept as flags so combat and casting can check them cheaply.
+ */
+export const RULE_FLAGS = [
+  'cant_attack',
+  'cant_block',
+  'cant_be_blocked',
+  'attacks_each_combat',
+  'cant_be_countered',
+  'doesnt_untap',
+] as const;
+export type RuleFlag = (typeof RULE_FLAGS)[number];
+
+// --- Core node shapes ---------------------------------------------------------
+
 export interface AddManaEffect extends EffectNode {
   type: 'add_mana';
   /** Alternatives the player picks from; each is a list of symbols, e.g. [["R"],["G"]] or [["C","C"]]. */
@@ -158,6 +293,55 @@ export interface AddManaEffect extends EffectNode {
 
 export interface EntersTappedEffect extends EffectNode {
   type: 'enters_tapped';
+}
+
+/** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
+export interface ContinuousEffectNode extends EffectNode {
+  type: 'continuous';
+  affected: Ref;
+  power?: number;
+  toughness?: number;
+  keywords?: KeywordInstance[];
+  rules?: RuleFlag[];
+}
+
+/** A token as created: a face definition plus a name (CR 111.4). */
+export interface TokenSpec {
+  face: FaceDef;
+}
+
+/**
+ * Node tags the engine core handles. The compiler emits only these (or tags a
+ * plugin registers), so a compiled line always runs.
+ */
+export const CORE_NODES = {
+  effects: [
+    'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'destroy', 'move', 'counter', 'tap', 'untap',
+    'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
+    'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search',
+  ],
+  statics: ['enters_tapped', 'enters_with_counters', 'continuous'],
+  triggers: ['enters', 'dies', 'leaves', 'attacks', 'blocks', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw'],
+  costs: ['sacrifice_self', 'pay_life'],
+} as const;
+
+/** Every node tag used by one ability, by kind — for checking the CORE_NODES invariant. */
+export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]; triggers: string[]; costs: string[] } {
+  const out = { effects: [] as string[], statics: [] as string[], triggers: [] as string[], costs: [] as string[] };
+  const visit = (list: EffectNode[] | undefined) => {
+    for (const e of list ?? []) {
+      out.effects.push(e.type);
+      if (Array.isArray(e.effects)) visit(e.effects as EffectNode[]);
+    }
+  };
+  if (a.kind === 'static') out.statics.push(a.effect.type);
+  else {
+    visit(a.effects);
+    for (const m of a.modes?.options ?? []) visit(m.effects);
+    if (a.kind === 'triggered') out.triggers.push(a.trigger.type);
+    if (a.kind === 'activated') for (const c of a.cost.other ?? []) out.costs.push(c.type);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

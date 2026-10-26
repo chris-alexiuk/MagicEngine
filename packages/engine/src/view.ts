@@ -40,6 +40,14 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   }
   for (const id of [...g.zones.battlefield, ...g.zones.exile, ...g.zones.command]) visible.add(id);
   for (const e of g.stack) if (e.kind === 'spell') visible.add(e.object);
+  // CR 701.22a / CR 701.25a: a player who scries or surveils looks at those cards.
+  if (g.pending && g.pending.player === viewer && (g.pending.kind === 'scry' || g.pending.kind === 'surveil')) {
+    for (const id of g.pending.objects) visible.add(id);
+  }
+  // CR 701.23a: a player searching their library looks at all of it.
+  if (g.pending?.kind === 'search' && g.pending.player === viewer) {
+    for (const id of g.zones.library[viewer] ?? []) visible.add(id);
+  }
 
   const objects: Record<ObjectId, GameObject> = {};
   const cards: Record<string, CardDef> = {};

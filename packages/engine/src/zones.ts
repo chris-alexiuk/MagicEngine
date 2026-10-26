@@ -69,10 +69,12 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number } = {},
+  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
+  const controllerBefore = o.controller;
+  const faceBefore = o.face;
   removeFromCurrentZone(g, o);
 
   o.zone = to;
@@ -81,7 +83,16 @@ export function moveObject(
   o.damage = 0;
   o.counters = {};
   o.sick = to === 'battlefield';
+  // CR 613.7d: an object receives a timestamp as it enters a zone.
+  o.timestamp = ++g.clock;
   delete o.loyaltyActivatedTurn;
+  delete o.attachedTo;
+  delete o.regenShields;
+  delete o.activatedTurn;
+  delete o.triggeredTurn;
+  delete o.monstrous;
+  if (opts.x !== undefined) o.x = opts.x;
+  else delete o.x;
   o.controller = to === 'battlefield' || to === 'stack' ? (opts.controller ?? o.controller) : o.owner;
   o.face = opts.face ?? (to === 'battlefield' || to === 'stack' ? o.face : 0);
 
@@ -101,7 +112,16 @@ export function moveObject(
     if (face.defense !== undefined && /^\d+$/.test(face.defense)) o.counters.defense = Number(face.defense);
     onEnterBattlefield(g, o, events);
   }
-  events.push({ type: 'moved', object: id, from, to });
+  events.push({
+    type: 'moved',
+    object: id,
+    from,
+    to,
+    controller: controllerBefore,
+    card: o.card,
+    face: from === 'battlefield' || from === 'stack' ? faceBefore : o.face,
+    ...(o.token ? { token: true as const } : {}),
+  });
 }
 
 /** Creates a fresh object for a card owned by `owner`, placed in `zone`. */
@@ -119,6 +139,7 @@ export function createObject(g: GameState, card: string, owner: PlayerId, zone: 
     sick: zone === 'battlefield',
     damage: 0,
     counters: {},
+    timestamp: ++g.clock,
   };
   g.objects[id] = o;
   zoneList(g, zone, owner).push(id);

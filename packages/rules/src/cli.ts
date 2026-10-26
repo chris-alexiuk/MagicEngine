@@ -1,6 +1,7 @@
 /**
  *   tsx src/cli.ts parse <MagicCompRules.txt> <rules.json>
  *   tsx src/cli.ts trace [--check]
+ *   tsx src/cli.ts subtypes
  *
  * `trace` scans packages/engine/src (implemented) and packages/engine/test (tested)
  * for "CR x.y" citations and writes docs/rules/TRACE.md. With --check it exits 1
@@ -10,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { parseComprehensiveRules, type RulesDoc } from './parse.js';
+import { extractSubtypes, subtypesModule } from './subtypes.js';
 import { buildTrace, findCitations, traceMarkdown, type Citation } from './trace.js';
 
 const root = resolve(process.env.INIT_CWD ?? process.cwd());
@@ -60,13 +62,24 @@ async function trace(check: boolean): Promise<void> {
   }
 }
 
+/** Writes the compiler's subtype lists (CR 205.3) so the parser can tell "Elf" from "Elves". */
+async function subtypes(): Promise<void> {
+  const doc: RulesDoc = JSON.parse(await readFile(fromRoot('docs/rules/rules.json'), 'utf8'));
+  const lists = extractSubtypes(doc);
+  const out = 'packages/compiler/src/grammar/subtypes.ts';
+  await writeFile(fromRoot(out), subtypesModule(lists, doc.effectiveDate));
+  console.log(Object.entries(lists).map(([k, v]) => `${v.length} ${k}`).join(', ') + ` → ${out}`);
+}
+
 const [cmd, ...args] = process.argv.slice(2).filter((a) => a !== '--');
 const run =
   cmd === 'parse' && args.length >= 2
     ? parse(args[0]!, args[1]!)
     : cmd === 'trace'
       ? trace(args.includes('--check'))
-      : Promise.reject(new Error('usage: cli parse <in.txt> <out.json> | cli trace [--check]'));
+      : cmd === 'subtypes'
+        ? subtypes()
+        : Promise.reject(new Error('usage: cli parse <in.txt> <out.json> | cli trace [--check] | cli subtypes'));
 run.catch((err: unknown) => {
   console.error(err);
   process.exit(1);

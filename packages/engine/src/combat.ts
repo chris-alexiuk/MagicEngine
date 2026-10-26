@@ -1,4 +1,4 @@
-import { canUseTapAbilities, hasKeyword, hasProtectionFrom, hasType, power, toughness } from './characteristics.js';
+import { canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, power, toughness } from './characteristics.js';
 import {
   RulesError,
   type AttackTarget,
@@ -74,7 +74,8 @@ function canAttack(g: GameState, o: GameObject): boolean {
     !hasType(g, o, 'Battle') &&
     canUseTapAbilities(g, o) &&
     // CR 702.3b: a creature with defender can't attack.
-    !hasKeyword(g, o, 'defender')
+    !hasKeyword(g, o, 'defender') &&
+    !hasRule(g, o, 'cant_attack')
   );
 }
 
@@ -118,6 +119,14 @@ export function declareAttackers(
     if (!legalTargets.some((t) => sameTarget(t, target))) throw new RulesError(`${nameOf(g, o)} can’t attack that.`);
   }
 
+  // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (!seen.has(id) && canAttack(g, o) && hasRule(g, o, 'attacks_each_combat')) {
+      throw new RulesError(`${nameOf(g, o)} attacks each combat if able.`);
+    }
+  }
+
   for (const { attacker, target } of attacks) {
     const o = g.objects[attacker]!;
     // CR 508.1f: attacking taps the creature; CR 702.20b: unless it has vigilance.
@@ -134,12 +143,19 @@ export function declareAttackers(
 // ---------------------------------------------------------------------------
 
 function canBlockAtAll(g: GameState, o: GameObject, player: PlayerId): boolean {
-  // CR 509.1a: untapped creatures the defending player controls, not battles.
-  return o.zone === 'battlefield' && o.controller === player && hasType(g, o, 'Creature') && !o.tapped && !hasType(g, o, 'Battle');
+  // CR 509.1a: untapped creatures the defending player controls, not battles; and not ones that "can't block".
+  return (
+    o.zone === 'battlefield' &&
+    o.controller === player &&
+    hasType(g, o, 'Creature') &&
+    !o.tapped &&
+    !hasType(g, o, 'Battle') &&
+    !hasRule(g, o, 'cant_block')
+  );
 }
 
 function colors(g: GameState, o: GameObject): string[] {
-  return faceOf(g, o).colors;
+  return chars(g, o).colors;
 }
 
 /** Evasion abilities that stop this blocker from blocking this attacker (CR 509.1b). */
@@ -147,6 +163,7 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   const a = (k: string) => hasKeyword(g, attacker, k);
   const b = (k: string) => hasKeyword(g, blocker, k);
   const aName = nameOf(g, attacker);
+  if (hasRule(g, attacker, 'cant_be_blocked')) return `${aName} can’t be blocked.`;
   // CR 702.16f: an attacker with protection can't be blocked by creatures with that quality.
   if (hasProtectionFrom(g, attacker, blocker)) return `${aName} has protection from it.`;
   // CR 702.9b / CR 702.17b: flying can be blocked only by flying or reach.
@@ -164,7 +181,7 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   // CR 702.118b: skulk can't be blocked by creatures with greater power.
   if (a('skulk') && power(g, blocker) > power(g, attacker)) return `${aName} has skulk.`;
   // CR 702.14c: landwalk — unblockable while the defending player controls such a land.
-  for (const kw of faceOf(g, attacker).keywords) {
+  for (const kw of chars(g, attacker).keywords) {
     if (kw.id !== 'landwalk' || !kw.text) continue;
     const words = kw.text.split(' ');
     const defenderLands = g.zones.battlefield
@@ -487,7 +504,7 @@ export function dealDamage(
     }
     if (combat) {
       // CR 120.3g / CR 702.164c: toxic adds poison counters on combat damage to a player.
-      const toxic = faceOf(g, source).keywords.filter((k) => k.id === 'toxic').reduce((n, k) => n + (k.n ?? 0), 0);
+      const toxic = chars(g, source).keywords.filter((k) => k.id === 'toxic').reduce((n, k) => n + (k.n ?? 0), 0);
       if (toxic > 0) ps.poison += toxic;
       // CR 903.10a: track combat damage dealt to each player by each commander.
       if (source.commander) {
@@ -505,6 +522,11 @@ export function dealDamage(
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
     // CR 120.3c: damage to a planeswalker removes that many loyalty counters.
     o.counters.loyalty = Math.max(0, (o.counters.loyalty ?? 0) - amount);
+    return amount;
+  }
+  if (hasType(g, o, 'Battle') && !hasType(g, o, 'Creature')) {
+    // CR 120.3h: damage to a battle removes that many defense counters.
+    o.counters.defense = Math.max(0, (o.counters.defense ?? 0) - amount);
     return amount;
   }
   if (infect || hasKeyword(g, source, 'wither')) {
