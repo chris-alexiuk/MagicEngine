@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { CardDBMeta } from '@mtg/schema';
 import { compileCards } from './compile.js';
 import { buildCoverage, coverageMarkdown } from './coverage.js';
@@ -52,20 +52,38 @@ async function download(cacheDir: string): Promise<{ file: string; updatedAt: st
   if (!listRes.ok) throw new Error(`bulk-data lookup failed: HTTP ${listRes.status}: ${body.slice(0, 300)}`);
   const list = JSON.parse(body) as { data?: ScryfallBulkItem[] };
   const item = list.data?.find((d) => d.type === 'oracle_cards');
-  if (!item?.download_uri) {
-    throw new Error(`no oracle_cards entry with a download_uri in the bulk-data list: ${body.slice(0, 600)}`);
-  }
-  const file = join(cacheDir, `oracle-cards-${item.updated_at.replace(/[:.]/g, '-')}.json`);
+  // Scryfall now publishes gzipped JSON Lines; older responses had a plain JSON array.
+  const url = item?.jsonl_download_uri ?? item?.download_uri;
+  if (!item || !url) throw new Error(`no oracle_cards download in the bulk-data list: ${body.slice(0, 600)}`);
+  const ext = item.jsonl_download_uri ? '.jsonl.gz' : '.json';
+  const file = join(cacheDir, `oracle-cards-${item.updated_at.replace(/[:.+]/g, '-')}${ext}`);
   if (existsSync(file)) {
     console.log(`using cached ${file}`);
     return { file, updatedAt: item.updated_at };
   }
-  console.log(`downloading ${(item.size / 1e6).toFixed(0)} MB from ${item.download_uri}`);
-  const res = await fetch(item.download_uri, { headers: HEADERS });
-  if (!res.ok) throw new Error(`bulk download failed: ${res.status}`);
+  const size = item.compressed_size ?? item.size;
+  console.log(`downloading ${size ? `${(size / 1e6).toFixed(0)} MB ` : ''}from ${url}`);
+  const res = await fetch(url, { headers: HEADERS });
+  if (!res.ok) throw new Error(`bulk download failed: HTTP ${res.status}`);
   await mkdir(cacheDir, { recursive: true });
   await writeFile(file, Buffer.from(await res.arrayBuffer()));
   return { file, updatedAt: item.updated_at };
+}
+
+/** Reads Scryfall card objects from .json (array), .jsonl or .jsonl.gz / .json.gz. */
+async function readCards(path: string): Promise<ScryfallCard[]> {
+  let bytes = await readFile(path);
+  // Decompress real gzip data only (some servers transparently decompress downloads).
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = gunzipSync(bytes);
+  const text = bytes.toString('utf8');
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith('[')) return JSON.parse(text) as ScryfallCard[];
+  const cards: ScryfallCard[] = [];
+  for (const line of text.split('\n')) {
+    const l = line.trim();
+    if (l) cards.push(JSON.parse(l) as ScryfallCard);
+  }
+  return cards;
 }
 
 async function main(): Promise<void> {
@@ -80,7 +98,7 @@ async function main(): Promise<void> {
     inputFile = fromCwd(args.input!);
   }
 
-  const raw = JSON.parse(await readFile(inputFile, 'utf8')) as ScryfallCard[];
+  const raw = await readCards(inputFile);
   const started = Date.now();
   const { db, skipped } = compileCards(raw, {
     source: args.download

@@ -54,7 +54,11 @@ export interface ScryfallCard {
 
 export interface ScryfallBulkItem {
   type: string;
-  download_uri: string;
   updated_at: string;
-  size: number;
+  /** Gzipped JSON Lines, one card per line (current API). */
+  jsonl_download_uri?: string;
+  compressed_size?: number;
+  /** Plain JSON array (older API responses). */
+  download_uri?: string;
+  size?: number;
 }
