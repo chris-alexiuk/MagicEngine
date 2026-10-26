@@ -99,6 +99,8 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** CR 702.171b: saddled this turn. */
+  saddledTurn?: number;
   /** CR 702.112b: it became renowned. */
   renowned?: true;
   /** CR 702.177a: abilities activated "only once" (by index). */
@@ -529,6 +531,8 @@ export type GameEvent =
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
   | { type: 'turned_face_up'; object: ObjectId }
+  /** CR 731.1a: day became night or night became day (or it first became one). */
+  | { type: 'day_night'; to: 'day' | 'night'; from?: 'day' | 'night' }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
@@ -626,6 +630,8 @@ export interface GameState {
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
   asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode }[];
+  /** CR 731.1: the game's day/night designation, once it has one. */
+  dayNight?: 'day' | 'night';
   /** Events whose triggers wait for a copy choice (CR 707.5). */
   heldEvents?: GameEvent[];
   /** What happened this turn, and how many spells each player cast last turn. */

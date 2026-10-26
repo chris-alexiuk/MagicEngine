@@ -346,6 +346,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 731.1: "It becomes night." / "it becomes day"
+  const becomes = /^[Ii]t becomes (day|night)$/.exec(s);
+  if (becomes) return [{ type: 'day_night', to: becomes[1] }];
+  // CR 702.171a (saddle): "This permanent becomes saddled until end of turn."
+  // "Target Mount you control becomes saddled until end of turn."
+  const saddled = /^(.+?) becomes saddled until end of turn$/.exec(s);
+  if (saddled) {
+    const what = parseObjectRef(saddled[1]!, b);
+    if (what && !what.plural) return [{ type: 'become_saddled', what: what.ref }];
+  }
   // CR 702.112a: "it becomes renowned".
   if (/^(?:it|~) becomes renowned$/.test(s)) return [{ type: 'become_renowned' }];
   // CR 701.57a: "discover N".

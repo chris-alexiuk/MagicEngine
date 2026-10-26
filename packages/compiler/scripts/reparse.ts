@@ -1,12 +1,13 @@
 /**
  * Measures the grammar against a compiled card DB without re-downloading Scryfall data:
  *
- *   tsx scripts/reparse.ts <cards.json.gz> [--out coverage.md] [--grep <regex>] [--limit N]
+ *   tsx scripts/reparse.ts <cards.json.gz> [--out coverage.md] [--grep <regex>] [--limit N] [--save next.json.gz]
  *
- * Prints coverage totals. --grep lists unparsed lines matching a pattern (for grammar work).
+ * Prints coverage totals. --grep lists unparsed lines matching a pattern (for grammar work);
+ * --save writes the reparsed DB (gzipped if the name ends in .gz) for further analysis.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { CORE_NODES, faceAbilities, nodeTags, type CardDB } from '@mtg/schema';
 import { buildCoverage, coverageMarkdown, reparseDB } from '../src/index.js';
 
@@ -50,6 +51,11 @@ if (strays.size) {
   process.exitCode = 1;
 }
 
+const save = opt('--save');
+if (save) {
+  const json = Buffer.from(JSON.stringify(next));
+  writeFileSync(save, save.endsWith('.gz') ? gzipSync(json) : json);
+}
 const out = opt('--out');
 if (out) writeFileSync(out, coverageMarkdown(report));
 const grep = opt('--grep');

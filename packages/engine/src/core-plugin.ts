@@ -12,6 +12,7 @@ import { payDuringResolution } from './payment.js';
 import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copySpell } from './spell-copies.js';
+import { dayNightCard, setDayNight } from './day-night.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
@@ -324,6 +325,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const def = ctx.g.cards[o.card];
       // CR 701.27c / CR 712.9: only double-faced permanents (not meld cards) transform.
       if (o.zone !== 'battlefield' || !def || def.layout !== 'transform' || def.faces.length !== 2) continue;
+      // CR 702.145b/e: "This permanent can't transform except due to its daybound ability."
+      if (dayNightCard(ctx.g, o)) continue;
       const next = o.face === 0 ? 1 : 0;
       // CR 701.27d: not into an instant or sorcery face.
       if (def.faces[next]!.types.some((t) => t === 'Instant' || t === 'Sorcery')) continue;
@@ -331,6 +334,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       o.face = next;
       ctx.events.push({ type: 'transformed', object: o.id, face: next });
     }
+    return true;
+  },
+
+  // CR 731.1: "It becomes night." / "it becomes day"
+  day_night(node, ctx) {
+    setDayNight(ctx.g, node.to === 'night' ? 'night' : 'day', ctx.events);
+    return true;
+  },
+
+  // CR 702.171a: "This permanent becomes saddled until end of turn."
+  become_saddled(node, ctx) {
+    // CR 702.171b: only permanents can become saddled.
+    for (const o of refObjects(ctx, node.what ? ref(node, 'what') : { ref: 'self' })) if (o.zone === 'battlefield') o.saddledTurn = ctx.g.turn;
     return true;
   },
 
@@ -1065,6 +1081,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return e.attacks.flatMap(({ attacker, target }) => {
       const o = check.g.objects[attacker];
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+      // CR 702.171b: "attacks while saddled" — saddled this turn, before it attacked.
+      if (t.saddled && o.saddledTurn !== check.g.turn) return [];
       // "Whenever a creature attacks enchanted player"
       if (t.defender === 'enchanted' && (target.kind !== 'player' || target.player !== check.source.attachedToPlayer)) return [];
       const player = target.kind === 'player' ? target.player : check.g.objects[target.object]?.controller;
@@ -1117,6 +1135,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
+  },
+  // CR 731.1a: "Whenever day becomes night or night becomes day" (not when it first becomes one).
+  day_night_changed(t, check) {
+    const e = check.event;
+    return e.type === 'day_night' && e.from && !check.sourceLeft ? [{}] : [];
   },
   // CR 702.63a: "When the last time counter is removed from ~".
   last_counter_removed(t, check) {
@@ -1259,6 +1282,10 @@ export const corePlugin: MechanicPlugin = {
       queueAsEnters(g, o, node as AsEntersNode);
     },
     // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
+    // "If it's neither day nor night, it becomes day as ~ enters."
+    enters_day(_node, _o, g) {
+      if (!g.dayNight) g.dayNight = 'day';
+    },
     enters_with_counters(node, o, g) {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
       if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;

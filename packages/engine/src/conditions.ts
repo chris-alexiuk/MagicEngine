@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -75,6 +75,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
     }
+    case 'day_night':
+      // CR 731: "if it's night"
+      return cond.is === 'neither' ? !g.dayNight : g.dayNight === cond.is;
+    case 'saddled':
+      // CR 702.171b: saddled until end of turn (or until it leaves).
+      return Boolean(source && source.zone === 'battlefield' && source.saddledTurn === g.turn);
     case 'renowned':
       // CR 702.112b
       return Boolean(source?.renowned && source.zone === 'battlefield') !== Boolean(cond.not);

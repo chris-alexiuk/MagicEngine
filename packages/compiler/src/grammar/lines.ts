@@ -270,6 +270,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
   }
 
+  // CR 731.1a: "Whenever day becomes night or night becomes day"
+  if (t === 'day becomes night or night becomes day') return { trigger: { type: 'day_night_changed' }, it: { ref: 'self' }, player: null };
   // CR 702.63a (vanishing): "When the last time counter is removed from ~"
   const lastCounter = /^the last (\S+) counter is removed from ~$/.exec(t);
   if (lastCounter) return { trigger: { type: 'last_counter_removed', counter: lastCounter[1]! }, it: { ref: 'self' }, player: null };
@@ -351,6 +353,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
 
+  // CR 702.171b: "Whenever ~ attacks while saddled" — it's saddled as it attacks.
+  if (t === '~ attacks while saddled') {
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, saddled: true }, it: { ref: 'self' }, player: null };
+  }
   const self = /^~ (enters(?: the battlefield)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
@@ -1050,6 +1057,16 @@ export const reboundRule: GrammarRule = {
   },
 };
 
+/** CR 731: "If it's neither day nor night, it becomes day as ~ enters." */
+export const entersDayRule: GrammarRule = {
+  id: 'enters_day',
+  parse(line, original) {
+    if (line !== "If it's neither day nor night, it becomes day as ~ enters.") return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_day' } };
+    return node;
+  },
+};
+
 export const additionalCostRule: GrammarRule = {
   id: 'additional_cost',
   parse(line, original, ctx) {
@@ -1076,6 +1093,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   selfReplacementRule,
   castOptionRule,
   reboundRule,
+  entersDayRule,
   resolveToHandRule,
   returnIfPaidRule,
   additionalCostRule,

@@ -31,7 +31,7 @@ import { faceDownFace } from './face-down.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
-  'class_level', 'turned_face_up', 'discarded',
+  'class_level', 'turned_face_up', 'discarded', 'day_night',
 ]);
 /** CR 603.10a: leaves-the-battlefield abilities look back in time. */
 const LOOK_BACK = new Set(['dies', 'leaves']);

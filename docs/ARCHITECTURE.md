@@ -97,7 +97,8 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Casting for free as an effect resolves: cascade, discover, rebound, "you may cast it without paying its mana cost"
    - ✅ Foretell, plot, suspend, madness
    - ✅ Bloodthirst, vanishing, renown, mentor, bargain, exhaust and split second
-   - Next: "becomes a copy of", copies of abilities, granted static abilities, day and night, saddle, station, backup, alternative costs, text-changing effects, blockers that block several creatures, "from the top of your library", static type changes ("is an Island in addition")
+   - ✅ Day and night (CR 731): the untap step's check of the previous turn's spells, daybound and nightbound permanents transforming with it (CR 702.145), "it becomes night", "if it's night", "whenever day becomes night or night becomes day"; saddle and "attacks while saddled" (CR 702.171)
+   - Next: "becomes a copy of", copies of abilities, granted static abilities, station, backup, alternative costs, text-changing effects, blockers that block several creatures, "from the top of your library", static type changes ("is an Island in addition")
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

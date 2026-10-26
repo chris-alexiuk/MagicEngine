@@ -594,3 +594,16 @@ describe('more keywords from CR 702 (slice 16)', () => {
     expect(one('Exhaust — {2}{G}: Put three +1/+1 counters on this creature.', 'Creature — Elf')).toMatchObject({ kind: 'activated', oncePerGame: true });
   });
 });
+
+describe('day and night, saddle (slice 17)', () => {
+  it('reads the day/night designation, its changes, and saddle', () => {
+    expect(one("If it's neither day nor night, it becomes day as this creature enters.", 'Creature — Human')).toMatchObject({ kind: 'static', effect: { type: 'enters_day' } });
+    expect(one('Whenever day becomes night or night becomes day, draw a card.', 'Creature — Human')).toMatchObject({ trigger: { type: 'day_night_changed' } });
+    expect(one('It becomes night. Draw a card.', 'Sorcery')).toMatchObject({ effects: [{ type: 'day_night', to: 'night' }, { type: 'draw' }] });
+    expect(one("This spell costs {2} less to cast if it's night.", 'Instant')).toMatchObject({ effect: { condition: { type: 'day_night', is: 'night' } } });
+    expect(parse('Saddle 2', 'Creature — Horse Mount', 'Horse').keywords[0]!.abilities).toMatchObject([
+      { cost: { other: [{ type: 'crew', power: 2 }] }, effects: [{ type: 'become_saddled' }], timing: 'sorcery' },
+    ]);
+    expect(one('Whenever this creature attacks while saddled, create a Treasure token.', 'Creature — Horse Mount')).toMatchObject({ trigger: { type: 'attacks', saddled: true } });
+  });
+});

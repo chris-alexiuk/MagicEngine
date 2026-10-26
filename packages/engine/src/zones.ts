@@ -148,6 +148,7 @@ export function moveObject(
   delete o.regenShields;
   delete o.foretold;
   delete o.renowned;
+  delete o.saddledTurn;
   delete o.activatedOnce;
   delete o.plotted;
   delete o.suspended;
@@ -183,6 +184,9 @@ export function moveObject(
     o.baseController = o.controller;
     // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
     for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+    // CR 702.145b: if it's night, a daybound double-faced permanent enters transformed.
+    const def = g.cards[o.card];
+    if (g.dayNight === 'night' && !o.faceDown && def?.faces.length === 2 && def.faces[0]!.keywords.some((k) => k.id === 'daybound') && o.face === 0) o.face = 1;
     const face = faceOf(g, o);
     // CR 306.5b: a planeswalker enters with loyalty counters equal to its printed loyalty.
     if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = Number(face.loyalty);
