@@ -1,5 +1,6 @@
-import type { EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
-import { chars, matchesFilter, objectAbilities } from './characteristics.js';
+import type { ConditionNode, EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
+import { chars, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
+import { replaceQuantity } from './quantities.js';
 import { abilitySources } from './zones.js';
 import type {
   ChoiceAnswer,
@@ -158,9 +159,20 @@ export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEve
     const src = g.objects[id];
     if (!src || src.zone !== 'battlefield') continue;
     for (const a of objectAbilities(g, src)) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'enter_tapped_others') continue;
-      const filter = ((a as StaticAbility).effect.filter ?? {}) as ObjectFilter;
-      if (matchesFilter(g, o, filter, { controller: src.controller, source: src, anyZone: true })) o.tapped = true;
+      if (a.kind !== 'static') continue;
+      const effect = (a as StaticAbility).effect;
+      if (effect.type !== 'enter_tapped_others' && effect.type !== 'enter_counters_others') continue;
+      if (!staticConditionHolds(g, effect as { condition?: ConditionNode }, src)) continue;
+      const filter = (effect.filter ?? {}) as ObjectFilter;
+      if (!matchesFilter(g, o, filter, { controller: src.controller, source: src, anyZone: true })) continue;
+      if (effect.type === 'enter_tapped_others') o.tapped = true;
+      else {
+        // Metallic Mimic: "Each other creature you control of the chosen type enters with an additional +1/+1 counter on
+        // it." — counters it enters with are put on it (CR 122.6), so counter replacements apply.
+        const counter = String(effect.counter);
+        const n = replaceQuantity(g, 'counters', Number(effect.amount ?? 1), { player: o.controller, object: o, counter });
+        if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+      }
     }
   }
 }

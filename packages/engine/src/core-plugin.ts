@@ -701,6 +701,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // High Tide: "Until end of turn, whenever a player taps an Island for mana, …" — a triggered mana ability for the turn.
+  mana_trigger_this_turn(node, ctx) {
+    (ctx.g.manaTriggers ??= []).push({ controller: ctx.controller, ability: node.ability as TriggeredAbility, turn: ctx.g.turn });
+    ctx.g.manaTriggers = ctx.g.manaTriggers.filter((f) => f.turn === ctx.g.turn);
+    return true;
+  },
+
   attach(node, ctx) {
     const what = refObjects(ctx, ref(node, 'what'))[0];
     const to = refObjects(ctx, ref(node, 'to'))[0];
@@ -1928,9 +1935,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     else {
       const answer = answerOf(ctx, 'search');
       if (!answer) {
-        if (library.length === 0 && zones.length === 1) return true;
+        if (library.length === 0 && zones.length === 1) {
+          ctx.events.push({ type: 'searched', player, owner });
+          return true;
+        }
         return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
       }
+      if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
       const need = mustFind ? Math.min(count, candidates.length) : 0;
       if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
@@ -3205,6 +3216,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "When ~ is put into a graveyard from anywhere, shuffle it into its owner's library." (works in the graveyard)
   // CR 305.1: "Whenever you play a land", "Whenever an opponent plays a land" (Burgeoning) — playing it, not putting it
   // onto the battlefield.
+  // Archivist of Oghma: "Whenever an opponent searches their library"
+  searched(t, check) {
+    const e = check.event;
+    if (e.type !== 'searched' || check.sourceLeft || e.owner !== e.player) return [];
+    if (t.who === 'opponent' && e.player === check.controller) return [];
+    return [{ player: e.player }];
+  },
   land_played(t, check) {
     const e = check.event;
     if (e.type !== 'land_played' || check.sourceLeft) return [];
@@ -3319,7 +3337,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement', 'trigger_extra'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

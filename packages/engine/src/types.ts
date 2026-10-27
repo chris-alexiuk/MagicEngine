@@ -764,6 +764,8 @@ export type GameEvent =
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
   | { type: 'land_played'; player: PlayerId; object: ObjectId }
+  /** CR 701.23: a player searched a library (`owner`'s). */
+  | { type: 'searched'; player: PlayerId; owner: PlayerId }
   /** `nth`: which spell this is for its caster this turn (1 = their first). */
   | { type: 'cast'; player: PlayerId; object: ObjectId; nth?: number; manaBefore?: number; manaSpent?: number }
   /** CR 700.13: a player committed a crime (a spell or ability of theirs targets an opponent or what they have). */
@@ -806,6 +808,8 @@ export type GameEvent =
   | { type: 'game_over'; winner: PlayerId | null };
 
 export interface GameState {
+  /** High Tide: triggered mana abilities a resolved spell set up for the rest of this turn. */
+  manaTriggers?: { controller: PlayerId; ability: TriggeredAbility; turn: number }[];
   config: GameConfig;
   /** Definitions of every card in this game, so a game is self-contained and replayable. */
   cards: Record<string, CardDef>;

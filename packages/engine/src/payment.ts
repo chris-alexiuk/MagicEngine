@@ -420,6 +420,8 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
           ? src.attachedTo?.id === tapped.id && src.attachedTo.zcc === tapped.zcc
           : subject.ref === 'all' && tapped.zone === 'battlefield' && matchesFilter(g, tapped, subject.filter, { controller: src.controller, source: src });
       if (!hit && !(subject.ref === 'self' && src.id === tapped.id)) continue;
+      // Forsaken Monument: "Whenever you tap a permanent for {C}" — only when that mana was made.
+      if (a.trigger.producedColor && !produced.includes(a.trigger.producedColor as ManaColor)) continue;
       // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
       if (!a.effects.every((x) => x.type === 'add_mana')) {
         g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });
@@ -431,6 +433,18 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
         const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
         runEffect(run, { g, controller, source: src, events, targets: [], x: 0, memo: {} });
       }
+    }
+  }
+  // High Tide: "Until end of turn, whenever a player taps an Island for mana, that player adds an additional {U}." (CR 514.2)
+  for (const f of g.manaTriggers ?? []) {
+    if (f.turn !== g.turn || g.step === 'cleanup') continue;
+    const subject = f.ability.trigger.subject as Ref;
+    if (subject.ref !== 'all' || tapped.zone !== 'battlefield' || !matchesFilter(g, tapped, subject.filter, { controller: f.controller, source: null })) continue;
+    if (f.ability.trigger.producedColor && !produced.includes(f.ability.trigger.producedColor as ManaColor)) continue;
+    const controller = f.ability.trigger.its ? tapped.controller : f.controller;
+    for (const effect of f.ability.effects) {
+      const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
+      runEffect(run, { g, controller, events, targets: [], x: 0, memo: {} });
     }
   }
 }

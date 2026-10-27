@@ -155,6 +155,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Selvala: "if its power is greater than each other creature's power"
   if (t === "its power is greater than each other creature's power" && b.it) return { type: 'is', of: b.it, filter: { powerAboveOthers: true } };
+  // Tezzeret: "If it's an artifact creature, put a +1/+1 counter on it." — what it is now (the sentence loop makes sure an
+  // earlier effect didn't move it).
+  const itsA = /^(?:it|that creature|that permanent)(?:'s| is) (an? .+)$/.exec(t);
+  if (itsA && b.it && b.it.ref !== 'self') {
+    const pf = parseFilter(itsA[1]!.replace(/^an? /, ''), b);
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'is', of: b.it, filter: pf.filter };
+  }
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
   if (itIs && b.it) {

@@ -467,6 +467,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           continue;
         }
       }
+      // "If it's a Spirit, …" after the object was destroyed, exiled or bounced would ask about a card that has left: not
+      // read here.
+      const MOVES = new Set(['destroy', 'exile', 'move', 'sacrifice', 'bounce', 'return', 'flicker', 'put_into_library', 'shuffle_into_library']);
+      if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -484,6 +488,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const more = /^(?:it|~) deals (\S+) damage(?: to (?:that creature|that permanent|that player|it|them|each of them))?$/i.exec(instead);
         const n = more ? parseAmount(more[1]!) : null;
         if (!yes && n !== null && previous.every((x) => x.type === 'deal_damage')) yes = previous.map((x) => ({ ...structuredClone(x), amount: n }));
+        // Rite of Replication: "If this spell was kicked, create five of those tokens instead." — the same tokens, more of them.
+        const moreTokens = /^create (\w+) of those tokens$/.exec(instead);
+        const tokenCount = moreTokens ? parseAmount(moreTokens[1]!) : null;
+        if (!yes && tokenCount !== null && previous.length === 1 && previous[0]!.type === 'create_token') yes = [{ ...structuredClone(previous[0]!), amount: tokenCount }];
         if (!yes) return null;
         const replaced = out.splice(out.length - previous.length, previous.length);
         out.push({ type: 'if', cond: cond!, effects: yes, else: replaced });
@@ -2028,10 +2036,13 @@ const VERBS: Record<string, VerbHandler> = {
     return imperative && args === '~' ? [{ type: 'unattach', what: { ref: 'self' } }] : null;
   },
   attach(args, who, b, imperative) {
-    const m = /^(~|it) to (.+)$/.exec(args);
-    if (!m || !imperative || (m[1] === 'it' && b.it?.ref !== 'self')) return null;
+    const m = /^(~|it|that Equipment) to (.+)$/.exec(args);
+    if (!m || !imperative) return null;
+    // Sigarda's Aid: "Whenever an Equipment you control enters, you may attach it to target creature you control."
+    const what: Ref | null = m[1] === '~' ? { ref: 'self' } : b.it && (b.it.ref === 'self' || b.it.ref === 'trigger_object') ? b.it : null;
+    if (!what || (m[1] === 'that Equipment' && what.ref !== 'trigger_object')) return null;
     const to = parseObjectRef(m[2]!, b);
-    return to && !to.plural ? [{ type: 'attach', what: { ref: 'self' }, to: to.ref }] : null;
+    return to && !to.plural ? [{ type: 'attach', what, to: to.ref }] : null;
   },
 };
 

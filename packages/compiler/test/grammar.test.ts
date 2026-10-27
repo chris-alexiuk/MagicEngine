@@ -1703,3 +1703,20 @@ describe('slice 154', () => {
     expect(parse('Equipment you control have equip {1}.', 'Legendary Creature — Human', 'A').abilities[0]).toMatchObject({ effect: { affected: { ref: 'all', filter: { subtypes: ['Equipment'] } }, keywords: [{ id: 'equip' }] } });
   });
 });
+
+describe('slice 155', () => {
+  it('reads Equipment attach triggers, searches, enter-with counters and "five of those tokens instead"', () => {
+    expect(parse('Whenever an Equipment you control enters, you may attach it to target creature you control.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'attach', what: { ref: 'trigger_object' } }] }] });
+    expect(parse('Whenever an opponent searches their library, you gain 1 life and draw a card.', 'Creature — Human', 'A').abilities[0]).toMatchObject({ trigger: { type: 'searched', who: 'opponent' } });
+    expect(parse('Each other creature you control of the chosen type enters with an additional +1/+1 counter on it.', 'Artifact Creature — Shapeshifter', 'M').abilities[0]).toMatchObject({ effect: { type: 'enter_counters_others', counter: '+1/+1', filter: { other: true, chosenType: true } } });
+    expect(parse("Create a token that's a copy of target creature. If this spell was kicked, create five of those tokens instead.", 'Sorcery', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ type: 'create_token', amount: 5 }], else: [{ type: 'create_token', amount: 1 }] }] });
+  });
+  it('reads High Tide, Forsaken Monument, Darksteel Mutation, Imprisoned in the Moon and "If it\'s a …"', () => {
+    expect(parse('Until end of turn, whenever a player taps an Island for mana, that player adds an additional {U}.', 'Instant', 'H').abilities[0]).toMatchObject({ kind: 'spell', effects: [{ type: 'mana_trigger_this_turn', ability: { trigger: { type: 'tapped_for_mana', its: true } } }] });
+    expect(parse('Whenever you tap a permanent for {C}, add an additional {C}.', 'Legendary Artifact', 'F').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', producedColor: 'C' } });
+    expect(parse('Enchanted creature is an Insect artifact creature with base power and toughness 0/1 and has indestructible, and it loses all other abilities, card types, and creature types.', 'Enchantment — Aura', 'D').abilities[0]).toMatchObject({ effect: { setTypes: { types: ['Artifact', 'Creature'], subtypes: ['Insect'] }, setPower: 0, setToughness: 1, loseAbilities: true, keywords: [{ id: 'indestructible' }] } });
+    expect(parse('Enchanted permanent is a colorless land with "{T}: Add {C}" and loses all other card types and abilities.', 'Enchantment — Aura', 'I').abilities[0]).toMatchObject({ effect: { setTypes: { types: ['Land'] }, colors: [], loseAbilities: true } });
+    expect(parse("Untap target artifact or creature. If it's an artifact creature, put a +1/+1 counter on it.", 'Instant', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'untap' }, { type: 'if', cond: { type: 'is', filter: { types: ['Creature'], allTypes: ['Artifact'] } } }] });
+    expect(parse("Destroy target creature. If it's a Spirit, draw a card.", 'Instant', 'T').unparsed).toHaveLength(1);
+  });
+});

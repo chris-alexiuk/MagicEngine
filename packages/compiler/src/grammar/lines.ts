@@ -764,6 +764,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
+  // Archivist of Oghma: "Whenever an opponent searches their library" (CR 701.23)
+  const searches = /^(an opponent|a player) searches their library$/.exec(t);
+  if (searches) return { trigger: { type: 'searched', who: searches[1] === 'an opponent' ? 'opponent' : 'any' }, it: null, player: { ref: 'trigger_player' } };
   // Burgeoning: "Whenever an opponent plays a land", Fastbond-style "Whenever you play a land"
   const plays = /^(you|an opponent|a player) plays? a land$/.exec(t);
   if (plays && word === 'Whenever') {
@@ -1424,6 +1427,13 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
     const { zone: _z, ...filter } = pf.filter;
     return { type: 'uncounterable', filter };
   }
+  // Metallic Mimic: "Each other creature you control of the chosen type enters with an additional +1/+1 counter on it."
+  const extra = /^Each (other )?(.+?) enters with an additional (\S+) counter on it$/.exec(body);
+  if (extra) {
+    const pf = parseFilter(extra[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extra[1] ? { other: true } : {}) }, counter: extra[3]!, amount: 1 };
+  }
   const m = /^(.+?) enter(?: the battlefield)? tapped$/.exec(body);
   if (!m || /^(?:~|It|This)\b/.test(m[1]!)) return null;
   const pf = parseFilter(m[1]!.replace(/, and /, ', or ').replace(/^(\w+) and (\w+)/, '$1 or $2').replace(/^\w/, (c) => c.toLowerCase()), b);
@@ -1592,7 +1602,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1600,8 +1610,21 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
   // "gets +1/+0, has "…," and is a Wizard in addition to its other types": a list of predicates.
   // Brotherhood Regalia: "has ward {2}, is an Assassin in addition to its other types, and can't be blocked"
-  const predicates = m[2]!.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't ))/g, ' and ').replace(/ and and /g, ' and ');
+  // Darksteel Mutation: "…, and it loses all other abilities, card types, and creature types"; Imprisoned in the Moon: "is a
+  // colorless land with "{T}: Add {C}" and loses all other card types and abilities".
+  const normalized = m[2]!
+    .replace(/, and it loses /, ' and loses ')
+    .replace(/^(is an? (?:colorless )?land) with (QUOTED_\d+)(?= and |$)/, '$1 and has $2');
+  const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't ))/g, ' and ').replace(/ and and /g, ' and ');
+  let loseOthers = false;
   for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? )/)) {
+    // "loses all other abilities, card types, and creature types" / "… card types and abilities" — with the types this
+    // effect sets (layer 4 replaces them) and the abilities it grants (layer 6, in this effect's own order).
+    if (/^loses all other (?:abilities, card types, and creature types|card types and abilities)$/.test(part) && !effect.loseAbilities) {
+      effect.loseAbilities = true;
+      loseOthers = true;
+      continue;
+    }
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
     const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (?:land )?types$/.exec(part);
@@ -1648,16 +1671,25 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       continue;
     }
     // Layers 4, 5, 7b: "is a blue Frog creature with base power and toughness 1/1"
-    const isA = /^(?:is|are) (?:an? )?((?:(?:white|blue|black|red|green|colorless) )*)((?:[A-Z][\w’'-]* )*)creature with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    // Darksteel Mutation: "is an Insect artifact creature with base power and toughness 0/1"; "a green and white Elk creature".
+    const isA = /^(?:is|are) (?:an? )?((?:(?:white|blue|black|red|green|colorless)(?: and | ))*)((?:[A-Z][\w’'-]* )*)((?:artifact |enchantment )*)creature with base power and toughness (\d+)\/(\d+)$/.exec(part);
     if (isA && !effect.setTypes) {
-      const colors = isA[1]!.trim() ? isA[1]!.trim().split(' ').filter((w) => w !== 'colorless').map((w) => COLOR_WORDS[w]!) : null;
+      const colors = isA[1]!.trim() ? isA[1]!.trim().split(/ and | /).filter((w) => w !== 'colorless').map((w) => COLOR_WORDS[w]!) : null;
       const subtypes = isA[2]!.trim() ? isA[2]!.trim().split(' ') : [];
       if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
-      effect.setTypes = { types: ['Creature'], subtypes };
+      const more = isA[3]!.trim() ? isA[3]!.trim().split(' ').map((w) => TYPE_NOUNS[w]!) : [];
+      effect.setTypes = { types: [...more, 'Creature'], subtypes };
       if (colors) effect.colors = colors as Color[];
-      effect.setPower = Number(isA[3]);
-      effect.setToughness = Number(isA[4]);
+      effect.setPower = Number(isA[4]);
+      effect.setToughness = Number(isA[5]);
       effect.setLayer = '7b';
+      continue;
+    }
+    // Imprisoned in the Moon: "is a colorless land" (layers 4 and 5; its subtypes go with its other types).
+    const isLandType = /^is an? (colorless )?land$/.exec(part);
+    if (isLandType && !effect.setTypes) {
+      effect.setTypes = { types: ['Land'], subtypes: [] };
+      if (isLandType[1]) effect.colors = [];
       continue;
     }
     // Layer 5: "is blue"; layer 4 (CR 305.7): "Enchanted land is an Island"
@@ -1703,6 +1735,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       effect.keywords = kws;
     } else return null;
   }
+  // "all other card types" only makes sense with the types the effect sets.
+  if (loseOthers && !effect.setTypes) return null;
   return effect;
 }
 
@@ -2405,12 +2439,23 @@ export const manaTriggerRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     if (!env) return null;
+    // High Tide: "Until end of turn, whenever a player taps an Island for mana, that player adds an additional {U}." — a
+    // spell that sets up a triggered mana ability for the rest of the turn.
+    const thisTurn = /^Until end of turn, (whenever .+)$/.exec(line);
+    if (thisTurn) {
+      const inner = this.parse(thisTurn[1]!.replace(/^w/, 'W'), thisTurn[1]!, ctx) as TriggeredAbility | null;
+      return inner ? ({ kind: 'spell', text: original, effects: [{ type: 'mana_trigger_this_turn', ability: inner }] } as AbilityNode) : null;
+    }
     const enchanted = /^Whenever enchanted (?:land|Forest|Plains|Island|Swamp|Mountain) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line);
-    const yours = /^Whenever you tap (?:a|an) (.+?) for mana, add (?:an additional )?(.+)\.$/.exec(line);
-    const anyone = /^Whenever (?:a|an) (.+?) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line);
+    // Forsaken Monument: "Whenever you tap a permanent for {C}, add an additional {C}."
+    const yours = /^Whenever you tap (?:a|an) (.+?) for (?:mana|\{([WUBRGC])\}), add (?:an additional )?(.+)\.$/.exec(line);
+    const anyone =
+      /^Whenever (?:a|an) (.+?) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line) ??
+      /^Whenever a player taps (?:a|an) (.+?) for mana, that player adds (?:an additional )?(.+)\.$/.exec(line);
     const m = enchanted ?? yours ?? anyone;
     if (!m) return null;
-    const manaText = enchanted ? enchanted[1]! : m[2]!;
+    const producedColor = yours?.[2];
+    const manaText = enchanted ? enchanted[1]! : yours ? yours[3]! : m[2]!;
     let subject: Ref = { ref: 'attached' };
     if (!enchanted) {
       const pf = parseFilter(`${m[1]!}${yours ? ' you control' : ''}`, new Binder(env));
@@ -2422,7 +2467,7 @@ export const manaTriggerRule: GrammarRule = {
     else if (manaText === 'one mana of the chosen color') effect = { type: 'add_mana', options: [['chosen']] };
     else if (MANA_RUN.test(manaText) && !/[X\/]/.test(manaText)) effect = parseManaProduction(manaText) as AddManaEffect | null;
     if (!effect) return null;
-    return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }) }, effects: [effect] } as TriggeredAbility;
+    return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }), ...(producedColor ? { producedColor } : {}) }, effects: [effect] } as TriggeredAbility;
   },
 };
 
