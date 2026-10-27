@@ -3,7 +3,7 @@ import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
 import { STEPS } from './types.js';
-import { livePlayers } from './zones.js';
+import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
@@ -11,7 +11,7 @@ import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canActivateTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
-import { grantedKeywordOff, hasKeyword, matchesFilter, power, printedAbilities } from './characteristics.js';
+import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -48,13 +48,14 @@ import {
   type ObjectId,
   type PlayerId,
   type Target,
+  type TargetRef,
 } from './types.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { mayPlayFrom } from './permissions.js';
+import { freePermission, mayPlayFrom, topLifeOnly } from './permissions.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -407,8 +408,42 @@ export function additionalCosts(face: FaceDef): EffectNode[] {
 }
 
 /** castOptions, plus what the player has from elsewhere: Omniscience's "without paying their mana costs" from the hand. */
+/**
+ * Terror of the Peaks (CR 601.2f): the life a spell's targets add to its cost — each targeted permanent an opponent of the
+ * caster controls with "Spells your opponents cast that target this creature cost an additional N life to cast".
+ */
+export function targetLifeTax(g: GameState, player: PlayerId, targets: readonly (readonly (TargetRef | Target)[])[]): number {
+  let n = 0;
+  const seen = new Set<string>();
+  for (const list of targets) {
+    for (const t of list) {
+      const id = t.kind === 'object' ? ('id' in t ? t.id : (t as { object: string }).object) : null;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const o = g.objects[id];
+      if (!o || o.zone !== 'battlefield' || o.controller === player) continue;
+      for (const a of objectAbilities(g, o)) if (a.kind === 'static' && a.effect.type === 'target_life_tax') n += Number(a.effect.life ?? 0);
+    }
+  }
+  return n;
+}
+
 export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): CastOptionNode[] {
   const base = castOptions(face);
+  // Underworld Breach: "Each nonland card in your graveyard has escape. The escape cost is equal to the card's mana cost
+  // plus exile three other cards from your graveyard." (CR 702.138a)
+  if (o.zone === 'graveyard' && o.owner === player && !face.types.includes('Land') && !base.some((x) => x.id === 'escape')) {
+    for (const id of abilitySources(g)) {
+      const src = g.objects[id]!;
+      if (src.controller !== player) continue;
+      const grant = objectAbilities(g, src).find((a) => a.kind === 'static' && a.effect.type === 'grant_escape');
+      if (grant?.kind !== 'static') continue;
+      const filter = (grant.effect.filter ?? {}) as ObjectFilter;
+      if (!matchesFilter(g, o, filter, { controller: player, source: src, anyZone: true })) continue;
+      base.push({ type: 'cast_option', id: 'escape', kind: 'alternative', zone: 'graveyard', cost: { mana: face.manaCost, other: [{ type: 'exile_cards', amount: Number(grant.effect.exile ?? 0), other: true }] } });
+      break;
+    }
+  }
   if (o.zone === 'hand' && !face.types.includes('Land') && playerRule(g, player, 'free_from_hand')) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
   return base;
 }
@@ -565,6 +600,12 @@ function cast(
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
   // "Until the end of your next turn, you may play that card."
   const fromExile = (o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'spell');
+  // Bolas's Citadel: from the top of the library, life equal to its mana value instead of its mana cost (CR 118.9;
+  // CR 107.3b: X is 0).
+  const lifeInstead = !during && !alt && o.zone === 'library' && topLifeOnly(g, player, o);
+  // "You may play it this turn without paying its mana cost" (CR 118.9; CR 107.3b: X is 0).
+  const freeFromExile = !during && !alt && fromExile && o.zone === 'exile' && freePermission(g, player, o);
+  if (lifeInstead || freeFromExile) x = 0;
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
@@ -616,7 +657,7 @@ function cast(
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
-  const cost = parseManaCost(during?.free || alt?.id === 'plot' ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : face.manaCost)));
+  const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : face.manaCost)));
   if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
@@ -653,7 +694,14 @@ function cast(
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
   // "discard X cards", "pay X life": X is the value chosen for the spell (CR 107.3a).
   const additional: Cost = {
-    other: [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
+    other: [
+      ...additionalCosts(castFace),
+      ...(alt?.cost.other ?? []),
+      ...added.flatMap((a) => a.cost.other ?? []),
+      ...(lifeInstead && manaValueOf(g, o) > 0 ? [{ type: 'pay_life', amount: manaValueOf(g, o) }] : []),
+      // Terror of the Peaks: "Spells your opponents cast that target this creature cost an additional 3 life to cast."
+      ...(targetLifeTax(g, player, targets) > 0 ? [{ type: 'pay_life', amount: targetLifeTax(g, player, targets) }] : []),
+    ].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
   };
   checkOtherCosts(g, player, o, additional, costChoices);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
@@ -885,7 +933,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (ability.maxPerTurn && activationsThisTurn(g, o, index) >= ability.maxPerTurn) throw new RulesError(`That ability can be activated only ${ability.maxPerTurn} times each turn.`);
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
-  const { cost } = ability;
+  // Chatterfang: "Sacrifice X Squirrels" — X is announced as it's activated (CR 107.3a, 602.2b).
+  const cost = ability.cost.other?.some((c) => c.amount === 'X') ? { ...ability.cost, other: ability.cost.other.map((c) => (c.amount === 'X' ? { ...c, amount: choices.x } : c)) } : ability.cost;
 
   if (cost.loyalty !== undefined) {
     // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn.

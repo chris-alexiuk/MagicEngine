@@ -883,7 +883,8 @@ export interface GameState {
   lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number }[];
+  /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

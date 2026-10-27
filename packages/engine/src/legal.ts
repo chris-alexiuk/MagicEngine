@@ -15,9 +15,9 @@ import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
-import { mayPlayFrom, playableFromExile, playableFromTop } from './permissions.js';
+import { freePermission, mayPlayFrom, playableFromExile, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
-import { activationsThisTurn } from './actions.js';
+import { activationsThisTurn, targetLifeTax } from './actions.js';
 import { bestowedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
 
@@ -82,7 +82,11 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // One of its additional costs is chosen as it's cast: listed with the cast options.
       if (hasCostChoice(face)) return;
       if (castRestrictionProblem(g, player, face, o)) return;
-      const cost = parseManaCost(face.manaCost);
+      // Bolas's Citadel: life equal to its mana value instead of its mana cost (CR 119.4: only with that much life).
+      const lifeInstead = faceIndex === 0 && topLifeOnly(g, player, o);
+      if (lifeInstead && g.players[player]!.life < manaValueOf(g, o)) return;
+      const free = faceIndex === 0 && o.zone === 'exile' && freePermission(g, player, o);
+      const cost = parseManaCost(lifeInstead || free ? '' : face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
       // X spells need a value; the UI asks for one (also "discard X cards" as an additional cost).
       if (cost.unsupported.length || cost.x > 0 || additionalCosts(face).some((c) => c.amount === 'X')) return;
@@ -115,6 +119,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         if (!planAutoTap(g, player, total, 0, tappedForCost, purpose)) return;
       }
       const all = { ...costs, ...help };
+      // CR 119.4: life to pay for the targets (Terror of the Peaks), on top of any other life the costs ask for.
+      const lifeCosts = (lifeInstead ? manaValueOf(g, o) : 0) + targetLifeTax(g, player, choice.targets ?? []);
+      if (lifeCosts > 0 && g.players[player]!.life < lifeCosts) return;
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
     });
     // CR 118.9 / 601.2f: the same spell for an alternative cost, or with an optional additional one.

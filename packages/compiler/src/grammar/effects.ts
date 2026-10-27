@@ -61,6 +61,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // all creatures they control, then puts all cards they exiled this way onto the battlefield."
   const swap = /^Each player exiles all (creature|artifact) cards from their graveyard, then sacrifices all (?:creatures|artifacts) they control, then puts all cards they exiled this way onto the battlefield\.$/.exec(text.trim());
   if (swap) return [{ type: 'swap_graveyard', cardType: swap[1] === 'creature' ? 'Creature' : 'Artifact' }];
+  // Dauthi Voidwalker: the choice and the permission go together.
+  const voidPlay = /^Choose an exiled card (an opponent owns|you own) with an? \S+ counter on it\. You may play it this turn without paying its mana cost\.$/.exec(text.trim());
+  if (voidPlay) return parseSentence(text.trim().replace(/\.$/, ''), b);
   // Torment of Hailfire: "Repeat the following process X times. Each opponent loses 3 life unless …"
   const repeatN = /^Repeat the following process (\w+) times\. ([^.]+\.)$/.exec(text.trim());
   if (repeatN) {
@@ -276,6 +279,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const otherwise = times ? parseSentence(capitalise(dont[1]!), b) : null;
         if (!times || !otherwise) return null;
         out.push({ type: 'may_pay', cost: payEach[1]!, times, effects: [], else: otherwise });
+        i++;
+        continue;
+      }
+      // Isochron Scepter: "You may copy the exiled card. If you do, you may cast the copy without paying its mana cost."
+      // (CR 707.12: a copy that isn't cast ceases to exist, so the two choices are one.)
+      const copyCard = /^You may copy (the exiled card|that card)$/.exec(s);
+      if (copyCard && /^If you do, you may cast the copy without paying its mana cost$/.test(sentences[i + 1] ?? '')) {
+        const what = parseObjectRef(copyCard[1]!, b);
+        if (!what || what.plural) return null;
+        out.push({ type: 'cast_copy_of', what: what.ref });
         i++;
         continue;
       }
@@ -713,6 +726,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         out.push({ type: 'modify', what: b.it, types: [itsA[1]!.replace(/^\w/, (c) => c.toUpperCase())], subtypes: [], until: 'game' });
         continue;
       }
+      // Portal to Phyrexia: "put target creature card from a graveyard onto the battlefield under your control. It's a
+      // Phyrexian in addition to its other types." (layer 4)
+      const itsAlso = /^It's an? ([A-Z][a-z]+) in addition to its other types$/.exec(s);
+      if (itsAlso && (SUBTYPES.creature as readonly string[]).includes(itsAlso[1]!)) {
+        const last = out[out.length - 1];
+        if (!last || last.type !== 'move' || last.to !== 'battlefield' || !b.it) return null;
+        out.push({ type: 'modify', what: b.it, types: [], subtypes: [itsAlso[1]!], retainTypes: true, until: 'game' });
+        continue;
+      }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
       // CR 205.1b: "It's still a land." — the earlier "becomes a creature" keeps its other types.
       if (/^(?:It's|They're) still (?:a land|lands|an artifact|artifacts|an enchantment|a planeswalker)$/.test(s)) {
@@ -1058,6 +1080,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Dauthi Voidwalker: "Choose an exiled card an opponent owns with a void counter on it. You may play it this turn
+  // without paying its mana cost." (read as one: see the sentence loop)
+  const chooseExiled = /^[Cc]hoose an exiled card (an opponent owns|you own) with an? (\S+) counter on it\. You may play it this turn without paying its mana cost$/.exec(s);
+  if (chooseExiled) {
+    return [{ type: 'play_exiled', filter: { zone: 'exile', owner: chooseExiled[1] === 'you own' ? 'you' : 'opponent', counter: chooseExiled[2]! }, free: true }];
+  }
+  // Etali, Primal Storm: "you may cast any number of spells from among those cards without paying their mana costs"
+  const castAmong = /^[Yy]ou may cast any number of spells from among (?:those cards|them|the exiled cards) without paying their mana costs$/.exec(s);
+  if (castAmong && b.it?.ref === 'created') return [{ type: 'cast_among_free', what: { ref: 'created' } }];
   // Hideaway: "You may play the exiled card without paying its mana cost." — a land, too.
   const playFree = /^[Yy]ou may play (the exiled card|that card|it) without paying its mana cost$/.exec(s);
   if (playFree) {
@@ -2081,7 +2112,8 @@ const VERBS: Record<string, VerbHandler> = {
       if (what && !what.plural && hand[2] === "its owner's" && !b.player) b.player = { ref: 'owner_of', of: what.ref };
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
-    const field = /^(.+?) to the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
+    // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
@@ -2131,7 +2163,11 @@ const VERBS: Record<string, VerbHandler> = {
     // "Target player may search their library for a card named …, reveal it, put it into their hand, then shuffle."
     const theirs = !imperative && /^their library /.test(args);
     if (!imperative && !theirs) return null;
-    if (theirs) args = args.replace(/^their library /, 'your library ').replace(/ into their hand/, ' into your hand').replace(/ into their graveyard/, ' into your graveyard');
+    if (theirs) {
+      args = args.replace(/^their library /, 'your library ').replace(/ into their hand/, ' into your hand').replace(/ into their graveyard/, ' into your graveyard');
+      // Field of Ruin: "Each player searches their library for a basic land card, puts it onto the battlefield, then shuffles."
+      args = args.replace(/, (?:reveals (it|them|that card|those cards), )?puts (it|them) /, (_m, r?: string, p?: string) => `, ${r ? `reveal ${r}, ` : ''}put ${p} `).replace(/, then shuffles$/, ', then shuffle');
+    }
     // "your library and/or graveyard", "your graveyard, hand, and/or library": several zones.
     const zonesWord = /^your (library and\/or graveyard|graveyard and\/or library|graveyard, hand, and\/or library|hand, graveyard, and\/or library|library, graveyard, and\/or hand) for /.exec(args);
     const zones = zonesWord ? zonesWord[1]!.split(/,? (?:and\/or )?|, /).filter(Boolean) : null;
@@ -2159,6 +2195,19 @@ const VERBS: Record<string, VerbHandler> = {
       /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
     if (!m) return null;
+    // Krosan Verge: "a Forest card and a Plains card" — one of each.
+    const pair = /^(?:a|an) (.+? card) and (?:a|an) (.+? card)$/.exec(m[1]!);
+    if (pair) {
+      const fs = [pair[1]!, pair[2]!].map((t) => parseFilter(`${t} in your library`, b));
+      if (fs.some((f) => !f || f.plural)) return null;
+      const filters = fs.map((f) => (({ zone: _z, owner: _o, ...rest }) => rest)(f!.filter));
+      const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
+      if (to === 'library') return null;
+      const node: EffectNode = { type: 'search', filter: { zone: 'library', owner: 'you' }, filters, amount: 2, to };
+      if (theirs) node.who = who;
+      if (m[3]) node.tapped = true;
+      return [node];
+    }
     const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(m[1]!);
     if (!q) return null;
     const amount = q[1] ? 1 : parseAmount(q[2] ?? q[3]!);
@@ -2275,7 +2324,7 @@ function targetList(args: string, b: Binder): Ref[] | null {
 
 for (const lemma of Object.keys(VERBS)) {
   VERB_FORMS[lemma] = lemma;
-  VERB_FORMS[lemma.endsWith('y') ? `${lemma.slice(0, -1)}ies` : `${lemma}s`] = lemma;
+  VERB_FORMS[lemma.endsWith('y') ? `${lemma.slice(0, -1)}ies` : /(?:ch|sh|s|x)$/.test(lemma) ? `${lemma}es` : `${lemma}s`] = lemma;
 }
 VERB_FORMS.scries = 'scry';
 

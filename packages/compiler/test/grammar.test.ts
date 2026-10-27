@@ -1870,3 +1870,29 @@ describe('slice 161', () => {
     expect(saga.abilities[2]).toMatchObject({ effects: [{ type: 'search', filter: { types: ['Artifact'], manaCostIs: ['{0}', '{1}'] } }] });
   });
 });
+
+describe('slice 162', () => {
+  it("reads Bolas's Citadel, Underworld Breach, Dauthi Voidwalker and Terror of the Peaks", () => {
+    expect(parse('You may play lands and cast spells from the top of your library. If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost.', 'Legendary Artifact', 'B').abilities[0]).toMatchObject({ effect: { type: 'top_permission', lands: true, spells: {}, lifeCost: true } });
+    expect(parse('{T}, Sacrifice ten nonland permanents: Each opponent loses 10 life.', 'Legendary Artifact', 'B').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 10 }] } });
+    expect(parse("Each nonland card in your graveyard has escape. The escape cost is equal to the card's mana cost plus exile three other cards from your graveyard.", 'Enchantment', 'U').abilities[0]).toMatchObject({ effect: { type: 'grant_escape', filter: { notTypes: ['Land'] }, exile: 3 } });
+    expect(parse("If a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.", 'Creature — Shade', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', owner: 'opponents', withCounter: 'void' } });
+    expect(parse('{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.', 'Creature — Shade', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'play_exiled', filter: { zone: 'exile', owner: 'opponent', counter: 'void' }, free: true }] });
+    expect(parse('Spells your opponents cast that target this creature cost an additional 3 life to cast.', 'Creature — Dragon', 'T').abilities[0]).toMatchObject({ effect: { type: 'target_life_tax', life: 3 } });
+  });
+  it('reads Etali and Isochron Scepter', () => {
+    expect(parse("Whenever ~ attacks, exile the top card of each player's library, then you may cast any number of spells from among those cards without paying their mana costs.", 'Legendary Creature — Dinosaur', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', who: { ref: 'players', who: 'each' } }, { type: 'cast_among_free', what: { ref: 'created' } }] });
+    expect(parse('{2}, {T}: You may copy the exiled card. If you do, you may cast the copy without paying its mana cost.', 'Artifact', 'I').abilities[0]).toMatchObject({ effects: [{ type: 'cast_copy_of', what: { ref: 'exiled_with' } }] });
+  });
+  it('reads each player searching, paired searches, batched graveyard triggers, filtered token triplers and more', () => {
+    expect(parse('Each player searches their library for a basic land card, puts it onto the battlefield, then shuffles.', 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'search', who: { ref: 'players', who: 'each' }, to: 'battlefield' }] });
+    expect(parse('Search your library for a Forest card and a Plains card, put them onto the battlefield tapped, then shuffle.', 'Sorcery', 'K').abilities[0]).toMatchObject({ effects: [{ type: 'search', filters: [{ subtypes: ['Forest'] }, { subtypes: ['Plains'] }], amount: 2, tapped: true }] });
+    expect(parse('Whenever one or more land cards are put into your graveyard from anywhere, draw a card.', 'Legendary Creature — Frog Horror', 'G').abilities[0]).toMatchObject({ trigger: { type: 'put_into_graveyard', batch: true, subject: { filter: { types: ['Land'], owner: 'you', token: false } } } });
+    expect(parse('If one or more creature tokens would be created under your control, three times that many of those tokens are created instead.', 'Legendary Creature — God', 'O').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'tokens', op: 'triple', tokenFilter: { types: ['Creature'] } } });
+    expect(parse("When ~ dies, return it to the battlefield tapped and transformed under its owner's control.", 'Legendary Creature — God', 'O').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'battlefield', tapped: true, transformed: true }] });
+    expect(parse('{2}{W}, {T}: Transform this land. Activate only if you attacked with three or more creatures this turn and only as a sorcery.', 'Land', 'T').abilities[0]).toMatchObject({ timing: 'sorcery', activateIf: { type: 'attacked_with', n: 3 } });
+    expect(parse("At the beginning of your upkeep, put target creature card from a graveyard onto the battlefield under your control. It's a Phyrexian in addition to its other types.", 'Artifact', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'modify', subtypes: ['Phyrexian'], retainTypes: true }] });
+    expect(parse('At the beginning of your upkeep, if you control the artifact with the greatest mana value or tied for the greatest mana value, draw a card.', 'Legendary Creature — Vedalken Artificer', 'P').abilities[0]).toMatchObject({ condition: { type: 'greatest_mv', filter: { types: ['Artifact'] } } });
+    expect(parse('{B}, Sacrifice X Squirrels: Target creature gets +X/-X until end of turn.', 'Legendary Creature — Squirrel Warrior', 'C').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 'X', filter: { subtypes: ['Squirrel'] } }] } });
+  });
+});

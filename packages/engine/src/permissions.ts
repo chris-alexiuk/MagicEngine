@@ -17,6 +17,11 @@ export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what:
   );
 }
 
+/** Dauthi Voidwalker: a permission to play this card "without paying its mana cost". */
+export function freePermission(g: GameState, player: PlayerId, o: GameObject): boolean {
+  return (g.mayPlay ?? []).some((p) => p.free && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
+}
+
 /**
  * "You may play lands from the top of your library", "You may cast creature spells from the top of your library":
  * the top card, from a static ability of a permanent the player controls.
@@ -35,6 +40,28 @@ function fromTop(g: GameState, player: PlayerId, o: GameObject, what: 'land' | '
     }
   }
   return false;
+}
+
+/**
+ * Bolas's Citadel: "If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost." —
+ * true when the only permissions that let this player cast the top card are ones like that (CR 118.9).
+ */
+export function topLifeOnly(g: GameState, player: PlayerId, o: GameObject): boolean {
+  const lib = g.zones.library[player] ?? [];
+  if (o.zone !== 'library' || o.owner !== player || lib[0] !== o.id) return false;
+  let life = false;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'top_permission') continue;
+      const spells = a.effect.spells as ObjectFilter | undefined;
+      if (!spells || !matchesFilter(g, o, spells, { controller: player, source: src, anyZone: true })) continue;
+      if (!a.effect.lifeCost) return false;
+      life = true;
+    }
+  }
+  return life;
 }
 
 /** The top card of a player's library, if they may play it now. */

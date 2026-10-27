@@ -83,6 +83,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
+  // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
+  const greatest = /^you control the (\w+) with the greatest mana value or tied for the greatest mana value$/.exec(t);
+  if (greatest) {
+    const pf = parseFilter(greatest[1]!, b);
+    if (pf && !pf.plural && !pf.filter.zone) return { type: 'greatest_mv', filter: pf.filter };
+  }
   // Guardian Project: "if it doesn't have the same name as another creature you control or a creature card in your graveyard"
   if (/^it doesn't have the same name as another creature you control or a creature card in your graveyard$/.test(t) && b.it) return { type: 'unique_name', of: b.it };
   // Howltooth Hollow: "if each player has no cards in hand"; Shelldock Isle: "if a library has twenty or fewer cards in it"

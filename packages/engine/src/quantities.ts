@@ -19,6 +19,8 @@ export interface QuantitySubject {
   source?: GameObject;
   to?: DamageRecipient;
   combat?: boolean;
+  /** The tokens being created (Ojer Taq: "If one or more creature tokens would be created …"). */
+  made?: { types: string[]; subtypes: string[] };
 }
 
 export function replaceQuantity(g: GameState, event: QuantityReplacementNode['event'], n: number, subject: QuantitySubject): number {
@@ -66,8 +68,16 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
   const who = (p: PlayerId | undefined) => !e.who || e.who === 'each' || (e.who === 'you' ? p === you : p !== undefined && p !== you);
   switch (e.event) {
     case 'gain_life':
-    case 'tokens':
       return who(s.player);
+    case 'tokens': {
+      if (!who(s.player)) return false;
+      const f = e.tokenFilter;
+      if (f && s.made) {
+        if (f.types && !f.types.some((t) => s.made!.types.includes(t))) return false;
+        if (f.subtypes && !f.subtypes.some((t) => s.made!.subtypes.includes(t))) return false;
+      }
+      return !f || Boolean(s.made);
+    }
     case 'counters':
       if (!who(s.player) || !s.object) return false;
       if (e.counter && e.counter !== s.counter) return false;

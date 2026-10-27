@@ -172,7 +172,14 @@ const MANA_RUN = /^(?:\{(?:\d+|[WUBRGCSX]|[WUBRG2]\/[WUBRGP])\})+$/;
 
 /** "Sacrifice a creature", "Sacrifice another artifact", "Discard a card" — costs where the player picks what. */
 export function choiceCost(item: string, b: Binder | null): EffectNode | null {
-  const sac = /^[Ss]acrifice (a|an|one|two|three|four|five|six|seven|another) (other )?(.+)$/.exec(item);
+  // Chatterfang: "Sacrifice X Squirrels" — as many as the X announced.
+  const sacX = /^[Ss]acrifice X (.+)$/.exec(item);
+  if (sacX && b) {
+    const pf = parseFilter(sacX[1]!, b);
+    if (!pf || !pf.plural || pf.filter.zone) return null;
+    return { type: 'sacrifice', filter: pf.filter, amount: 'X' };
+  }
+  const sac = /^[Ss]acrifice (a|an|one|two|three|four|five|six|seven|eight|nine|ten|another) (other )?(.+)$/.exec(item);
   if (sac && b) {
     // Mondrak: "Sacrifice two other artifacts and/or creatures"
     const pf = parseFilter(sac[3]!.replace(/ and\/or /g, ' or '), b);
@@ -393,12 +400,14 @@ export const activatedRule: GrammarRule = {
         effectText = effectText.slice(0, reduce.index) + (effectText.endsWith('.') && !effectText.slice(0, reduce.index).endsWith('.') ? '.' : '');
         changed = true;
       }
-      // "Activate only if you control an Island." (CR 602.5b)
-      const onlyIf = / Activate only if ([^.]+)\.$/.exec(effectText);
+      // "Activate only if you control an Island." (CR 602.5b); Temple of Civilization: "Activate only if you attacked with
+      // three or more creatures this turn and only as a sorcery."
+      const onlyIf = / Activate only if ([^.]+?)( and only as a sorcery)?\.$/.exec(effectText);
       if (onlyIf) {
         const cond = parseCondition(onlyIf[1]!, new Binder(env));
         if (!cond) return null;
         andIf(node, cond);
+        if (onlyIf[2]) node.timing = 'sorcery';
         effectText = effectText.slice(0, onlyIf.index);
         changed = true;
       }
@@ -503,8 +512,8 @@ export const activatedRule: GrammarRule = {
         return { ...node, effects: [effect, ...rest], mana: true };
       }
     }
-    // "Remove any number of … counters" is X only for mana abilities so far.
-    if (cost.other?.some((c) => c.amount === 'X')) return null;
+    // "Remove any number of … counters" is X only for mana abilities so far; "Sacrifice X Squirrels" is announced (CR 107.3a).
+    if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice')) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
     const program = parseProgram(effectText, b);
@@ -993,6 +1002,17 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
   }
   // "Whenever a creature card is put into a graveyard from anywhere other than the battlefield" (Syr Konrad)
+  // The Gitrog Monster: "Whenever one or more land cards are put into your graveyard from anywhere" — once per batch.
+  const intoYardBatch = /^one or more ((?:.+? )?cards) are put into (your|a|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
+  if (intoYardBatch) {
+    const pf = parseFilter(`${intoYardBatch[1]} in a graveyard`, b);
+    if (pf && pf.plural && pf.filter.zone === 'graveyard') {
+      const { zone: _z, ...filter } = pf.filter;
+      filter.token = false;
+      if (intoYardBatch[2] !== 'a') filter.owner = intoYardBatch[2] === 'your' ? 'you' : 'opponent';
+      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, batch: true, ...(intoYardBatch[3] ? { notFromBattlefield: true } : {}) }, it: null, player: null };
+    }
+  }
   // Bloodchief Ascension: "Whenever a card is put into an opponent's graveyard from anywhere" — "that player" is its owner.
   const intoYard = /^(a|an) ((?:.+? )?card) is put into (a|your|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
   if (intoYard) {
@@ -1987,7 +2007,7 @@ export const costModifierRule: GrammarRule = {
 /** "twice that many", "that many plus one", "double that damage", "triple that damage". */
 function quantityOp(text: string): { op: 'double' | 'triple' | 'plus'; n?: number } | null {
   if (/^(?:twice that (?:many|much)|double that)/.test(text)) return { op: 'double' };
-  if (/^triple that/.test(text)) return { op: 'triple' };
+  if (/^(?:triple that|three times that (?:many|much))/.test(text)) return { op: 'triple' };
   const plus = /^that (?:many|much)(?: \w+)? plus (\w+)/.exec(text);
   const n = plus ? parseAmount(plus[1]!) : null;
   return typeof n === 'number' ? { op: 'plus', n } : null;
@@ -2039,6 +2059,15 @@ export const quantityReplacementRule: GrammarRule = {
       const op = quantityOp(effectPuts[3]!);
       const pf = parseFilter(effectPuts[2]!.replace(/^(?:a|an) /, ''), b);
       return op && pf && !pf.plural ? make({ event: 'counters', ...(effectPuts[1] ? { counter: effectPuts[1] } : {}), filter: pf.filter, ...op }) : null;
+    }
+    // Ojer Taq: "If one or more creature tokens would be created under your control, three times that many of those tokens
+    // are created instead."
+    const someTokens = /^If one or more (artifact|creature|Treasure|Food|Clue) tokens would be created under your control, (.+?) of those tokens are created instead\.$/.exec(line);
+    if (someTokens) {
+      const op = quantityOp(someTokens[2]!);
+      const word = someTokens[1]!;
+      const tokenFilter: ObjectFilter = /^[a-z]/.test(word) ? { types: [word.replace(/^\w/, (c) => c.toUpperCase())] } : { subtypes: [word] };
+      return op ? make({ event: 'tokens', who: 'you', ...op, tokenFilter }) : null;
     }
     const tokens =
       /^If (?:one or more|an effect would create one or more) tokens would be created under your control, (.+?) of those tokens are created instead\.$/.exec(line) ??
@@ -2153,10 +2182,12 @@ export const exileInsteadRule: GrammarRule = {
       if (/^another /.test(line.slice(3))) pf.filter.other = true;
       return make({ dies: true, filter: pf.filter });
     }
-    const gy = /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line);
+    const gy =
+      /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line) ??
+      /^If a (card) would be put into (your|a|an opponent's) graveyard from anywhere, instead exile it with an? (\S+) counter on it\.$/.exec(line);
     if (gy) {
       const owner = gy[2] === 'your' ? 'you' : gy[2] === 'a' ? 'each' : 'opponents';
-      return make({ owner, ...(gy[1] === 'nontoken creature' ? { filter: { types: ['Creature'], token: false } } : {}) });
+      return make({ owner, ...(gy[1] === 'nontoken creature' ? { filter: { types: ['Creature'], token: false } } : {}), ...(gy[3] ? { withCounter: gy[3] } : {}) });
     }
     return null;
   },
@@ -2615,9 +2646,10 @@ export const topPermissionRule: GrammarRule = {
   id: 'top_permission',
   parse(line, original, ctx) {
     const env = envOf(ctx);
-    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.$/.exec(line);
-    if (!env || !m || (!m[1] && !m[2])) return null;
-    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}) };
+    // Bolas's Citadel: "… If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost."
+    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(line);
+    if (!env || !m || (!m[1] && !m[2]) || (m[3] && !m[2])) return null;
+    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}), ...(m[3] ? { lifeCost: true } : {}) };
     if (m[2]) {
       let phrase = m[2];
       // "Angel spells and Human spells", "instant and sorcery spells"
@@ -2634,6 +2666,34 @@ export const topPermissionRule: GrammarRule = {
       }
     }
     return { kind: 'static', text: original, effect } as StaticAbility;
+  },
+};
+
+/** Terror of the Peaks: "Spells your opponents cast that target this creature cost an additional 3 life to cast." */
+export const targetLifeTaxRule: GrammarRule = {
+  id: 'target_life_tax',
+  parse(line, original) {
+    const m = /^Spells your opponents cast that target (?:~|this creature|this permanent) cost an additional (\w+) life to cast\.$/.exec(line);
+    const n = m ? parseAmount(m[1]!) : null;
+    return typeof n === 'number' ? ({ kind: 'static', text: original, effect: { type: 'target_life_tax', life: n } } as StaticAbility) : null;
+  },
+};
+
+/**
+ * Underworld Breach: "Each nonland card in your graveyard has escape. The escape cost is equal to the card's mana cost
+ * plus exile three other cards from your graveyard." (CR 702.138a)
+ */
+export const grantedEscapeRule: GrammarRule = {
+  id: 'granted_escape',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^Each (.+?) in your graveyard has escape\. The escape cost is equal to (?:the card's|its) mana cost plus exile (\w+) other cards from your graveyard\.$/.exec(line);
+    if (!env || !m) return null;
+    const n = parseAmount(m[2]!);
+    const pf = parseFilter(`${m[1]} in your graveyard`, new Binder(env));
+    if (typeof n !== 'number' || !pf || pf.plural) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { kind: 'static', text: original, effect: { type: 'grant_escape', filter, exile: n } } as StaticAbility;
   },
 };
 
@@ -2751,6 +2811,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   topPermissionRule,
   manaTriggerRule,
   grantedFlashbackRule,
+  grantedEscapeRule,
+  targetLifeTaxRule,
   chapterRule,
   entersWithCountersRule,
   entersTappedUnlessRule,

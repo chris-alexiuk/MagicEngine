@@ -625,7 +625,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           answer = null;
           if (k > 0) at = { kind: 'planeswalker', object: walkers[k - 1]! };
         }
-        const count = replaceQuantity(g, 'tokens', n, { player: ctx.controller });
+        const count = replaceQuantity(g, 'tokens', n, { player: ctx.controller, made: { types: face.types, subtypes: face.subtypes } });
         for (let j = 0; j < count; j++) {
           const t = createToken(g, face, ctx.controller, ctx.events, { tapped: true });
           enterAttacking(g, t, ctx.source, at);
@@ -650,7 +650,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const created: ObjectRef[] = [];
     for (const copy of copies) for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
-      const count = replaceQuantity(ctx.g, 'tokens', n, { player: p });
+      const copiedFace = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
+      const madeFace = copiedFace ?? face;
+      const count = replaceQuantity(ctx.g, 'tokens', n, { player: p, ...(madeFace ? { made: { types: madeFace.types, subtypes: madeFace.subtypes } } : {}) });
       // Academy Manufactor: "If you would create a Clue, Food, or Treasure token, instead create one of each."
       const each = copy ? null : oneOfEach(ctx.g, face!, p);
       const kinds = each ? each.faces.flatMap((f) => Array.from({ length: count * each.times }, () => f)) : Array.from({ length: count }, () => face);
@@ -665,7 +667,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const copied = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
       const made = { types: (copied ?? face)?.types ?? [], subtypes: (copied ?? face)?.subtypes ?? [] };
       for (const x of extraTokens(ctx.g, p, made, count)) {
-        const more = replaceQuantity(ctx.g, 'tokens', x.count, { player: p });
+        const more = replaceQuantity(ctx.g, 'tokens', x.count, { player: p, made: { types: x.token.types, subtypes: x.token.subtypes } });
         for (let i = 0; i < more; i++) createToken(ctx.g, x.token, p, ctx.events, {});
       }
     }
@@ -2030,6 +2032,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   search(node, ctx) {
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;
+    // Field of Ruin: "Each player searches their library for a basic land card, …" — each in turn (APNAP, CR 101.4).
+    if (node.who && (ref(node, 'who') as { ref: string }).ref === 'players') {
+      const players = refPlayers(ctx, ref(node, 'who'));
+      const order = apnap(g).filter((p) => players.includes(p));
+      return { expand: order.map((p) => ({ ...structuredClone(node), who: { ref: 'you' }, asPlayer: p })) };
+    }
     // "Target player may search their library …": that player searches.
     const player = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
     if (!player) return true;
@@ -2038,7 +2046,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!owner) return true;
     const library = zoneList(g, 'library', owner);
     // "with mana value X or less": the spell's X, or what the text says X is (Eldritch Evolution).
-    const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'library' as const });
+    const anyOf = node.filters ? { anyOf: (node.filters as ObjectFilter[]).map((f) => ({ ...f })) } : {};
+    const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), ...anyOf, zone: 'library' as const });
     // "Search your library and/or graveyard": cards in those zones too.
     const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
     const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
@@ -2061,7 +2070,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
-      const need = mustFind ? Math.min(count, candidates.length) : 0;
+      // Krosan Verge: "a Forest card and a Plains card" — one card for each description.
+      const filters = node.filters as ObjectFilter[] | undefined;
+      if (filters) {
+        const fits = (ids: ObjectId[], fs: ObjectFilter[]): boolean =>
+          !ids.length || fs.some((f, i) => matchesFilter(g, g.objects[ids[0]!]!, { ...liveFilter(ctx, f), zone: 'library' }, { controller: player, source: ctx.source ?? null }) && fits(ids.slice(1), fs.filter((_, j) => j !== i)));
+        if (chosen.length > filters.length || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id)) || !fits(chosen, filters)) {
+          throw new RulesError('Choose at most one card for each description.');
+        }
+      }
+      const need = filters ? 0 : mustFind ? Math.min(count, candidates.length) : 0;
       if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
         throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
       }
@@ -2321,6 +2339,70 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     ps.landsPlayedThisTurn++;
     moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller });
     ctx.events.push({ type: 'land_played', player: ctx.controller, object: o.id });
+    return true;
+  },
+
+  // Isochron Scepter (CR 707.12): a copy of the card is created and cast without paying its mana cost; one that isn't
+  // cast ceases to exist, so it's made only once the player says yes.
+  cast_copy_of(node, ctx) {
+    const g = ctx.g;
+    const [o] = refObjects(ctx, ref(node, 'what'));
+    if (!o || !castableCard(g, o)) return true;
+    const answer = answerOf(ctx, 'cast_free');
+    if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Copy ${nameOf(g, o)} and cast the copy without paying its mana cost?` } };
+    if (!answer.cast) return true;
+    const id = `o${g.nextId++}`;
+    g.objects[id] = { id, card: o.card, owner: ctx.controller, controller: ctx.controller, zone: o.zone, zcc: 0, face: o.face, tapped: false, sick: false, damage: 0, counters: {}, timestamp: ++g.clock, spellCopy: true };
+    zoneList(g, o.zone, ctx.controller).push(id);
+    castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, {});
+    return true;
+  },
+
+  // Etali, Primal Storm: "you may cast any number of spells from among those cards without paying their mana costs" —
+  // the player picks which, in the order they're cast (CR 608.2g), then each is cast as this resolves.
+  cast_among_free(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { order?: string[]; i?: number };
+    if (!memo.order) {
+      const candidates = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'exile' && castableCard(g, o)).map((o) => o.id);
+      if (!candidates.length) return true;
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: candidates.length, ordered: true, text: 'Choose the spells to cast without paying their mana costs, in the order you cast them.' } };
+      if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose among those cards.');
+      memo.order = answer.objects;
+      memo.i = 0;
+    }
+    let answer = answerOf(ctx, 'cast_free');
+    for (let i = memo.i ?? 0; i < memo.order.length; i++) {
+      const o = g.objects[memo.order[i]!]!;
+      if (o.zone !== 'exile') continue;
+      if (!answer) {
+        memo.i = i;
+        return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, o)} without paying its mana cost?` } };
+      }
+      if (answer.cast) castDuringResolution(g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, {});
+      answer = null;
+      memo.i = i + 1;
+    }
+    return true;
+  },
+
+  // Dauthi Voidwalker: "Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without
+  // paying its mana cost."
+  play_exiled(node, ctx) {
+    const g = ctx.g;
+    const filter = node.filter as ObjectFilter;
+    const candidates = g.zones.exile.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
+    if (!candidates.length) return true;
+    let chosen = candidates[0]!;
+    if (candidates.length > 1) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: 'Choose an exiled card. You may play it this turn without paying its mana cost.' } };
+      if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of those cards.');
+      chosen = answer.objects[0]!;
+    }
+    const o = g.objects[chosen]!;
+    (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: 'play', lastTurn: g.turn, ...(node.free ? { free: true as const } : {}) });
     return true;
   },
 
@@ -3449,7 +3531,17 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if ((t.subject as Ref | undefined)?.ref === 'all') {
       if (e.type !== 'moved' || e.to !== 'graveyard' || check.sourceLeft || (t.notFromBattlefield && e.from === 'battlefield')) return [];
       const o = check.g.objects[e.object];
-      if (!o || o.zone !== 'graveyard' || !matchesFilter(check.g, o, (t.subject as { filter: ObjectFilter }).filter, { controller: check.controller, anyZone: true })) return [];
+      const filter = (t.subject as { filter: ObjectFilter }).filter;
+      if (!o || o.zone !== 'graveyard' || !matchesFilter(check.g, o, filter, { controller: check.controller, anyZone: true })) return [];
+      // The Gitrog Monster: "one or more land cards" — once for the cards put there at the same time.
+      if (t.batch) {
+        const first = (check.batch ?? [e]).find((x) => {
+          if (x.type !== 'moved' || x.to !== 'graveyard' || (t.notFromBattlefield && x.from === 'battlefield')) return false;
+          const xo = check.g.objects[x.object];
+          return Boolean(xo && xo.zone === 'graveyard' && matchesFilter(check.g, xo, filter, { controller: check.controller, anyZone: true }));
+        });
+        return first === e ? [{}] : [];
+      }
       return [{ object: refTo(o) }];
     }
     if (e.type !== 'moved' || e.to !== 'graveyard' || e.object !== check.source.id || check.source.zone !== 'graveyard') return [];
@@ -3552,7 +3644,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'target_life_tax'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

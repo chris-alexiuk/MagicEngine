@@ -164,7 +164,8 @@ export function moveObject(
   if (from === 'battlefield' && o.exileWhenLeaves) to = 'exile';
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
-  if (to === 'graveyard' && exiledInstead(g, o, from)) to = 'exile';
+  const instead = to === 'graveyard' ? exiledInstead(g, o, from) : null;
+  if (instead) to = 'exile';
   // "If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead."
   const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
   if (shuffleInstead) to = 'library';
@@ -204,6 +205,8 @@ export function moveObject(
   o.tapped = false;
   o.damage = 0;
   o.counters = {};
+  // Dauthi Voidwalker: "instead exile it with a void counter on it".
+  if (instead && typeof instead === 'object' && instead.withCounter) o.counters[instead.withCounter] = 1;
   o.sick = to === 'battlefield';
   // CR 613.7d: an object receives a timestamp as it enters a zone.
   o.timestamp = ++g.clock;
@@ -442,7 +445,7 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
 
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
 /** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
-function exiledInstead(g: GameState, o: GameObject, from: ZoneName): boolean {
+function exiledInstead(g: GameState, o: GameObject, from: ZoneName): ExileInsteadNode | null {
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
@@ -451,10 +454,10 @@ function exiledInstead(g: GameState, o: GameObject, from: ZoneName): boolean {
       if (e.dies && from !== 'battlefield') continue;
       if (e.owner === 'you' ? o.owner !== source.controller : e.owner === 'opponents' ? o.owner === source.controller : false) continue;
       if (e.filter && !matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true })) continue;
-      return true;
+      return e;
     }
   }
-  return false;
+  return null;
 }
 
 function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {
