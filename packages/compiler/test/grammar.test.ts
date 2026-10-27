@@ -727,3 +727,20 @@ describe('extra turns, switching P/T, cost LKI (slice 24)', () => {
     expect(parse('{T}: Add {G}. Activate only during your turn.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
   });
 });
+
+describe('top-card digs, goad, divided damage (slices 25–26)', () => {
+  it('reads them', () => {
+    expect(one('Reveal the top card of your library. If it\'s a land card, put it onto the battlefield. Otherwise, put it into your hand.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'dig', amount: 1, take: 1, to: 'battlefield', rest: 'hand', filter: { types: ['Land'] } }],
+    });
+    expect(one('You may search your library and/or graveyard for a card named Ajani, reveal it, and put it into your hand. If you search your library this way, shuffle.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'may', effects: [{ type: 'search', zones: ['library', 'graveyard'] }] }],
+    });
+    expect(one('Goad target creature.', 'Sorcery')).toMatchObject({ effects: [{ type: 'goad' }] });
+    expect(one('This spell deals 3 damage divided as you choose among one, two, or three targets.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'deal_damage', divided: true, amount: 3 }], targets: [{ count: 3, upTo: true, min: 1 }],
+    });
+    expect(one('Investigate twice.', 'Sorcery').effects).toHaveLength(2);
+    expect(one('You win the game.', 'Sorcery')).toMatchObject({ effects: [{ type: 'game_result', result: 'win' }] });
+  });
+});

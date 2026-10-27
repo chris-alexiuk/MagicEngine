@@ -103,7 +103,23 @@ export function promptAttackers(g: GameState): boolean {
 }
 
 /** CR 508.1c: restrictions on what a creature may attack ("can't attack unless defending player controls an Island"). */
+/** CR 508.1d / 701.15b: it attacks each combat if able (or is goaded). */
+export function mustAttack(g: GameState, o: GameObject): boolean {
+  return hasRule(g, o, 'attacks_each_combat') || Boolean(o.goadedBy?.length);
+}
+
 export function attackRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
+  // CR 701.15b: a goaded creature attacks a player other than one who goaded it, if able.
+  if (o.goadedBy?.length) {
+    const defender = defenderOf(g, target);
+    if (defender && o.goadedBy.includes(defender) && attackTargets(g).some((t) => !o.goadedBy!.includes(defenderOf(g, t) ?? '') && !otherRestriction(g, o, t))) {
+      return `${nameOf(g, o)} is goaded: it attacks a player other than the one who goaded it, if able.`;
+    }
+  }
+  return otherRestriction(g, o, target);
+}
+
+function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
   for (const r of chars(g, o).combat) {
     if (!r.attackOnlyIfDefenderControls) continue;
     const defender = defenderOf(g, target);
@@ -138,8 +154,8 @@ export function declareAttackers(
   // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (!seen.has(id) && canAttack(g, o) && hasRule(g, o, 'attacks_each_combat') && legalTargets.some((t) => !attackRestriction(g, o, t))) {
-      throw new RulesError(`${nameOf(g, o)} attacks each combat if able.`);
+    if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => !attackRestriction(g, o, t))) {
+      throw new RulesError(`${nameOf(g, o)} ${o.goadedBy?.length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
     }
   }
 

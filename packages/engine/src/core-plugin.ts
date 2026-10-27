@@ -20,6 +20,7 @@ import { installPlugin, matchTrigger, type EffectContext, type EffectResult, typ
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
+import { playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
@@ -91,6 +92,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (node.from && source.zone !== 'battlefield') return true;
     const n = amountOf(ctx, node.amount);
     let dealt = 0;
+    if (node.divided) {
+      // CR 601.2d: as divided when it was cast; a target that's no longer legal doesn't get its share.
+      const index = (node.to as { index?: number }).index ?? 0;
+      const original = ctx.resolution?.entry.targets[index] ?? [];
+      const division = ctx.resolution?.entry.division ?? [];
+      const legal = ctx.targets[index] ?? [];
+      original.forEach((t, i) => {
+        const still = legal.some((l) => (l.kind === 'player' ? t.kind === 'player' && l.player === t.player : t.kind === 'object' && l.id === t.id && l.zcc === t.zcc));
+        if (!still) return;
+        const to = t.kind === 'player' ? { kind: 'player' as const, player: t.player } : { kind: 'permanent' as const, object: t.id };
+        if (t.kind === 'object' && ctx.g.objects[t.id]?.zone !== 'battlefield') return;
+        dealt += dealDamage(ctx.g, source, to, division[i] ?? 0, false, ctx.events);
+      });
+      if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
+      return true;
+    }
     for (const to of refRecipients(ctx, ref(node, 'to'))) dealt += dealDamage(ctx.g, source, to, n, false, ctx.events);
     // CR 702.15b: lifelink — the source's controller gains that much life.
     if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
@@ -429,8 +446,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         for (const id of chosen) moveObject(g, id, to as 'hand' | 'battlefield' | 'graveyard', ctx.events, to === 'battlefield' ? { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) } : {});
       }
       const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
-      if (node.rest === 'graveyard') {
-        for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
+      if (node.rest === 'graveyard' || node.rest === 'hand') {
+        for (const id of rest) moveObject(g, id, node.rest, ctx.events);
         return true;
       }
       if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
@@ -492,6 +509,25 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       chosen = list;
     }
     for (const id of chosen) moveObject(g, id, 'hand', ctx.events);
+    return true;
+  },
+
+  // CR 701.15a: goaded until the goading player's next turn; CR 701.15d: once per player.
+  goad(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield' || !chars(ctx.g, o).types.includes('Creature')) continue;
+      if (!(o.goadedBy ??= []).includes(ctx.controller)) o.goadedBy.push(ctx.controller);
+      ctx.events.push({ type: 'goaded', object: o.id, by: ctx.controller });
+    }
+    return true;
+  },
+
+  // CR 104.2a / 104.3a: a player wins (everyone else loses) or loses the game.
+  game_result(node, ctx) {
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      if (node.result === 'lose') playerLoses(ctx.g, p, 'an effect says so', ctx.events);
+      else for (const q of livePlayers(ctx.g)) if (q !== p) playerLoses(ctx.g, q, `${p} won the game`, ctx.events);
+    }
     return true;
   },
 
@@ -866,14 +902,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!owner) return true;
     const library = zoneList(g, 'library', owner);
     const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
-    const candidates = library.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: player }));
+    // "Search your library and/or graveyard": cards in those zones too.
+    const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
+    const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player })));
     const count = amountOf(ctx, node.amount);
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');
     const mustFind = !quality && !node.upTo;
     const answer = answerOf(ctx, 'search');
     if (!answer) {
-      if (library.length === 0) return true;
+      if (library.length === 0 && zones.length === 1) return true;
       return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node) } };
     }
     const chosen = answer.objects;

@@ -6,7 +6,7 @@ import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
 import { matchTrigger } from './registry.js';
 import { apnap } from './resolve.js';
-import { chooseTargets, targetCandidates, targetPrompts } from './targets.js';
+import { chooseTargets, divisionFor, targetCandidates, targetPrompts } from './targets.js';
 import {
   RulesError,
   type GameEvent,
@@ -275,6 +275,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
 
   const program = flatten([ability], answer.modes);
   const targets = chooseTargets(g, t.controller, program.specs, answer.targets, source);
+  const division = divisionFor(program.effects, targets, 0, (answer as { divide?: number[] }).divide);
   g.triggers = g.triggers.filter((x) => x.id !== t.id);
   g.stack.push({
     kind: 'ability',
@@ -286,6 +287,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     program,
     targets,
     x: 0,
+    ...(division ? { division } : {}),
     trigger: t.info,
     ...(ability.condition ? { condition: ability.condition } : {}),
   });

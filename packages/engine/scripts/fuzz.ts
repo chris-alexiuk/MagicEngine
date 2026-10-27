@@ -19,6 +19,7 @@ import type { CardDB, CardDef, Color } from '@mtg/schema';
 import {
   activatedAbilities,
   attackRestriction,
+  mustAttack,
   apply,
   blockDeclarationProblem,
   blockProblem,
@@ -190,7 +191,7 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };
     case 'declare_attackers': {
       const attacks = p.attackers
-        .filter((id) => hasRule(g, g.objects[id]!, 'attacks_each_combat') || rnd() < 0.6)
+        .filter((id) => mustAttack(g, g.objects[id]!) || rnd() < 0.6)
         .flatMap((attacker) => {
           // CR 508.1c: "can't attack unless defending player controls an Island".
           const ok = p.targets.filter((t) => !attackRestriction(g, g.objects[attacker]!, t));

@@ -1,4 +1,4 @@
-import type { EffectNode, FaceDef, Ref, RuleFlag } from '@mtg/schema';
+import type { EffectNode, FaceDef, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
@@ -131,6 +131,21 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += dig.used;
         continue;
       }
+      // "Look at the top card of your library. If it's a land card, you may put it onto the battlefield tapped.
+      // (Otherwise, put it into your hand.)" — one card, maybe taken.
+      const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
+      const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      if (topCard && ifIts) {
+        const pf = parseFilter(`${ifIts[1]} card in your library`, b);
+        if (!pf) return null;
+        const { zone: _z, owner: _o, ...filter } = pf.filter;
+        const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't put the card (?:onto the battlefield|into your hand)), put (?:it|that card) (into your hand|into your graveyard|on the bottom of your library)$/.exec(sentences[i + 2]!) : null;
+        const to = ifIts[3]!.startsWith('onto') ? 'battlefield' : ifIts[3] === 'into your hand' ? 'hand' : 'graveyard';
+        const rest = otherwise ? (otherwise[1] === 'into your hand' ? 'hand' : otherwise[1] === 'into your graveyard' ? 'graveyard' : 'bottom') : 'top';
+        out.push({ type: 'dig', amount: 1, take: 1, to, filter, rest, ...(ifIts[2] ? { optional: true } : {}), ...(ifIts[4] ? { tapped: true } : {}), ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}) });
+        i += otherwise ? 2 : 1;
+        continue;
+      }
       // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards
       // that card." — the chosen card is discarded (or exiled).
       const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
@@ -199,14 +214,29 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const top = /^[Ee]xile the top (card|(\w+) cards) of your library$/.exec(s);
       const next = sentences[i + 1] ?? '';
       const untilPlay = /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next);
-      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) this turn$/.exec(next);
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn)$/.exec(next);
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (typeof amount !== 'number') return null;
-        const until = untilPlay && untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot';
+        const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode, until } });
         i++;
+        continue;
+      }
+      // "If you search your library this way, shuffle." — the search above shuffles when it looks there.
+      if (/^If you search your library this way, shuffle$/.test(s)) {
+        const lastSearch = (list: EffectNode[]): EffectNode | undefined => {
+          const x = list[list.length - 1];
+          if (!x) return undefined;
+          if (x.type === 'search') return x;
+          for (const k of ['effects', 'then', 'else']) {
+            const inner = Array.isArray(x[k]) ? lastSearch(x[k] as EffectNode[]) : undefined;
+            if (inner) return inner;
+          }
+          return undefined;
+        };
+        if (!lastSearch(out)?.zones) return null;
         continue;
       }
       // CR 707.10c: "You may choose new targets for the copy."
@@ -515,6 +545,30 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const becomes = /^[Ii]t becomes (day|night)$/.exec(s);
   if (becomes) return [{ type: 'day_night', to: becomes[1] }];
   // CR 702.171a (saddle): "This permanent becomes saddled until end of turn."
+  // CR 701.15a: "Goad target creature." / "goad it" / "goad each creature target player controls"
+  const goad = /^[Gg]oad (.+)$/.exec(s);
+  if (goad) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(goad[1]!, b);
+      return what ? [{ type: 'goad', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // "Investigate twice.", "Proliferate twice." — the action, again.
+  const again = /^(.+) (twice|three times)$/.exec(s);
+  if (again && /^(?:[Ii]nvestigate|[Pp]roliferate|[Pp]opulate|[Ss]cry \w+|[Ss]urveil \w+|[Aa]mass .+|[Bb]olster \w+|[Cc]onnive|[Ee]xplore|[Ii]ncubate \w+)$/.test(again[1]!)) {
+    const once = parseSentence(again[1]!, b);
+    if (once) return Array.from({ length: again[2] === 'twice' ? 2 : 3 }, () => structuredClone(once)).flat();
+  }
+  // CR 104.2a / 104.3: "You win the game." / "You lose the game." / "Target player loses the game."
+  const result = /^(.+?) (wins?|loses?) the game$/.exec(s);
+  if (result) {
+    const r = attempt(b, (b) => {
+      const who = /^you$/i.test(result[1]!) ? { ref: 'you' as const } : parsePlayerRef(result[1]!, b);
+      return who ? [{ type: 'game_result', who, result: result[2]!.startsWith('win') ? 'win' : 'lose' }] : null;
+    });
+    if (r) return r;
+  }
   // CR 500.7: "Take an extra turn after this one." / "Target player takes an extra turn after this one."
   const extraTurn = /^(?:(.+?) takes?|[Tt]ake) an extra turn after this one$/.exec(s);
   if (extraTurn) {
@@ -941,6 +995,14 @@ const VERBS: Record<string, VerbHandler> = {
     const theirs = !imperative && /^their library /.test(args);
     if (!imperative && !theirs) return null;
     if (theirs) args = args.replace(/^their library /, 'your library ').replace(/ into their hand/, ' into your hand').replace(/ into their graveyard/, ' into your graveyard');
+    // "your library and/or graveyard", "your graveyard, hand, and/or library": several zones.
+    const zonesWord = /^your (library and\/or graveyard|graveyard and\/or library|graveyard, hand, and\/or library|hand, graveyard, and\/or library|library, graveyard, and\/or hand) for /.exec(args);
+    const zones = zonesWord ? zonesWord[1]!.split(/,? (?:and\/or )?|, /).filter(Boolean) : null;
+    if (zonesWord) {
+      args = args.replace(zonesWord[0], 'your library for ').replace(/, reveal it, and put it/, ', reveal it, put it').replace(/ and put (it|them) (?=onto|into)/, ', put $1 ');
+      // The shuffle comes in its own sentence ("If you search your library this way, shuffle.").
+      if (!/, then shuffle$/.test(args)) args += ', then shuffle';
+    }
     const m =
       /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), then shuffle and put (?:that card|it) (on top)$/.exec(args);
@@ -953,6 +1015,7 @@ const VERBS: Record<string, VerbHandler> = {
     if (!pf || pf.plural !== amount > 1) return null;
     const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
     const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
+    if (zones) node.zones = zones;
     if (theirs) node.who = who;
     if (q[2]) node.upTo = true;
     if (m[3]) node.tapped = true;
@@ -1181,6 +1244,29 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
 
 /** "~ deals 3 damage to any target", "… to target creature and 2 damage to its controller". */
 function parseDamage(c: string, b: Binder): EffectNode[] | null {
+  // CR 601.2d: "~ deals 3 damage divided as you choose among one, two, or three targets."
+  const divided = /^(~|[Ii]t) deals (\S+) damage divided as you choose among (any number of|one or two|one, two, or three|up to (\w+)) (targets|target .+)$/.exec(c);
+  if (divided) {
+    return attempt(b, (b) => {
+      if (divided[1] !== '~' && b.it?.ref !== 'self') return null;
+      const amount = parseAmount(divided[2]!);
+      if (amount === null) return null;
+      const most = divided[3] === 'any number of' ? 100 : divided[3] === 'one or two' ? 2 : divided[3] === 'one, two, or three' ? 3 : parseAmount(divided[4]!);
+      if (typeof most !== 'number') return null;
+      // Each target gets at least 1, so there can't be more targets than damage.
+      const count = typeof amount === 'number' ? Math.min(most, amount) : most;
+      let spec: TargetSpec;
+      if (divided[5] === 'targets') spec = { what: 'any', filter: { types: ['Creature', 'Planeswalker', 'Battle'] }, text: 'any target', count, upTo: true, min: 1 };
+      else {
+        const what = divided[5]!.replace(/^target /, '');
+        const pf = parseFilter(what.replace(/ and\/or /g, ' or '), b);
+        if (!pf || !pf.plural) return null;
+        spec = { what: 'object', filter: pf.filter, text: divided[5]!, count, upTo: true, min: 1 };
+      }
+      const to = b.addTarget(spec);
+      return [{ type: 'deal_damage', amount, to, divided: true }];
+    });
+  }
   const m = /^(~|[Ii]t) deals (\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {

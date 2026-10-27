@@ -320,6 +320,14 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   for (const p of Object.values(g.players)) p.landsPlayedThisTurn = 0;
   // "You may play that card this turn" ends with the turn.
   prunePermissions(g);
+  // CR 701.15a: goad lasts until the goading player's next turn.
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (o.goadedBy?.includes(player)) {
+      o.goadedBy = o.goadedBy.filter((p) => p !== player);
+      if (!o.goadedBy.length) delete o.goadedBy;
+    }
+  }
   events.push({ type: 'turn_began', turn: g.turn, player });
   // CR 502.2: the untap step's second part (there's no phasing to do first) — day and night.
   checkDayNight(g, previousCasts, events);

@@ -20,7 +20,7 @@ import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
-import { chooseTargets } from './targets.js';
+import { chooseTargets, divisionFor } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
 import {
   RulesError,
@@ -99,9 +99,9 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'suspend':
       return exileToCastLater(g, a.player, a.object, a.type, a.autoTap ?? false, events);
     case 'cast':
-      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? []);
+      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? [], undefined, a.divide);
     case 'activate':
-      return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes, costs: a.costs ?? {} }, events);
+      return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes, costs: a.costs ?? {}, divide: a.divide }, events);
     case 'activate_manual':
       return activateManual(g, a.player, a.object, a.line, a.autoTap ?? false, events);
   }
@@ -408,6 +408,7 @@ function cast(
   extras: string[] = [],
   /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
   during?: { free?: boolean; suspended?: true },
+  divide?: number[],
 ): void {
   const kicks = typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
   const kicked = kicks > 0;
@@ -542,7 +543,9 @@ function cast(
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
   };
-  g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}) });
+  // CR 601.2d: the division of its damage among the targets.
+  const division = program ? divisionFor(program.effects, targets, x, divide) : undefined;
+  g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}), ...(division ? { division } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
@@ -588,6 +591,7 @@ interface ActivationChoices {
   targets: Target[][] | undefined;
   modes: number[] | undefined;
   costs: CostChoices;
+  divide?: number[];
 }
 
 function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
@@ -627,6 +631,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   // CR 602.2b (following CR 601.2b–c): modes and targets.
   const program = flatten([ability], choices.modes);
   const targets = chooseTargets(g, player, program.specs, choices.targets, o);
+  const division = divisionFor(program.effects, targets, choices.x, choices.divide);
   const source = { id, zcc: o.zcc };
 
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
@@ -666,6 +671,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     targets,
     x: choices.x,
     ...(lki ? { costLKI: lki } : {}),
+    ...(division ? { division } : {}),
   });
   events.push({ type: 'ability_activated', player, source: id, text: ability.text });
   announceTargets(g.stack[g.stack.length - 1]!, events);

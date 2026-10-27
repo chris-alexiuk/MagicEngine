@@ -110,6 +110,8 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** CR 701.15: the players who goaded it (until each one's next turn). */
+  goadedBy?: PlayerId[];
   /** The last turn it was dealt damage ("creature that was dealt damage this turn"). */
   damagedTurn?: number;
   /** CR 702.171b: saddled this turn. */
@@ -256,6 +258,8 @@ interface StackBase {
   x: number;
   /** What the costs paid for it sacrificed or discarded. */
   costLKI?: CostLKI;
+  /** CR 601.2d: how its divided damage is split, one amount per target chosen (in order). */
+  division?: number[];
 }
 
 export type StackEntry =
@@ -456,7 +460,7 @@ export type ChoiceAnswer =
   | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
   | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
   | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
-  | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][] }
+  | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][]; divide?: number[] }
   | { kind: 'copy_targets'; targets?: Target[][] }
   | { kind: 'cast_free'; cast: boolean; targets?: Target[][]; modes?: number[] }
   /** CR 701.22a: cards to keep on top (first = top) and to put on the bottom. */
@@ -526,6 +530,8 @@ export type Action =
       modes?: number[];
       /** What to sacrifice or discard for additional costs (CR 601.2f). */
       costs?: CostChoices;
+      /** CR 601.2d: how to divide its damage among the targets (default: evenly). */
+      divide?: number[];
     }
   | {
       type: 'activate';
@@ -538,6 +544,7 @@ export type Action =
       targets?: Target[][];
       modes?: number[];
       costs?: CostChoices;
+      divide?: number[];
     }
   | { type: 'activate_manual'; player: PlayerId; object: ObjectId; line: number; autoTap?: boolean }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
@@ -579,6 +586,7 @@ export type GameEvent =
   /** CR 702.179: a player's speed changed; CR 702.131: a player got the city's blessing. */
   | { type: 'speed'; player: PlayerId; speed: number }
   | { type: 'coin_flip'; player: PlayerId; won: boolean }
+  | { type: 'goaded'; object: ObjectId; by: PlayerId }
   | { type: 'city_blessing'; player: PlayerId }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }

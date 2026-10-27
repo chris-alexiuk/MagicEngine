@@ -1,4 +1,4 @@
-import type { TargetSpec } from '@mtg/schema';
+import type { EffectNode, TargetSpec } from '@mtg/schema';
 import { hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type Target, type TargetPrompt, type TargetRef } from './types.js';
 import { playerRule } from './player-rules.js';
@@ -89,7 +89,39 @@ export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetS
 
 /** CR 601.2c / CR 115.6: whether enough legal targets exist for every spec. */
 export function canChooseTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): boolean {
-  return specs.every((spec) => spec.upTo || targetCandidates(g, controller, spec, source).length >= (spec.count ?? 1));
+  return specs.every((spec) => targetCandidates(g, controller, spec, source).length >= (spec.upTo ? (spec.min ?? 0) : (spec.count ?? 1)));
+}
+
+/**
+ * CR 601.2d: how divided damage is split among the chosen targets — the player's division, or an even
+ * one by default (any remainder to the first targets). Each target gets at least 1.
+ */
+export function divisionFor(effects: EffectNode[], targets: readonly (readonly unknown[])[], x: number, given?: number[]): number[] | undefined {
+  const node = findDivided(effects);
+  if (!node) return undefined;
+  const total = node.amount === 'X' ? x : typeof node.amount === 'number' ? node.amount : 0;
+  const index = (node.to as { index?: number }).index ?? 0;
+  const k = targets[index]?.length ?? 0;
+  if (k === 0) return [];
+  if (k > total) throw new RulesError(`Each target needs at least 1 of the ${total} damage.`);
+  if (given) {
+    if (given.length !== k || given.some((n) => !Number.isInteger(n) || n < 1) || given.reduce((a, b) => a + b, 0) !== total) {
+      throw new RulesError(`Divide ${total} damage among the ${k} target(s), at least 1 each.`);
+    }
+    return [...given];
+  }
+  return Array.from({ length: k }, (_, i) => Math.floor(total / k) + (i < total % k ? 1 : 0));
+}
+
+function findDivided(effects: EffectNode[]): EffectNode | undefined {
+  for (const e of effects) {
+    if (e.type === 'deal_damage' && e.divided) return e;
+    for (const k of ['effects', 'then', 'else']) {
+      const inner = Array.isArray(e[k]) ? findDivided(e[k] as EffectNode[]) : undefined;
+      if (inner) return inner;
+    }
+  }
+  return undefined;
 }
 
 /** A default legal choice: the first candidates for each spec (UIs let the player change them). */
@@ -98,7 +130,7 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source);
     const n = spec.count ?? 1;
-    if (candidates.length < n && !spec.upTo) return null;
+    if (candidates.length < (spec.upTo ? (spec.min ?? 0) : n)) return null;
     out.push(candidates.slice(0, n));
   }
   return out;
@@ -125,8 +157,8 @@ export function chooseTargets(
   return specs.map((spec, i) => {
     const list = given[i]!;
     const n = spec.count ?? 1;
-    if (list.length > n || (!spec.upTo && list.length < n)) {
-      throw new RulesError(`Choose ${spec.upTo ? 'up to ' : ''}${n} for “${spec.text}”.`);
+    if (list.length > n || (!spec.upTo && list.length < n) || list.length < (spec.min ?? 0)) {
+      throw new RulesError(`Choose ${spec.upTo ? `${spec.min ? `${spec.min} to ` : 'up to '}` : ''}${n} for “${spec.text}”.`);
     }
     list.forEach((t, j) => {
       if (list.slice(0, j).some((u) => sameTarget(t, u))) throw new RulesError(`The same target was chosen twice for “${spec.text}”.`);

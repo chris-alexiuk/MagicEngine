@@ -149,6 +149,7 @@ export function moveObject(
   delete o.foretold;
   delete o.renowned;
   delete o.saddledTurn;
+  delete o.goadedBy;
   delete o.activatedOnce;
   delete o.plotted;
   delete o.suspended;
