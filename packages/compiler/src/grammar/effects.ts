@@ -132,6 +132,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         last!.spend = spend;
         continue;
       }
+      // "Put the rest on the bottom of your library in a random order. If you didn't put a card into your hand this
+      // way, draw a card." — after a look at the top cards.
+      const ifNone = /^If you didn't put (?:a|any) cards? (?:into your hand|onto the battlefield) this way, (.+)$/.exec(s);
+      if (ifNone) {
+        const last = out[out.length - 1];
+        const inner = last?.type === 'dig' && !last.ifNone ? parseSentence(capitalise(ifNone[1]!), b) : null;
+        if (!inner) return null;
+        last!.ifNone = inner;
+        continue;
+      }
       // CR 702.32a (fading): "Remove a fade counter from it. If you can't, sacrifice it."
       const cant = /^If you can't, (.+)$/.exec(s);
       if (cant) {
@@ -244,6 +254,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // (Otherwise, put it into your hand.)" — one card, maybe taken.
       const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
       const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      // "Look at the top card of your library. You may put that card into your graveyard." (a one-card surveil)
+      const mayPut = topCard && sentences[i + 1] ? /^You may put (?:that card|it) (into your graveyard|into your hand)$/.exec(sentences[i + 1]!) : null;
+      if (topCard && mayPut) {
+        out.push({ type: 'dig', amount: 1, take: 1, to: mayPut[1] === 'into your hand' ? 'hand' : 'graveyard', rest: 'top', optional: true, ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}) });
+        i += 1;
+        continue;
+      }
       if (topCard && ifIts) {
         const pf = parseFilter(`${ifIts[1]} card in your library`, b);
         if (!pf) return null;
@@ -711,11 +728,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // CR 118.12a: "[Do something] unless [a player] pays [cost]."
-  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
   if (unless) {
     return attempt(b, (b) => {
       const inner = parseSentence(unless[1]!, b);
       const payer = inner ? parsePlayerRef(unless[2]!, b) : null;
+      // "unless that player pays {X}, where X is …" (Esper Sentinel): X generic mana, counted as it resolves.
+      if (unless[3] === '{X}') return inner && payer ? [{ type: 'unless_pays', payer, cost: '', costX: 'X', effects: inner }] : null;
+      if (/\{X\}/.test(unless[3]!)) return null;
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unless[3]!, effects: inner }] : null;
     });
   }
@@ -1073,6 +1093,17 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       ];
     }
   }
+  // Loran of the Third Path: "You and target opponent each draw a card."
+  const youAnd = /^You and (target opponent|target player|that player|defending player) each (.+)$/.exec(s);
+  if (youAnd) {
+    const r = attempt(b, (b) => {
+      const other = parsePlayerRef(youAnd[1]!, b);
+      const mine = other ? parseClause(youAnd[2]!, b, { ref: 'you' }) : null;
+      const theirs = mine && other ? parseClause(youAnd[2]!, b, other) : null;
+      return mine && theirs ? [...mine.effects, ...theirs.effects] : null;
+    });
+    if (r) return r;
+  }
   // CR 701.38: "Starting with you, each player votes for sickness or psychosis." Secret council: "Each player
   // secretly votes for truth or consequences, then those votes are revealed."
   const VOTE_WORD = String.raw`[A-Za-z]+(?: (?:of )?[A-Z][a-z]+)*`;
@@ -1241,6 +1272,10 @@ type VerbHandler = (args: string, who: Ref, b: Binder, imperative: boolean) => E
 const VERB_FORMS: Record<string, string> = {};
 const VERBS: Record<string, VerbHandler> = {
   draw(args, who) {
+    // "draw up to two cards"
+    const upTo = /^up to (\w+) cards?$/.exec(args);
+    const n = upTo ? parseAmount(upTo[1]!) : null;
+    if (upTo) return typeof n === 'number' && n > 0 && who.ref !== 'players' ? [{ type: 'draw', amount: n, who, upTo: true }] : null;
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
@@ -1361,7 +1396,7 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) \S+ counters? on it)?$/.exec(args);
-    if (onto && !/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's) graveyards?$|^target .+ card$/.test(onto[1]!)) {
+    if (onto && !/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$/.test(onto[1]!)) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -1715,6 +1750,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;
   if (produced) return [produced];
+  // Mana Geyser: "Add {R} for each tapped land your opponents control."
+  const addEach = add ? /^((?:\{[WUBRGC]\})+) for each (.+)$/.exec(add[1]!) : null;
+  if (addEach) {
+    const base = parseManaProduction(addEach[1]!);
+    const times = base ? parseForEach(addEach[2]!, b) : null;
+    if (base && times) return [{ ...base, times }];
+  }
   return null;
 }
 

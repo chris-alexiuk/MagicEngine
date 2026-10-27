@@ -670,6 +670,10 @@ export interface CastProhibitionNode extends EffectNode {
   fromZones?: ('graveyard' | 'library' | 'exile')[];
   /** "can't cast more than one spell each turn" */
   maxPerTurn?: number;
+  /** Grand Abolisher: "… or activate abilities of artifacts, creatures, or enchantments" (mana abilities too, unless `nonMana`). */
+  activate?: { filter?: ObjectFilter; nonMana?: true };
+  /** Only activating is prohibited, not casting ("Players can't activate abilities that aren't mana abilities"). */
+  activateOnly?: true;
   condition?: ConditionNode;
 }
 
@@ -789,7 +793,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',

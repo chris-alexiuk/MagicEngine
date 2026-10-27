@@ -158,6 +158,10 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Costs to attack (CR 508.1g–h): "Creatures can't attack you [or planeswalkers you control] unless their controller pays {2} for each creature they control that's attacking you" — paid after the attackers tap, never required of a creature that must attack (CR 508.1d)
    - ✅ "You may choose new targets for target spell or ability" (CR 115.7d: legal targets for it, chosen by this ability's controller)
    - ✅ "the greatest power / toughness / mana value among …" as an amount (Return of the Wildspeaker, The Great Henge)
+   - ✅ "draw up to two cards", Arcane Denial (its controller may draw up to two at the next upkeep), Esper Sentinel ("their first noncreature spell each turn", "unless that player pays {X}, where X is …"), "Activate only if you created a token this turn"
+   - ✅ "Creatures your opponents control enter tapped" (CR 614.1d, another permanent's replacement), Dryad of the Ilysian Grove ("every basic land type"), "You and target opponent each draw a card", "Add {R} for each tapped land your opponents control", "Add X mana of any one color, where X is …", "Put all creature cards from all graveyards onto the battlefield under your control"; a counted divided amount is counted as the ability is put on the stack (CR 601.2d), and with nothing to divide the trigger is removed
+   - ✅ Grand Abolisher (CR 101.2: "During your turn, your opponents can't cast spells or activate abilities of artifacts, creatures, or enchantments" — mana abilities too), "Players can't activate abilities that aren't mana abilities"
+   - ✅ "If you didn't put a card into your hand this way, draw a card" after a look at the top cards; "Look at the top card of your library. You may put that card into your graveyard."
    - Next: mutate, "the color or colors of your choice", Attractions, "Whenever players finish voting", votes for players, "Choose a card name" as an effect
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers

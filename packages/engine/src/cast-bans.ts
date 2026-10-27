@@ -31,6 +31,7 @@ function bans(g: GameState, e: CastProhibitionNode, source: GameObject, player: 
  * can't cast spells this turn"). The reason the spell can't be cast, or null.
  */
 export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, spell: GameObject): string | null {
+  if (!anyProhibitions(g)) return null;
   const matches = (filter: ObjectFilter | undefined, controller: PlayerId, source: GameObject | null, o: GameObject = spell) =>
     !filter || matchesFilter(g, o, filter, { controller, source, anyZone: true });
   for (const ban of g.castBans ?? []) {
@@ -42,6 +43,7 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cast_prohibition') continue;
       const e = (a as StaticAbility).effect as CastProhibitionNode;
+      if (e.activateOnly) continue;
       if (!bans(g, e, source, player) || !staticConditionHolds(g, e, source)) continue;
       if (e.during === 'your_turn' && g.active !== source.controller) continue;
       if (e.during === 'combat' && !COMBAT_STEPS.includes(g.step)) continue;
@@ -55,4 +57,41 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
     }
   }
   return null;
+}
+
+let memo: { g: GameState; key: string; v: boolean } | null = null;
+/** Whether any "can't cast" or "can't activate" prohibition is around at all (they're rare). */
+function anyProhibitions(g: GameState): boolean {
+  const key = `${g.clock}|${g.nextId}|${g.zones.battlefield.length}|${g.castBans?.length ?? 0}|${g.turn}`;
+  if (memo?.g === g && memo.key === key) return memo.v;
+  let v = Boolean(g.castBans?.some((b) => b.lastTurn >= g.turn));
+  for (const id of abilitySources(g)) {
+    if (v) break;
+    const o = g.objects[id];
+    if (o) v = objectAbilities(g, o).some((a) => a.kind === 'static' && (a as StaticAbility).effect.type === 'cast_prohibition');
+  }
+  memo = { g, key, v };
+  return v;
+}
+
+/**
+ * CR 101.2 / 602.5: "During your turn, your opponents can't cast spells or activate abilities of artifacts, creatures,
+ * or enchantments" (Grand Abolisher). True when `player` can't activate this ability of `source` now.
+ */
+export function activationProhibited(g: GameState, player: PlayerId, source: GameObject, mana: boolean): boolean {
+  if (!anyProhibitions(g)) return false;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cast_prohibition') continue;
+      const e = (a as StaticAbility).effect as CastProhibitionNode;
+      if (!e.activate || (mana && e.activate.nonMana)) continue;
+      if (!bans(g, e, src, player) || !staticConditionHolds(g, e, src)) continue;
+      if (e.during === 'your_turn' && g.active !== src.controller) continue;
+      if (e.during === 'combat' && !COMBAT_STEPS.includes(g.step)) continue;
+      if (e.activate.filter && !matchesFilter(g, source, e.activate.filter, { controller: src.controller, source: src, anyZone: true })) continue;
+      return true;
+    }
+  }
+  return false;
 }

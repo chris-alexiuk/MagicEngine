@@ -171,10 +171,11 @@ export function canChooseTargets(g: GameState, controller: PlayerId, specs: Targ
  * CR 601.2d: how divided damage is split among the chosen targets — the player's division, or an even
  * one by default (any remainder to the first targets). Each target gets at least 1.
  */
-export function divisionFor(effects: EffectNode[], targets: readonly (readonly unknown[])[], x: number, given?: number[]): number[] | undefined {
+/** `count`: the amount when it's counted ("X damage divided …, where X is the number of creatures you control"). */
+export function divisionFor(effects: EffectNode[], targets: readonly (readonly unknown[])[], x: number, given?: number[], count?: (amount: unknown) => number): number[] | undefined {
   const node = findDivided(effects);
   if (!node) return undefined;
-  const total = node.amount === 'X' ? x : typeof node.amount === 'number' ? node.amount : 0;
+  const total = node.amount === 'X' ? x : typeof node.amount === 'number' ? node.amount : (count?.(node.amount) ?? 0);
   const index = ((node.to ?? node.what) as { index?: number }).index ?? 0;
   const k = targets[index]?.length ?? 0;
   const what = node.type === 'add_counters' ? 'counters' : 'damage';
@@ -187,6 +188,17 @@ export function divisionFor(effects: EffectNode[], targets: readonly (readonly u
     return [...given];
   }
   return Array.from({ length: k }, (_, i) => Math.floor(total / k) + (i < total % k ? 1 : 0));
+}
+
+/**
+ * CR 601.2d: each target of a division gets at least 1, so a divided total caps how many can be chosen.
+ * The index of the divided spec and its total, or null.
+ */
+export function dividedCap(effects: EffectNode[], x: number, count?: (amount: unknown) => number): { index: number; total: number } | null {
+  const node = findDivided(effects);
+  if (!node) return null;
+  const total = node.amount === 'X' ? x : typeof node.amount === 'number' ? node.amount : (count?.(node.amount) ?? 0);
+  return { index: ((node.to ?? node.what) as { index?: number }).index ?? 0, total };
 }
 
 function findDivided(effects: EffectNode[]): EffectNode | undefined {

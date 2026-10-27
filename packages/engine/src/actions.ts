@@ -1,4 +1,4 @@
-import { castProhibition } from './cast-bans.js';
+import { activationProhibited, castProhibition } from './cast-bans.js';
 import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
@@ -7,7 +7,8 @@ import { livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
-import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
+import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
+import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
 import { hasKeyword, power, printedAbilities } from './characteristics.js';
@@ -676,7 +677,8 @@ function cast(
   const giftSpell = giftTo ? castFace.abilities.find((a) => a.kind === 'static' && a.effect.type === 'gift_spell') : undefined;
   if (program && giftSpell && giftSpell.kind === 'static') program.effects.unshift({ type: 'give_gift', effects: giftSpell.effect.effects });
   // CR 601.2d: the division of its damage among the targets.
-  const division = program ? divisionFor(program.effects, targets, x, divide) : undefined;
+  const counted = (a: unknown) => amountOf({ g, controller: player, source: o, events: [], targets, x, memo: {} }, a as Amount);
+  const division = program ? divisionFor(program.effects, targets, x, divide, counted) : undefined;
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}), ...(division ? { division } : {}) });
   // CR 700.14: the mana spent to cast spells this turn, before and after this one ("Whenever you expend 4").
   const spentNow = Object.values(spent).reduce((a, b) => a + b, 0);
@@ -823,6 +825,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   // "Any player may activate this ability." (CR 602.2)
   if (!yours && !(o.zone === 'battlefield' && ability?.anyPlayer)) throw new RulesError('You can’t activate abilities of that object.');
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such ability.`);
+  // CR 101.2: "your opponents can't … activate abilities of artifacts, creatures, or enchantments"
+  if (activationProhibited(g, player, o, false)) throw new RulesError(`You can’t activate ${nameOf(g, o)}’s abilities now.`);
   if (ability.maxPerTurn && activationsThisTurn(g, o, index) >= ability.maxPerTurn) throw new RulesError(`That ability can be activated only ${ability.maxPerTurn} times each turn.`);
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
@@ -854,7 +858,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   // CR 602.2b (following CR 601.2b–c): modes and targets.
   const program = flatten([ability], choices.modes);
   const targets = chooseTargets(g, player, program.specs, choices.targets, o);
-  const division = divisionFor(program.effects, targets, choices.x, choices.divide);
+  const division = divisionFor(program.effects, targets, choices.x, choices.divide, (a) => amountOf({ g, controller: player, source: o, events: [], targets, x: choices.x, memo: {} }, a as Amount));
   const source = { id, zcc: o.zcc };
 
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.

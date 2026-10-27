@@ -27,6 +27,8 @@ export interface TurnLog {
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
   drawn?: Record<PlayerId, number>;
+  /** Players who created a token this turn. */
+  createdToken?: PlayerId[];
   /** Players who controlled a permanent that left the battlefield this turn (revolt). */
   left?: PlayerId[];
   /** A nonland permanent left the battlefield this turn (void). */
@@ -76,6 +78,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'created': {
         const o = g.objects[e.object];
         if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
+        // "if you created a token this turn" (Idol of Oblivion)
+        if (!(log.createdToken ??= []).includes(e.controller)) log.createdToken.push(e.controller);
         break;
       }
       case 'became_target': {
@@ -317,6 +321,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return log.gainedLife.includes(controller);
         case 'opponent_gained_life':
           return log.gainedLife.some((p) => p !== controller);
+        case 'you_created_token':
+          return (log.createdToken ?? []).includes(controller);
         case 'opponent_cast':
           // "If an opponent cast a blue spell this turn" — any one opponent.
           return livePlayers(g).some(

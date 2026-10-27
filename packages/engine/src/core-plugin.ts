@@ -148,8 +148,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   draw(node, ctx) {
     // CR 121.2: several cards are drawn one at a time; CR 702.52a: each may be replaced by a dredge.
     const memo = ctx.memo as { n?: number; players?: PlayerId[]; done?: number };
-    memo.n ??= amountOf(ctx, node.amount);
     memo.players ??= refPlayers(ctx, ref(node, 'who'));
+    // "may draw up to two cards": the player says how many first.
+    if (memo.n === undefined && node.upTo) {
+      const most = amountOf(ctx, node.amount);
+      const p = memo.players[0];
+      const said = answerOf(ctx, 'choose_option');
+      if (!p || most <= 0) return true;
+      if (!said) return { ask: { kind: 'choose_option', player: p, options: Array.from({ length: most + 1 }, (_, i) => String(i)), text: `Draw up to ${most} cards: how many?`, sourceName: sourceName(ctx) } };
+      const n = Number(said.choice);
+      if (!Number.isInteger(n) || n < 0 || n > most) throw new RulesError(`Choose a number from 0 to ${most}.`);
+      memo.n = n;
+      memo.players = [p];
+    }
+    memo.n ??= amountOf(ctx, node.amount);
     let answer = answerOf(ctx, 'choose_objects');
     for (let k = memo.done ?? 0; k < memo.players.length * memo.n; k++) {
       const p = memo.players[Math.floor(k / memo.n)]!;
@@ -680,9 +692,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   dig(node, ctx) {
     const g = ctx.g;
     const memo = ctx.memo as { looked?: string[]; chosen?: string[] };
+    // "If you didn't put a card into your hand this way, draw a card."
+    const done = (): EffectResult => (node.ifNone && !memo.chosen?.length ? { expand: node.ifNone as EffectNode[] } : true);
     const library = zoneList(g, 'library', ctx.controller);
     const looked = (memo.looked ??= library.slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
-    if (!looked.length) return true;
+    if (!looked.length) return done();
     const take = amountOf(ctx, node.take ?? 1);
     const answer = answerOf(ctx, 'choose_objects');
     if (!memo.chosen) {
@@ -715,12 +729,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
       if (node.rest === 'graveyard' || node.rest === 'hand') {
         for (const id of rest) moveObject(g, id, node.rest, ctx.events);
-        return true;
+        return done();
       }
       if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
         if (node.order === 'random') shuffleInPlace(g, rest);
         if (node.rest !== 'top') for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
-        return true;
+        return done();
       }
       // "on the bottom of your library in any order": the player orders them.
       return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: rest, min: rest.length, max: rest.length, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).', ordered: true } };
@@ -730,7 +744,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const order = answer?.objects ?? rest;
     if (order.length !== rest.length || !order.every((id) => rest.includes(id)) || new Set(order).size !== order.length) throw new RulesError('Put each of those cards in order.');
     for (const id of order) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
-    return true;
+    return done();
   },
 
   // CR 701.39a: "Bolster N" — a creature you control with the least toughness gets N +1/+1 counters.
@@ -1462,7 +1476,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   unless_pays(node, ctx) {
     // CR 118.12a: "[Do something] unless [a player] pays [cost]" — that player chooses whether to pay.
     const payer = refPlayers(ctx, ref(node, 'payer'))[0];
-    const cost = String(node.cost);
+    // "{X}, where X is this creature's power": counted now.
+    const cost = node.costX !== undefined ? `{${Math.max(0, amountOf(ctx, node.costX))}}` : String(node.cost);
     if (!payer) return { expand: node.effects as EffectNode[] };
     const answer = answerOf(ctx, 'pay');
     if (!answer) {
@@ -2641,8 +2656,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       return matchesFilter(check.g, copy, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(copy), player: e.controller }] : [];
     }
     if (e.type !== 'cast' || check.sourceLeft) return [];
-    // "Whenever you cast your second spell each turn"
-    if (typeof t.nth === 'number' && e.nth !== t.nth) return [];
+    // "Whenever you cast your second spell each turn"; "… their first noncreature spell each turn" counts only those.
+    if (typeof t.nth === 'number' && t.nthOfKind) {
+      const filter = { ...(t.filter as ObjectFilter) };
+      const ctxF = { controller: check.controller, source: check.source, anyZone: true };
+      const before = (check.g.turnLog.castSpells ?? []).filter((c) => c.player === e.player && c.id !== e.object && check.g.objects[c.id] && matchesFilter(check.g, check.g.objects[c.id]!, filter, ctxF)).length;
+      if (before !== t.nth - 1) return [];
+    } else if (typeof t.nth === 'number' && e.nth !== t.nth) return [];
     // CR 702.191a (increment): more mana spent on it than this creature's power or toughness.
     if (t.increment) {
       const src = check.source;
@@ -2694,7 +2714,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

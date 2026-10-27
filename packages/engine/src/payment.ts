@@ -1,3 +1,4 @@
+import { activationProhibited } from './cast-bans.js';
 import { evalCondition } from './conditions.js';
 import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
@@ -268,6 +269,7 @@ export function runManaAbility(
   if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You don’t control that permanent.');
   const ability = manaAbilities(g, o)[index];
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such mana ability.`);
+  if (activationProhibited(g, player, o, true)) throw new RulesError(`You can’t activate ${nameOf(g, o)}’s abilities now.`);
 
   if (ability.cost.tap) {
     // CR 118.3: an already tapped permanent can't be tapped to pay a cost.

@@ -338,10 +338,13 @@ export const activatedRule: GrammarRule = {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
       // counter removed this way" (X, the number removed).
-      const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}) equal to (.+))$/.exec(mana[1]!) : null;
+      const xAny = mana ? /^X mana of any one color, where X is (.+)$/.exec(mana[1]!) : null;
+      if (xAny && mana) mana[1] = `an amount of ANY equal to ${xAny[1]}`;
+      const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}|ANY) equal to (.+))$/.exec(mana[1]!) : null;
       const removedThisWay = scaled?.[2] && /^\S+ counter removed this way$/.test(scaled[2]) && cost.other?.some((c) => c.amount === 'X');
       const times = scaled ? (removedThisWay ? { kind: 'x' as const } : scaled[2] ? parseForEach(scaled[2], new Binder(env)) : parseCount(scaled[4]!, new Binder(env))) : null;
-      const effect = scaled ? (times ? { ...parseManaProduction(scaled[1] ?? scaled[3]!)!, times } : null) : mana && parseManaProduction(mana[1]!);
+      const unit = scaled ? (scaled[3] === 'ANY' ? parseManaProduction('one mana of any color') : parseManaProduction(scaled[1] ?? scaled[3]!)) : null;
+      const effect = scaled ? (times && unit ? { ...unit, times } : null) : mana && parseManaProduction(mana[1]!);
       // CR 106.6: "Spend this mana only to cast creature spells."
       const spendOnly = mana?.[2] ? /^Spend this mana only ([^.]+)\.(?: (.+))?$/.exec(mana[2]) : null;
       if (mana && effect && spendOnly) {
@@ -932,6 +935,19 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
+  // Esper Sentinel: "Whenever an opponent casts their first noncreature spell each turn"
+  const nthKind = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) (.+?) spell each turn$/.exec(t);
+  if (nthKind) {
+    const pf = parseFilter(`${nthKind[3]} spell`, b);
+    if (!pf || pf.plural) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    const who = nthKind[1] === 'you' ? 'you' : nthKind[1] === 'an opponent' ? 'opponent' : 'any';
+    return {
+      trigger: { type: 'cast', who, filter, nth: ['first', 'second', 'third'].indexOf(nthKind[2]!) + 1, nthOfKind: true },
+      it: { ref: 'trigger_object' },
+      player: { ref: 'trigger_player' },
+    };
+  }
   const cast = /^(you|an opponent|a player|enchanted player) (casts?|cast or copy|casts or copies) (?:a|an) (.+)$/.exec(t);
   if (cast) {
     let what = cast[3]!;
@@ -1132,8 +1148,8 @@ export const continuousRule: GrammarRule = {
       }
       if (!found) return null;
     }
-    const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | null =
-      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b);
+    const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
+      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
     if (conds.length) effect.condition = conds.length === 1 ? conds[0]! : { type: 'and', all: conds };
     const node: StaticAbility = { kind: 'static', text: original, effect };
@@ -1142,6 +1158,15 @@ export const continuousRule: GrammarRule = {
 };
 
 /** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
+/** CR 614.1d: "Creatures your opponents control enter tapped.", "Artifacts and creatures your opponents control enter tapped." */
+function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
+  const m = /^(.+?) enter(?: the battlefield)? tapped$/.exec(body);
+  if (!m || /^(?:~|It|This)\b/.test(m[1]!)) return null;
+  const pf = parseFilter(m[1]!.replace(/, and /, ', or ').replace(/^(\w+) and (\w+)/, '$1 or $2').replace(/^\w/, (c) => c.toLowerCase()), b);
+  if (!pf || !pf.plural || pf.filter.zone) return null;
+  return { type: 'enter_tapped_others', filter: pf.filter };
+}
+
 /** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you." */
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGC])\})+) for each (?:creature they control that's attacking you|of those creatures)$/i.exec(body);
@@ -1155,12 +1180,14 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
 
 /** CR 101.2: "Your opponents can't cast spells during your turn.", "Each player can't cast more than one spell each turn." */
 function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | null {
+  // After a condition ("During your turn, your opponents can't …") the subject starts lower-case.
+  body = body.replace(/^\w/, (c) => c.toUpperCase());
   const passive = /^(Spells .+|.+ spells) can't be cast$/.exec(body);
   if (passive) {
     const ban = parseCastBan(passive[1]!.replace(/^S/, 's'), b);
     return ban && !ban.maxPerTurn ? { type: 'cast_prohibition', who: 'each', ...ban } : null;
   }
-  const m = /^(You|Your opponents|Each opponent|Opponents|Players|Each player|Enchanted player|Enchanted creature's controller) can't cast (.+)$/.exec(body);
+  const m = /^(You|Your opponents|Each opponent|Opponents|Players|Each player|Enchanted player|Enchanted creature's controller) can't ((?:cast|activate) .+)$/.exec(body);
   if (!m) return null;
   const WHO: Record<string, CastProhibitionNode['who']> = {
     You: 'you',
@@ -1172,7 +1199,26 @@ function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | nu
     'Enchanted player': 'enchanted_player',
     "Enchanted creature's controller": 'enchanted_controller',
   };
-  const ban = parseCastBan(m[2]!, b);
+  // Grand Abolisher: "… can't cast spells or activate abilities of artifacts, creatures, or enchantments".
+  const act = /^(?:(.+?) or )?activate (?:activated )?abilities(?: of (.+?))?( that aren't mana abilities)?$/.exec(m[2]!.replace(/^activate /, ' activate ').trim().replace(/^cast /, ''));
+  if (act) {
+    const spells = act[1] ? parseCastBan(act[1], b) : null;
+    if (act[1] && (!spells || spells.maxPerTurn)) return null;
+    let filter: ObjectFilter | undefined;
+    if (act[2]) {
+      const pf = parseFilter(act[2].replace(/, and /, ', or ').replace(/^(\w+) and (\w+)$/, '$1 or $2'), b);
+      if (!pf || !pf.plural || pf.filter.zone) return null;
+      filter = pf.filter;
+    }
+    return {
+      type: 'cast_prohibition',
+      who: WHO[m[1]!]!,
+      ...(spells ?? {}),
+      ...(act[1] ? {} : { activateOnly: true as const }),
+      activate: { ...(filter ? { filter } : {}), ...(act[3] ? { nonMana: true as const } : {}) },
+    };
+  }
+  const ban = parseCastBan(m[2]!.replace(/^cast /, ''), b);
   return ban ? { type: 'cast_prohibition', who: WHO[m[1]!]!, ...ban } : null;
 }
 
@@ -1213,6 +1259,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // opponents control can't be activated", "… and its activated abilities can't be activated unless they're mana abilities".
   const lock = (mana: string | undefined, their: boolean) => `can't have ${their ? 'their' : 'its'} ${mana ? 'non-mana ' : ''}abilities activated`;
   body = body
+    // Dryad of the Ilysian Grove: "Lands you control are every basic land type in addition to their other types."
+    .replace(/ (are|is) every basic land type in addition to (their|its) other types$/, ' $1 Plains Island Swamp Mountain Forest in addition to $2 other types')
     .replace(/^Activated abilities of sources /, 'Activated abilities of permanents ')
     .replace(/^Activated abilities of (.+?) can't be activated( unless they're mana abilities)?$/, (_m, what: string, mana?: string) => `${what.replace(/, and /, ', or ').replace(/^(\w+) and (\w+)$/, '$1 or $2').replace(/^\w/, (c) => c.toUpperCase())} ${lock(mana, true)}`)
     .replace(/^(.+?)'s activated abilities can't be activated( unless they're mana abilities)?$/, (_m, what: string, mana?: string) => `${what} ${lock(mana, false)}`)

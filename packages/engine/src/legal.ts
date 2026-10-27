@@ -1,3 +1,4 @@
+import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
@@ -193,6 +194,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   // Abilities that work from the hand (cycling, CR 702.29a) or the graveyard (CR 113.6m).
   for (const id of [...zoneList(g, 'hand', player), ...zoneList(g, 'graveyard', player)]) {
     const o = g.objects[id]!;
+    if (activationProhibited(g, player, o, false)) continue;
     activatedAbilities(g, o).forEach((ab, ability) => {
       const mana = parseManaCost(ab.cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana, 0, [], { kind: 'ability', source: o }))) return;
@@ -211,7 +213,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     // CR 602.2: "Any player may activate this ability."
     const mine = o.controller === player;
     if (!mine && !activatedAbilities(g, o).some((a) => a.anyPlayer)) continue;
-    if (mine) manaAbilities(g, o).forEach((ab, ability) => {
+    const banned = activationProhibited(g, player, o, false);
+    const manaBanned = activationProhibited(g, player, o, true);
+    if (mine && !manaBanned) manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
       if (ab.cost.mana) return;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
@@ -234,7 +238,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         });
       } else if (!effect?.options || manaOption(effect.options[0]!, o)) out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
     });
-    activatedAbilities(g, o).forEach((ab, ability) => {
+    if (!banned) activatedAbilities(g, o).forEach((ab, ability) => {
       if (!mine && !ab.anyPlayer) return;
       if (ab.maxPerTurn && activationsThisTurn(g, o, ability) >= ab.maxPerTurn) return;
       const { cost } = ab;

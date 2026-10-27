@@ -1,4 +1,6 @@
-import type { EffectNode, StaticAbility, TriggerNode } from '@mtg/schema';
+import type { EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
+import { matchesFilter, objectAbilities } from './characteristics.js';
+import { abilitySources } from './zones.js';
 import type {
   ChoiceAnswer,
   GameEvent,
@@ -139,5 +141,16 @@ export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEve
     if (ability.kind !== 'static') continue;
     const replacement = enterReplacements.get((ability as StaticAbility).effect.type);
     if (replacement) replacement((ability as StaticAbility).effect, o, g);
+  }
+  // CR 614.1d: "Creatures your opponents control enter tapped." — another permanent's replacement effect.
+  for (const id of abilitySources(g)) {
+    if (id === o.id) continue;
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield') continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'enter_tapped_others') continue;
+      const filter = ((a as StaticAbility).effect.filter ?? {}) as ObjectFilter;
+      if (matchesFilter(g, o, filter, { controller: src.controller, source: src, anyZone: true })) o.tapped = true;
+    }
   }
 }

@@ -1,12 +1,12 @@
 import { copyChoicePending } from './as-enters.js';
-import type { TriggeredAbility, TriggerNode } from '@mtg/schema';
+import type { Amount, TriggeredAbility, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, matchesFilter, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
 import { matchTrigger } from './registry.js';
-import { apnap } from './resolve.js';
-import { chooseTargets, divisionFor, targetCandidates, targetPrompts, targetsRequired } from './targets.js';
+import { amountOf, apnap } from './resolve.js';
+import { chooseTargets, dividedCap, divisionFor, targetCandidates, targetPrompts, targetsRequired } from './targets.js';
 import {
   RulesError,
   type GameEvent,
@@ -257,13 +257,22 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     }
     const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && candidates[i]!.length === (s.count ?? 1)));
     if (!forced) {
+      const prompts = targetPrompts(g, t.controller, specs, source);
+      // "X damage divided as you choose among any number of targets, where X is …": no more targets than X.
+      const cap = modal ? null : dividedCap(ability.effects, 0, (a) => amountOf({ g, controller: t.controller, source: source ?? undefined, events: [], targets: [], x: 0, memo: {}, trigger: t.info } as EffectContext, a as Amount));
+      // With nothing to divide no target can be chosen, so it's removed like one without legal targets (CR 603.3d).
+      if (cap && cap.total <= 0 && (specs[cap.index]?.min ?? 1) > 0) {
+        g.triggers = g.triggers.filter((x) => x !== t);
+        return;
+      }
+      if (cap && prompts[cap.index]) prompts[cap.index] = { ...prompts[cap.index]!, count: Math.min(prompts[cap.index]!.count, cap.total) };
       g.pending = {
         kind: 'trigger_targets',
         player: t.controller,
         trigger: t.id,
         sourceName: t.sourceName,
         text: ability.text,
-        prompts: targetPrompts(g, t.controller, specs, source),
+        prompts,
         ...(ability.modes
           ? {
               modes: {
@@ -282,7 +291,9 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
 
   const program = flatten([ability], answer.modes);
   const targets = chooseTargets(g, t.controller, program.specs, answer.targets, source);
-  const division = divisionFor(program.effects, targets, 0, (answer as { divide?: number[] }).divide);
+  const division = divisionFor(program.effects, targets, 0, (answer as { divide?: number[] }).divide, (a) =>
+    amountOf({ g, controller: t.controller, source: source ?? undefined, events: [], targets, x: 0, memo: {}, trigger: t.info } as EffectContext, a as Amount),
+  );
   g.triggers = g.triggers.filter((x) => x.id !== t.id);
   g.stack.push({
     kind: 'ability',

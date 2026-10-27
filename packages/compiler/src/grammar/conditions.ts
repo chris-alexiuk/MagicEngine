@@ -267,6 +267,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
+  if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
   const oppCast = /^an opponent cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
   if (oppCast) {

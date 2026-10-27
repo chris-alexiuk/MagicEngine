@@ -1273,3 +1273,26 @@ describe('costs to attack (slice 97)', () => {
     });
   });
 });
+
+describe('staples (slices 100–108)', () => {
+  it('reads them', () => {
+    expect(parse("During your turn, your opponents can't cast spells or activate abilities of artifacts, creatures, or enchantments.", 'Creature — Human Cleric', 'Abolisher').abilities[0]).toMatchObject({
+      effect: { type: 'cast_prohibition', who: 'opponents', activate: { filter: { types: ['Creature', 'Artifact', 'Enchantment'] } }, condition: { type: 'your_turn' } },
+    });
+    expect(parse("Players can't activate abilities that aren't mana abilities.", 'Enchantment', 'Stifling').abilities[0]).toMatchObject({ effect: { type: 'cast_prohibition', who: 'each', activateOnly: true, activate: { nonMana: true } } });
+    expect(parse("Look at the top five cards of your library. You may reveal a creature card from among them and put it into your hand. Put the rest on the bottom of your library in a random order. If you didn't put a card into your hand this way, draw a card.", 'Sorcery', 'Seek').abilities[0]).toMatchObject({
+      effects: [{ type: 'dig', amount: 5, ifNone: [{ type: 'draw', amount: 1 }] }],
+    });
+    expect(parse('{T}: Look at the top card of your library. You may put that card into your graveyard.', 'Artifact', 'Glass').abilities[0]).toMatchObject({ effects: [{ type: 'dig', amount: 1, to: 'graveyard', rest: 'top', optional: true }] });
+    expect(parse('Draw up to three cards.', 'Sorcery', 'Up').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: 3, upTo: true }] });
+    expect(parse("Whenever an opponent casts their first noncreature spell each turn, draw a card unless that player pays {X}, where X is this creature's power.", 'Artifact Creature — Human Soldier', 'Sentinel').abilities[0]).toMatchObject({
+      trigger: { type: 'cast', who: 'opponent', nth: 1, nthOfKind: true, filter: { notTypes: ['Creature'] } },
+      effects: [{ type: 'unless_pays', costX: { kind: 'stat', stat: 'power' } }],
+    });
+    expect(parse('{T}: Draw a card. Activate only if you created a token this turn.', 'Artifact', 'Idol').abilities[0]).toMatchObject({ activateIf: { type: 'this_turn', event: 'you_created_token' } });
+    expect(parse('Artifacts and creatures your opponents control enter tapped.', 'Enchantment', 'Obedience').abilities[0]).toMatchObject({ effect: { type: 'enter_tapped_others', filter: { types: ['Artifact', 'Creature'], controller: 'opponent' } } });
+    expect(parse('{T}: You and target opponent each draw a card.', 'Artifact', 'Loran').abilities[0]).toMatchObject({ effects: [{ type: 'draw', who: { ref: 'you' } }, { type: 'draw', who: { ref: 'target', index: 0 } }] });
+    expect(parse('Add {R} for each tapped land your opponents control.', 'Instant', 'Geyser').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', options: [['R']], times: { kind: 'count' } }] });
+    expect(parse("{T}: Add X mana of any one color, where X is this creature's power.", 'Creature — Spirit', 'Kami').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', anyColor: 1, times: { kind: 'stat' } }] });
+  });
+});
