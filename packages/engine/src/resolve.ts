@@ -194,7 +194,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -362,6 +362,21 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'kicks':
       // CR 702.33c: how many times the spell (or the permanent it became) was kicked.
       return ctx.source?.cast?.kicks ?? (ctx.source?.cast?.kicked ? 1 : 0);
+    case 'total_power': {
+      // Ghalta: "the total power of creatures you control"
+      let n = 0;
+      for (const id of g.zones.battlefield) {
+        const o = g.objects[id]!;
+        if (matchesFilter(g, o, e.filter, { controller: ctx.controller, source: ctx.source ?? null })) n += Math.max(0, power(g, o));
+      }
+      return n;
+    }
+    case 'commander_colors': {
+      // War Room: "the number of colors in your commanders' color identity" (CR 903.4).
+      const colors = new Set<string>();
+      for (const o of Object.values(g.objects)) if (o.commander && o.owner === ctx.controller && !o.spellCopy) for (const c of g.cards[o.card]?.colorIdentity ?? []) colors.add(c);
+      return colors.size;
+    }
     case 'commander_casts':
       return Object.entries(g.commanderCasts).reduce((n, [id, k]) => n + (g.objects[id]?.owner === ctx.controller ? k : 0), 0);
     case 'cast_before': {

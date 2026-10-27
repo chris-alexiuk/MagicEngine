@@ -1411,3 +1411,81 @@ describe('slice 129', () => {
     expect(named.abilities[0]).toMatchObject({ modes: { options: [{ text: 'Pray for Protection — Creatures you control gain indestructible until end of turn.' }, { targets: [{ what: 'player' }] }] } });
   });
 });
+
+describe('slices 130–131', () => {
+  it('grants keywords honestly and reads flashback grants', () => {
+    // A granted keyword the engine can't apply leaves the line unread; one defined by its CR text carries its abilities.
+    expect(parse('Creatures you control have banding.', 'Enchantment', 'B').unparsed).toHaveLength(1);
+    expect(parse('Creatures you control have exalted.', 'Enchantment', 'E').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'exalted', abilities: [{ kind: 'triggered' }] }] } });
+    expect(parse('Nontoken creatures you control have riot.', 'Enchantment', 'R').abilities[0]).toMatchObject({ effect: { affected: { filter: { token: false } }, keywords: [{ id: 'riot', abilities: [{ effect: { type: 'as_enters' } }] }] } });
+    expect(parse('Creature spells of the chosen type cost {2} less to cast.', 'Artifact', 'I').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', filter: { chosenType: true }, amount: 2 } });
+    expect(parse('Whenever a creature you control enters or attacks, draw a card.', 'Enchantment', 'K').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters' }, { type: 'attacks' }] } });
+    expect(parse('When this creature enters, target instant or sorcery card in your graveyard gains flashback until end of turn. The flashback cost is equal to its mana cost.', 'Creature — Human Wizard', 'Snap').abilities[0]).toMatchObject({
+      effects: [{ type: 'modify', until: 'eot', keywords: [{ id: 'flashback', costIsManaCost: true }] }],
+    });
+    expect(parse("Each instant and sorcery card in your graveyard has flashback. The flashback cost is equal to that card's mana cost.", 'Creature — Human Wizard', 'Lier').abilities[0]).toMatchObject({
+      effect: { type: 'continuous', affected: { filter: { zone: 'graveyard', types: ['Instant', 'Sorcery'] } }, keywords: [{ id: 'flashback', costIsManaCost: true }] },
+    });
+    expect(parse("Spells can't be countered.", 'Creature — Human Wizard', 'Lier').abilities[0]).toMatchObject({ effect: { type: 'uncounterable', anyone: true } });
+  });
+});
+
+describe('slice 132', () => {
+  it('reads mana that makes a spell uncounterable', () => {
+    expect(parse("{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered.", 'Land', 'Cavern').abilities[0]).toMatchObject({
+      mana: true, effects: [{ type: 'add_mana', spend: { spells: { types: ['Creature'], chosenType: true }, uncounterable: true } }],
+    });
+  });
+});
+
+describe('slice 133', () => {
+  it('reads Path of Ancestry', () => {
+    expect(parse("{T}: Add one mana of any color in your commander's color identity. When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1.", 'Land', 'Path').abilities[0]).toMatchObject({
+      mana: true, effects: [{ type: 'add_mana', abilities: [{ kind: 'triggered', trigger: { type: 'mana_spent', filter: { types: ['Creature'], sharesTypeWithCommander: true } }, effects: [{ type: 'scry', amount: 1 }] }] }],
+    });
+  });
+});
+
+describe('slices 134–135', () => {
+  it('reads Myriad Landscape and "the next spell you cast this turn"', () => {
+    expect(parse('{2}, {T}, Sacrifice this land: Search your library for up to two basic land cards that share a land type, put them onto the battlefield tapped, then shuffle.', 'Land', 'M').abilities[0]).toMatchObject({
+      effects: [{ type: 'search', amount: 2, upTo: true, sameLandType: true, to: 'battlefield', tapped: true }],
+    });
+    expect(parse("{U}, {T}: The next spell you cast this turn can't be countered.", 'Land', 'V').abilities[0]).toMatchObject({ effects: [{ type: 'next_spell', filter: {}, uncounterable: true }] });
+    expect(parse('{1}{U}, {T}: Draw a card. The next instant or sorcery spell you cast this turn costs {X} less to cast, where X is the number of Wizards you control as this ability resolves.', 'Creature — Wizard', 'K').abilities[0]).toMatchObject({
+      effects: [{ type: 'draw' }, { type: 'next_spell', filter: { types: ['Instant', 'Sorcery'] }, reduce: { kind: 'count' } }],
+    });
+  });
+});
+
+describe('slice 136', () => {
+  it('reads War Room, Gamble, Victimize', () => {
+    expect(parse("{3}, {T}, Pay life equal to the number of colors in your commanders' color identity: Draw a card.", 'Land', 'War Room').abilities[0]).toMatchObject({ cost: { other: [{ type: 'pay_life', amount: { kind: 'commander_colors' } }] } });
+    expect(parse('Search your library for a card, put that card into your hand, discard a card at random, then shuffle.', 'Sorcery', 'Gamble').abilities[0]).toMatchObject({ effects: [{ type: 'search', to: 'hand' }, { type: 'discard', random: true }] });
+    expect(parse('Choose two target creature cards in your graveyard. Sacrifice a creature. If you do, return the chosen cards to the battlefield tapped.', 'Sorcery', 'Victimize').abilities[0]).toMatchObject({
+      targets: [{ count: 2 }],
+      effects: [{ type: 'may_do', mandatory: true, effects: [{ type: 'sacrifice_choice' }], then: [{ type: 'move', what: { ref: 'target', index: 0 }, to: 'battlefield' }] }],
+    });
+  });
+});
+
+describe('slice 137', () => {
+  it('reads a batch of staples', () => {
+    expect(parse('This spell costs {X} less to cast, where X is the total power of creatures you control.', 'Creature — Dinosaur', 'Ghalta').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', self: true, amount: { kind: 'total_power', filter: { controller: 'you', types: ['Creature'] } } } });
+    expect(parse("Each spell you cast that's red or green costs {1} less to cast.", 'Creature — Goblin', 'A').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', who: 'you', filter: { colors: ['R', 'G'] }, amount: 1 } });
+    expect(parse('Creature spells you cast with power 4 or greater cost {2} less to cast.', 'Creature — Bear', 'G').abilities[0]).toMatchObject({ effect: { filter: { types: ['Creature'], power: { op: 'ge', n: 4 } }, amount: 2 } });
+    expect(parse('Whenever a creature you control dies, each other player sacrifices a creature of their choice.', 'Enchantment', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice', who: { ref: 'players', who: 'opponents' } }] });
+    expect(parse('Whenever a player sacrifices a permanent, this creature deals 1 damage to any target.', 'Creature — Devil', 'D').abilities[0]).toMatchObject({ trigger: { type: 'sacrificed', who: 'any' } });
+    expect(parse('{1}, {T}, Sacrifice this land: You may cast spells this turn as though they had flash.', 'Land', 'Z').abilities[0]).toMatchObject({ effects: [{ type: 'player_effect', rule: 'flash' }] });
+    expect(parse("Untap all artifacts you control during each other player's untap step.", 'Artifact', 'C').abilities[0]).toMatchObject({ effect: { type: 'continuous', rules: ['untap_during_others'] } });
+    expect(parse('Equipped creature gets +2/+2 and has protection from black and from green.', 'Artifact — Equipment', 'S').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'protection', text: 'black' }, { id: 'protection', text: 'green' }] } });
+  });
+});
+
+describe('slice 138', () => {
+  it('reads triggered mana abilities (CR 605.1b)', () => {
+    expect(parse('Whenever enchanted land is tapped for mana, its controller adds an additional {G}.', 'Enchantment — Aura', 'Growth').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', subject: { ref: 'attached' }, its: true }, effects: [{ type: 'add_mana', options: [['G']] }] });
+    expect(parse('Whenever you tap a Swamp for mana, add an additional {B}.', 'Creature — Spirit', 'Ghast').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', subject: { filter: { subtypes: ['Swamp'], controller: 'you' } } } });
+    expect(parse('Whenever you tap a land for mana, add one mana of any type that land produced.', 'Enchantment', 'Wake').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', produced: true }] });
+  });
+});

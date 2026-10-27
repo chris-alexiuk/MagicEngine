@@ -7,11 +7,11 @@ import { livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
-import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
+import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
-import { hasKeyword, power, printedAbilities } from './characteristics.js';
+import { grantedKeywordOff, hasKeyword, matchesFilter, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -24,7 +24,7 @@ import {
   settle,
 } from './flow.js';
 import { reduceCostBy, parseManaCost, type ManaCost } from './mana.js';
-import { OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
+import { lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
@@ -459,6 +459,15 @@ export function flashbackCost(face: FaceDef): string | null {
   return kw?.cost && /^(\{[^}]+\})+$/.test(kw.cost) ? kw.cost : null;
 }
 
+/** CR 702.34a: its flashback cost, printed or given by an effect (Snapcaster Mage, Past in Flames, Lier). */
+export function flashbackCostOf(g: GameState, o: GameObject, face: FaceDef): string | null {
+  const own = flashbackCost(face);
+  if (own) return own;
+  const k = grantedKeywordOff(g, o, 'flashback');
+  const cost = k ? (k.costIsManaCost ? face.manaCost : k.cost) : undefined;
+  return cost && /^(\{[^}]+\})+$/.test(cost) ? cost : null;
+}
+
 function cast(
   g: GameState,
   player: PlayerId,
@@ -540,7 +549,7 @@ function cast(
     o.owner === player &&
     ((alt?.id === 'foretell' && o.foretold !== undefined && o.foretold < g.turn) ||
       (alt?.id === 'plot' && o.plotted !== undefined && o.plotted < g.turn && g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0));
-  const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCost(face) : null;
+  const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCostOf(g, o, face) : null;
   // CR 702.127a: "You may cast this half of this split card from your graveyard."
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
   // "Until the end of your next turn, you may play that card."
@@ -642,6 +651,17 @@ function cast(
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
   const spent = payMana(g, player, cost, x, { kind: 'spell', object: o });
   if (!spent) throw new RulesError(`Not enough mana to cast ${face.name}.`);
+  // "The next spell you cast this turn …": this spell uses those effects up.
+  const nextUsed = (g.nextSpell ?? []).filter((n) => n.player === player && n.turn === g.turn && matchesFilter(g, o, n.filter, { controller: player, source: g.objects[n.source.id] ?? null, anyZone: true }));
+  if (g.nextSpell) g.nextSpell = g.nextSpell.filter((n) => n.turn === g.turn && !nextUsed.includes(n));
+  // Cavern of Souls: "Spend this mana only to cast a creature spell of the chosen type, and that spell can't be countered."
+  const uncounterableCast = lastSpentRestricted.some((r) => r.spend?.uncounterable) || nextUsed.some((n) => n.uncounterable);
+  // Path of Ancestry: "When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1."
+  const spentTriggers = lastSpentRestricted.flatMap((r) => {
+    const src = r.source ? g.objects[r.source.id] : undefined;
+    const filter = (r.onSpent?.trigger.filter ?? {}) as ObjectFilter;
+    return r.onSpent && matchesFilter(g, o, filter, { controller: player, source: src ?? null, anyZone: true }) ? [{ ability: r.onSpent, source: r.source!, name: src ? nameOf(g, src) : 'mana' }] : [];
+  });
   // CR 702.44a / converge: the colors of mana spent to cast it.
   const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => spent[m] > 0).length;
   const lki = costLKI(g, additional, costChoices);
@@ -682,7 +702,9 @@ function cast(
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
     ...(giftTo ? { giftTo } : {}),
+    ...(uncounterableCast ? { uncounterable: true as const } : {}),
   };
+  for (const t of spentTriggers) g.triggers.push({ id: `t${g.nextId++}`, controller: player, source: t.source, sourceName: t.name, ability: t.ability, info: { object: { id: o.id, zcc: o.zcc } } });
   // CR 702.174b / 702.174j: an instant or sorcery whose gift was promised gives it first, as it resolves.
   const giftSpell = giftTo ? castFace.abilities.find((a) => a.kind === 'static' && a.effect.type === 'gift_spell') : undefined;
   if (program && giftSpell && giftSpell.kind === 'static') program.effects.unshift({ type: 'give_gift', effects: giftSpell.effect.effects });

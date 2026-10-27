@@ -12,6 +12,7 @@ import type {
   Cost,
   CostModifierNode,
   QuantityReplacementNode,
+  AddManaEffect,
   ExileInsteadNode,
   ManaSpend,
   ObjectFilter,
@@ -190,6 +191,12 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || pf.filter.zone) return null;
     if (tap[3]) pf.filter.sharesColorWithSource = true;
     return { type: 'tap_creatures', amount, filter: pf.filter };
+  }
+  // War Room: "Pay life equal to the number of colors in your commanders' color identity"
+  const lifeEqual = /^[Pp]ay life equal to (.+)$/.exec(item);
+  if (lifeEqual && b) {
+    const n = parseCount(lifeEqual[1]!, b);
+    return n ? { type: 'pay_life', amount: n } : null;
   }
   // "As an additional cost to cast this spell, pay 3 life." (CR 119.4)
   const life = /^[Pp]ay (\d+) life$/.exec(item);
@@ -399,6 +406,17 @@ export const activatedRule: GrammarRule = {
         if (!spend) return null;
         effect.spend = spend;
         mana[2] = spendOnly[2]!;
+      }
+      // Path of Ancestry: "When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1."
+      const spentWhen = mana?.[2] ? /^When that mana is spent to cast (.+?), (.+)\.$/.exec(mana[2]) : null;
+      if (mana && effect && spentWhen) {
+        const sb = new Binder(env);
+        const pf = parseFilter(spentWhen[1]!.replace(/^(?:a|an) /, ''), sb);
+        const then = pf && pf.filter.zone === 'stack' ? parseEffectText(`${spentWhen[2]!.replace(/^\w/, (c) => c.toUpperCase())}.`, sb) : null;
+        if (!pf || !then || sb.targets.length) return null;
+        const { zone: _z, ...filter } = pf.filter;
+        effect.abilities = [{ kind: 'triggered', text: mana[2]!, trigger: { type: 'mana_spent', filter }, effects: then }];
+        mana[2] = '';
       }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
       const keep = mana?.[2] ? /^Until end of turn, you don't lose this mana as steps and phases end\.(?: (.+))?$/.exec(mana[2]) : null;
@@ -723,6 +741,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies").
     return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
   }
+  // Kindred Discovery: "Whenever a creature you control of the chosen type enters or attacks"
+  const eitherAny = /^((?:a|an|another) .+?) (enters|attacks) or (attacks|dies)$/.exec(t);
+  if (eitherAny && eitherAny[2] !== eitherAny[3]) {
+    const one = parseTrigger(word, `${eitherAny[1]} ${eitherAny[2]}`, b);
+    const two = one ? parseTrigger(word, `${eitherAny[1]} ${eitherAny[3]}`, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
+  }
   // "Whenever ~ becomes tapped", "Whenever enchanted land becomes tapped", "Whenever a creature you control becomes tapped"
   const tapped = /^(~|enchanted (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes (un)?tapped$/.exec(t);
   if (tapped) {
@@ -875,14 +901,17 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
   }
   // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
-  const sacrificed = /^you sacrifice (a|an|another) (.+)$/.exec(t);
+  // Mayhem Devil: "Whenever a player sacrifices a permanent"
+  const sacrificed = /^(you|a player|an opponent) sacrifices? (a|an|another) (.+)$/.exec(t);
   if (sacrificed) {
-    const pf = parseFilter(sacrificed[2]!, b);
+    const pf = parseFilter(sacrificed[3]!, b);
     if (!pf || pf.plural || (pf.filter.controller && pf.filter.controller !== 'you')) return null;
+    if (sacrificed[1] !== 'you' && pf.filter.controller) return null;
     const { controller: _c, ...filter } = pf.filter;
     b.named['that creature'] = { ref: 'trigger_object' };
     b.named['that permanent'] = { ref: 'trigger_object' };
-    return { trigger: { type: 'sacrificed', filter, ...(sacrificed[1] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+    const who = sacrificed[1] === 'you' ? {} : { who: sacrificed[1] === 'a player' ? 'any' : 'opponent' };
+    return { trigger: { type: 'sacrificed', filter, ...who, ...(sacrificed[2] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: sacrificed[1] === 'you' ? null : { ref: 'trigger_player' } };
   }
   const life = /^(you) gain life( for the first time each turn)?$/.exec(t);
   if (life) {
@@ -1214,6 +1243,8 @@ export const continuousRule: GrammarRule = {
 /** CR 614.1d: "Creatures your opponents control enter tapped.", "Artifacts and creatures your opponents control enter tapped." */
 function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   // Rhythm of the Wild: "Creature spells you control can't be countered." (CR 101.2)
+  // Lier, Prowling Pyromancer: "Spells can't be countered." — anyone's.
+  if (/^Spells can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true };
   const uncounterable = /^(.*?)\bspells you (?:control|cast) can't be countered$/i.exec(body);
   if (uncounterable) {
     const words = uncounterable[1]!.trim();
@@ -1320,6 +1351,14 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
 
 /** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
+  // Bender's Waterskin, Unwinding Clock: "Untap this artifact / all artifacts you control during each other player's untap step."
+  const untapOthers = /^Untap (~|all (.+?)) during each other player's untap step$/.exec(body);
+  // (Seedborn Muse's "all permanents you control" is a rule for the player.)
+  if (untapOthers && untapOthers[2] !== 'permanents you control') {
+    if (untapOthers[1] === '~') return { type: 'continuous', affected: { ref: 'self' }, rules: ['untap_during_others'] };
+    const pf = parseFilter(untapOthers[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { type: 'continuous', affected: { ref: 'all', filter: pf.filter }, rules: ['untap_during_others'] } : null;
+  }
   // CR 602.5: "Enchanted creature's activated abilities can't be activated", "Activated abilities of artifacts your
   // opponents control can't be activated", "… and its activated abilities can't be activated unless they're mana abilities".
   const lock = (mana: string | undefined, their: boolean) => `can't have ${their ? 'their' : 'its'} ${mana ? 'non-mana ' : ''}abilities activated`;
@@ -1464,7 +1503,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
         effect.toughness = scaled[0]!.toughness as Amount;
       }
     } else if (has && !effect.keywords) {
-      const kws = parseKeywordList(has[1]!, b);
+      const kws = parseKeywordList(has[1]!, b, false, true);
       if (!kws) return null;
       effect.keywords = kws;
     } else return null;
@@ -1595,18 +1634,33 @@ export const costModifierRule: GrammarRule = {
       const ability: StaticAbility = { kind: 'static', text: original, effect: node };
       return ability;
     }
-    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);
+    // Herald's Horn, Urza's Incubator: "Creature spells you cast of the chosen type cost {1} less to cast."
+    // Goblin Anarchomancer: "Each spell you cast that's red or green costs {1} less to cast."
+    const thats = /^Each (?:(.+?) )?spell you cast that's (.+?) costs (\{\d+\}) (less|more) to cast$/.exec(body);
+    if (thats) {
+      const a = amountOf(thats[3]!);
+      const pf = a ? parseFilter(`${thats[1] ? `${thats[1]} ` : ''}${thats[2]} spells`, b) : null;
+      if (!a || !pf || pf.filter.zone !== 'stack') return null;
+      const { zone: _z, ...filter } = pf.filter;
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: thats[4] as 'less' | 'more', ...a } as CostModifierNode };
+    }
+    // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
+    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);
     if (others) {
+      const suffix = others[3] ? ` ${others[3].trim()}` : '';
+      others.splice(3, 1);
+      const chosenType = false;
       const a = amountOf(others[3]!);
       if (!a || a.amount === 'X') return null;
       const adjectives = others[1]!.trim().replace(/ and /g, ' or ');
       let filter: ObjectFilter = {};
-      if (adjectives && !/^Spells?$/i.test(adjectives)) {
-        const pf = parseFilter(`${adjectives.replace(/^\w/, (c) => c.toLowerCase())} spells`, b);
+      if ((adjectives && !/^Spells?$/i.test(adjectives)) || suffix) {
+        const pf = parseFilter(`${adjectives && !/^Spells?$/i.test(adjectives) ? `${adjectives.replace(/^\w/, (c) => c.toLowerCase())} ` : ''}spells${suffix}`, b);
         if (!pf) return null;
         const { zone: _z, ...rest } = pf.filter;
         filter = rest;
       }
+      if (chosenType) filter.chosenType = true;
       const who = !others[2] ? 'each' : others[2] === 'you' ? 'you' : 'opponents';
       const node: CostModifierNode = { type: 'cost_modifier', who, filter, change: others[4]!.toLowerCase() as 'less' | 'more', ...a };
       const ability: StaticAbility = { kind: 'static', text: original, effect: node };
@@ -2093,6 +2147,51 @@ export const entersDayRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 605.1b / 106.12a: triggered mana abilities — "Whenever enchanted land is tapped for mana, its controller adds an
+ * additional {G}" (Wild Growth), "Whenever you tap a Swamp for mana, add an additional {B}" (Crypt Ghast),
+ * "Whenever a Forest is tapped for mana, its controller adds an additional {G}", "… add one mana of any type that
+ * land produced" (Mirari's Wake). They resolve at once, as the mana ability does.
+ */
+export const manaTriggerRule: GrammarRule = {
+  id: 'mana_trigger',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env) return null;
+    const enchanted = /^Whenever enchanted (?:land|Forest|Plains|Island|Swamp|Mountain) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line);
+    const yours = /^Whenever you tap (?:a|an) (.+?) for mana, add (?:an additional )?(.+)\.$/.exec(line);
+    const anyone = /^Whenever (?:a|an) (.+?) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line);
+    const m = enchanted ?? yours ?? anyone;
+    if (!m) return null;
+    const manaText = enchanted ? enchanted[1]! : m[2]!;
+    let subject: Ref = { ref: 'attached' };
+    if (!enchanted) {
+      const pf = parseFilter(`${m[1]!}${yours ? ' you control' : ''}`, new Binder(env));
+      if (!pf || pf.plural || pf.filter.zone) return null;
+      subject = { ref: 'all', filter: pf.filter };
+    }
+    let effect: AddManaEffect | null = null;
+    if (/^one mana of any type that (?:land|permanent|creature) produced$/.test(manaText)) effect = { type: 'add_mana', produced: true };
+    else if (manaText === 'one mana of the chosen color') effect = { type: 'add_mana', options: [['chosen']] };
+    else if (MANA_RUN.test(manaText) && !/[X\/]/.test(manaText)) effect = parseManaProduction(manaText) as AddManaEffect | null;
+    if (!effect) return null;
+    return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }) }, effects: [effect] } as TriggeredAbility;
+  },
+};
+
+/** Lier, Disciple of the Drowned: "Each instant and sorcery card in your graveyard has flashback. The flashback cost is equal to that card's mana cost." */
+export const grantedFlashbackRule: GrammarRule = {
+  id: 'granted_flashback',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^(.+?) (?:has|have) flashback\. The flashback cost is equal to (?:its|that card's|their) mana cost\.$/.exec(line);
+    if (!env || !m) return null;
+    const what = parseObjectRef(m[1]!.replace(/^\w/, (c) => c.toLowerCase()), new Binder(env));
+    if (!what || what.ref.ref !== 'all' || (what.ref.filter as ObjectFilter | undefined)?.zone !== 'graveyard') return null;
+    return { kind: 'static', text: original, effect: { type: 'continuous', affected: what.ref, keywords: [{ id: 'flashback', costIsManaCost: true }] } } as StaticAbility;
+  },
+};
+
 export const additionalCostRule: GrammarRule = {
   id: 'additional_cost',
   parse(line, original, ctx) {
@@ -2131,6 +2230,8 @@ export const additionalCostRule: GrammarRule = {
 };
 
 export const GRAMMAR_RULES: GrammarRule[] = [
+  manaTriggerRule,
+  grantedFlashbackRule,
   chapterRule,
   entersWithCountersRule,
   entersTappedUnlessRule,

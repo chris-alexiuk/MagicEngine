@@ -1,5 +1,5 @@
-import { isQuoted, parseQuotedAbility } from './quoted.js';
-import type { KeywordInstance, ObjectFilter, Ref, TargetSpec } from '@mtg/schema';
+import { grantableStatic, isQuoted, parseQuotedAbility } from './quoted.js';
+import { keywordSupported, type KeywordInstance, type ObjectFilter, type Ref, type TargetSpec } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
 import { capitalise, COLOR_WORDS, parseAmount, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js';
 
@@ -47,6 +47,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Transmute (CR 702.53a), transfigure (CR 702.71a)
   [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
+  [/ that shares a creature type with your commander$/, (f) => !f.sharesTypeWithCommander && ((f.sharesTypeWithCommander = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
@@ -88,12 +89,23 @@ function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: str
  * "flying and first strike", "trample, haste", 'haste and "{T}: Add {G}."' → keyword instances;
  * null if any item isn't a keyword. Quoted abilities are `printed` on a token or copy, or granted.
  */
-export function parseKeywordList(text: string, b: Binder, printed = false): KeywordInstance[] | null {
+export function parseKeywordList(text: string, b: Binder, printed = false, grant = false): KeywordInstance[] | null {
+  // Swords: "protection from black and from green" is two protections (CR 702.16).
+  text = text.replace(/\bprotection from (\w+) and from (\w+)\b/g, 'protection from $1, protection from $2');
   const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean);
   const out: KeywordInstance[] = [];
   for (const item of items) {
-    const kw = isQuoted(item) ? parseQuotedAbility(item, b, printed) : b.env.keywords.parseChunk(item, true);
+    let kw = isQuoted(item) ? parseQuotedAbility(item, b, printed) : b.env.keywords.parseChunk(item, true);
     if (!kw) return null;
+    // Granted: a keyword the engine knows only through its CR definition (prowess, riot, exalted…) carries that
+    // definition's abilities; one it can't apply at all (banding) leaves the line unread.
+    if (grant && !isQuoted(item) && !keywordSupported(kw)) {
+      const r = b.env.parseAbilities?.(capitalise(item), '\u0001', 'Creature');
+      const exp = r && !r.unparsed.length && !r.manualKeywords.length && r.keywords.length === 1 && !r.abilities.length ? r.keywords[0]! : null;
+      const usable = (a: import('@mtg/schema').AbilityNode) => a.kind === 'triggered' || a.kind === 'activated' || grantableStatic(a) || (a.kind === 'static' && a.effect.type === 'as_enters');
+      if (!exp || exp.id !== kw.id || !keywordSupported(exp) || !(exp.abilities ?? []).every(usable)) return null;
+      kw = exp;
+    }
     out.push(kw);
   }
   return out.length ? out : null;
@@ -129,6 +141,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
 
   // "noncreature, nonland permanent": a comma between "non-" words is "and".
   rest = rest.replace(/,\s+(?=non)/g, ' ');
+  // "each instant and sorcery card": each card that's either (as with "or").
+  rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
   // "each Fungus and Saproling you control": either subtype.
   rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) === a && subtypeOf(z) === z ? `${a} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
@@ -234,7 +248,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
   const adjTypes: string[] = [];
   for (const raw of adjectives) {
     const w = raw.toLowerCase();
-    const non = /^non-?(.+)$/.exec(raw);
+    // "Nontoken creatures you control" at the start of a sentence, too.
+    const non = /^[Nn]on-?(.+)$/.exec(raw);
     if (non) {
       const x = non[1]!;
       const xl = x.toLowerCase();
@@ -423,7 +438,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   const t = text.trim().toLowerCase();
   if (t === 'you') return { ref: 'you' };
   if (t === 'each player') return { ref: 'players', who: 'each' };
-  if (t === 'each opponent' || t === 'each of your opponents' || t === 'your opponents') return { ref: 'players', who: 'opponents' };
+  // In a free-for-all game (CR 806), every other player is an opponent: "each other player sacrifices a creature".
+  if (t === 'each opponent' || t === 'each of your opponents' || t === 'your opponents' || t === 'each other player') return { ref: 'players', who: 'opponents' };
   if (t === 'target player' || t === 'target opponent') {
     const spec: TargetSpec = { what: 'player', text: t };
     if (t === 'target opponent') spec.player = 'opponent';

@@ -60,6 +60,10 @@ export interface RestrictedMana {
   spend?: ManaSpend;
   /** Mana that isn't lost as steps and phases end, until then (CR 500.5). */
   keep?: 'end_of_turn' | 'end_of_combat';
+  /** What made it ("a creature spell of the chosen type" is the type chosen for that permanent). */
+  source?: ObjectRef;
+  /** "When that mana is spent to cast …" (Path of Ancestry). */
+  onSpent?: TriggeredAbility;
 }
 
 export interface PlayerState {
@@ -190,7 +194,7 @@ export interface GameObject {
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -519,7 +523,8 @@ export type PendingChoice =
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
-  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string }
+  /** sameLandType: the cards found must share a land type (Myriad Landscape). */
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
   | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
   /** CR 701.34a: any number of permanents and players that have counters. */
@@ -840,6 +845,8 @@ export interface GameState {
   prevention: PreventionShield[];
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
+  /** "The next spell you cast this turn can't be countered" / "costs {1} less to cast" — used up by that spell. */
+  nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
   playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */

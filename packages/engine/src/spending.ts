@@ -1,7 +1,7 @@
 import type { ManaSpend, ObjectFilter } from '@mtg/schema';
 import { matchesFilter } from './characteristics.js';
 import { MANA_COLORS, payFromPool, type ManaCost } from './mana.js';
-import type { GameObject, GameState, ManaPool, PlayerId } from './types.js';
+import type { GameObject, GameState, ManaPool, PlayerId, RestrictedMana } from './types.js';
 
 /**
  * CR 106.6: some mana can be spent only on certain things ("Spend this mana only to cast creature spells").
@@ -12,9 +12,10 @@ export type ManaPurpose = { kind: 'spell'; object: GameObject } | { kind: 'abili
 export const OTHER_PURPOSE: ManaPurpose = { kind: 'other' };
 
 /** Whether mana with this restriction can be spent on this. */
-export function canSpend(g: GameState, player: PlayerId, spend: ManaSpend | undefined, purpose: ManaPurpose): boolean {
+export function canSpend(g: GameState, player: PlayerId, spend: ManaSpend | undefined, purpose: ManaPurpose, source?: GameObject | null): boolean {
   if (!spend) return true;
-  const ok = (o: GameObject, f: ObjectFilter) => matchesFilter(g, o, f, { controller: player, anyZone: true });
+  // "a creature spell of the chosen type": the type chosen for the permanent that made the mana.
+  const ok = (o: GameObject, f: ObjectFilter) => matchesFilter(g, o, f, { controller: player, anyZone: true, source: source ?? null });
   if (purpose.kind === 'spell') return Boolean(spend.spells && ok(purpose.object, spend.spells));
   if (purpose.kind === 'ability') return Boolean(spend.abilities && ok(purpose.source, spend.abilities));
   if (purpose.kind === 'unlock' || purpose.kind === 'face_up') return Boolean(spend.special?.includes(purpose.kind));
@@ -25,7 +26,7 @@ export function canSpend(g: GameState, player: PlayerId, spend: ManaSpend | unde
 export function spendablePool(g: GameState, player: PlayerId, purpose: ManaPurpose): ManaPool {
   const ps = g.players[player]!;
   const out: ManaPool = { ...ps.pool };
-  for (const r of ps.restricted ?? []) if (canSpend(g, player, r.spend, purpose)) out[r.color] += r.amount;
+  for (const r of ps.restricted ?? []) if (canSpend(g, player, r.spend, purpose, sourceOf(g, r))) out[r.color] += r.amount;
   return out;
 }
 
@@ -33,9 +34,15 @@ export function spendablePool(g: GameState, player: PlayerId, purpose: ManaPurpo
  * CR 601.2h / 602.2b: pays a mana cost from what the player could spend on it — restricted mana first,
  * since it's good for less. Returns the mana spent, or null (paying nothing) if the cost can't be paid.
  */
+const sourceOf = (g: GameState, r: RestrictedMana): GameObject | null => (r.source ? (g.objects[r.source.id] ?? null) : null);
+
+/** Restricted mana a payment used, for its riders ("and that spell can't be countered"). */
+export let lastSpentRestricted: RestrictedMana[] = [];
+
 export function payMana(g: GameState, player: PlayerId, cost: ManaCost, x: number, purpose: ManaPurpose): ManaPool | null {
   const ps = g.players[player]!;
-  const usable = (ps.restricted ?? []).filter((r) => r.amount > 0 && canSpend(g, player, r.spend, purpose));
+  const usable = (ps.restricted ?? []).filter((r) => r.amount > 0 && canSpend(g, player, r.spend, purpose, sourceOf(g, r)));
+  lastSpentRestricted = [];
   const combined: ManaPool = { ...ps.pool };
   for (const r of usable) combined[r.color] += r.amount;
   const left = payFromPool(combined, cost, x);
@@ -49,6 +56,7 @@ export function payMana(g: GameState, player: PlayerId, cost: ManaCost, x: numbe
       const take = Math.min(r.amount, owed);
       r.amount -= take;
       owed -= take;
+      if (take) lastSpentRestricted.push(r);
     }
     ps.pool[c] -= owed;
   }

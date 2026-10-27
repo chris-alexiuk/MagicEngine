@@ -118,8 +118,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     const ps = ctx.g.players[ctx.controller]!;
     // CR 106.6: "Spend this mana only to …" — kept apart from the rest of the pool.
-    if (effect.spend || effect.keep) {
-      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}) });
+    const onSpent = effect.abilities?.find((a): a is TriggeredAbility => a.kind === 'triggered' && a.trigger.type === 'mana_spent');
+    if (effect.spend || effect.keep || onSpent) {
+      // "a creature spell of the chosen type": remember which permanent's choice that is (and whose mana it was).
+      const source = ctx.source && (onSpent || JSON.stringify(effect.spend ?? {}).includes('"chosen')) ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {};
+      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}) });
     } else for (const c of mana) ps.pool[c]++;
     ctx.events.push({ type: 'mana_added', player: ctx.controller, mana });
     return true;
@@ -482,7 +485,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   modify(node, ctx) {
     // CR 611.2c: the affected set is determined now and doesn't change later.
-    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
+    // "… card in your graveyard gains flashback until end of turn" works on cards in graveyards.
+    const flashback = Array.isArray(node.keywords) && (node.keywords as KeywordInstance[]).every((k) => k.id === 'flashback');
+    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard'));
     if (!objects.length) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
@@ -836,6 +841,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         ...(ctx.resolution?.lkiThisWay ? { lkiThisWay: ctx.resolution.lkiThisWay } : {}),
         ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}),
       },
+    });
+    return true;
+  },
+
+  // Mistrise Village: "The next spell you cast this turn can't be countered."; "… costs {1} less to cast".
+  next_spell(node, ctx) {
+    const g = ctx.g;
+    const reduce = node.reduce !== undefined ? Math.max(0, amountOf(ctx, node.reduce)) : undefined;
+    const source = ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 };
+    (g.nextSpell ??= []).push({
+      id: `n${g.nextId++}`, player: ctx.controller, turn: g.turn, filter: (node.filter ?? {}) as ObjectFilter, source,
+      ...(node.uncounterable ? { uncounterable: true as const } : {}), ...(reduce !== undefined ? { reduce } : {}),
     });
     return true;
   },
@@ -1677,12 +1694,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const answer = answerOf(ctx, 'search');
       if (!answer) {
         if (library.length === 0 && zones.length === 1) return true;
-        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node) } };
+        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
       }
       chosen = answer.objects;
       const need = mustFind ? Math.min(count, candidates.length) : 0;
       if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
         throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
+      }
+      // Myriad Landscape: "up to two basic land cards that share a land type".
+      if (node.sameLandType && chosen.length > 1) {
+        const types = (id: ObjectId) => chars(g, g.objects[id]!).subtypes;
+        const common = types(chosen[0]!).filter((t) => chosen.every((id) => types(id).includes(t)));
+        if (!common.length) throw new RulesError('The cards must share a land type.');
       }
       // Cultivate: revealed, then the player picks which one goes onto the battlefield.
       if (split && chosen.length) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
@@ -2226,11 +2249,14 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
 
 /** "Creature spells you control can't be countered." */
 function uncounterable(g: GameState, spell: GameObject): boolean {
+  // Cast with mana that said "that spell can't be countered".
+  if (spell.cast?.uncounterable) return true;
   for (const id of abilitySources(g)) {
     const src = g.objects[id]!;
-    if (src.controller !== spell.controller) continue;
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || a.effect.type !== 'uncounterable') continue;
+      // "Spells you control can't be countered" — unless it's everyone's ("Spells can't be countered").
+      if (src.controller !== spell.controller && !a.effect.anyone) continue;
       if (matchesFilter(g, spell, { ...((a.effect.filter ?? {}) as ObjectFilter), zone: 'stack' }, { controller: src.controller, source: src })) return true;
     }
   }
@@ -2773,6 +2799,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   reflexive() {
     return [];
   },
+  // "When that mana is spent to cast …": put in place by the payment (see cast).
+  mana_spent() {
+    return [];
+  },
+  // CR 605.1b: triggered mana abilities resolve with the mana ability that tapped the permanent (see runManaAbility).
+  tapped_for_mana() {
+    return [];
+  },
   // "Whenever you scry", "Whenever you scry or surveil" (CR 701.22, 701.25).
   scry(t, check) {
     const e = check.event;
@@ -2793,7 +2827,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever you sacrifice a Clue", "Whenever you sacrifice another permanent" (CR 701.21a).
   sacrificed(t, check) {
     const e = check.event;
-    if (e.type !== 'sacrificed' || e.player !== check.controller) return [];
+    if (e.type !== 'sacrificed') return [];
+    // "Whenever a player sacrifices a permanent" / "an opponent"; otherwise you.
+    if (t.who === 'opponent' ? e.player === check.controller : t.who !== 'any' && e.player !== check.controller) return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
     // "another": not this permanent (which may itself have been sacrificed); "When you sacrifice ~".
@@ -2802,7 +2838,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // CR 702.110b: "When ~ exploits a creature" — sacrificed as its exploit ability resolved.
     if (t.exploit && e.exploitedBy !== check.source.id) return [];
     if (t.filter && !matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true, lastController: e.player })) return [];
-    return [{ object: refTo(o) }];
+    return [{ object: refTo(o), player: e.player }];
   },
   // CR 701.43d: "When you do" (linked to "You may exert ~ as it attacks"), "Whenever you exert a creature".
   exerted(t, check) {

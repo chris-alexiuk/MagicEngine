@@ -1,5 +1,5 @@
 import type { EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
-import { matchesFilter, objectAbilities } from './characteristics.js';
+import { chars, matchesFilter, objectAbilities } from './characteristics.js';
 import { abilitySources } from './zones.js';
 import type {
   ChoiceAnswer,
@@ -141,6 +141,15 @@ export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEve
     if (ability.kind !== 'static') continue;
     const replacement = enterReplacements.get((ability as StaticAbility).effect.type);
     if (replacement) replacement((ability as StaticAbility).effect, o, g);
+  }
+  // CR 614.12: a keyword another permanent gives it ("Nontoken creatures you control have riot") applies as it enters.
+  const printed = new Set(face?.keywords.map((k) => k.id) ?? []);
+  for (const k of chars(g, o).keywords) {
+    if (printed.has(k.id)) continue;
+    for (const a of k.abilities ?? []) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'as_enters') continue;
+      enterReplacements.get('as_enters')?.((a as StaticAbility).effect, o, g);
+    }
   }
   // CR 614.1d: "Creatures your opponents control enter tapped." — another permanent's replacement effect.
   for (const id of abilitySources(g)) {

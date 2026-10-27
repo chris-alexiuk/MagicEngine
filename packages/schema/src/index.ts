@@ -98,6 +98,8 @@ export interface KeywordInstance {
   player?: 'any' | 'opponent';
   /** What the keyword means, compiled from its definition in CR 702 (prowess → a triggered ability). */
   abilities?: AbilityNode[];
+  /** Granted flashback: "The flashback cost is equal to its mana cost." (Snapcaster Mage) */
+  costIsManaCost?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +341,8 @@ export interface ObjectFilter {
   chosenColor?: true;
   /** "with the chosen name": the name chosen as the source entered (CR 201.3). */
   chosenName?: true;
+  /** Path of Ancestry: "a creature spell that shares a creature type with your commander". */
+  sharesTypeWithCommander?: true;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
 }
@@ -439,6 +443,8 @@ export type AmountExpr = (
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
   | { kind: 'colors_spent' }
   /** "the sacrificed creature's power", "the discarded card's mana value" — as it was when the cost was paid. */
+  | { kind: 'total_power'; filter: ObjectFilter }
+  | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
 ) & { times?: number; plus?: number };
 
@@ -447,6 +453,8 @@ export type AmountExpr = (
  * Kept as flags so combat and casting can check them cheaply.
  */
 export const RULE_FLAGS = [
+  // Bender's Waterskin: "Untap this artifact during each other player's untap step."
+  'untap_during_others',
   'cant_attack',
   'cant_block',
   /** CR 506.5: "can't attack alone", "can't block alone". */
@@ -475,6 +483,10 @@ export type RuleFlag = (typeof RULE_FLAGS)[number];
 
 export interface AddManaEffect extends EffectNode {
   type: 'add_mana';
+  /** Mirari's Wake: "one mana of any type that land produced". */
+  produced?: true;
+  /** "When that mana is spent to cast a creature spell …, scry 1." — a `mana_spent` triggered ability. */
+  abilities?: AbilityNode[];
   /**
    * Alternatives the player picks from; each is a list of symbols, e.g. [["R"],["G"]] or [["C","C"]].
    * "chosen" stands for the color chosen as the source entered ("one mana of the chosen color").
@@ -507,6 +519,8 @@ export interface ManaSpend {
   abilities?: ObjectFilter;
   /** Special actions it can pay for: "unlock doors" (CR 709.5e), "turn a permanent face up" (CR 702.37e). */
   special?: ('unlock' | 'face_up')[];
+  /** Cavern of Souls: "…, and that spell can't be countered." */
+  uncounterable?: true;
 }
 
 export interface EntersTappedEffect extends EffectNode {
@@ -808,7 +822,7 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -824,11 +838,11 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -868,6 +882,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
+  if (kw.id === 'flashback' && kw.costIsManaCost) return true;
   if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge', 'harmonize', 'escalate', 'splice'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]
   if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));

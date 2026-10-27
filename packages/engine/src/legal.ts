@@ -6,8 +6,8 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, tough
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
-import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, unblockedAttackers } from './payment.js';
+import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
+import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -164,7 +164,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   for (const id of zoneList(g, 'graveyard', player)) {
     const o = g.objects[id]!;
     const face = g.cards[o.card]!.faces[0]!;
-    const fb = flashbackCost(face);
+    const fb = flashbackCostOf(g, o, face);
     if (!fb || hasCostChoice(face)) continue;
     const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (!instantSpeed && !mainPhaseEmptyStack) continue;
@@ -225,7 +225,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (ab.oncePerTurn && o.activatedTurn?.[-1 - ability] === g.turn) return;
       let costs: CostChoices = {};
       if (ab.cost.other) {
-        if (ab.cost.other.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
+        if (ab.cost.other.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;
         const picked = defaultCostChoices(g, player, o, ab.cost.other);
         if (!picked) return;
         costs = picked;
@@ -252,7 +252,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
       if (cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
       if (cost.untap && !o.tapped) return;
-      if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
+      if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;
       const mana = parseManaCost(cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0) return;
       applyPowerUp(g, o, ab, mana, player);
@@ -391,7 +391,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       const pick = exileCostCandidates(g, player, source, c).filter((id) => !exile.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       exile.push(...pick);
-    } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
+    } else if (c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, source, c)) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;

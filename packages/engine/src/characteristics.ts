@@ -43,6 +43,8 @@ export interface Characteristics {
 /** One continuous effect that might apply, with what's needed to order and scope it. */
 interface ActiveEffect {
   timestamp: number;
+  /** It's about spells ("Instant and sorcery spells you control have lifelink"). */
+  spells?: true;
   /** Layer 7c: how much it adds to power and toughness (counted as needed). */
   pt?: () => [number, number];
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
@@ -86,6 +88,43 @@ function printed(face: FaceDef): Characteristics {
     combat: [],
     hasPT: face.power !== undefined,
   };
+}
+
+/**
+ * A keyword a card outside the battlefield has from an effect: "target instant or sorcery card in your graveyard
+ * gains flashback" (a resolved effect locked to that card, CR 611.2c) or "Each instant and sorcery card in your
+ * graveyard has flashback" (a static ability of a permanent).
+ */
+export function grantedKeywordOff(g: GameState, o: GameObject, id: string): KeywordInstance | undefined {
+  for (const e of g.effects) {
+    const k = e.keywords?.find((x) => x.id === id);
+    if (k && e.objects.some((r) => r.id === o.id && r.zcc === o.zcc)) return k;
+  }
+  for (const sid of abilitySources(g)) {
+    const src = g.objects[sid];
+    if (!src || src.zone !== 'battlefield') continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'continuous' || a.effect.condition) continue;
+      const e = a.effect as ContinuousEffectNode;
+      const k = e.keywords?.find((x) => x.id === id);
+      if (!k || e.affected.ref !== 'all') continue;
+      if (matchesFilter(g, o, (e.affected as { filter: ObjectFilter }).filter, { controller: src.controller, source: src })) return k;
+    }
+  }
+  return undefined;
+}
+
+/** CR 205.3m / 702.73a: whether it has a creature type one of this player's commanders has (changeling: all of them). */
+function sharesTypeWithCommander(g: GameState, c: Characteristics, player: PlayerId | undefined): boolean {
+  const kinds = (x: Characteristics) => (x.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : x.subtypes.filter((s) => CREATURE_TYPES.includes(s)));
+  const mine = kinds(c);
+  if (!mine.length) return false;
+  for (const o of Object.values(g.objects)) {
+    if (!o.commander || o.owner !== player || o.spellCopy) continue;
+    const theirs = kinds(chars(g, o));
+    if (theirs.some((t) => mine.includes(t))) return true;
+  }
+  return false;
 }
 
 /** Abilities a keyword stands for (compiled from its CR 702 definition), e.g. prowess's trigger. */
@@ -288,10 +327,21 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
+        ...(e.affected.ref === 'all' && (e.affected.filter as ObjectFilter | undefined)?.zone === 'stack' ? { spells: true as const } : {}),
       });
     }
   }
   return out;
+}
+
+/** Static abilities that give spells keywords — looked up once per state. */
+let spellGrantsMemo: { key: string; list: ActiveEffect[] } | null = null;
+function spellGrants(g: GameState): ActiveEffect[] {
+  const key = `${g.clock}:${g.nextId}:${g.zones.battlefield.length}:${g.turn}`;
+  if (spellGrantsMemo?.key === key) return spellGrantsMemo.list;
+  const list = staticEffects(g).filter((e) => e.keywords?.length && e.spells);
+  spellGrantsMemo = { key, list };
+  return list;
 }
 
 function affectedBy(g: GameState, ref: Ref, source: GameObject, o: GameObject, c: Characteristics): boolean {
@@ -369,6 +419,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
       const e = a.kind === 'static' && a.effect.type === 'continuous' ? (a.effect as ContinuousEffectNode) : null;
       if (e && e.affected.ref === 'self') for (const r of e.rules ?? []) c.rules.add(r);
     }
+    // Layer 6 on spells (CR 613.1f): "Instant and sorcery spells you control have lifelink" (Heartflame Duelist).
+    for (const e of spellGrants(g)) if (e.applies(o, c)) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
     applyOwnCDA(g, o, c);
     return c;
   }
@@ -631,6 +683,7 @@ export function matchesFilter(
   }
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
+  if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
   if (f.chosenName && !(ctx.source?.chosen?.cardName && g.cards[o.card]?.faces.some((x) => x.name === ctx.source!.chosen!.cardName) && !o.faceDown)) return false;
   return true;

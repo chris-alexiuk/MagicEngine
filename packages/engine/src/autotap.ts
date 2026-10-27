@@ -38,7 +38,7 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       const effect = ab.effects[0] as AddManaEffect;
       if (effect.type !== 'add_mana' || effect.times !== undefined || effect.eachColor) return;
       // CR 106.6: restricted mana only helps when it can be spent on this.
-      if (effect.spend && !canSpend(g, player, effect.spend, purpose)) return;
+      if (effect.spend && !canSpend(g, player, effect.spend, purpose, o)) return;
       if (effect.anyColor) {
         for (const c of anyColorChoices(g, player, effect.identity, effect)) {
           modes.push({ ability, mana: Array.from({ length: effect.anyColor }, () => c), choice: c });

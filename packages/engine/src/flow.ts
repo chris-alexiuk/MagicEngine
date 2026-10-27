@@ -498,6 +498,11 @@ export function untapStep(g: GameState, events: GameEvent[], keep: readonly stri
       if (o.controller === p && o.tapped) setTapped(g, id, false, events);
     }
   }
+  // Unwinding Clock: "Untap all artifacts you control during each other player's untap step."
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (o.tapped && o.controller !== g.active && hasRule(g, o, 'untap_during_others')) setTapped(g, id, false, events);
+  }
   pruneDurations(g, events);
   // CR 502.4: no priority in the untap step.
   beginStep(g, 'upkeep', events);

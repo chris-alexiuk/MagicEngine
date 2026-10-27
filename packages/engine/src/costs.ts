@@ -51,6 +51,12 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     }
   }
 
+  // "The next spell you cast this turn costs {1} less to cast."
+  for (const n of g.nextSpell ?? []) {
+    if (n.player !== player || n.turn !== g.turn || !n.reduce) continue;
+    if (!matchesFilter(g, spell, n.filter, { controller: player, source: g.objects[n.source.id] ?? null, anyZone: true })) continue;
+    changes.push({ n: n.reduce, change: 'less' });
+  }
   // Increases first, then reductions; generic mana can't go below zero (CR 601.2f).
   for (const c of changes) {
     if (c.change !== 'more' || c.n <= 0) continue;

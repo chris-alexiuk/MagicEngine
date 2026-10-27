@@ -91,6 +91,14 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // Ghalta: "the total power of creatures you control"
+  const totalPower = /^the total power of (.+)$/.exec(t);
+  if (totalPower) {
+    const pf = parseFilter(totalPower[1]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: pf.filter } : null;
+  }
+  // CR 903.4: "the number of colors in your commanders' color identity"
+  if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };
   const twice = /^twice (.+)$/.exec(t);
   if (twice) {
     const inner = parseCount(twice[1]!, b);

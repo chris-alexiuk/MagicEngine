@@ -231,10 +231,16 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
       out.push(picks);
       continue;
     }
-    // "from a single graveyard": the first candidate's owner's cards.
-    const first = candidates[0];
-    const owner = spec.sameOwner && first?.kind === 'object' ? g.objects[first.object]?.owner : undefined;
-    out.push((owner ? candidates.filter((t) => t.kind === 'object' && g.objects[t.object]?.owner === owner) : candidates).slice(0, n));
+    // "from a single graveyard": the cards of an owner who has enough of them.
+    if (spec.sameOwner) {
+      const need = targetsRequired(g, controller, spec, candidates);
+      const ownerOf = (t: Target) => (t.kind === 'object' ? g.objects[t.object]?.owner : undefined);
+      const owner = [...new Set(candidates.map(ownerOf))].find((p) => p && candidates.filter((t) => ownerOf(t) === p).length >= need);
+      if (!owner) return null;
+      out.push(candidates.filter((t) => ownerOf(t) === owner).slice(0, n));
+      continue;
+    }
+    out.push(candidates.slice(0, n));
   }
   return out;
 }

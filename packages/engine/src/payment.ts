@@ -1,14 +1,15 @@
 import { activationProhibited } from './cast-bans.js';
 import { evalCondition } from './conditions.js';
 import { playerRule } from './player-rules.js';
-import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
+import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
+import { amountOf } from './resolve.js';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power, toughness } from './characteristics.js';
+import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
-import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
+import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 import { replaceQuantity } from './quantities.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
@@ -116,6 +117,13 @@ export function blight(g: GameState, player: PlayerId, target: GameObject, n: nu
   events.push({ type: 'counters', object: target.id, counter: '-1/-1', delta: amount });
 }
 
+/** How much life a cost asks for: a number, or counted now ("Pay life equal to the number of colors in your commanders' color identity"). */
+export function lifeCost(g: GameState, player: PlayerId, source: GameObject, c: EffectNode): number {
+  if (typeof c.amount === 'number') return c.amount;
+  if (c.amount && typeof c.amount === 'object') return amountOf({ g, controller: player, source, events: [], targets: [], x: 0, memo: {} }, c.amount as Amount);
+  return Number(c.amount);
+}
+
 /** "Return an Island you control to its owner's hand" as a cost: permanents you control like that. */
 export function returnCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
   const filter = (c.filter ?? {}) as ObjectFilter;
@@ -143,8 +151,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t sacrifice ${nameOf(g, o)}.`);
     } else if (c.type === 'pay_life') {
       // CR 119.4: a player can pay life only if their life total is at least that much; CR 119.8: not if it can't change.
-      if (g.players[player]!.life < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} life to pay.`);
-      if (Number(c.amount) > 0 && playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
+      const life = lifeCost(g, player, o, c);
+      if (g.players[player]!.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
+      if (life > 0 && playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
     } else if (c.type === 'discard_self') {
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
@@ -270,8 +279,9 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     }
     if (c.type === 'pay_life') {
       const ps = g.players[player]!;
-      ps.life -= Number(c.amount);
-      events.push({ type: 'life', player, delta: -Number(c.amount), life: ps.life });
+      const life = lifeCost(g, player, o, c);
+      ps.life -= life;
+      events.push({ type: 'life', player, delta: -life, life: ps.life });
     } else if (c.type === 'sacrifice_self') {
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       events.push({ type: 'sacrificed', object: o.id, player });
@@ -362,6 +372,7 @@ export function runManaAbility(
   payOtherCosts(g, player, o, ability.cost, events, costChoices);
 
   // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
+  const before = events.length;
   const queue = [...ability.effects];
   while (queue.length) {
     const e = queue.shift()!;
@@ -369,6 +380,33 @@ export function runManaAbility(
     // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
     if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
     else if (ok !== true) throw new RulesError(e.type === 'add_mana' ? 'Choose which mana to add.' : 'That mana ability can’t be resolved automatically.');
+  }
+  // CR 106.12a / 605.1b: "Whenever … is tapped for mana" — triggered mana abilities, resolved now too.
+  if (ability.cost.tap) {
+    const produced = events.slice(before).flatMap((ev) => (ev.type === 'mana_added' ? ev.mana : []));
+    if (produced.length) tappedForMana(g, o, produced, events);
+  }
+}
+
+function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], events: GameEvent[]): void {
+  for (const sid of abilitySources(g)) {
+    const src = g.objects[sid];
+    if (!src || src.zone !== 'battlefield') continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'triggered' || a.trigger.type !== 'tapped_for_mana') continue;
+      const subject = a.trigger.subject as Ref;
+      const hit =
+        subject.ref === 'attached'
+          ? src.attachedTo?.id === tapped.id && src.attachedTo.zcc === tapped.zcc
+          : subject.ref === 'all' && tapped.zone === 'battlefield' && matchesFilter(g, tapped, subject.filter, { controller: src.controller, source: src });
+      if (!hit) continue;
+      // "its controller adds …"; "add …" — the trigger's controller.
+      const controller = a.trigger.its ? tapped.controller : src.controller;
+      for (const effect of a.effects) {
+        const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
+        runEffect(run, { g, controller, source: src, events, targets: [], x: 0, memo: {} });
+      }
+    }
   }
 }
 

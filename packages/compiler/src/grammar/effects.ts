@@ -50,6 +50,27 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0 && !/ instead$/.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
+      // CR 702.34a: "target instant or sorcery card in your graveyard gains flashback until end of turn. The flashback
+      // cost is equal to its mana cost." (Snapcaster Mage, Past in Flames)
+      const fbGrant = /^(.+?) (?:gains?|has|have) flashback( until end of turn)?$/.exec(s);
+      if (fbGrant && sentences[i + 1] && /^The flashback cost is equal to (?:its|that card's|their) mana cost$/.test(sentences[i + 1]!)) {
+        const what = parseObjectRef(fbGrant[1]!, b);
+        if (!what) return null;
+        out.push({ type: 'modify', what: what.ref, until: fbGrant[2] ? 'eot' : 'game', keywords: [{ id: 'flashback', costIsManaCost: true }] });
+        i++;
+        continue;
+      }
+      // Victimize: "Sacrifice a creature. If you do, return the chosen cards …" — not optional, but what follows
+      // happens only if it was done (CR 608.2c).
+      const ifDone = sentences[i + 1] && !/^(?:You may|Pay) /.test(s) ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (ifDone && /^Sacrifice /.test(s)) {
+        const first = parseSentence(s, b);
+        const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
+        if (!first || !then) return null;
+        out.push({ type: 'may_do', effects: first, then, mandatory: true });
+        i++;
+        continue;
+      }
       // CR 603.12: "[Do something]. When you do, [effect]." — the rest of the text is a reflexive triggered ability
       // with its own targets, which triggers only if the action was taken.
       const whenYouDo = sentences[i + 1] ? /^When you do, (.+)$/.exec(sentences[i + 1]!) : null;
@@ -765,6 +786,8 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Emergence Zone: "You may cast spells this turn as though they had flash." (CR 702.8a)
+  if (/^You may cast spells this turn as though they had flash$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash' }];
   // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
   const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
   if (whileTapped) {
@@ -777,7 +800,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const where = /^(.+), where X is (.+)$/.exec(s);
   if (where) {
     return attempt(b, (b) => {
-      const expr = parseCount(where[2]!, b);
+      // "… as this ability resolves": effects count as they resolve anyway (CR 608.2h).
+      const expr = parseCount(where[2]!.replace(/ as this (?:ability|spell) resolves$/, ''), b);
       const inner = expr && parseSentence(where[1]!, b);
       return inner && expr ? bindX(inner, expr) : null;
     });
@@ -1281,6 +1305,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const filter = !k ? {} : COLORS[k] ? { colors: [COLORS[k]] } : { types: [k[0]!.toUpperCase() + k.slice(1)] };
     return [{ type: 'prevent_chosen_source', filter }];
   }
+  // Mistrise Village: "The next spell you cast this turn can't be countered."; "The next instant or sorcery spell you cast
+  // this turn costs {2} less to cast", "… costs {X} less to cast, where X is the number of Wizards you control".
+  const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
+  if (next) {
+    let filter: ObjectFilter = {};
+    if (next[1]) {
+      const pf = parseFilter(`${next[1]} spells`, b);
+      if (!pf || pf.filter.zone !== 'stack') return null;
+      const { zone: _z, ...rest } = pf.filter;
+      filter = rest;
+    }
+    if (next[2] === "can't be countered") return [{ type: 'next_spell', filter, uncounterable: true }];
+    if (next[3] === 'X') {
+      // ", where X is …" in the same sentence is bound by the sentence (bindX).
+      const x = next[4] ? parseCount(next[4], b) : 'X';
+      return x ? [{ type: 'next_spell', filter, reduce: x }] : null;
+    }
+    return next[4] ? null : [{ type: 'next_spell', filter, reduce: Number(next[3]) }];
+  }
   // Command Beacon: "Put your commander into your hand from the command zone." (CR 903.3)
   if (/^(?:Put your commander into your hand from the command zone|Return your commander from the command zone to your hand)$/.test(s)) {
     return [{ type: 'move', what: { ref: 'all', filter: { commander: true, zone: 'command', owner: 'you' } }, to: 'hand' }];
@@ -1650,6 +1693,14 @@ const VERBS: Record<string, VerbHandler> = {
       if (!pf || !pf.plural) return null;
       return [{ type: 'search', filter: pf.filter, amount: 2, upTo: true, to: 'hand', split: { to: 'battlefield', ...(split[2] ? { tapped: true } : {}) } }];
     }
+    // Gamble: "Search your library for a card, put that card into your hand, discard a card at random, then shuffle."
+    const gamble = /^your library for a card, put that card into your hand, discard a card at random, then shuffle$/.test(args);
+    if (gamble && who.ref === 'you' && !zones) {
+      return [
+        { type: 'search', filter: { zone: 'library', owner: 'you' }, amount: 1, to: 'hand' },
+        { type: 'discard', amount: 1, who: { ref: 'you' }, random: true },
+      ];
+    }
     const m =
       /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
@@ -1658,14 +1709,17 @@ const VERBS: Record<string, VerbHandler> = {
     if (!q) return null;
     const amount = q[1] ? 1 : parseAmount(q[2] ?? q[3]!);
     if (typeof amount !== 'number') return null;
-    const pf = parseFilter(`${q[4]} in your library`, b);
-    if (!pf || pf.plural !== amount > 1) return null;
+    // Myriad Landscape: "up to two basic land cards that share a land type"
+    const share = / that share a land type$/.test(q[4]!);
+    const pf = parseFilter(`${q[4]!.replace(/ that share a land type$/, '')} in your library`, b);
+    if (!pf || pf.plural !== amount > 1 || (share && amount < 2)) return null;
     const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
     const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
     if (zones) node.zones = zones;
     if (theirs) node.who = who;
     if (q[2]) node.upTo = true;
     if (m[3]) node.tapped = true;
+    if (share) node.sameLandType = true;
     return [node];
   },
   // CR 701.62a: "manifest dread" — "that creature" is the manifested permanent afterward.
@@ -1682,9 +1736,13 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(fresh[1]!, b);
       return what?.targeted && !what.plural ? [{ type: 'retarget', what: what.ref }] : null;
     }
-    if (!imperative || !/^(?:up to one )?target /.test(args)) return null;
+    if (!imperative || !/^(?:up to (?:one|two|three) |one |two |three )?target /.test(args)) return null;
     const what = parseObjectRef(args, b);
-    return what?.targeted ? [] : null;
+    if (!what?.targeted) return null;
+    // Victimize: "… Return the chosen cards to the battlefield tapped."
+    const names = what.plural ? ['the chosen cards', 'the chosen creatures', 'the chosen permanents'] : ['the chosen card', 'the chosen creature', 'the chosen permanent'];
+    b.named = { ...b.named, ...Object.fromEntries(names.map((n) => [n, what.ref])) };
+    return [];
   },
   // CR 601.2d: "Distribute three +1/+1 counters among one, two, or three target creatures (you control)."
   distribute(args, who, b, imperative) {
@@ -1990,7 +2048,7 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     if (colors.length) node.colors = colors;
     if (m[6] || m[7]) node.retainTypes = true;
     if (m[5]) {
-      const kws = parseKeywordList(m[5], b);
+      const kws = parseKeywordList(m[5], b, false, true);
       if (!kws) return null;
       node.keywords = kws;
     }
@@ -2111,7 +2169,7 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
         node.power = pt.power;
         node.toughness = pt.toughness;
       } else {
-        const kws = parseKeywordList(pm[2]!, b);
+        const kws = parseKeywordList(pm[2]!, b, false, true);
         if (!kws || node.keywords) return null;
         node.keywords = kws;
       }
@@ -2199,6 +2257,12 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
 /** CR 106.6: "to cast creature spells", "to cast artifact spells or activate abilities of artifacts", "to activate abilities". */
 export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
   if (text === 'to activate abilities') return { abilities: {} };
+  // Cavern of Souls, Delighted Halfling: "to cast a creature spell of the chosen type, and that spell can't be countered"
+  const rider = /^(.+), and that spell can't be countered$/.exec(text);
+  if (rider) {
+    const rest = parseManaSpend(rider[1]!, b);
+    return rest?.spells && !rest.abilities && !rest.special ? { ...rest, uncounterable: true } : null;
+  }
   // "to cast Room spells and unlock doors", "to cast an enchantment spell, unlock a door, or turn a permanent face up"
   const special: ('unlock' | 'face_up')[] = [];
   for (;;) {

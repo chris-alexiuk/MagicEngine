@@ -203,7 +203,13 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'sacrifice', objects: shuffle([...p.candidates]).slice(0, p.count) } };
     case 'search': {
       const n = p.mustFind ? Math.min(p.count, p.candidates.length) : Math.floor(rnd() * (Math.min(p.count, p.candidates.length) + 1));
-      return { player: me, answer: { kind: 'search', objects: shuffle([...p.candidates]).slice(0, n) } };
+      let pool = shuffle([...p.candidates]);
+      // "that share a land type": the first card's types decide the rest.
+      if (p.sameLandType && pool.length) {
+        const sub = (id: string) => g.cards[g.objects[id]!.card]!.faces[0]!.subtypes;
+        pool = [pool[0]!, ...pool.slice(1).filter((id) => sub(id).some((t) => sub(pool[0]!).includes(t)))];
+      }
+      return { player: me, answer: { kind: 'search', objects: pool.slice(0, n) } };
     }
     case 'scry': {
       const xs = shuffle([...p.objects]);
