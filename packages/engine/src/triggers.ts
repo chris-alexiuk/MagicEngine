@@ -34,7 +34,7 @@ import { collectDungeonTriggers } from './dungeons.js';
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
-  'sacrificed', 'blockers_done', 'scried', 'surveilled', 'copied', 'became_monstrous', 'ring_tempted',
+  'sacrificed', 'blockers_done', 'scried', 'surveilled', 'foraged', 'copied', 'became_monstrous', 'ring_tempted',
   'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked', 'die_rolled',
 ]);
 /** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
@@ -471,10 +471,12 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
     }
     if (e.type !== 'step') continue;
     for (const d of [...g.delayed]) {
-      if (d.on || d.step !== e.step) continue;
+      // "your next main phase": precombat or postcombat (CR 505.1).
+      const isMain = e.step === 'main1' || e.step === 'main2';
+      if (d.on || !(d.step === e.step || (d.step === 'main' && isMain))) continue;
       if (d.whose === 'you' && g.active !== d.controller) continue;
       // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
-      if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === 'end') continue;
+      if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === e.step) continue;
       g.delayed = g.delayed.filter((x) => x.id !== d.id);
       g.triggers.push({
         id: `t${g.nextId++}`,

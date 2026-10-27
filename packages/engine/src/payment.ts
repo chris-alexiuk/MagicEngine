@@ -9,11 +9,12 @@ import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spend
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
 import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
+import { replaceQuantity } from './quantities.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -85,6 +86,36 @@ export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObjec
   return zoneList(g, zone, player).filter((id) => id !== o.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone }, { controller: player, source: o })));
 }
 
+/**
+ * "Reveal a Pirate card from your hand"; CR 701.4a: "behold a Dragon" — reveal a Dragon card from your hand or
+ * choose a Dragon permanent you control.
+ */
+export function revealCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
+  const filter = (c.filter ?? {}) as ObjectFilter;
+  const ctx = { controller: player, source: o };
+  const hand = zoneList(g, 'hand', player).filter((id) => id !== o.id && matchesFilter(g, g.objects[id]!, { ...filter, zone: 'hand' }, ctx));
+  if (c.type !== 'behold') return hand;
+  return [...hand, ...g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === player && matchesFilter(g, g.objects[id]!, filter, ctx))];
+}
+
+/** CR 701.68a: the creatures you control that could get the -1/-1 counters. */
+export function blightCandidates(g: GameState, player: PlayerId): ObjectId[] {
+  return g.zones.battlefield.filter((id) => g.objects[id]!.controller === player && hasType(g, g.objects[id]!, 'Creature'));
+}
+
+/** CR 701.61a: the Foods you could sacrifice to forage. */
+export function foodCandidates(g: GameState, player: PlayerId): ObjectId[] {
+  return g.zones.battlefield.filter((id) => g.objects[id]!.controller === player && matchesFilter(g, g.objects[id]!, { subtypes: ['Food'] }, { controller: player, source: null }));
+}
+
+/** CR 701.68a: "put N -1/-1 counters on a creature you control" (through replacement effects, CR 614.1a). */
+export function blight(g: GameState, player: PlayerId, target: GameObject, n: number, events: GameEvent[]): void {
+  const amount = replaceQuantity(g, 'counters', n, { player, object: target, counter: '-1/-1' });
+  if (amount <= 0) return;
+  target.counters['-1/-1'] = (target.counters['-1/-1'] ?? 0) + amount;
+  events.push({ type: 'counters', object: target.id, counter: '-1/-1', delta: amount });
+}
+
 /** "Return an Island you control to its owner's hand" as a cost: permanents you control like that. */
 export function returnCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
   const filter = (c.filter ?? {}) as ObjectFilter;
@@ -146,6 +177,25 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
       if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your ${c.from === 'hand' ? 'hand' : 'graveyard'} to exile.`);
+    } else if (c.type === 'blight') {
+      // CR 701.68b: with no creature to put the counters on, you can't blight.
+      const chosen = choices.blighted ?? [];
+      if (chosen.length !== 1 || !blightCandidates(g, player).includes(chosen[0]!)) throw new RulesError('Choose a creature you control to blight.');
+    } else if (c.type === 'forage') {
+      // CR 701.61a: "Exile three cards from your graveyard or sacrifice a Food."
+      if (choices.forageFood) {
+        const food = choices.sacrifice ?? [];
+        if (food.length !== 1 || !foodCandidates(g, player).includes(food[0]!)) throw new RulesError('Choose a Food you control to sacrifice.');
+      } else {
+        const chosen = choices.exile ?? [];
+        const yard = zoneList(g, 'graveyard', player).filter((id) => id !== o.id);
+        if (chosen.length !== 3 || new Set(chosen).size !== 3 || !chosen.every((id) => yard.includes(id))) throw new RulesError('Choose three cards in your graveyard to exile (or a Food to sacrifice).');
+      }
+    } else if (c.type === 'reveal_from_hand' || c.type === 'behold') {
+      const n = Number(c.amount ?? 1);
+      const ok = revealCostCandidates(g, player, o, c);
+      const chosen = choices.reveal ?? [];
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(c.type === 'behold' ? `Choose ${n} card(s) in your hand or permanent(s) you control to behold.` : `Choose ${n} card(s) in your hand to reveal.`);
     } else if (c.type === 'return_permanents') {
       const n = Number(c.amount ?? 1);
       const ok = returnCostCandidates(g, player, o, c);
@@ -249,6 +299,21 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
+    } else if (c.type === 'blight') {
+      const target = choices.blighted?.[0] ? g.objects[choices.blighted[0]] : undefined;
+      if (target) blight(g, player, target, Number(c.amount ?? 1), events);
+    } else if (c.type === 'forage') {
+      if (choices.forageFood) {
+        for (const id of choices.sacrifice ?? []) {
+          events.push({ type: 'sacrificed', object: id, player });
+          moveObject(g, id, 'graveyard', events);
+        }
+      } else for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
+      events.push({ type: 'foraged', player });
+    } else if (c.type === 'reveal_from_hand' || c.type === 'behold') {
+      // CR 701.20a / 701.4a: the cards from the hand are revealed; a beheld permanent is only chosen.
+      const shown = (choices.reveal ?? []).filter((id) => g.objects[id]?.zone === 'hand');
+      if (shown.length) events.push({ type: 'revealed', player, objects: shown });
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       discardCard(g, o.id, events);

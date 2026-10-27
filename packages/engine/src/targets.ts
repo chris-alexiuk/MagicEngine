@@ -99,8 +99,8 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
         ? g.zones.battlefield
         : zone === 'stack'
           ? g.stack.flatMap((e) => (e.kind === 'spell' ? [e.object] : []))
-          : zone === 'exile'
-            ? g.zones.exile
+          : zone === 'exile' || zone === 'command'
+            ? g.zones[zone]
             : g.order.flatMap((p) => g.zones[zone][p] ?? []);
     // "For each opponent, … target creature that player controls": only those players' objects.
     const players = spec.perPlayer ? perPlayerSet(g, controller, spec) : null;

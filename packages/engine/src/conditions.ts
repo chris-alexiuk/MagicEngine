@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -190,6 +190,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
     case 'city_blessing':
       return Boolean(g.players[controller]?.cityBlessing);
+    case 'opponent_has_more': {
+      // Land Tax: "if an opponent controls more lands than you"
+      const count = (p: PlayerId) => g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, cond.filter as ObjectFilter, { controller: p, source: source ?? null })).length;
+      const mine = count(controller);
+      return livePlayers(g).some((p) => p !== controller && count(p) > mine);
+    }
     case 'votes': {
       // CR 701.38: "If sickness gets more votes", "If psychosis gets more votes or the vote is tied"
       const tally = ctx.resolution?.votes ?? {};

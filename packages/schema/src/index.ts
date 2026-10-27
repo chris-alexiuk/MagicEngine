@@ -270,7 +270,7 @@ export interface TargetSpec {
   text: string;
 }
 
-export type ZoneWord = 'battlefield' | 'stack' | 'graveyard' | 'hand' | 'library' | 'exile';
+export type ZoneWord = 'battlefield' | 'stack' | 'graveyard' | 'hand' | 'library' | 'exile' | 'command';
 
 /** Describes a set of objects. Relative words ("you", "another") are relative to the ability's source. */
 export interface ObjectFilter {
@@ -573,6 +573,14 @@ export interface CastOptionNode extends EffectNode {
   reduceByTappedPower?: true;
   /** CR 702.160a / 718.3b: cast prototyped — the inset power and toughness (with this mana cost and its colors). */
   prototype?: { power: string; toughness: string };
+  /** One of a list of additional costs ("sacrifice a creature or pay {3}"): exactly one of them is paid (CR 118.8). */
+  required?: true;
+}
+
+/** "As an additional cost to cast this spell, sacrifice a creature, discard a card, or pay 4 life." (CR 118.8, 601.2b) */
+export interface AdditionalCostChoiceNode extends EffectNode {
+  type: 'additional_cost_choice';
+  options: Cost[];
 }
 
 /**
@@ -800,15 +808,15 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more',
   ],
   statics: [
-    'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
+    'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
     'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable',
   ],
   triggers: [
@@ -816,9 +824,9 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
@@ -920,6 +928,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     if (a.effect.condition) cond(a.effect.condition as ConditionNode);
     if (a.effect.unless) cond(a.effect.unless as ConditionNode);
     if (a.effect.type === 'additional_cost') out.costs.push((a.effect.cost as EffectNode).type);
+    if (a.effect.type === 'additional_cost_choice') for (const c of a.effect.options as Cost[]) out.costs.push(...(c.other ?? []).map((x) => x.type));
     nested(a.effect);
   }
   else {

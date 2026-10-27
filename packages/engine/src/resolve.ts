@@ -91,8 +91,8 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
           ? g.zones.battlefield
           : zone === 'stack'
             ? g.stack.flatMap((e) => (e.kind === 'spell' ? [e.object] : []))
-            : zone === 'exile'
-              ? g.zones.exile
+            : zone === 'exile' || zone === 'command'
+              ? g.zones[zone]
               : g.order.flatMap((p) => g.zones[zone][p] ?? []);
       // "all creatures target player controls"
       const owners = ref.filter.controlledBy ? refPlayers(ctx, ref.filter.controlledBy as Ref) : null;
@@ -290,8 +290,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const ids =
         zone === 'battlefield'
           ? g.zones.battlefield
-          : zone === 'exile'
-            ? g.zones.exile
+          : zone === 'exile' || zone === 'command'
+            ? g.zones[zone]
             : zone === 'stack'
               ? []
               : (e.filter.owner === 'you' ? [ctx.controller] : g.order).flatMap((p) => g.zones[zone][p] ?? []);
@@ -309,7 +309,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.resolution?.votes?.[e.option] ?? 0;
     case 'die_result':
       // CR 706.2: the result of the roll this resolution made.
-      return ctx.resolution?.dieResult ?? 0;
+      return ctx.resolution?.dieResult ?? ctx.trigger?.dieResult ?? 0;
     case 'blockers': {
       // CR 702.23a: "for each creature blocking it beyond the first"
       const [o] = refObjects(ctx, e.of);
@@ -349,7 +349,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'cost_lki': {
       // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
-      const lki = ctx.resolution?.entry.costLKI?.[e.cost];
+      // A cost first; else what this resolution (or the one that created this reflexive ability) sacrificed.
+      const lki = ctx.resolution?.entry.costLKI?.[e.cost] ?? ctx.resolution?.lkiThisWay?.[e.cost] ?? ctx.trigger?.lkiThisWay?.[e.cost];
       return lki?.reduce((n, x) => n + x[e.stat], 0) ?? 0;
     }
     case 'colors_spent':

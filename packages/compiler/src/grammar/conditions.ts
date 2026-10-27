@@ -267,6 +267,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
+  // Land Tax: "if an opponent controls more lands than you"
+  const more = /^an opponent controls more (.+?) than you(?: do)?$/.exec(t);
+  if (more) {
+    const pf = parseFilter(more[1]!, b);
+    if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
+    return { type: 'opponent_has_more', filter: pf.filter };
+  }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
   const oppCast = /^an opponent cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);

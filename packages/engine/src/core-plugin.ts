@@ -3,7 +3,7 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, Amount, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
 import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
@@ -13,8 +13,8 @@ import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
-import { payDuringResolution } from './payment.js';
-import { removeFromCombat, attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
+import { blight, blightCandidates, foodCandidates, payDuringResolution } from './payment.js';
+import { removeFromCombat, attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -580,6 +580,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     const n = amountOf(ctx, node.amount);
+    // CR 701.9b: "discard a card at random" — nobody chooses.
+    if (node.random) {
+      for (const p of players) {
+        const hand = [...zoneList(ctx.g, 'hand', p)];
+        const picked: string[] = [];
+        while (picked.length < n && hand.length) picked.push(hand.splice(Math.floor(nextRandom(ctx.g) * hand.length), 1)[0]!);
+        for (const id of picked) discardCard(ctx.g, id, ctx.events);
+        if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + picked.length;
+      }
+      return true;
+    }
     const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
     const answer = answerOf(ctx, 'discard');
     if (answer) {
@@ -804,6 +815,95 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: tied, min: 1, max: 1, text: 'Choose a creature with the least toughness to bolster.' } };
     }
     addCounters(ctx, g.objects[pick]!, '+1/+1', amountOf(ctx, node.amount));
+    return true;
+  },
+
+  // CR 603.12: a reflexive triggered ability ("When you do, …") triggers as the action is taken; it's put on the
+  // stack the next time a player would receive priority, with its own targets (CR 603.3).
+  reflexive(node, ctx) {
+    const g = ctx.g;
+    const ability = (node.abilities as TriggeredAbility[])[0]!;
+    const source = ctx.source;
+    g.triggers.push({
+      id: `t${g.nextId++}`,
+      controller: ctx.controller,
+      source: source ? { id: source.id, zcc: source.zcc } : { id: '', zcc: 0 },
+      sourceName: sourceName(ctx),
+      ability,
+      info: {
+        ...(ctx.trigger ?? {}),
+        ...(ctx.resolution?.dieResult !== undefined ? { dieResult: ctx.resolution.dieResult } : {}),
+        ...(ctx.resolution?.lkiThisWay ? { lkiThisWay: ctx.resolution.lkiThisWay } : {}),
+        ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}),
+      },
+    });
+    return true;
+  },
+
+  // CR 701.68a: "blight N" — each player puts N -1/-1 counters on a creature they control (CR 701.68b: none, nothing).
+  blight(node, ctx) {
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount);
+    const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
+    const answer = answerOf(ctx, 'choose_objects');
+    if (answer && ctx.memo.asking) {
+      const p = ctx.memo.asking as PlayerId;
+      const pick = answer.objects[0];
+      if (answer.objects.length !== 1 || !blightCandidates(g, p).includes(pick!)) throw new RulesError('Choose a creature you control.');
+      blight(g, p, g.objects[pick!]!, n, ctx.events);
+      done.push(p);
+      delete ctx.memo.asking;
+    }
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      if (done.includes(p)) continue;
+      const mine = blightCandidates(g, p);
+      if (mine.length <= 1) {
+        if (mine[0]) blight(g, p, g.objects[mine[0]]!, n, ctx.events);
+        done.push(p);
+        continue;
+      }
+      ctx.memo.done = done;
+      ctx.memo.asking = p;
+      return { ask: { kind: 'choose_objects', player: p, candidates: mine, min: 1, max: 1, text: `Choose a creature you control to put ${n} -1/-1 counter${n === 1 ? '' : 's'} on.` } };
+    }
+    return true;
+  },
+
+  // CR 701.61a: "Exile three cards from your graveyard or sacrifice a Food."
+  forage(_node, ctx) {
+    const g = ctx.g;
+    const p = ctx.controller;
+    const foods = foodCandidates(g, p);
+    const yard = zoneList(g, 'graveyard', p);
+    if (!foods.length && yard.length < 3) return true;
+    const WAYS = ['Sacrifice a Food', 'Exile three cards from your graveyard'];
+    let way = ctx.memo.way as string | undefined;
+    if (!way) {
+      const answer = answerOf(ctx, 'choose_option');
+      if (foods.length && yard.length >= 3 && !answer) return { ask: { kind: 'choose_option', player: p, options: WAYS, text: 'Forage how?', sourceName: sourceName(ctx) } };
+      way = answer ? answer.choice : foods.length ? WAYS[0]! : WAYS[1]!;
+      if (!WAYS.includes(way)) throw new RulesError('Choose one of the options.');
+      ctx.memo.way = way;
+    }
+    const answer = answerOf(ctx, 'choose_objects');
+    if (way === WAYS[0]) {
+      let food = foods.length === 1 ? foods[0] : undefined;
+      if (answer) {
+        if (answer.objects.length !== 1 || !foods.includes(answer.objects[0]!)) throw new RulesError('Choose a Food you control.');
+        food = answer.objects[0];
+      }
+      if (!food) return { ask: { kind: 'choose_objects', player: p, candidates: foods, min: 1, max: 1, text: 'Choose a Food to sacrifice.' } };
+      sacrifice(g, g.objects[food]!, p, ctx.events);
+    } else {
+      let cards = yard.length === 3 ? yard : undefined;
+      if (answer) {
+        if (answer.objects.length !== 3 || new Set(answer.objects).size !== 3 || !answer.objects.every((id) => yard.includes(id))) throw new RulesError('Choose three cards in your graveyard.');
+        cards = answer.objects;
+      }
+      if (!cards) return { ask: { kind: 'choose_objects', player: p, candidates: yard, min: 3, max: 3, text: 'Choose three cards in your graveyard to exile.' } };
+      for (const id of cards) moveObject(g, id, 'exile', ctx.events);
+    }
+    ctx.events.push({ type: 'foraged', player: p });
     return true;
   },
 
@@ -1628,20 +1728,28 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const candidatesOf = (p: PlayerId) =>
       g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, filter, { controller: p, source: ctx.source ?? null }));
     const answer = answerOf(ctx, 'sacrifice');
+    // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
+    const sacrifice = (o: GameObject, p: PlayerId) => {
+      if (ctx.resolution) {
+        const lki = (ctx.resolution.lkiThisWay ??= {});
+        lki.sacrificed = [...(lki.sacrificed ?? []), { power: power(g, o), toughness: toughness(g, o), mana_value: manaValueOf(g, o) }];
+      }
+      sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
+    };
     if (answer) {
       const p = ctx.memo.asking as PlayerId;
       const candidates = candidatesOf(p);
       if (answer.objects.length !== Math.min(n, candidates.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${Math.min(n, candidates.length)} permanent(s) to sacrifice.`);
       }
-      for (const id of answer.objects) sacrifice(g, g.objects[id]!, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
+      for (const id of answer.objects) sacrifice(g.objects[id]!, p);
       done.push(p);
     }
     for (const p of players) {
       if (done.includes(p)) continue;
       const candidates = candidatesOf(p);
       if (candidates.length <= n) {
-        for (const id of candidates) sacrifice(g, g.objects[id]!, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
+        for (const id of candidates) sacrifice(g.objects[id]!, p);
         done.push(p);
         continue;
       }
@@ -1744,6 +1852,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   manifest(node, ctx) {
     const g = ctx.g;
     ensureFaceDownDefs(g);
+    // Reality Shift: "Its controller manifests the top card of their library."
+    const manifester = node.who ? refPlayers(ctx, node.who as Ref)[0] : ctx.controller;
+    if (!manifester) return true;
     let chosen: string[];
     let rest: string[] = [];
     if (node.dread) {
@@ -1757,10 +1868,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         chosen = answer.objects;
       }
       rest = looked.filter((id) => !chosen.includes(id));
-    } else chosen = zoneList(g, 'library', ctx.controller).slice(0, amountOf(ctx, node.amount ?? 1));
+    } else chosen = zoneList(g, 'library', manifester).slice(0, amountOf(ctx, node.amount ?? 1));
     const made: { id: string; zcc: number }[] = [];
     for (const id of chosen) {
-      moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, faceDown: node.cloak ? 'cloak' : 'manifest' });
+      moveObject(g, id, 'battlefield', ctx.events, { controller: manifester, faceDown: node.cloak ? 'cloak' : 'manifest' });
       if (g.objects[id]?.zone === 'battlefield') made.push({ id, zcc: g.objects[id]!.zcc });
     }
     for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
@@ -1915,6 +2026,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const otherwise = (node.else as EffectNode[] | undefined) ?? [];
     const chooser = chooserOf(node, ctx);
     if (!chooser || !first.every((e) => feasible(e, ctx, chooser))) return otherwise.length ? { expand: otherwise } : true;
+    // CR 603.12: "Sacrifice it. When you do, …" — not optional; what follows happens only if it could be done.
+    if (node.mandatory) return { expand: [...first, ...then] };
     if (!answer) return { ask: { kind: 'may', player: chooser, text: describeEffects([...first, ...then]), sourceName: sourceName(ctx) } };
     return { expand: answer.yes ? [...first, ...then] : otherwise };
   },
@@ -1930,11 +2043,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: source ? { id: source.id, zcc: ctx.resolution?.found?.[source.id] === source.zcc ? source.zcc : (ctx.sourceZcc ?? source.zcc) } : { id: '', zcc: 0 },
       sourceName: sourceName(ctx),
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
-      step: node.step === 'upkeep' ? 'upkeep' : node.step === 'end_of_combat' ? 'end_of_combat' : 'end',
+      step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' ? node.step : 'end',
+      ...(node.whose === 'you' ? { whose: 'you' as const } : {}),
       createdTurn: g.turn,
       createdStep: g.step,
-      effects: node.effects as EffectNode[],
-      targets: ctx.targets,
+      effects: freezeTargetAmounts(node.effects as EffectNode[], ctx),
+      // CR 603.7c / 400.7: a target this resolution moved ("put it onto the battlefield … exile it at the beginning of
+      // the next end step") is followed to the object it became.
+      targets: ctx.targets.map((list) => list.map((t) => (t.kind === 'object' && ctx.resolution?.found?.[t.id] !== undefined ? { ...t, zcc: ctx.resolution.found[t.id]! } : t))),
       ...(ctx.trigger || ctx.resolution?.created ? { info: { ...ctx.trigger, ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}) } } : {}),
       ...(node.on ? { on: node.on as { who: 'you'; filter: ObjectFilter } } : {}),
     });
@@ -2019,6 +2135,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 };
 
+/**
+ * CR 608.2h: "that spell's mana value" in a delayed ability is worked out as it's created — by the time it triggers,
+ * the countered spell is just a card in a graveyard.
+ */
+function freezeTargetAmounts(list: EffectNode[], ctx: EffectContext): EffectNode[] {
+  const fix = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(fix);
+    if (!v || typeof v !== 'object') return v;
+    const o = v as Record<string, unknown>;
+    if (typeof o.kind === 'string' && !['spell', 'activated', 'triggered', 'static'].includes(o.kind) && JSON.stringify(o).includes('"ref":"target"')) {
+      return amountOf(ctx, o as unknown as Amount);
+    }
+    return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, fix(x)]));
+  };
+  return fix(list) as EffectNode[];
+}
+
 /** Who decides an optional effect: its controller, or the one player it names ("that player may …"). */
 function chooserOf(node: EffectNode, ctx: EffectContext): PlayerId | null {
   if (!node.who) return ctx.controller;
@@ -2085,6 +2218,9 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   }
   if (e.type === 'discard') return e.all ? zoneList(g, 'hand', chooser).length > 0 : zoneList(g, 'hand', chooser).length >= amountOf(ctx, e.amount);
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // CR 701.68b, 701.61a
+  if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
+  if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
   return true;
 }
 
@@ -2204,6 +2340,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const id = e.type === 'created' ? e.object : e.type === 'moved' && e.to === 'battlefield' ? e.object : null;
     const o = id ? check.g.objects[id] : undefined;
     if (!o || o.zone !== 'battlefield' || !subjectMatches(check, t.subject as Ref, o)) return [];
+    // "When ~ enters untapped"
+    if (t.untapped && o.tapped) return [];
     // "Whenever one or more tokens you control enter": once for the batch.
     if (t.batch) {
       const first = (check.batch ?? [e]).find((x) => {
@@ -2316,6 +2454,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'became_target' || check.sourceLeft) return [];
     if (t.by === 'opponent' && e.controller === check.controller) return [];
     if (t.by === 'you' && e.controller !== check.controller) return [];
+    if (t.targetedBy === 'spell' && !e.spell) return [];
+    if (t.targetedBy === 'ability' && !e.entry) return [];
     // Valiant: "for the first time each turn"
     if (t.first && !e.first) return [];
     const o = check.g.objects[e.object];
@@ -2629,11 +2769,15 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'became_monstrous' || e.object !== check.source.id || check.sourceLeft) return [];
     return [{ object: refTo(check.source), amount: e.amount }];
   },
+  // CR 603.12: reflexive abilities are created by the effect that names them, never by an event.
+  reflexive() {
+    return [];
+  },
   // "Whenever you scry", "Whenever you scry or surveil" (CR 701.22, 701.25).
   scry(t, check) {
     const e = check.event;
-    if (check.sourceLeft || (e.type !== 'scried' && e.type !== 'surveilled')) return [];
-    if (e.player !== check.controller || !(t.kinds as string[]).includes(e.type === 'scried' ? 'scry' : 'surveil')) return [];
+    if (check.sourceLeft || (e.type !== 'scried' && e.type !== 'surveilled' && e.type !== 'foraged')) return [];
+    if (e.player !== check.controller || !(t.kinds as string[]).includes(e.type === 'scried' ? 'scry' : e.type === 'foraged' ? 'forage' : 'surveil')) return [];
     return [{ player: e.player }];
   },
   // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
@@ -2768,7 +2912,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

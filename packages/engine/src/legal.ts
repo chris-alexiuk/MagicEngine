@@ -2,12 +2,12 @@ import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
+import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
-import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
+import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
+import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -69,6 +69,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       }
       const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
       if (!instantSpeed && !mainPhaseEmptyStack) return;
+      // One of its additional costs is chosen as it's cast: listed with the cast options.
+      if (hasCostChoice(face)) return;
       if (castRestrictionProblem(g, player, face, o)) return;
       const cost = parseManaCost(face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
@@ -163,7 +165,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const o = g.objects[id]!;
     const face = g.cards[o.card]!.faces[0]!;
     const fb = flashbackCost(face);
-    if (!fb) continue;
+    if (!fb || hasCostChoice(face)) continue;
     const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (!instantSpeed && !mainPhaseEmptyStack) continue;
     if (castRestrictionProblem(g, player, face, o)) continue;
@@ -179,7 +181,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const o = g.objects[id]!;
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
-      if (!face.keywords.some((k) => k.id === 'aftermath')) return;
+      if (!face.keywords.some((k) => k.id === 'aftermath') || hasCostChoice(face)) return;
       const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
       if (!instantSpeed && !mainPhaseEmptyStack) return;
       if (castRestrictionProblem(g, player, face, o)) return;
@@ -278,7 +280,10 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   if (!options.length || face.types.includes('Land')) return [];
   const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
   const out: Action[] = [];
+  // With a required choice of additional costs, the bot casts it paying one of them (and no other options).
+  const required = options.some((x) => x.required);
   for (const opt of options) {
+    if (required && !opt.required) continue;
     // From exile (foretell, plot, madness) is listed elsewhere.
     if (opt.zone === 'exile' || opt.duringResolution) continue;
     // CR 702.37c: cast face down, it's a creature spell with no text.
@@ -352,6 +357,9 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   const crew: ObjectId[] = [];
   const exile: ObjectId[] = [];
   const returned: ObjectId[] = [];
+  const reveal: ObjectId[] = [];
+  const blighted: ObjectId[] = [];
+  let forageFood = false;
   // "Remove any number of storage counters": all of them, by default.
   let counters: number | undefined;
   for (const c of other) {
@@ -395,6 +403,27 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
         .slice(0, n);
       if (pick.length < n) return null;
       returned.push(...pick);
+    } else if (c.type === 'blight') {
+      // The toughest creature (one that survives the counters if it can), not the source of an ability being paid for.
+      const options = blightCandidates(g, player).sort((a, b) => toughness(g, g.objects[b]!) - toughness(g, g.objects[a]!));
+      const pick = options.find((id) => id !== source.id && !sacrifice.includes(id)) ?? options[0];
+      if (!pick) return null;
+      blighted.push(pick);
+    } else if (c.type === 'forage') {
+      // A Food if there is one; otherwise three cards from the graveyard.
+      const food = foodCandidates(g, player).find((id) => !sacrifice.includes(id) && id !== source.id);
+      if (food) {
+        sacrifice.push(food);
+        forageFood = true;
+      } else {
+        const yard = zoneList(g, 'graveyard', player).filter((id) => id !== source.id && !exile.includes(id)).slice(0, 3);
+        if (yard.length < 3) return null;
+        exile.push(...yard);
+      }
+    } else if (c.type === 'reveal_from_hand' || c.type === 'behold') {
+      const pick = revealCostCandidates(g, player, source, c).filter((id) => !reveal.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      reveal.push(...pick);
     } else if (c.type === 'return_unblocked') {
       const first = unblockedAttackers(g, player)[0];
       if (!first) return null;
@@ -424,10 +453,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(counters !== undefined ? { counters } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.counters !== undefined ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.counters !== undefined ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {

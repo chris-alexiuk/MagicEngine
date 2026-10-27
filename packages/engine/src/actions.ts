@@ -394,6 +394,9 @@ function addCost(into: ManaCost, extra: ManaCost): void {
   for (const [c, n] of Object.entries(extra.specific)) into.specific[c as ManaColor] = (into.specific[c as ManaColor] ?? 0) + (n ?? 0);
 }
 
+/** Whether casting it means choosing one of a list of additional costs (CR 118.8). */
+export const hasCostChoice = (face: FaceDef) => face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'additional_cost_choice');
+
 /** A face's additional costs to cast (CR 601.2f), from its "As an additional cost…" lines. */
 export function additionalCosts(face: FaceDef): EffectNode[] {
   return face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'additional_cost' ? [a.effect.cost as EffectNode] : []));
@@ -402,6 +405,11 @@ export function additionalCosts(face: FaceDef): EffectNode[] {
 /** CR 118.9 / 601.2f: the alternative and optional additional costs a face offers as it's cast. */
 export function castOptions(face: FaceDef): CastOptionNode[] {
   const out = printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
+  // CR 118.8: "As an additional cost to cast this spell, sacrifice a creature or pay {3}" — one of them, announced (CR 601.2b).
+  for (const a of face.abilities) {
+    if (a.kind !== 'static' || a.effect.type !== 'additional_cost_choice') continue;
+    (a.effect.options as Cost[]).forEach((cost, i) => out.push({ type: 'cast_option', id: `choice${i + 1}`, kind: 'additional', cost, required: true }));
+  }
   // Casting from exile: foretell (its foretell cost, CR 702.143a), plot (free, CR 702.170d), madness (CR 702.35a).
   for (const kw of face.keywords) {
     const mana = kw.cost && /^(\{[^}]+\})+$/.test(kw.cost) ? kw.cost : null;
@@ -490,6 +498,8 @@ function cast(
     if (!opt) throw new RulesError(`${face.name} has no optional “${x}” cost.`);
     return opt;
   });
+  // CR 118.8 / 601.2b: one of a list of additional costs ("sacrifice a creature or pay {3}") must be chosen.
+  if (options.some((y) => y.required) && added.filter((a) => a.required).length !== 1) throw new RulesError(`Choose which of ${face.name}’s additional costs to pay.`);
   // Replicate and squad may be paid any number of times (CR 702.56a, 702.157a); others once.
   if (extras.some((x, i) => extras.indexOf(x) !== i && !options.find((y) => y.id === x)?.repeatable)) throw new RulesError('Each optional cost can be paid once.');
   if (alt?.duringResolution && !during) throw new RulesError(`${face.name}'s ${alt.id} cost can be paid only as its ability resolves.`);
@@ -803,7 +813,10 @@ export function castDuringResolution(
   opts: { alt?: string; suspended?: true; exileOnLeave?: true } = {},
 ): void {
   // With an alternative cost (madness) it's paid, tapping for mana as needed; otherwise it's free.
-  cast(g, player, id, 0, 0, Boolean(opts.alt), targets, modes, events, {}, false, opts.alt, [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
+  // A required choice of additional costs (CR 118.8): one that needs nothing chosen (life, mana) if there is one.
+  const choices = castOptions(g.cards[g.objects[id]!.card]!.faces[0]!).filter((x) => x.required);
+  const pick = choices.find((x) => (x.cost.other ?? []).every((c) => c.type === 'pay_life')) ?? choices[0];
+  cast(g, player, id, 0, 0, Boolean(opts.alt) || Boolean(pick?.cost.mana), targets, modes, events, {}, false, opts.alt, pick ? [pick.id] : [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
 }
 
 /** Whether a card could be cast right now for free: not a land (CR 305.9). */

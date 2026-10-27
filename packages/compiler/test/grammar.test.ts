@@ -1332,3 +1332,82 @@ describe('slices 120–122', () => {
     expect(parse('Exile all graveyards.', 'Sorcery', 'Wake').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile', what: { ref: 'all', filter: { zone: 'graveyard' } } }] });
   });
 });
+
+describe('slices 123–124', () => {
+  it('reads them', () => {
+    expect(parse('Whenever Goldspan becomes the target of a spell, you gain 2 life.', 'Creature — Dragon', 'Goldspan').abilities[0]).toMatchObject({ trigger: { type: 'becomes_target', targetedBy: 'spell' } });
+    expect(parse("Whenever Giant becomes the target of a spell, Giant deals 2 damage to that spell's controller.", 'Creature — Giant', 'Giant').abilities[0]).toMatchObject({ trigger: { type: 'becomes_target', targetedBy: 'spell' }, effects: [{ type: 'deal_damage', to: { ref: 'controller_of' } }] });
+    expect(parse('Whenever one or more other creatures you control enter, draw a card.', 'Creature — Vampire', 'Vampire').abilities[0]).toMatchObject({ trigger: { type: 'enters', batch: true, subject: { filter: { other: true, controller: 'you' } } } });
+    expect(parse('At the beginning of your upkeep, if an opponent controls more lands than you, you gain 3 life.', 'Enchantment', 'Tax').abilities[0]).toMatchObject({ condition: { type: 'opponent_has_more', filter: { types: ['Land'] } } });
+  });
+});
+
+describe('slice 125', () => {
+  it('reads a choice of additional costs', () => {
+    expect(parse('As an additional cost to cast this spell, sacrifice a creature or pay {3}{B}.', 'Sorcery', 'Eaten').abilities[0]).toMatchObject({
+      effect: { type: 'additional_cost_choice', options: [{ other: [{ type: 'sacrifice', filter: { types: ['Creature'] } }] }, { mana: '{3}{B}' }] },
+    });
+    expect(parse('As an additional cost to cast this spell, sacrifice a creature, discard a card, or pay 4 life.', 'Instant', 'Mangle').abilities[0]).toMatchObject({
+      effect: { type: 'additional_cost_choice', options: [{ other: [{ type: 'sacrifice' }] }, { other: [{ type: 'discard' }] }, { other: [{ type: 'pay_life', amount: 4 }] }] },
+    });
+    // "artifact or creature" stays one filter.
+    expect(parse('As an additional cost to cast this spell, pay {1} or sacrifice an artifact or creature.', 'Instant', 'Glare').abilities[0]).toMatchObject({
+      effect: { options: [{ mana: '{1}' }, { other: [{ type: 'sacrifice', filter: { types: ['Artifact', 'Creature'] } }] }] },
+    });
+    expect(parse('As an additional cost to cast this spell, behold a Dragon or pay {1}.', 'Instant', 'Exhale').abilities[0]).toMatchObject({
+      effect: { options: [{ other: [{ type: 'behold', filter: { subtypes: ['Dragon'] } }] }, { mana: '{1}' }] },
+    });
+    expect(parse('As an additional cost to cast this spell, reveal a Pirate card from your hand or pay {1}.', 'Creature — Pirate', 'Buc').abilities[0]).toMatchObject({
+      effect: { options: [{ other: [{ type: 'reveal_from_hand', filter: { subtypes: ['Pirate'] } }] }, { mana: '{1}' }] },
+    });
+  });
+});
+
+describe('slice 126', () => {
+  it('reads blight and forage', () => {
+    expect(parse('{T}, Blight 1: Surveil 1.', 'Creature — Goblin', 'Gob').abilities[0]).toMatchObject({ cost: { tap: true, other: [{ type: 'blight', amount: 1 }] } });
+    expect(parse('As an additional cost to cast this spell, put a -1/-1 counter on a creature you control.', 'Instant', 'Sting').abilities[0]).toMatchObject({ effect: { type: 'additional_cost', cost: { type: 'blight', amount: 1 } } });
+    expect(parse('Pay 1 life, Blight 2: Target opponent blights 2. Activate only as a sorcery.', 'Creature — Goblin', 'Gob').abilities[0]).toMatchObject({ effects: [{ type: 'blight', amount: 2, who: { ref: 'target' } }] });
+    expect(parse('When this enchantment enters, you may blight 1. If you do, draw a card.', 'Enchantment', 'Rite').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', effects: [{ type: 'blight', amount: 1 }] }] });
+    expect(parse("When this creature enters, you may pay {2}. If you don't, blight 2.", 'Creature — Elf', 'Elf').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{2}', effects: [], else: [{ type: 'blight', amount: 2 }] }] });
+    expect(parse('{2}, Forage: Put a +1/+1 counter on each other Squirrel you control.', 'Creature — Squirrel', 'Sq').abilities[0]).toMatchObject({ cost: { mana: '{2}', other: [{ type: 'forage' }] } });
+    expect(parse('When this creature enters, you may forage. If you do, draw a card.', 'Creature — Squirrel', 'Sq').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', effects: [{ type: 'forage' }] }] });
+    expect(parse('Whenever you forage, put a +1/+1 counter on this creature.', 'Creature — Squirrel', 'Sq').abilities[0]).toMatchObject({ trigger: { type: 'scry', kinds: ['forage'] } });
+  });
+});
+
+describe('slice 127', () => {
+  it('reads reflexive triggered abilities (CR 603.12)', () => {
+    const land = parse('When this land enters, sacrifice it. When you do, search your library for a basic Forest card, put it onto the battlefield tapped, then shuffle.', 'Land', 'Tri').abilities[0];
+    expect(land).toMatchObject({ effects: [{ type: 'may_do', mandatory: true, effects: [{ type: 'sacrifice' }], then: [{ type: 'reflexive', abilities: [{ kind: 'triggered', trigger: { type: 'reflexive' } }] }] }] });
+    const fiend = parse('When this creature enters, you may sacrifice another creature. When you do, destroy target creature an opponent controls.', 'Creature — Demon', 'Fiend').abilities[0] as { targets?: unknown[] };
+    expect(fiend.targets).toBeUndefined();
+    expect(fiend).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'reflexive', abilities: [{ targets: [{ filter: { controller: 'opponent' } }], effects: [{ type: 'destroy' }] }] }] }] });
+    expect(parse('Whenever you attack, you may pay {1}{W}. When you do, target creature gains lifelink until end of turn.', 'Creature — Gargoyle', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{1}{W}', effects: [{ type: 'reflexive' }] }] });
+    // "that creature" after an action on some other object doesn't read (it isn't something the new ability sees).
+    expect(parse("At the beginning of your end step, you may sacrifice another creature. When you do, Zia deals damage equal to that creature's power to any target.", 'Creature — Dragon', 'Zia').unparsed).toHaveLength(1);
+  });
+});
+
+describe('slice 128', () => {
+  it('reads the pacts, Mana Drain, Command Beacon, random discards, manifesting players', () => {
+    expect(parse("Counter target spell. At the beginning of your next upkeep, pay {3}{U}{U}. If you don't, you lose the game.", 'Instant', 'Pact').abilities[0]).toMatchObject({
+      effects: [{ type: 'counter' }, { type: 'delayed', step: 'upkeep', whose: 'you', effects: [{ type: 'may_pay', cost: '{3}{U}{U}', effects: [], else: [{ type: 'game_result' }] }] }],
+    });
+    expect(parse("Counter target spell. At the beginning of your next main phase, add an amount of {C} equal to that spell's mana value.", 'Instant', 'Drain').abilities[0]).toMatchObject({
+      effects: [{ type: 'counter' }, { type: 'delayed', step: 'main', whose: 'you', effects: [{ type: 'add_mana', times: { kind: 'stat', stat: 'mana_value' } }] }],
+    });
+    expect(parse('{T}, Sacrifice this land: Put your commander into your hand from the command zone.', 'Land', 'Beacon').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'hand', what: { filter: { commander: true, zone: 'command' } } }] });
+    expect(parse('Target player discards two cards at random.', 'Sorcery', 'Rot').abilities[0]).toMatchObject({ effects: [{ type: 'discard', amount: 2, random: true }] });
+    expect(parse('Exile target creature. Its controller manifests the top card of their library.', 'Instant', 'Shift').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'manifest', who: { ref: 'controller_of' } }] });
+  });
+});
+
+describe('slice 129', () => {
+  it('reads "enters untapped" and named modes', () => {
+    expect(parse('When this land enters untapped, you gain 2 life.', 'Land', 'Sanctuary').abilities[0]).toMatchObject({ trigger: { type: 'enters', untapped: true } });
+    const named = parse('Choose one —\n• Pray for Protection — Creatures you control gain indestructible until end of turn.\n• Strike a Deal — You and target opponent each draw two cards.', 'Instant', 'Temple');
+    expect(named.unparsed).toEqual([]);
+    expect(named.abilities[0]).toMatchObject({ modes: { options: [{ text: 'Pray for Protection — Creatures you control gain indestructible until end of turn.' }, { targets: [{ what: 'player' }] }] } });
+  });
+});

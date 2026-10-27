@@ -50,6 +50,33 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0 && !/ instead$/.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
+      // CR 603.12: "[Do something]. When you do, [effect]." — the rest of the text is a reflexive triggered ability
+      // with its own targets, which triggers only if the action was taken.
+      const whenYouDo = sentences[i + 1] ? /^When you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (whenYouDo) {
+        const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
+        const may = /^You may (.+)$/.exec(s);
+        const first = pay ? [] : parseSentence(capitalise(may ? may[1]! : s), b);
+        if (!first) return null;
+        const rb = b.clone();
+        rb.targets = [];
+        rb.damaged = null;
+        // The first part's targets aren't this ability's; after an action on some object ("sacrifice another
+        // creature"), "that creature" means that object, which this ability can't see — so it doesn't read.
+        // Only what a trigger can see survives: the source and what made the outer ability trigger.
+        const keepsIt = first.every((x) => ['lose_life', 'gain_life', 'draw', 'mill', 'forage'].includes(x.type));
+        if (!keepsIt || !rb.it || !['self', 'trigger_object'].includes(rb.it.ref)) rb.it = null;
+        if (rb.player && !['you', 'trigger_player'].includes(rb.player.ref)) rb.player = null;
+        const restText = `${[whenYouDo[1]!, ...sentences.slice(i + 2)].join('. ')}.`;
+        const inner = parseEffectText(capitalise(restText), rb);
+        // "the exiled card" after "you may exile it" isn't something this ability can find.
+        if (!inner || (!pay && JSON.stringify(inner).includes('"exiled_with"'))) return null;
+        const ability = { kind: 'triggered', text: `When you do, ${restText}`, trigger: { type: 'reflexive' }, effects: inner, ...(rb.targets.length ? { targets: rb.targets } : {}) };
+        const reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
+        if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive] });
+        else out.push({ type: 'may_do', effects: first, then: [reflexive], ...(may ? {} : { mandatory: true }) });
+        break;
+      }
       // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
         s = `${s.replace(/, reveal that card, and put it /, ', reveal it, put it ').replace(/, and put /, ', put ')}, then shuffle`;
@@ -68,6 +95,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (otherwise && !no) return null;
         out.push({ type: 'may_pay', cost: pay[1]!, effects: inner, ...(no ? { else: no } : {}) });
         i += otherwise ? 2 : 1;
+        continue;
+      }
+      // "You may pay {2}. If you don't, blight 2." / "… sacrifice it."
+      const payDont = pay && sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (pay && payDont) {
+        const no = parseSentence(capitalise(payDont[1]!), b);
+        if (!no) return null;
+        out.push({ type: 'may_pay', cost: pay[1]!, effects: [], else: no });
+        i++;
         continue;
       }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
@@ -469,6 +505,28 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         });
         if (!inner) return null;
         out.push({ type: 'delayed', on: { who: 'you', filter }, effects: inner });
+        continue;
+      }
+      // CR 603.7: "At the beginning of your next upkeep, pay {3}{U}{U}. If you don't, you lose the game." (the pacts),
+      // "At the beginning of your next main phase, add …" (Mana Drain) — a following "If you do/don't" goes with it.
+      const yourNext = /^At the beginning of your next (upkeep|end step|main phase|precombat main phase), (.+)$/.exec(s);
+      if (yourNext) {
+        const follow = sentences[i + 1] && /^If you (?:do|don't), /.test(sentences[i + 1]!) ? sentences[i + 1]! : null;
+        const inner = parseEffectText(`${capitalise(yourNext[2]!)}.${follow ? ` ${follow}.` : ''}`, b);
+        if (!inner) return null;
+        const step = yourNext[1] === 'upkeep' ? 'upkeep' : yourNext[1] === 'end step' ? 'end' : yourNext[1] === 'main phase' ? 'main' : 'main1';
+        out.push({ type: 'delayed', step, whose: 'you', effects: inner });
+        if (follow) i++;
+        continue;
+      }
+      // "Pay {3}{U}{U}. If you don't, you lose the game." — an instruction to pay; not paying is a choice (CR 118.12).
+      const payNow = /^Pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+      const payFollow = payNow && sentences[i + 1] ? /^If you (do|don't), (.+)$/.exec(sentences[i + 1]!) : null;
+      if (payNow && payFollow) {
+        const then = parseSentence(capitalise(payFollow[2]!), b);
+        if (!then) return null;
+        out.push({ type: 'may_pay', cost: payNow[1]!, ...(payFollow[1] === 'do' ? { effects: then } : { effects: [], else: then }) });
+        i++;
         continue;
       }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
@@ -1223,6 +1281,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const filter = !k ? {} : COLORS[k] ? { colors: [COLORS[k]] } : { types: [k[0]!.toUpperCase() + k.slice(1)] };
     return [{ type: 'prevent_chosen_source', filter }];
   }
+  // Command Beacon: "Put your commander into your hand from the command zone." (CR 903.3)
+  if (/^(?:Put your commander into your hand from the command zone|Return your commander from the command zone to your hand)$/.test(s)) {
+    return [{ type: 'move', what: { ref: 'all', filter: { commander: true, zone: 'command', owner: 'you' } }, to: 'hand' }];
+  }
   // CR 701.57a: "discover N".
   const discover = /^[Dd]iscover (\d+)$/.exec(s);
   if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
@@ -1231,6 +1293,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (manifest) {
     const amount = manifest[2] === 'card' ? 1 : manifest[2] === 'two cards' ? 2 : 3;
     return [{ type: 'manifest', amount, ...(/^[Cc]loak/.test(manifest[1]!) ? { cloak: true } : {}) }];
+  }
+  // Reality Shift: "Its controller manifests the top card of their library."
+  const theyManifest = /^(.+?) manifests the top card of (?:their|his or her) library$/.exec(s);
+  if (theyManifest) {
+    const who = parsePlayerRef(theyManifest[1]!, b);
+    return who ? [{ type: 'manifest', amount: 1, who }] : null;
   }
   // CR 114.1: "You get an emblem with "…"" (planeswalkers' ultimates).
   const emblem = /^[Yy]ou get an emblem with (.+)$/.exec(s);
@@ -1350,6 +1418,10 @@ const VERBS: Record<string, VerbHandler> = {
   discard(args, who) {
     // "discards their hand" (CR 701.9a: all the cards in it).
     if (/^(?:their|your|his or her) hand$/.test(args)) return [{ type: 'discard', all: true, amount: 0, who }];
+    // CR 701.9b: "discard a card at random"
+    const random = /^(\S+) cards? at random$/.exec(args);
+    const n = random ? parseAmount(random[1]!) : null;
+    if (random) return typeof n === 'number' ? [{ type: 'discard', amount: n, who, random: true }] : null;
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
@@ -1358,6 +1430,11 @@ const VERBS: Record<string, VerbHandler> = {
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'mill', amount, who }] : null;
+  },
+  // CR 701.68a: "blight 2", "target opponent blights 2"
+  blight(args, who) {
+    const amount = parseAmount(args);
+    return typeof amount === 'number' ? [{ type: 'blight', amount, who }] : null;
   },
   scry(args, who) {
     const amount = parseAmount(args);
@@ -1743,6 +1820,8 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 701.34a
   if (/^proliferate$/i.test(c)) return [{ type: 'proliferate' }];
+  // CR 701.61a
+  if (/^forage$/i.test(c)) return [{ type: 'forage' }];
   // CR 701.50a: "~ connives", "target creature you control connives".
   const connive = /^(.+?) connives$/i.exec(c);
   if (connive) {
@@ -1802,6 +1881,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;
   if (produced) return [produced];
+  // Mana Drain: "add an amount of {C} equal to that spell's mana value".
+  const addAmount = add ? /^an amount of (\{[WUBRGC]\}) equal to (.+)$/.exec(add[1]!) : null;
+  if (addAmount) {
+    const base = parseManaProduction(addAmount[1]!);
+    const times = base ? parseCount(addAmount[2]!, b) : null;
+    if (base && times) return [{ ...base, times }];
+  }
   // Mana Geyser: "Add {R} for each tapped land your opponents control."
   const addEach = add ? /^((?:\{[WUBRGC]\})+) for each (.+)$/.exec(add[1]!) : null;
   if (addEach) {

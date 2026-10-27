@@ -306,6 +306,9 @@ export interface TriggerInfo {
   amount?: number;
   /** Tokens the original ability created, for a delayed trigger ("sacrifice it at the next end step"). */
   created?: ObjectRef[];
+  /** CR 603.12: what the resolution that created a reflexive ability rolled, and what it sacrificed (as it last existed). */
+  dieResult?: number;
+  lkiThisWay?: CostLKI;
 }
 
 interface StackBase {
@@ -383,7 +386,7 @@ export interface DelayedTrigger {
   sourceName: string;
   text: string;
   /** CR 511.2: "at end of combat" is the end of combat step. */
-  step: 'end' | 'upkeep' | 'end_of_combat';
+  step: 'end' | 'upkeep' | 'end_of_combat' | 'main' | 'main1';
   createdTurn: number;
   createdStep: Step;
   effects: EffectNode[];
@@ -442,6 +445,8 @@ export interface Resolution {
   created?: ObjectRef[];
   /** CR 706.2: the result of the latest die roll this resolution made ("equal to the result"). */
   dieResult?: number;
+  /** CR 608.2h: what this resolution sacrificed, as it last existed ("the sacrificed creature's power"). */
+  lkiThisWay?: CostLKI;
   /** CR 701.38: the votes cast as this resolves, by option (or by object id, for a vote for objects). */
   votes?: Record<string, number>;
   /** CR 701.38: the objects with the most votes or tied for most votes. */
@@ -610,6 +615,12 @@ export interface CostChoices {
   counters?: number;
   /** CR 702.47a: cards revealed from your hand to splice onto the spell, in the order their text happens. */
   splice?: ObjectId[];
+  /** "Reveal a Dragon card from your hand", "behold a Dragon" (CR 701.4a): the card or permanent. */
+  reveal?: ObjectId[];
+  /** CR 701.68a: the creature you control that gets the -1/-1 counters when you blight. */
+  blighted?: ObjectId[];
+  /** CR 701.61a: forage by sacrificing a Food (in `sacrifice`) rather than exiling three cards (in `exile`). */
+  forageFood?: boolean;
 }
 
 export type Action =
@@ -719,6 +730,8 @@ export type GameEvent =
   | { type: 'became_target'; object: ObjectId; spell?: ObjectId; entry?: string; controller: PlayerId; first?: true }
   | { type: 'transformed'; object: ObjectId; face: number }
   | { type: 'scried'; player: PlayerId; top: number; bottom: number }
+  /** CR 701.61a */
+  | { type: 'foraged'; player: PlayerId }
   | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
   /** CR 701.20a: cards shown to every player. */
   | { type: 'revealed'; player: PlayerId; objects: ObjectId[] }

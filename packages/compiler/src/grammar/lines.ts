@@ -114,7 +114,8 @@ export function parseProgram(text: string, b: Binder): Program | null {
     for (const bullet of bullets) {
       const mb = b.clone();
       mb.targets = [];
-      const effects = parseEffectText(bullet.slice(2), mb);
+      // A mode's name ("• Sell Contraband — Create a Treasure token.") has no rules meaning.
+      const effects = parseEffectText(bullet.slice(2).replace(/^[A-Z][\w' ,!-]{1,40} — (?=[A-Z])/, ''), mb);
       // A mode the grammar can't read stays manual; the others still run (CR 700.2).
       if (!effects) options.push({ text: bullet.slice(2), effects: [], manual: true });
       else options.push({ text: bullet.slice(2), ...(mb.targets.length ? { targets: mb.targets } : {}), effects });
@@ -201,6 +202,27 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     return { type: 'exile_cards', amount, from: 'hand', ...(Object.keys(filter).length ? { filter } : {}) };
+  }
+  // CR 701.68a: "Blight 2"; "put a -1/-1 counter on a creature you control" is the same. CR 701.61a: "Forage".
+  const blightCost = /^[Bb]light (\d+)$/.exec(item) ?? /^[Pp]ut (a|one|two|three) -1\/-1 counters? on a creature you control$/.exec(item);
+  if (blightCost) {
+    const amount = parseAmount(blightCost[1]!);
+    return typeof amount === 'number' ? { type: 'blight', amount } : null;
+  }
+  if (/^[Ff]orage$/.test(item)) return { type: 'forage' };
+  // "Reveal a Pirate card from your hand"; CR 701.4a: "behold a Dragon".
+  const reveal = /^[Rr]eveal (a|an) (.+? card) from your hand$/.exec(item);
+  if (reveal && b) {
+    const pf = parseFilter(`${reveal[2]} in your hand`, b);
+    if (!pf || pf.plural) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'reveal_from_hand', amount: 1, filter };
+  }
+  const behold = /^[Bb]ehold (a|an) (.+)$/.exec(item);
+  if (behold && b) {
+    const pf = parseFilter(behold[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone || pf.filter.controller) return null;
+    return { type: 'behold', amount: 1, filter: pf.filter };
   }
   // "Return an Island you control to its owner's hand", "return two Islands you control to their owner's hand"
   const ret = /^[Rr]eturn (a|an|one|two|three) (.+?) you control to (?:its|their) owners?'s? hands?$/.exec(item);
@@ -469,10 +491,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const level = /^~ becomes level (\d+)$/.exec(t);
   if (level) return { trigger: { type: 'becomes_level', level: Number(level[1]) }, it: { ref: 'self' }, player: null };
   // CR 702.21a (ward): "becomes the target of a spell or ability an opponent controls".
-  const targeted = /^~ becomes the target of a spell or ability(?: (an opponent|you) controls?)?( for the first time each turn)?$/.exec(t);
+  const targeted = /^~ becomes the target of (a spell or ability|a spell|an ability)(?: (an opponent|you) controls?)?( for the first time each turn)?$/.exec(t);
   if (targeted) {
+    // Goldspan Dragon: "becomes the target of a spell" — not an ability.
+    const of = targeted[1] === 'a spell' ? { targetedBy: 'spell' } : targeted[1] === 'an ability' ? { targetedBy: 'ability' } : {};
     return {
-      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...(targeted[1] ? { by: targeted[1] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[2] ? { first: true } : {}) },
+      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...of, ...(targeted[2] ? { by: targeted[2] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[3] ? { first: true } : {}) },
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -660,6 +684,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const alone = attachedEvent[1] === 'attacks alone' ? { alone: true } : {};
     return { trigger: { type, subject: { ref: 'attached' }, ...alone }, it: leaves ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
   }
+  // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
+  if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
   const self = /^~ (enters(?: the battlefield)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
@@ -689,7 +715,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
-  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~)$/.exec(t);
+  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?)$/.exec(t);
   if (either && either[2] !== either[3]) {
     const one = parseTrigger(word, `${either[1]} ${either[2]}`, b);
     const two = one ? parseTrigger(word, `${either[1]} ${either[3]}`, b) : null;
@@ -738,11 +764,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: otherEvent[2] === 'becomes blocked' ? 'becomes_blocked' : 'turned_face_up', subject }, it: { ref: 'trigger_object' }, player: null };
   }
   // "Whenever one or more tokens you control enter": once for the batch.
-  const batchEnter = /^one or more (.+?) enter(?: the battlefield)?( under your control)?$/.exec(t);
+  const batchEnter = /^one or more (other )?(.+?) enter(?: the battlefield)?( under your control)?$/.exec(t);
   if (batchEnter) {
-    const pf = parseFilter(batchEnter[1]!, b);
+    const pf = parseFilter(batchEnter[2]!, b);
     if (!pf || !pf.plural) return null;
-    if (batchEnter[2]) {
+    // "Whenever one or more other creatures you control with power 2 or less enter" (Welcoming Vampire)
+    if (batchEnter[1]) pf.filter.other = true;
+    if (batchEnter[3]) {
       if (pf.filter.controller) return null;
       pf.filter.controller = 'you';
     }
@@ -831,7 +859,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'activate', who, keyword: 'cycling', ...(cycles[2] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // CR 701.22 / 701.25: "Whenever you scry", "Whenever you surveil", "Whenever you scry or surveil"
-  const scry = /^you (scry|surveil|scry or surveil)$/.exec(t);
+  const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
   // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
   const countersOn = /^one or more ([+-]\d+\/[+-]\d+|\w+) counters are put on (~|(?:a|an|another) (.+?))$/.exec(t);
@@ -1905,7 +1933,7 @@ export const castOptionRule: GrammarRule = {
     const anyTimes = /^As an additional cost to cast ~, you may pay (.+?) any number of times$/.exec(t);
     if (anyTimes) return make('additional', anyTimes[1]!, { repeatable: true });
     // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
-    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+)$/.exec(t);
+    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+|blight \d+)$/.exec(t);
     if (mayAdditional) {
       const choice = choiceCost(mayAdditional[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
       if (!choice) return null;
@@ -2071,10 +2099,34 @@ export const additionalCostRule: GrammarRule = {
     const env = envOf(ctx);
     const m = /^As an additional cost to cast ~, (.+)\.$/.exec(line);
     if (!env || !m) return null;
-    const cost = choiceCost(m[1]!.replace(/^\w/, (c) => c.toUpperCase()), new Binder(env));
-    if (!cost) return null;
-    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'additional_cost', cost } };
-    return node;
+    const b = new Binder(env);
+    const cost = choiceCost(m[1]!.replace(/^\w/, (c) => c.toUpperCase()), b);
+    if (cost) return { kind: 'static', text: original, effect: { type: 'additional_cost', cost } } as StaticAbility;
+    // "sacrifice a creature or pay {3}", "sacrifice a creature, discard a card, or pay 4 life" (CR 118.8): one of them.
+    const part = (s: string): Cost | null => {
+      const mana = /^pay ((?:\{[^}]+\})+)$/.exec(s);
+      if (mana) return MANA_RUN.test(mana[1]!) ? { mana: mana[1]! } : null;
+      const c = choiceCost(s.replace(/^\w/, (x) => x.toUpperCase()), b);
+      return c ? { other: [c] } : null;
+    };
+    const text = m[1]!;
+    // Every way of cutting it at ", " / " or " / ", or " into parts that each read as a cost ("sacrifice an artifact or creature" stays whole).
+    const cuts = (s: string): Cost[] | null => {
+      const one = part(s);
+      if (one) return [one];
+      const re = /,? or |, /g;
+      for (let hit = re.exec(s); hit; hit = re.exec(s)) {
+        const head = part(s.slice(0, hit.index));
+        if (!head) continue;
+        const rest = cuts(s.slice(hit.index + hit[0].length));
+        if (rest) return [head, ...rest];
+      }
+      return null;
+    };
+    if (!/ or /.test(text)) return null;
+    const options = cuts(text);
+    if (!options || options.length < 2) return null;
+    return { kind: 'static', text: original, effect: { type: 'additional_cost_choice', options } } as StaticAbility;
   },
 };
 
