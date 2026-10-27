@@ -223,6 +223,8 @@ export interface CompiledProgram {
 
 /** What a trigger event was about, for "that creature" / "that player" (CR 603.10). */
 export interface TriggerInfo {
+  /** A state trigger (CR 603.8) — at most one of it waiting or on the stack. */
+  state?: true;
   object?: ObjectRef;
   player?: PlayerId;
   /** A stack entry the trigger is about (an ability that targeted something, for ward). */

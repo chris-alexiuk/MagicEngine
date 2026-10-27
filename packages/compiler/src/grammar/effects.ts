@@ -739,6 +739,13 @@ const VERBS: Record<string, VerbHandler> = {
   },
   put(args, who, b, imperative) {
     if (!imperative) return null;
+    // "Put a number of +1/+1 counters equal to the power of the card you exiled on target creature." (scavenge)
+    const counted = /^a number of (\S+) counters equal to (.+?) on (.+)$/.exec(args);
+    if (counted) {
+      const amount = counted[2] === 'the power of the card you exiled' ? { kind: 'stat', stat: 'power', of: { ref: 'self' } } : parseCount(counted[2]!, b);
+      const what = amount ? parseObjectRef(counted[3]!, b) : null;
+      return amount && what ? [{ type: 'add_counters', what: what.ref, counter: counted[1]!.replace(/−/g, '-'), amount }] : null;
+    }
     const counters = /^(\S+) (\S+) counters? on (.+)$/.exec(args);
     if (counters) {
       const amount = parseAmount(counters[1]!);
@@ -790,7 +797,10 @@ const VERBS: Record<string, VerbHandler> = {
   regenerate: objectVerb('regenerate'),
   search(args, who, b, imperative) {
     // CR 701.23: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle."
-    if (!imperative) return null;
+    // "Target player may search their library for a card named …, reveal it, put it into their hand, then shuffle."
+    const theirs = !imperative && /^their library /.test(args);
+    if (!imperative && !theirs) return null;
+    if (theirs) args = args.replace(/^their library /, 'your library ').replace(/ into their hand/, ' into your hand').replace(/ into their graveyard/, ' into your graveyard');
     const m =
       /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), then shuffle and put (?:that card|it) (on top)$/.exec(args);
@@ -803,6 +813,7 @@ const VERBS: Record<string, VerbHandler> = {
     if (!pf || pf.plural !== amount > 1) return null;
     const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
     const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
+    if (theirs) node.who = who;
     if (q[2]) node.upTo = true;
     if (m[3]) node.tapped = true;
     return [node];
@@ -1060,8 +1071,10 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
   if (!m) return null;
   const until = / until end of turn$/.test(c) ? 'eot' : 'game';
   return attempt(b, (b) => {
-    const what = parseObjectRef(m[1]!, b);
-    if (!what) return null;
+    // "Two target creatures each get +1/+1": "each" goes with a plural subject.
+    const each = / each$/.test(m[1]!);
+    const what = parseObjectRef(m[1]!.replace(/ each$/, ''), b);
+    if (!what || (each && !what.plural)) return null;
     const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)![2]!;
     const parts = `${verb} ${m[2]}`.split(/ and (?=gets? |gains? |has |have )/);
     const node: EffectNode = { type: 'modify', what: what.ref, until };

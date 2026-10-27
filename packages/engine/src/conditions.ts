@@ -101,8 +101,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'paid':
       // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
       return Boolean(source?.cast?.paid?.includes(String(cond.cost)));
-    case 'cast_by_you':
-      return !source?.cast?.copy && source?.cast?.by === controller && (!cond.fromHand || source.cast.from === 'hand');
+    case 'cast_by_you': {
+      // "if you cast it" — the spell or permanent itself, or what "it" names.
+      const o = cond.of ? refObjects(ctx, cond.of as never)[0] : source;
+      return !o?.cast?.copy && o?.cast?.by === controller && (!cond.fromHand || o.cast.from === 'hand');
+    }
     case 'self_tapped':
       return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);
     case 'your_turn':

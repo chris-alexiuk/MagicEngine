@@ -2,7 +2,9 @@
  * Robustness check: random bots play many games with random decks drawn from the
  * real card pool, and every action is checked.
  *
- *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose]
+ *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top]
+ *
+ * --top lists the sources of the most triggers and tokens (to spot runaway loops).
  *
  * Failures reported:
  *   - crash:     the engine threw something other than a rules error
@@ -16,6 +18,7 @@ import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef, Color } from '@mtg/schema';
 import {
   activatedAbilities,
+  attackRestriction,
   apply,
   blockDeclarationProblem,
   blockProblem,
@@ -47,6 +50,8 @@ let lastSizes = '';
 const SEED = Number(opt('--seed', '1'));
 const PLAYERS = opt('--players', 'mixed');
 const VERBOSE = args.includes('--verbose');
+const TOP = args.includes('--top');
+const bySource = new Map<string, number>();
 
 let raw = readFileSync(dbPath);
 if (raw[0] === 0x1f && raw[1] === 0x8b) raw = gunzipSync(raw);
@@ -184,7 +189,11 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     case 'declare_attackers': {
       const attacks = p.attackers
         .filter((id) => hasRule(g, g.objects[id]!, 'attacks_each_combat') || rnd() < 0.6)
-        .map((attacker) => ({ attacker, target: pick(p.targets) }));
+        .flatMap((attacker) => {
+          // CR 508.1c: "can't attack unless defending player controls an Island".
+          const ok = p.targets.filter((t) => !attackRestriction(g, g.objects[attacker]!, t));
+          return ok.length ? [{ attacker, target: pick(ok) }] : [];
+        });
       return { player: me, answer: { kind: 'declare_attackers', attacks } };
     }
     case 'declare_blockers': {
@@ -384,7 +393,17 @@ for (let game = 0; game < GAMES; game++) {
     decided++;
     if (action.type === 'activate') used.set(`${g.turn}:${action.object}`, (used.get(`${g.turn}:${action.object}`) ?? 0) + 1);
     for (const e of r.events) {
-      if (e.type === 'triggered') stats.triggered++;
+      if (e.type === 'triggered') {
+        stats.triggered++;
+        if (TOP) {
+          const name = r.state.objects[e.source]?.card ?? e.source;
+          bySource.set(`trigger: ${name}`, (bySource.get(`trigger: ${name}`) ?? 0) + 1);
+        }
+      }
+      if (TOP && e.type === 'created') {
+        const name = r.state.objects[e.object]?.card ?? '?';
+        bySource.set(`token: ${name}`, (bySource.get(`token: ${name}`) ?? 0) + 1);
+      }
       if (e.type === 'resolved' && (e.entry.program || e.entry.kind === 'spell')) stats.resolvedAuto++;
       if (e.type === 'fizzled') stats.fizzled++;
       if (e.type === 'created') stats.tokens++;
@@ -415,6 +434,7 @@ for (let game = 0; game < GAMES; game++) {
 const ms = Date.now() - t0;
 if (process.env.FUZZ_SIZES) console.log(lastSizes);
 console.log(`${GAMES} games, ${turns} turns, ${actions} actions in ${(ms / 1000).toFixed(1)} s (${(ms / Math.max(1, actions)).toFixed(2)} ms/action)`);
+if (TOP) for (const [k, v] of [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${v} ${k}`);
 console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto}, manual ${stats.manual}, fizzled ${stats.fizzled}, tokens ${stats.tokens}`);
 const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);
 for (const k of ['crash', 'rejected', 'invariant'] as const) {

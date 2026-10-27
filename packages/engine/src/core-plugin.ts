@@ -780,7 +780,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   search(node, ctx) {
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;
-    const player = ctx.controller;
+    // "Target player may search their library …": that player searches.
+    const player = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
+    if (!player) return true;
     const library = zoneList(g, 'library', player);
     const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
     const candidates = library.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: player }));
@@ -1345,6 +1347,16 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
+  // CR 603.8: a state trigger, checked whenever triggers are; it won't trigger again while it's waiting or on the stack.
+  state(t, check) {
+    if (check.sourceLeft || check.event !== check.batch?.[0]) return [];
+    const ctx = { g: check.g, controller: check.controller, source: check.source, events: [], targets: [], x: 0, memo: {} };
+    if (!evalCondition(t.condition as ConditionNode, ctx)) return [];
+    const src = check.source;
+    const waiting = check.g.triggers.some((x) => x.source.id === src.id && x.ability.trigger === t) ||
+      check.g.stack.some((x) => x.kind === 'ability' && x.source.id === src.id && x.trigger?.state === true);
+    return waiting ? [] : [{ state: true }];
+  },
   // "When ~ enters or attacks": either event (once per event, CR 603.2c).
   either(t, check) {
     return ((t.of as TriggerNode[] | undefined) ?? []).flatMap((sub) => matchTrigger(sub, check));
@@ -1487,7 +1499,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

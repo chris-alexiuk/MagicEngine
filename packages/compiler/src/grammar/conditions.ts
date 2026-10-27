@@ -81,7 +81,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
   const cast = /^you cast it( from your hand)?$/.exec(t);
-  if (cast) return { type: 'cast_by_you', ...(cast[1] ? { fromHand: true } : {}) };
+  // "Whenever a creature you control enters, if you cast it, …": "it" is the entering creature.
+  if (cast) return { type: 'cast_by_you', ...(cast[1] ? { fromHand: true } : {}), ...(b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
   const state = /^~ is (tapped|untapped)$/.exec(t);
   if (state) return { type: 'self_tapped', tapped: state[1] === 'tapped' };
   // "~ is equipped", "~ is enchanted" — something of that kind is attached to it.

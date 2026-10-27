@@ -280,6 +280,8 @@ export interface ObjectFilter {
   counter?: string;
   /** "~ or another Ally you control": the source itself matches too, whatever else it is. */
   orSource?: true;
+  /** "a card named Pir, Imaginative Rascal" */
+  name?: string;
   /** Any one of these ("creature or Vehicle"). */
   anyOf?: ObjectFilter[];
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
@@ -415,6 +417,8 @@ export interface CombatRules {
   minBlockers?: number;
   /** "must be blocked if able" (one) / "All creatures able to block ~ do so" (all) */
   mustBeBlocked?: 'one' | 'all';
+  /** "can't attack unless defending player controls an Island" (CR 508.1c) */
+  attackOnlyIfDefenderControls?: ObjectFilter;
 }
 
 /** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
@@ -569,7 +573,7 @@ export interface QuantityReplacementNode extends EffectNode {
  * having 0 or less life"; cant_lose: "You can't lose the game"; flash: "You may cast spells as though they had flash".
  */
 export const PLAYER_RULES = [
-  'no_max_hand_size', 'extra_lands', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
+  'no_max_hand_size', 'extra_lands', 'lands_from_graveyard', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
   'no_lose_for_life', 'cant_lose', 'flash',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
@@ -609,12 +613,12 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped',
+    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'],
   /** Counted amounts (AmountExpr kinds). */
@@ -627,7 +631,7 @@ export const CORE_NODES = {
     'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'ascend', 'sunburst',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
-    'kicker', 'multikicker',
+    'kicker', 'multikicker', 'partner_with',
   ],
 } as const;
 
@@ -636,6 +640,8 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   // Defined by abilities the compiler read from the CR (prowess, cycling, equip…).
   if (kw.abilities?.length) return true;
   if (!(CORE_NODES.keywords as readonly string[]).includes(kw.id)) return false;
+  // CR 702.124j: partner with's deck rule needs nothing, but its trigger must have compiled.
+  if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
   if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));

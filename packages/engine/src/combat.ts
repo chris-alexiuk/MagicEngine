@@ -102,6 +102,18 @@ export function promptAttackers(g: GameState): boolean {
   return true;
 }
 
+/** CR 508.1c: restrictions on what a creature may attack ("can't attack unless defending player controls an Island"). */
+export function attackRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
+  for (const r of chars(g, o).combat) {
+    if (!r.attackOnlyIfDefenderControls) continue;
+    const defender = defenderOf(g, target);
+    const f = r.attackOnlyIfDefenderControls;
+    const ok = defender && g.zones.battlefield.some((id) => g.objects[id]!.controller === defender && matchesFilter(g, g.objects[id]!, f, { controller: defender, source: o }));
+    if (!ok) return `${nameOf(g, o)} can’t attack unless that player controls a ${[...(f.subtypes ?? []), ...(f.types ?? [])].join(' or ') || 'matching permanent'}.`;
+  }
+  return null;
+}
+
 const sameTarget = (a: AttackTarget, b: AttackTarget) =>
   a.kind === b.kind && (a.kind === 'player' ? a.player === (b as typeof a).player : a.object === (b as typeof a).object);
 
@@ -119,12 +131,14 @@ export function declareAttackers(
     seen.add(attacker);
     // CR 508.1b / CR 802.3: each attacker attacks a defending player or a planeswalker they control.
     if (!legalTargets.some((t) => sameTarget(t, target))) throw new RulesError(`${nameOf(g, o)} can’t attack that.`);
+    const problem = attackRestriction(g, o, target);
+    if (problem) throw new RulesError(problem);
   }
 
   // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (!seen.has(id) && canAttack(g, o) && hasRule(g, o, 'attacks_each_combat')) {
+    if (!seen.has(id) && canAttack(g, o) && hasRule(g, o, 'attacks_each_combat') && legalTargets.some((t) => !attackRestriction(g, o, t))) {
       throw new RulesError(`${nameOf(g, o)} attacks each combat if able.`);
     }
   }

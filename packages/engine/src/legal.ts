@@ -5,7 +5,7 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withC
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { additionalCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
+import { addPerTargetCost, additionalCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -37,6 +37,13 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   const out: Action[] = [{ type: 'pass', player }];
   const mainPhaseEmptyStack = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
 
+  // "You may play lands from your graveyard."
+  if (mainPhaseEmptyStack && playerRule(g, player, 'lands_from_graveyard') && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player)) {
+    for (const id of zoneList(g, 'graveyard', player)) {
+      const def = g.cards[g.objects[id]!.card]!;
+      if (def.faces[0]!.types.includes('Land')) out.push({ type: 'play_land', player, object: id });
+    }
+  }
   // The hand, plus cards an effect lets this player play from exile (impulse draw).
   for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player)]) {
     const o = g.objects[id]!;
@@ -68,6 +75,11 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const choice = defaultSpellChoice(g, player, o, face);
       const costs = defaultCostChoices(g, player, o, additionalCosts(face));
       if (!choice || !costs) return;
+      // Strive: the chosen targets add to the cost.
+      if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost')) {
+        addPerTargetCost(face, choice.targets, cost);
+        if (!planAutoTap(g, player, cost)) return;
+      }
       const all = { ...costs, ...help };
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
     });

@@ -28,6 +28,12 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     const pf = parseFilter(by[1]!, b);
     return pf && pf.plural ? { cantBeBlockedBy: pf.filter } : null;
   }
+  // "can't attack unless defending player controls an Island" (CR 508.1c)
+  const unless = /^can't attack unless defending player controls (?:a|an) (.+)$/.exec(p);
+  if (unless) {
+    const pf = parseFilter(unless[1]!, b);
+    return pf && !pf.plural ? { attackOnlyIfDefenderControls: pf.filter } : null;
+  }
   const only = /^can block only (.+)$/.exec(p);
   if (only) {
     const pf = parseFilter(only[1]!, b);

@@ -145,7 +145,9 @@ export class ParserRegistry {
         } else result.unparsed.push(line);
         continue;
       }
-      const kws = this.keywords.parseLine(line);
+      // A flavor word before a keyword line ("Diana — Equip {2}", CR 207.2c-style): just the keyword.
+      const flavored = /^[A-Z][A-Za-z'’ ]{0,30} — (.+)$/.exec(line);
+      const kws = this.keywords.parseLine(line) ?? (flavored && !/^Choose\b/.test(line) ? this.keywords.parseLine(flavored[1]!) : null);
       if (kws && gate) {
         // A keyword at a level: "it has [abilities]" while the level holds (granted, layer 6).
         for (const kw of kws) {
@@ -219,7 +221,7 @@ export class ParserRegistry {
    */
   expandKeyword(kw: KeywordInstance, env: ParseContext): AbilityNode[] | null {
     // The CR names some keywords with their connecting word ("Affinity for [text]", CR 702.41a).
-    const def = KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
+    const def = KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`] ?? EXTRA_DEFINITIONS[kw.id];
     if (!def) return null;
     const printed = keywordText(def.pattern, kw);
     if (printed === null) return null;
@@ -236,6 +238,18 @@ export class ParserRegistry {
     return out;
   }
 }
+
+/**
+ * Keywords whose CR definition is one of several in a rule: CR 702.124j "Partner with [name]" — the deck
+ * rule does nothing in a game; the other ability is this trigger.
+ */
+const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+  partner_with: {
+    rule: '702.124j',
+    pattern: 'Partner with [text]',
+    meaning: ['When this permanent enters, target player may search their library for a card named [text], reveal it, put it into their hand, then shuffle.'],
+  },
+};
 
 /** Fills a definition's parameters ("N", "[cost]", "[type]", "[quality]") from a keyword instance. */
 /**

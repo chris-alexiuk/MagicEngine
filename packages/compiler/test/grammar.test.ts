@@ -682,3 +682,16 @@ describe('speed, ascend and more keywords (slice 21)', () => {
     expect(one("Whenever this creature attacks, create a 1/1 white Soldier creature token that's tapped and attacking.", 'Creature — Human')).toMatchObject({ effects: [{ type: 'create_token', tapped: true, attacking: true }] });
   });
 });
+
+describe('partner with, strive, sea serpents (slice 22)', () => {
+  it('reads them', () => {
+    expect(parse('Partner with Pir, Imaginative Rascal', 'Legendary Creature — Human', 'Toothy, Imaginary Friend').keywords[0]).toMatchObject({
+      id: 'partner_with',
+      abilities: [{ kind: 'triggered', effects: [{ type: 'may', effects: [{ type: 'search', filter: { name: 'Pir, Imaginative Rascal' } }] }] }],
+    });
+    expect(one('This spell costs {2}{W} more to cast for each target beyond the first.', 'Instant')).toMatchObject({ effect: { type: 'per_target_cost', cost: '{2}{W}' } });
+    expect(one("This creature can't attack unless defending player controls an Island.", 'Creature — Serpent')).toMatchObject({ effect: { combat: { attackOnlyIfDefenderControls: { subtypes: ['Island'] } } } });
+    expect(one('When you control no Islands, sacrifice this creature.', 'Creature — Serpent')).toMatchObject({ trigger: { type: 'state' } });
+    expect(parse('Diana — Equip {2}', 'Artifact — Equipment', 'Blade').keywords[0]).toMatchObject({ id: 'equip' });
+  });
+});

@@ -272,7 +272,9 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'land');
-  if (!fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
+  // "You may play lands from your graveyard."
+  const fromGraveyard = o.zone === 'graveyard' && o.owner === player && playerRule(g, player, 'lands_from_graveyard');
+  if (!fromExile && !fromGraveyard && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
   if (!face.types.includes('Land')) throw new RulesError(`${face.name} isn’t a land.`);
   // CR 712.12: a modal double-faced card is played as a land with a land face up.
   if (faceIndex > 0 && def.layout !== 'modal_dfc') throw new RulesError('Only modal double-faced cards can be played back face up.');
@@ -493,6 +495,8 @@ function cast(
     if (kicker.id === 'kicker' && kicks > 1) throw new RulesError(`${face.name} can be kicked only once.`);
     for (let i = 0; i < kicks; i++) addCost(cost, parseManaCost(kicker.cost!));
   }
+  // Strive: "costs {2}{W} more to cast for each target beyond the first" (CR 601.2f).
+  addPerTargetCost(castFace, targets, cost);
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, castFace, cost);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
@@ -541,6 +545,15 @@ function cast(
   announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
   if (!during) givePriority(g, player);
+}
+
+/** Strive: "This spell costs {2}{W} more to cast for each target beyond the first." (CR 601.2f) */
+export function addPerTargetCost(face: FaceDef, targets: readonly (readonly unknown[])[] | undefined, cost: ManaCost): void {
+  const chosen = (targets ?? []).reduce((n, list) => n + list.length, 0);
+  for (const a of face.abilities) {
+    if (a.kind !== 'static' || a.effect.type !== 'per_target_cost') continue;
+    for (let i = 1; i < chosen; i++) addCost(cost, parseManaCost(String(a.effect.cost)));
+  }
 }
 
 /** CR 608.2g: cast a card as an effect resolves, without paying its mana cost. */

@@ -444,6 +444,8 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  // "a card named …" (CR 201.2)
+  if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
   // "with a +1/+1 counter on it" (CR 122.1)
   if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"

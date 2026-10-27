@@ -412,6 +412,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
+  // CR 603.8: a state trigger — "When you control no Islands, sacrifice ~."
+  if (word === 'When' && /^you control no /.test(t)) {
+    const cond = parseCondition(t, b);
+    if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
+  }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
   const either = /^~ (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield)$/.exec(t);
@@ -672,6 +677,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (hand) return { type: 'player_rule', who: who(hand[1]!)!, rule: 'no_max_hand_size' };
   const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
   if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
+  // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
+  if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
   // CR 401.5: looking at, or playing with, the top card of your library revealed.
   if (/^You may look at the top card of your library (?:any time|at any time)$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'look_at_top' };
@@ -1188,6 +1195,17 @@ export const enterWithCounterRule: GrammarRule = {
   },
 };
 
+/** Strive: "This spell costs {2}{W} more to cast for each target beyond the first." (CR 601.2f) */
+export const perTargetCostRule: GrammarRule = {
+  id: 'per_target_cost',
+  parse(line, original) {
+    const m = /^~ costs ((?:\{[^}]+\})+) more to cast for each target beyond the first\.$/.exec(line);
+    if (!m) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'per_target_cost', cost: m[1]! } };
+    return node;
+  },
+};
+
 /** CR 731: "If it's neither day nor night, it becomes day as ~ enters." */
 export const entersDayRule: GrammarRule = {
   id: 'enters_day',
@@ -1226,6 +1244,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   reboundRule,
   entersDayRule,
   enterWithCounterRule,
+  perTargetCostRule,
   resolveToHandRule,
   returnIfPaidRule,
   additionalCostRule,
