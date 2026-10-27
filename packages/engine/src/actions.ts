@@ -1,3 +1,6 @@
+import { untapStep } from './flow.js';
+import { STEPS } from './types.js';
+import { livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
@@ -16,7 +19,8 @@ import {
   playerLoses,
   settle,
 } from './flow.js';
-import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
+import { parseManaCost, type ManaCost } from './mana.js';
+import { OTHER_PURPOSE, payMana } from './spending.js';
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
@@ -137,6 +141,15 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       finishCleanup(g, events);
       return;
     }
+    case 'keep_tapped': {
+      const candidates = (p as Extract<typeof p, { kind: 'keep_tapped' }>).candidates;
+      if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+        throw new RulesError('Choose permanents you may leave tapped.');
+      }
+      g.pending = null;
+      untapStep(g, events, answer.objects);
+      return;
+    }
     case 'legend_rule': {
       const objects = (p as Extract<typeof p, { kind: 'legend_rule' }>).objects;
       if (!objects.includes(answer.keep)) throw new RulesError('Choose one of the legendary permanents to keep.');
@@ -163,14 +176,14 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       return;
     case 'declare_blockers':
       declareBlockers(g, player, answer.blocks, events);
-      promptNextBlocker(g);
+      promptNextBlocker(g, events);
       // CR 509.2: once blockers are declared, the active player gets priority.
       if (!g.pending) givePriority(g, g.active);
       return;
     case 'assign_combat_damage':
       assignCombatDamage(g, answer.assignments, events);
-      // CR 510.3: then the active player gets priority.
-      givePriority(g, g.active);
+      // CR 510.3: then (once every player has assigned theirs) the active player gets priority.
+      if (!g.pending) givePriority(g, g.active);
       return;
     case 'trigger_targets':
       answerTriggerTargets(g, player, answer.modes, answer.targets, events);
@@ -233,9 +246,7 @@ function exileToCastLater(g: GameState, player: PlayerId, id: ObjectId, kind: 'f
   if (!exileActionTiming(g, player, face, kind)) throw new RulesError(`You can’t ${kind} ${face.name} now.`);
   const cost = parseManaCost(costText);
   if (wantsAutoTap) autoTap(g, player, cost, 0, events);
-  const left = payFromPool(g.players[player]!.pool, cost, 0);
-  if (!left) throw new RulesError(`Not enough mana to pay ${costText}.`);
-  g.players[player]!.pool = left;
+  if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`Not enough mana to pay ${costText}.`);
   moveObject(g, id, 'exile', events);
   if (kind === 'foretell') o.foretold = g.turn;
   if (kind === 'plot') o.plotted = g.turn;
@@ -257,9 +268,7 @@ function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: 
   const cost = parseManaCost(costText);
   if (cost.unsupported.length || cost.x) throw new RulesError(`Paying ${costText} isn’t supported yet.`);
   if (wantsAutoTap) autoTap(g, player, cost, 0, events);
-  const left = payFromPool(g.players[player]!.pool, cost, 0);
-  if (!left) throw new RulesError(`Not enough mana to pay ${costText}.`);
-  g.players[player]!.pool = left;
+  if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`Not enough mana to pay ${costText}.`);
   const face = g.cards[o.card]!.faces[o.face] ?? g.cards[o.card]!.faces[0]!;
   // CR 708.8: it's the same permanent, now with its own characteristics; nothing about entering happens.
   delete o.faceDown;
@@ -418,7 +427,7 @@ function cast(
   altId?: string,
   extras: string[] = [],
   /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
-  during?: { free?: boolean; suspended?: true },
+  during?: { free?: boolean; suspended?: true; exileOnLeave?: true },
   divide?: number[],
 ): void {
   const kicks = typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
@@ -504,6 +513,9 @@ function cast(
   // CR 702.190a: sneak — "any time you could cast an instant during your declare blockers step".
   if (alt?.id === 'sneak' && !(g.active === player && g.step === 'declare_blockers')) throw new RulesError(`${face.name} can be cast for its sneak cost only during your declare blockers step.`);
   const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash') || alt?.id === 'sneak';
+  // CR 601.3: "Cast this spell only during combat" (and the like).
+  const restricted = during ? null : castRestrictionProblem(g, player, castFace, o);
+  if (restricted) throw new RulesError(restricted);
   // CR 608.2g: casting as an effect resolves ignores timing.
   if (!instantSpeed && !during) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
@@ -538,13 +550,14 @@ function cast(
   }
   // Strive: "costs {2}{W} more to cast for each target beyond the first" (CR 601.2f).
   addPerTargetCost(castFace, targets, cost);
+  addModeCosts(castFace, modes, cost);
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
   if (alt?.reduceBySacrificed) {
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
     if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, sac));
   }
   // CR 601.2f: then increases and reductions.
-  applyCostModifiers(g, player, o, castFace, cost);
+  applyCostModifiers(g, player, o, castFace, cost, targets);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
   const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
   const helping = costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length;
@@ -555,15 +568,13 @@ function cast(
   const additional: Cost = { other: [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
   checkOtherCosts(g, player, o, additional, costChoices);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
-  if (wantsAutoTap) autoTap(g, player, cost, x, events);
+  if (wantsAutoTap) autoTap(g, player, cost, x, events, [], { kind: 'spell', object: o });
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
-  const poolBefore = g.players[player]!.pool;
-  const left = payFromPool(poolBefore, cost, x);
-  if (!left) throw new RulesError(`Not enough mana to cast ${face.name}.`);
-  g.players[player]!.pool = left;
+  const spent = payMana(g, player, cost, x, { kind: 'spell', object: o });
+  if (!spent) throw new RulesError(`Not enough mana to cast ${face.name}.`);
   // CR 702.44a / converge: the colors of mana spent to cast it.
-  const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => poolBefore[m] > left[m]).length;
+  const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => spent[m] > 0).length;
   const lki = costLKI(g, additional, costChoices);
   payOtherCosts(g, player, o, additional, events, costChoices);
 
@@ -582,10 +593,14 @@ function cast(
   }
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   // CR 702.127a: so is an aftermath half cast from a graveyard; jump-start too (CR 702.133a).
-  if (flashback || aftermath || alt?.exileOnLeave) o.exileOnLeave = true;
+  if (flashback || aftermath || alt?.exileOnLeave || during?.exileOnLeave) o.exileOnLeave = true;
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
+  // CR 702.174a: the gift's cost is choosing an opponent.
+  const opponents = livePlayers(g).filter((p) => p !== player);
+  const giftTo = paid.includes('gift') ? (costChoices.giftTo ?? opponents[0]) : undefined;
+  if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
   o.cast = {
     by: player,
     from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? 'exile' : 'hand',
@@ -595,12 +610,20 @@ function cast(
     ...(colorsSpent ? { colors: colorsSpent } : {}),
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
+    ...(giftTo ? { giftTo } : {}),
   };
+  // CR 702.174b / 702.174j: an instant or sorcery whose gift was promised gives it first, as it resolves.
+  const giftSpell = giftTo ? castFace.abilities.find((a) => a.kind === 'static' && a.effect.type === 'gift_spell') : undefined;
+  if (program && giftSpell && giftSpell.kind === 'static') program.effects.unshift({ type: 'give_gift', effects: giftSpell.effect.effects });
   // CR 601.2d: the division of its damage among the targets.
   const division = program ? divisionFor(program.effects, targets, x, divide) : undefined;
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}), ...(division ? { division } : {}) });
-  events.push({ type: 'cast', player, object: id });
-  announceTargets(g.stack[g.stack.length - 1]!, events);
+  // CR 700.14: the mana spent to cast spells this turn, before and after this one ("Whenever you expend 4").
+  const spentNow = Object.values(spent).reduce((a, b) => a + b, 0);
+  const manaBefore = g.turnLog.manaSpent?.[player] ?? 0;
+  (g.turnLog.manaSpent ??= {})[player] = manaBefore + spentNow;
+  events.push({ type: 'cast', player, object: id, nth: (g.turnLog.spellsCast[player] ?? 0) + 1, manaBefore, manaSpent: spentNow });
+  announceTargets(g.stack[g.stack.length - 1]!, events, g);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
   if (!during) givePriority(g, player);
 }
@@ -610,6 +633,51 @@ export function activationsThisTurn(g: GameState, o: GameObject, index: number):
   const a = o.activations?.[index];
   return a && a.turn === g.turn ? a.n : 0;
 }
+
+/**
+ * CR 601.3: "Cast this spell only during combat", "… only during the declare attackers step and only if you've been
+ * attacked this step", "… only if you've cast another spell this turn". Why it can't be cast now, or null.
+ */
+export function castRestrictionProblem(g: GameState, player: PlayerId, face: FaceDef, spell: GameObject): string | null {
+  for (const a of face.abilities) {
+    if (a.kind !== 'static' || a.effect.type !== 'cast_restriction') continue;
+    const r = a.effect;
+    const step = g.step;
+    const combat = ['beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat'].includes(step);
+    const ok: Record<string, boolean> = {
+      combat,
+      declare_attackers: step === 'declare_attackers',
+      declare_blockers: step === 'declare_blockers',
+      before_blockers: step === 'beginning_of_combat' || step === 'declare_attackers',
+      after_blockers: step === 'declare_blockers' || step === 'combat_damage' || step === 'end_of_combat',
+      before_damage: STEPS.indexOf(step) < STEPS.indexOf('combat_damage'),
+      after_combat: step === 'main2' || step === 'end' || step === 'cleanup',
+      before_combat: STEPS.indexOf(step) < STEPS.indexOf('beginning_of_combat') || step === 'beginning_of_combat' || step === 'declare_attackers',
+      upkeep: step === 'upkeep',
+    };
+    if (r.during && !ok[String(r.during)]) return `${face.name} can't be cast now.`;
+    if (r.whose === 'your' && g.active !== player) return `${face.name} can only be cast during your turn.`;
+    if (r.whose === 'opponent' && g.active === player) return `${face.name} can only be cast during an opponent's turn.`;
+    // "and only if you've been attacked this step"
+    if (r.attacked && !Object.values(g.combat?.attackers ?? {}).some((x) => (x.target.kind === 'player' ? x.target.player : g.objects[x.target.object]?.controller) === player)) {
+      return `${face.name} can only be cast if you've been attacked.`;
+    }
+    if (r.condition && !evalCondition(r.condition as ConditionNode, { g, controller: player, source: spell, events: [], targets: [], x: 0, memo: {} })) return `${face.name} can't be cast now.`;
+  }
+  return null;
+}
+
+/** CR 702.172a / 702.183a: spree and tiered — each chosen mode's cost is an additional cost. */
+export function addModeCosts(face: FaceDef, modes: readonly number[] | undefined, cost: ManaCost): void {
+  for (const a of face.abilities) {
+    if (a.kind !== 'spell' || !a.modes) continue;
+    for (const m of modes ?? []) {
+      const c = a.modes.options[m]?.cost;
+      if (c) addCost(cost, parseManaCost(c));
+    }
+  }
+}
+export const hasModeCosts = (face: FaceDef) => face.abilities.some((a) => a.kind === 'spell' && a.modes?.options.some((o) => o.cost));
 
 /** Strive: "This spell costs {2}{W} more to cast for each target beyond the first." (CR 601.2f) */
 export function addPerTargetCost(face: FaceDef, targets: readonly (readonly unknown[])[] | undefined, cost: ManaCost): void {
@@ -628,10 +696,10 @@ export function castDuringResolution(
   targets: Target[][] | undefined,
   modes: number[] | undefined,
   events: GameEvent[],
-  opts: { alt?: string; suspended?: true } = {},
+  opts: { alt?: string; suspended?: true; exileOnLeave?: true } = {},
 ): void {
   // With an alternative cost (madness) it's paid, tapping for mana as needed; otherwise it's free.
-  cast(g, player, id, 0, 0, Boolean(opts.alt), targets, modes, events, {}, false, opts.alt, [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}) });
+  cast(g, player, id, 0, 0, Boolean(opts.alt), targets, modes, events, {}, false, opts.alt, [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
 }
 
 /** Whether a card could be cast right now for free: not a land (CR 305.9). */
@@ -701,12 +769,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
   const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? [])];
-  if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself);
-  if (cost.mana) {
-    const left = payFromPool(g.players[player]!.pool, mana, choices.x);
-    if (!left) throw new RulesError('Not enough mana to activate that.');
-    g.players[player]!.pool = left;
-  }
+  if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
+  if (cost.mana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
   if (cost.tap) setTapped(g, id, true, events);
   if (cost.untap) setTapped(g, id, false, events);
   if (cost.loyalty !== undefined) {
@@ -736,7 +800,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     ...(division ? { division } : {}),
   });
   events.push({ type: 'ability_activated', player, source: id, text: ability.text, entry: g.stack[g.stack.length - 1]!.kind === 'ability' ? (g.stack[g.stack.length - 1] as { id: string }).id : '', ...(cost.loyalty !== undefined ? { loyalty: true as const } : {}) });
-  announceTargets(g.stack[g.stack.length - 1]!, events);
+  announceTargets(g.stack[g.stack.length - 1]!, events, g);
   // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);
 }
@@ -798,10 +862,8 @@ function activateManual(
     }
     if (mana) {
       const cost = parseManaCost(mana);
-      if (wantsAutoTap) autoTap(g, player, cost, 0, events);
-      const left = payFromPool(g.players[player]!.pool, cost);
-      if (!left) throw new RulesError('Not enough mana to activate that.');
-      g.players[player]!.pool = left;
+      if (wantsAutoTap) autoTap(g, player, cost, 0, events, [], { kind: 'ability', source: o });
+      if (!payMana(g, player, cost, 0, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
     }
     if (tap) setTapped(g, id, true, events);
   }

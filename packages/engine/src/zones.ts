@@ -177,6 +177,13 @@ export function moveObject(
   delete o.saddledTurn;
   delete o.goadedBy;
   delete o.prepared;
+  delete o.ringBearer;
+  if (o.phasedOut) {
+    g.phasedOut = (g.phasedOut ?? []).filter((x) => x !== id);
+    delete o.phasedOut;
+  }
+  delete o.copyRevert;
+  delete o.untapLocks;
   // CR 702.103b: bestowed only on the stack and the battlefield it resolves onto.
   if (!(from === 'stack' && to === 'battlefield')) delete o.bestowed;
   delete o.exerted;

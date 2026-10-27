@@ -1,3 +1,4 @@
+import { isRingBearer } from './ring.js';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import {
   RulesError,
@@ -280,6 +281,8 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   if (a('shadow') !== b('shadow')) return a('shadow') ? `${aName} has shadow.` : `${nameOf(g, blocker)} has shadow.`;
   // CR 702.31b: horsemanship can be blocked only by horsemanship.
   if (a('horsemanship') && !b('horsemanship')) return `${aName} has horsemanship.`;
+  // CR 701.54c: "Your Ring-bearer … can't be blocked by creatures with greater power."
+  if (isRingBearer(attacker) && power(g, blocker) > power(g, attacker)) return `${aName} is a Ring-bearer.`;
   // CR 702.118b: skulk can't be blocked by creatures with greater power.
   if (a('skulk') && power(g, blocker) > power(g, attacker)) return `${aName} has skulk.`;
   // CR 702.14c: landwalk — unblockable while the defending player controls such a land.
@@ -327,7 +330,7 @@ function blockerLimits(g: GameState, attacker: GameObject): { min: number; max: 
 }
 
 /** Called as the declare blockers step begins: queue every attacked player who could block. */
-export function startBlockers(g: GameState): void {
+export function startBlockers(g: GameState, events?: GameEvent[]): void {
   const attacked = new Set(
     attackingCreatures(g)
       .map((o) => defenderOf(g, g.combat!.attackers[o.id]!.target))
@@ -335,10 +338,10 @@ export function startBlockers(g: GameState): void {
   );
   // CR 802.4: each defending player, in APNAP order, declares blockers.
   g.combat!.toDeclareBlockers = defendingPlayers(g).filter((p) => attacked.has(p));
-  promptNextBlocker(g);
+  promptNextBlocker(g, events);
 }
 
-export function promptNextBlocker(g: GameState): void {
+export function promptNextBlocker(g: GameState, events?: GameEvent[]): void {
   const c = g.combat!;
   while (c.toDeclareBlockers.length) {
     const player = c.toDeclareBlockers[0]!;
@@ -353,6 +356,11 @@ export function promptNextBlocker(g: GameState): void {
     c.toDeclareBlockers.shift();
   }
   g.pending = null;
+  // CR 509.3g: once blocking is over, "attacks and isn't blocked" can trigger.
+  if (events && !c.blockersDone) {
+    c.blockersDone = true;
+    events.push({ type: 'blockers_done' });
+  }
 }
 
 /**
@@ -360,17 +368,24 @@ export function promptNextBlocker(g: GameState): void {
  * requirements ("must be blocked if able", "All creatures able to block ~ do so"), which must be
  * obeyed as far as possible without breaking a restriction.
  */
+/** CR 509.1a: how many attackers this creature can block. */
+function blockLimit(g: GameState, o: GameObject): number {
+  return 1 + chars(g, o).combat.reduce((n, r) => n + (r.extraBlocks ?? 0), 0);
+}
+
 export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: { blocker: ObjectId; attacker: ObjectId }[]): string | null {
   const c = g.combat!;
-  const used = new Set<ObjectId>();
+  const used = new Map<ObjectId, ObjectId[]>();
   const perAttacker = new Map<ObjectId, ObjectId[]>();
   for (const { blocker, attacker } of blocks) {
     const b = g.objects[blocker];
     const a = g.objects[attacker];
     if (!b || !canBlockAtAll(g, b, player)) return `${b ? nameOf(g, b) : blocker} can’t block.`;
-    // CR 509.1a: each blocker blocks one attacking creature.
-    if (used.has(blocker)) return `${nameOf(g, b)} can only block one creature.`;
-    used.add(blocker);
+    // CR 509.1a: each blocker blocks one attacking creature — more if an effect says it can.
+    const already = used.get(blocker) ?? [];
+    if (already.includes(attacker)) return `${nameOf(g, b)} is already blocking that creature.`;
+    if (already.length >= blockLimit(g, b)) return already.length === 1 ? `${nameOf(g, b)} can only block one creature.` : `${nameOf(g, b)} can’t block that many creatures.`;
+    used.set(blocker, [...already, attacker]);
     const state = c.attackers[attacker];
     // CR 802.4a: only creatures attacking you or your planeswalkers.
     if (!a || !state || !stillThere(g, attacker, state.zcc) || defenderOf(g, state.target) !== player) {
@@ -381,7 +396,7 @@ export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: 
     perAttacker.set(attacker, [...(perAttacker.get(attacker) ?? []), blocker]);
   }
   // CR 506.5: "can't block alone" — not as the only creature declared as a blocker.
-  if (blocks.length === 1 && hasRule(g, g.objects[blocks[0]!.blocker]!, 'cant_block_alone')) return `${nameOf(g, g.objects[blocks[0]!.blocker]!)} can’t block alone.`;
+  if (used.size === 1 && hasRule(g, g.objects[blocks[0]!.blocker]!, 'cant_block_alone')) return `${nameOf(g, g.objects[blocks[0]!.blocker]!)} can’t block alone.`;
   for (const [attacker, list] of perAttacker) {
     const a = g.objects[attacker]!;
     const { min, max } = blockerLimits(g, a);
@@ -424,8 +439,11 @@ export function declareBlockers(
   const problem = blockDeclarationProblem(g, player, blocks);
   if (problem) throw new RulesError(problem);
   for (const { blocker, attacker } of blocks) {
-    // CR 509.1g: it becomes a blocking creature.
-    c.blockers[blocker] = { zcc: g.objects[blocker]!.zcc, blocking: attacker };
+    // CR 509.1g: it becomes a blocking creature (of each attacker it blocks).
+    const zcc = g.objects[blocker]!.zcc;
+    const prior = c.blockers[blocker];
+    if (prior && prior.zcc === zcc) (prior.alsoBlocking ??= []).push(attacker);
+    else c.blockers[blocker] = { zcc, blocking: attacker };
     const state = c.attackers[attacker]!;
     state.blockers.push({ id: blocker, zcc: g.objects[blocker]!.zcc });
     // CR 509.1h: an attacker with blockers becomes blocked.
@@ -509,12 +527,42 @@ export function startCombatDamage(g: GameState, events: GameEvent[]): void {
     }
   }
 
-  if (choices.length) {
-    // CR 510.1 / CR 802.5: the active player announces attackers' damage first.
-    g.pending = { kind: 'assign_combat_damage', player: g.active, choices };
+  // CR 510.1d: a creature blocking two or more attackers divides its damage among them as its controller chooses.
+  const byDefender = new Map<PlayerId, DamageChoice[]>();
+  for (const o of dealers) {
+    const b = c.blockers[o.id];
+    if (!b?.alsoBlocking?.length) continue;
+    const amount = power(g, o);
+    if (amount <= 0) continue;
+    const blocked = blockedAttackers(g, b);
+    if (blocked.length < 2) continue;
+    const list = byDefender.get(o.controller) ?? [];
+    list.push({ attacker: o.id, power: amount, blockers: blocked.map((x) => x.id), trampleTarget: null, suggested: suggestAssignment(g, o, blocked, null, amount) });
+    byDefender.set(o.controller, list);
+  }
+  // CR 510.1 / CR 802.5: the active player announces attackers' damage first, then each defending player in turn order.
+  const queue = [
+    ...(choices.length ? [{ player: g.active, choices }] : []),
+    ...defendingPlayers(g).flatMap((p) => (byDefender.has(p) ? [{ player: p, choices: byDefender.get(p)! }] : [])),
+  ];
+  if (queue.length) {
+    const [first, ...rest] = queue;
+    g.pending = { kind: 'assign_combat_damage', player: first!.player, choices: first!.choices };
+    c.damageQueue = rest;
+    c.assigned = {};
     return;
   }
   dealCombatDamage(g, planDamage(g, dealers, {}), events);
+}
+
+/** The attackers a blocker is blocking that are still in combat. */
+function blockedAttackers(g: GameState, b: { blocking: ObjectId; alsoBlocking?: ObjectId[] }): GameObject[] {
+  const c = g.combat!;
+  return [b.blocking, ...(b.alsoBlocking ?? [])].flatMap((id) => {
+    const state = c.attackers[id];
+    const o = state ? stillThere(g, id, state.zcc) : null;
+    return o ? [o] : [];
+  });
 }
 
 /** Lethal damage to each blocker in turn, the rest to the last blocker — or past them with trample. */
@@ -574,9 +622,20 @@ export function assignCombatDamage(g: GameState, assignments: Record<ObjectId, D
       }
     }
   }
+  // The next player announces theirs; once everyone has, all of it is dealt at once (CR 510.2).
+  const c = g.combat!;
+  c.assigned = { ...(c.assigned ?? {}), ...Object.fromEntries(pending.choices.map((x) => [x.attacker, assignments[x.attacker]!])) };
+  const next = c.damageQueue?.shift();
+  if (next) {
+    g.pending = { kind: 'assign_combat_damage', player: next.player, choices: next.choices };
+    return;
+  }
   g.pending = null;
+  const chosen = c.assigned;
+  delete c.assigned;
+  delete c.damageQueue;
   const dealers = dealersForCurrentStep(g);
-  dealCombatDamage(g, planDamage(g, dealers, assignments), events);
+  dealCombatDamage(g, planDamage(g, dealers, chosen), events);
 }
 
 function dealersForCurrentStep(g: GameState): GameObject[] {
@@ -616,9 +675,15 @@ function planDamage(g: GameState, dealers: GameObject[], chosen: Record<ObjectId
     }
     const b = c.blockers[o.id];
     if (b) {
+      // CR 510.1d: as its controller divided it among the creatures it's blocking.
+      const picked = chosen[o.id];
+      if (picked) {
+        for (const d of picked) if (d.amount > 0) plan.push({ source: o.id, to: d.to, amount: d.amount });
+        continue;
+      }
       // CR 510.1d: a blocker damages the creature it's blocking, if that's still in combat.
-      const state = c.attackers[b.blocking];
-      if (state && stillThere(g, b.blocking, state.zcc)) plan.push({ source: o.id, to: { kind: 'permanent', object: b.blocking }, amount });
+      const blocked = blockedAttackers(g, b);
+      if (blocked.length === 1) plan.push({ source: o.id, to: { kind: 'permanent', object: blocked[0]!.id }, amount });
     }
   }
   return plan;

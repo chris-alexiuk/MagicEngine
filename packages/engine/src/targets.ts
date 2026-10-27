@@ -113,6 +113,8 @@ export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetS
     text: spec.text,
     count: spec.count ?? 1,
     upTo: Boolean(spec.upTo),
+    // "one, two, or three targets": at least this many (CR 601.2c).
+    ...(spec.upTo && spec.min ? { min: spec.min } : {}),
     candidates: targetCandidates(g, controller, spec, source),
   }));
 }

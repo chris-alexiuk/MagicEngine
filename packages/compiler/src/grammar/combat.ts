@@ -13,6 +13,13 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   const p = predicate.trim();
   if (/^must be blocked(?: this turn)? if able$/.test(p)) return { mustBeBlocked: 'one' };
   if (/^can't be blocked by more than one creature(?: each combat)?$/.test(p)) return { maxBlockers: 1 };
+  // CR 509.1a: blocking more than one attacker.
+  const additional = /^can block (?:an additional|(\w+) additional) creatures?(?: each combat)?$/.exec(p);
+  if (additional) {
+    const n = additional[1] ? parseAmount(additional[1]) : 1;
+    return typeof n === 'number' ? { extraBlocks: n } : null;
+  }
+  if (/^can block any number of creatures(?: each combat)?$/.test(p)) return { extraBlocks: 99 };
   const except = /^can't be blocked except by (.+)$/.exec(p);
   if (except) {
     const n = /^(\w+) or more creatures$/.exec(except[1]!);

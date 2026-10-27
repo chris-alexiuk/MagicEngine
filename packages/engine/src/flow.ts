@@ -1,3 +1,5 @@
+import { phasingStep } from './phasing.js';
+import { checkDungeonDone } from './dungeons.js';
 import type { ConditionNode } from '@mtg/schema';
 import { hasRule, hasType, isPermanentCard, hasKeyword, printedAbilities, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
@@ -283,10 +285,41 @@ function nextStepAfter(step: Step): Step | null {
   return i >= 0 && i < STEPS.length - 1 ? STEPS[i + 1]! : null;
 }
 
+/**
+ * CR 500.8: "After this phase, there is an additional combat phase [followed by an additional main phase]" — the added
+ * phases come right after the current one; then the turn carries on where it would have.
+ */
+function extraPhaseStep(g: GameState, next: Step | null): Step | null {
+  const endsPhase = g.step === 'main1' || g.step === 'main2' || g.step === 'end_of_combat';
+  if (!endsPhase) return next;
+  const x = g.inExtra;
+  // The added combat is over: its main phase, if it has one.
+  if (x && g.step === 'end_of_combat' && x.main && !x.mainNow) {
+    x.mainNow = true;
+    return 'main2';
+  }
+  const queued = g.extraPhases?.shift();
+  if (queued) {
+    g.inExtra = { main: queued.main, then: x ? x.then : (next ?? 'end') };
+    return 'beginning_of_combat';
+  }
+  if (x) {
+    delete g.inExtra;
+    return x.then;
+  }
+  return next;
+}
+
 /** Ends the current step and moves on. */
 export function endStep(g: GameState, events: GameEvent[]): void {
-  // CR 500.5: unspent mana empties as each step and phase ends.
-  for (const p of Object.values(g.players)) p.pool = emptyPool();
+  // CR 500.5: unspent mana empties as each step and phase ends — except mana an effect says isn't lost until later.
+  const combatEnds = g.step === 'end_of_combat';
+  for (const p of Object.values(g.players)) {
+    p.pool = emptyPool();
+    const kept = (p.restricted ?? []).filter((r) => r.keep === 'end_of_turn' ? g.step !== 'cleanup' : r.keep === 'end_of_combat' ? !combatEnds : false);
+    if (kept.length) p.restricted = kept;
+    else delete p.restricted;
+  }
   if (g.step === 'cleanup') {
     if (g.extraCleanup) {
       // CR 514.3a: after players act in a cleanup step, another cleanup step follows.
@@ -312,10 +345,13 @@ export function endStep(g: GameState, events: GameEvent[]): void {
     // CR 511.3: as the end of combat step ends, everything is removed from combat.
     g.combat = null;
   }
+  next = extraPhaseStep(g, next);
   beginStep(g, next ?? 'cleanup', events);
 }
 
 export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): void {
+  delete g.extraPhases;
+  delete g.inExtra;
   // Remember last turn's spells (werewolves, CR 702.145-style conditions); start a fresh log.
   g.lastTurnSpells = g.turnLog.spellsCast;
   // CR 731.2: how many spells the previous turn's active player cast, for day and night.
@@ -355,26 +391,18 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
 
   switch (step) {
     case 'untap': {
-      for (const id of g.zones.battlefield) {
+      // CR 502.1: phasing happens first.
+      phasingStep(g, events);
+      // CR 502.3: "You may choose not to untap ~" — the active player chooses before untapping.
+      const optional = g.zones.battlefield.filter((id) => {
         const o = g.objects[id]!;
-        if (o.controller !== g.active) continue;
-        // CR 302.6: permanents the active player controls have now been controlled since this turn began.
-        o.sick = false;
-        // CR 502.3: the active player untaps their permanents, unless an effect says otherwise.
-        // CR 701.43b: exerting it any number of times wears off in this one untap step.
-        const exerted = o.exerted;
-        delete o.exerted;
-        if (o.skipUntap) {
-          // "It doesn't untap during its controller's next untap step."
-          o.skipUntap--;
-          if (!o.skipUntap) delete o.skipUntap;
-          continue;
-        }
-        if (exerted) continue;
-        if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
+        return o.controller === g.active && o.tapped && hasRule(g, o, 'may_not_untap');
+      });
+      if (optional.length) {
+        g.pending = { kind: 'keep_tapped', player: g.active, candidates: optional };
+        return;
       }
-      // CR 502.4: no priority in the untap step.
-      beginStep(g, 'upkeep', events);
+      untapStep(g, events, []);
       return;
     }
     case 'draw': {
@@ -403,7 +431,7 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       break;
     case 'declare_blockers':
       // CR 509.1: the defending players declare blockers before anyone gets priority.
-      startBlockers(g);
+      startBlockers(g, events);
       if (g.pending) return;
       break;
     case 'combat_damage':
@@ -420,6 +448,42 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
   }
   // CR 117.3a: the active player receives priority at the beginning of most steps.
   if (stepHasPriority(step)) givePriority(g, g.active);
+}
+
+/** CR 502.3: the active player untaps their permanents (all but those they chose to keep tapped); then the upkeep. */
+export function untapStep(g: GameState, events: GameEvent[], keep: readonly string[]): void {
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (o.controller !== g.active) continue;
+    // CR 302.6: permanents the active player controls have now been controlled since this turn began.
+    o.sick = false;
+    // CR 502.3: the active player untaps their permanents, unless an effect says otherwise.
+    // CR 701.43b: exerting it any number of times wears off in this one untap step.
+    const exerted = o.exerted;
+    delete o.exerted;
+    if (o.skipUntap) {
+      // "It doesn't untap during its controller's next untap step."
+      o.skipUntap--;
+      if (!o.skipUntap) delete o.skipUntap;
+      continue;
+    }
+    if (exerted) continue;
+    // "… doesn't untap … for as long as ~ remains tapped"
+    if (o.untapLocks) {
+      o.untapLocks = o.untapLocks.filter((l) => {
+        const s = g.objects[l.id];
+        return Boolean(s && s.zone === 'battlefield' && s.zcc === l.zcc && s.tapped);
+      });
+      if (o.untapLocks.length) continue;
+      delete o.untapLocks;
+    }
+    // CR 502.3: one its controller chose not to untap.
+    if (keep.includes(id)) continue;
+    if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
+  }
+  pruneDurations(g, events);
+  // CR 502.4: no priority in the untap step.
+  beginStep(g, 'upkeep', events);
 }
 
 function startCleanup(g: GameState, events: GameEvent[]): void {
@@ -440,6 +504,13 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
     const o = g.objects[id]!;
     o.damage = 0;
     delete o.regenShields;
+    // "becomes a copy of … until end of turn": it's what it was before.
+    if (o.copyRevert) {
+      const prev = o.copyRevert[0];
+      if (prev) o.copyOf = prev;
+      else delete o.copyOf;
+      delete o.copyRevert;
+    }
   }
   g.effects = g.effects.filter((e) => e.until !== 'eot' && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
   g.prevention = [];
@@ -463,9 +534,23 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
  * CR 704.3: performs all applicable state-based actions simultaneously, repeating
  * until none apply. Returns whether any were performed.
  */
+/** CR 611.2b: an effect "for as long as ~ remains tapped" ends for good once that object isn't tapped there. */
+export function pruneDurations(g: GameState, events: GameEvent[]): boolean {
+  const held = (r: { id: string; zcc: number }) => {
+    const s = g.objects[r.id];
+    return Boolean(s && s.zone === 'battlefield' && s.zcc === r.zcc && s.tapped);
+  };
+  const before = g.effects.length;
+  g.effects = g.effects.filter((e) => !e.whileTapped || held(e.whileTapped));
+  if (g.effects.length === before) return false;
+  applyControlEffects(g, events);
+  return true;
+}
+
 export function checkStateBasedActions(g: GameState, events: GameEvent[]): boolean {
   let any = false;
   for (let round = 0; round < 100; round++) {
+    if (pruneDurations(g, events)) any = true;
     // Events from the previous round can trigger abilities (and leaving objects look back, CR 603.10a).
     collectTriggers(g, events);
     const losers: { player: PlayerId; reason: string }[] = [];
@@ -476,6 +561,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     const vanish: string[] = [];
     let changed = false;
 
+    // CR 704.5t: a venture marker on a dungeon's bottommost room, with that room's ability gone, completes it.
+    for (const p of livePlayers(g)) if (checkDungeonDone(g, p, events)) changed = true;
     // Checking doesn't change anything that characteristics depend on, so lookups share one cache.
     withCharsCache(() => {
       for (const p of livePlayers(g)) {
@@ -606,6 +693,8 @@ function removeObjectEntirely(g: GameState, id: string): void {
     const i = list.indexOf(id);
     if (i >= 0) list.splice(i, 1);
   }
+  // CR 702.26b: a phased-out permanent leaves with them too.
+  if (o.phasedOut) g.phasedOut = (g.phasedOut ?? []).filter((x) => x !== id);
   delete g.objects[id];
 }
 
@@ -629,6 +718,11 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   if (g.combat) g.combat.toDeclareBlockers = g.combat.toDeclareBlockers.filter((p) => p !== player);
 
   const remaining = livePlayers(g);
+  // CR 726.4: so with the initiative.
+  if (g.initiative === player && remaining.length) {
+    g.initiative = g.active !== player && remaining.includes(g.active) ? g.active : nextPlayer(g, player);
+    events.push({ type: 'initiative', player: g.initiative });
+  }
   // CR 725.4: if the monarch leaves the game, the active player becomes the monarch
   // (or, if the active player is the one leaving, the next player in turn order).
   if (g.monarch === player && remaining.length) {
@@ -647,7 +741,7 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   if (g.priority === player) g.priority = nextPlayer(g, player);
   if (theirChoice === 'declare_blockers' && g.active !== player) {
     // The next defending player declares; once everyone has, the active player gets priority.
-    promptNextBlocker(g);
+    promptNextBlocker(g, events);
     if (!g.pending) givePriority(g, g.active);
   }
   g.passed = g.passed.filter((p) => p !== player);
@@ -655,7 +749,10 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   // their turn ends and the next player's turn begins.
   if (g.active === player && g.started) {
     g.stack = [];
-    for (const p of Object.values(g.players)) p.pool = emptyPool();
+    for (const p of Object.values(g.players)) {
+      p.pool = emptyPool();
+      delete p.restricted;
+    }
     beginTurn(g, nextPlayer(g, player), events);
   }
 }

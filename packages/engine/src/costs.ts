@@ -5,6 +5,7 @@ import type { ManaCost } from './mana.js';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
+import type { TargetRef } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 
 /**
@@ -13,7 +14,8 @@ import { faceOf, abilitySources } from './zones.js';
  * from the spell itself ("This spell costs {1} less to cast for each artifact you control") and
  * from permanents ("Creature spells you cast cost {1} less to cast").
  */
-export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef, cost: ManaCost): void {
+/** `targets`: the spell's chosen targets, for "costs {2} less to cast if it targets a tapped creature". */
+export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef, cost: ManaCost, targets?: TargetRef[][]): void {
   const changes: { n: number; color?: Color; change: 'less' | 'more' }[] = [];
   const ctxFor = (controller: PlayerId, source: GameObject): EffectContext => ({ g, controller, source, events: [], targets: [], x: 0, memo: {} });
 
@@ -24,6 +26,14 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (!e.self) continue;
     const ctx = ctxFor(player, spell);
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
+    if (e.ifTargets) {
+      const hit = (targets ?? []).flat().some((t) => {
+        if (t.kind !== 'object') return false;
+        const o = g.objects[t.id];
+        return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, e.ifTargets!, { controller: player, source: spell, anyZone: true }));
+      });
+      if (!hit) continue;
+    }
     changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
   }
   for (const id of abilitySources(g)) {

@@ -51,7 +51,8 @@ export function start(opts: StartOptions = {}): GameState {
   const cards = { ...CARDS };
   for (const c of opts.extra ?? []) cards[c.name] = c;
   // Every card a test might give() has to be in the game's card table, so pad decks with one copy each.
-  const extras = (opts.extra ?? []).map((c) => c.name);
+  // (Dungeon cards start outside the game, CR 309.2.)
+  const extras = (opts.extra ?? []).filter((c) => !c.faces[0]!.types.includes('Dungeon')).map((c) => c.name);
   const { state } = createGame({
     players: ids.map((id) => ({
       id,
@@ -103,6 +104,10 @@ export function toStep(g: GameState, step: Step, player?: PlayerId): GameState {
     // So is skipping combat: no attackers, no blockers.
     if (g.pending?.kind === 'declare_attackers') {
       g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_attackers', attacks: [] } });
+      continue;
+    }
+    if (g.pending?.kind === 'keep_tapped') {
+      g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'keep_tapped', objects: [] } });
       continue;
     }
     if (g.pending?.kind === 'declare_blockers') {

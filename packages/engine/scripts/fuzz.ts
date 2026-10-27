@@ -91,6 +91,10 @@ const pool = db.cards.filter((c) => {
   if (/\{[^}]*(?:P|S|H|\d\/[WUBRG]|C\/)[^}]*\}/.test(f.manaCost) || /\{X\}/.test(f.manaCost)) return false;
   return ['normal', 'split', 'adventure', 'transform', 'modal_dfc', 'prepare'].includes(c.layout);
 });
+// CR 309.2: the dungeons (and Undercity, a token-sized card) players can venture into.
+const DUNGEONS: Record<string, CardDef> = Object.fromEntries(
+  [...db.cards, ...db.tokens].filter((c) => c.faces[0]!.types.includes('Dungeon')).map((c) => [c.name, c]),
+);
 const focusPool = FOCUS ? pool.filter((c) => c.faces.some((f) => FOCUS.test(f.oracle))) : [];
 
 function makeDeck(colors: Color[]): string[] {
@@ -105,8 +109,9 @@ function makeDeck(colors: Color[]): string[] {
 // Bots
 // ---------------------------------------------------------------------------
 
-function sample(candidates: Target[], count: number, upTo: boolean): Target[] {
-  const n = upTo ? Math.floor(rnd() * (Math.min(count, candidates.length) + 1)) : count;
+function sample(candidates: Target[], count: number, upTo: boolean, min = 0): Target[] {
+  const most = Math.min(count, candidates.length);
+  const n = upTo ? Math.min(most, min + Math.floor(rnd() * (most - min + 1))) : count;
   return shuffle([...candidates]).slice(0, n);
 }
 
@@ -127,7 +132,7 @@ function randomiseTargets(g: GameState, a: Action): Action {
   } catch {
     return a;
   }
-  return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo))) };
+  return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0)) };
 }
 
 function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | null {
@@ -142,6 +147,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'bottom_cards', objects: shuffle(hand()).slice(0, p.count) } };
     case 'opening_battlefield':
       return { player: me, answer: { kind: 'opening_battlefield', objects: p.candidates.filter(() => rnd() < 0.8) } };
+    case 'keep_tapped':
+      return { player: me, answer: { kind: 'keep_tapped', objects: p.candidates.filter(() => rnd() < 0.5) } };
     case 'discard_to_hand_size':
       return { player: me, answer: { kind: 'discard_to_hand_size', objects: shuffle(hand()).slice(0, p.count) } };
     case 'discard':
@@ -220,7 +227,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         for (const blocker of p.blockers) {
           if (rnd() < 0.5) continue;
           const options = p.attackers.filter((a) => !blockProblem(g, g.objects[blocker]!, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace'));
-          if (options.length) blocks.push({ blocker, attacker: pick(options) });
+          if (!options.length) continue;
+          const first = pick(options);
+          blocks.push({ blocker, attacker: first });
+          // CR 509.1a: a creature that can block more than one attacker sometimes does.
+          const extra = chars(g, g.objects[blocker]!).combat.reduce((n, r) => n + (r.extraBlocks ?? 0), 0);
+          for (const other of shuffle(options.filter((a) => a !== first)).slice(0, extra)) if (rnd() < 0.5) blocks.push({ blocker, attacker: other });
         }
         return blocks;
       };
@@ -251,13 +263,13 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       if (p.modes) {
         const legal = p.modes.options
           .map((o, i) => ({ i, o }))
-          .filter(({ o }) => o.prompts.every((pr) => pr.upTo || pr.candidates.length >= pr.count));
+          .filter(({ o }) => o.prompts.every((pr) => (pr.upTo ? pr.candidates.length >= (pr.min ?? 0) : pr.candidates.length >= pr.count)));
         const n = Math.max(p.modes.min, Math.min(p.modes.max, legal.length, 1 + Math.floor(rnd() * p.modes.max)));
         const chosen = shuffle(legal).slice(0, n).sort((a, b) => a.i - b.i);
-        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo)));
-        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo))] } };
+        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min)));
+        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min))] } };
       }
-      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo)) } };
+      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min)) } };
     }
   }
   return null;
@@ -294,6 +306,12 @@ function checkInvariants(g: GameState): string | null {
       if (err) return err;
     }
   }
+  // CR 702.26b: phased-out permanents are on the battlefield but kept off its list.
+  for (const id of g.phasedOut ?? []) {
+    const err = where(id, 'battlefield');
+    if (err) return err;
+    if (!g.objects[id]!.phasedOut) return `${id} is listed as phased out but isn't`;
+  }
   for (const e of g.stack) {
     if (e.kind === 'spell') {
       const err = where(e.object, 'stack');
@@ -326,7 +344,7 @@ const t0 = Date.now();
 for (let game = 0; game < GAMES; game++) {
   const count = PLAYERS === 'mixed' ? 2 + (game % 3) : Number(PLAYERS);
   const ids = ['p1', 'p2', 'p3', 'p4'].slice(0, count);
-  const cards: Record<string, CardDef> = {};
+  const cards: Record<string, CardDef> = { ...DUNGEONS };
   const players = ids.map((id) => {
     const colors = shuffle([...(['W', 'U', 'B', 'R', 'G'] as Color[])]).slice(0, 2);
     const deck = makeDeck(colors);

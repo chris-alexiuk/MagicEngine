@@ -2,6 +2,7 @@ import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power, toughness } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
+import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
 import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
@@ -146,7 +147,10 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     if (c.type === 'sacrifice') {
       const n = Number(c.amount ?? 1);
       // CR 701.21a: each chosen permanent goes to its owner's graveyard.
-      for (const id of choices.sacrifice!.slice(sacUsed, sacUsed + n)) moveObject(g, id, 'graveyard', events);
+      for (const id of choices.sacrifice!.slice(sacUsed, sacUsed + n)) {
+        events.push({ type: 'sacrificed', object: id, player });
+        moveObject(g, id, 'graveyard', events);
+      }
       sacUsed += n;
       continue;
     }
@@ -163,6 +167,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       events.push({ type: 'life', player, delta: -Number(c.amount), life: ps.life });
     } else if (c.type === 'sacrifice_self') {
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
+      events.push({ type: 'sacrificed', object: o.id, player });
       moveObject(g, o.id, 'graveyard', events);
     } else if (c.type === 'exile_self') {
       // CR 701.13a
@@ -212,11 +217,8 @@ export function runManaAbility(
   }
   if (ability.cost.untap && !o.tapped) throw new RulesError(`${nameOf(g, o)} is already untapped.`);
   checkOtherCosts(g, player, o, ability.cost, costChoices);
-  const pool = g.players[player]!.pool;
-  if (ability.cost.mana) {
-    const left = payFromPool(pool, parseManaCost(ability.cost.mana));
-    if (!left) throw new RulesError('Not enough mana in your pool to activate that.');
-    g.players[player]!.pool = left;
+  if (ability.cost.mana && !payMana(g, player, parseManaCost(ability.cost.mana), 0, { kind: 'ability', source: o })) {
+    throw new RulesError('Not enough mana in your pool to activate that.');
   }
   if (ability.cost.tap) setTapped(g, id, true, events);
   if (ability.cost.untap) setTapped(g, id, false, events);
@@ -234,8 +236,8 @@ export function runManaAbility(
 }
 
 /** CR 601.2g: activates mana abilities automatically to cover a cost beyond what's in the pool. */
-export function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: number, events: GameEvent[], exclude: ObjectId[] = []): void {
-  const plan = planAutoTap(g, player, cost, x, exclude);
+export function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: number, events: GameEvent[], exclude: ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): void {
+  const plan = planAutoTap(g, player, cost, x, exclude, purpose);
   if (!plan) throw new RulesError('You don’t have enough untapped mana sources.');
   for (const step of plan) runManaAbility(g, player, step.object, step.ability, step.choice, events);
 }
@@ -256,8 +258,6 @@ export function payDuringResolution(g: GameState, player: PlayerId, mana: string
   }
   const cost = parseManaCost(mana);
   if (cost.unsupported.length) throw new RulesError(`Paying ${mana} isn’t supported yet.`);
-  if (!payFromPool(g.players[player]!.pool, cost)) autoTap(g, player, cost, 0, events);
-  const left = payFromPool(g.players[player]!.pool, cost);
-  if (!left) throw new RulesError(`You can’t pay ${mana}.`);
-  g.players[player]!.pool = left;
+  if (!payFromPool(spendablePool(g, player, OTHER_PURPOSE), cost)) autoTap(g, player, cost, 0, events);
+  if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`You can’t pay ${mana}.`);
 }

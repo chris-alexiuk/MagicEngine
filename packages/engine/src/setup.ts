@@ -1,3 +1,4 @@
+import { isDungeon } from './dungeons.js';
 import type { CardDef } from '@mtg/schema';
 import { newTurnLog } from './conditions.js';
 import { beginTurn } from './flow.js';
@@ -60,6 +61,8 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
     if (!def) throw new RulesError(`Unknown card ${key}.`);
     cards[key] = def;
   }
+  // CR 309.2: dungeon cards start outside the game; the ones given are available to venture into.
+  for (const [key, def] of Object.entries(opts.cards)) if (isDungeon(def)) cards[key] = def;
 
   const g: GameState = {
     config,

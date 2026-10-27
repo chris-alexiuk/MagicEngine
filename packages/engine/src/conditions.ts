@@ -1,14 +1,16 @@
 import type { ConditionNode, ObjectFilter } from '@mtg/schema';
-import { matchesFilter, power, toughness } from './characteristics.js';
+import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { refObjects } from './resolve.js';
-import type { GameEvent, GameState, PlayerId } from './types.js';
+import type { GameEvent, GameState, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, zoneList } from './zones.js';
+import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -23,6 +25,24 @@ export interface TurnLog {
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
   drawn?: Record<PlayerId, number>;
+  /** Players who controlled a permanent that left the battlefield this turn (revolt). */
+  left?: PlayerId[];
+  /** A nonland permanent left the battlefield this turn (void). */
+  nonlandLeft?: boolean;
+  /** Permanents that entered the battlefield this turn, by controller (celebration). */
+  entered?: Record<PlayerId, ObjectId[]>;
+  /** CR 702.185c: a spell was warped this turn. */
+  warped?: boolean;
+  /** Who has targeted each object this turn (valiant: "for the first time each turn"). */
+  targeted?: Record<ObjectId, PlayerId[]>;
+  /** CR 700.13: players who committed a crime this turn. */
+  crimes?: PlayerId[];
+  /** CR 700.14: mana each player has spent to cast spells this turn. */
+  manaSpent?: Record<PlayerId, number>;
+  /** The sources that dealt damage to each permanent this turn. */
+  damagedBy?: Record<ObjectId, ObjectId[]>;
+  /** How many times each creature has been declared as an attacker this turn. */
+  attacks?: Record<ObjectId, number>;
 }
 
 export function newTurnLog(): TurnLog {
@@ -34,24 +54,59 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
   for (const e of events) {
     switch (e.type) {
-      case 'moved':
-        if (e.from === 'battlefield' && e.to === 'graveyard' && g.cards[e.card]?.faces[e.face]?.types.includes('Creature')) log.creatureDied = true;
+      case 'moved': {
+        const types = g.cards[e.card]?.faces[e.face]?.types ?? [];
+        if (e.from === 'battlefield' && e.to === 'graveyard' && types.includes('Creature')) log.creatureDied = true;
+        if (e.from === 'battlefield') {
+          if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
+          if (!types.includes('Land')) log.nonlandLeft = true;
+        }
+        if (e.to === 'battlefield') {
+          const o = g.objects[e.object];
+          if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
+        }
         break;
+      }
+      case 'created': {
+        const o = g.objects[e.object];
+        if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
+        break;
+      }
+      case 'became_target': {
+        const by = ((log.targeted ??= {})[e.object] ??= []);
+        if (!by.includes(e.controller)) {
+          by.push(e.controller);
+          e.first = true;
+        }
+        break;
+      }
       case 'attacks_declared':
         if (e.attacks.length && !log.attacked.includes(g.active)) log.attacked.push(g.active);
+        for (const a of e.attacks) (log.attacks ??= {})[a.attacker] = ((log.attacks ??= {})[a.attacker] ?? 0) + 1;
         break;
       case 'life':
-        if (e.delta > 0 && !log.gainedLife.includes(e.player)) log.gainedLife.push(e.player);
+        if (e.delta > 0 && !log.gainedLife.includes(e.player)) {
+          log.gainedLife.push(e.player);
+          e.firstGain = true;
+        }
         if (e.delta < 0 && !log.lostLife.includes(e.player)) log.lostLife.push(e.player);
         break;
       case 'damage':
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
+        if (e.to.kind === 'permanent') {
+          const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
+          if (!by.includes(e.source)) by.push(e.source);
+        }
+        break;
+      case 'crime':
+        if (!(log.crimes ??= []).includes(e.player)) log.crimes.push(e.player);
         break;
       case 'cast': {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
         const o = g.objects[e.object];
         const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
         if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);
+        if (o?.cast?.paid?.includes('warp')) log.warped = true;
         break;
       }
     }
@@ -77,6 +132,24 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
     }
+    case 'completed_dungeon': {
+      // "if you've completed a dungeon", "if you haven't completed Tomb of Annihilation" (CR 309.7)
+      const done = g.players[controller]?.completed ?? [];
+      return (cond.name ? done.includes(String(cond.name)) : done.length > 0) !== Boolean(cond.not);
+    }
+    case 'initiative':
+      // CR 726.1: "if you have the initiative"
+      return (g.initiative === controller) !== Boolean(cond.not);
+    case 'ring_bearer': {
+      // CR 701.54e: "if ~ is your Ring-bearer"; "if you don't control a Ring-bearer".
+      const yes = cond.any
+        ? g.zones.battlefield.some((id) => g.objects[id]!.controller === controller && isRingBearer(g.objects[id]!))
+        : Boolean(source && isRingBearer(source) && source.controller === controller);
+      return yes !== Boolean(cond.not);
+    }
+    case 'chose_other_ring_bearer':
+      // "if you chose a creature other than ~ as your Ring-bearer"
+      return Boolean(ctx.trigger?.object && ctx.trigger.object.id !== source?.id);
     case 'won_clash':
       // CR 701.30d: "If you win" — the clash this spell or ability just made.
       return Boolean(ctx.resolution?.clashWon) !== Boolean(cond.not);
@@ -117,7 +190,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return Boolean(source?.renowned && source.zone === 'battlefield') !== Boolean(cond.not);
     case 'paid':
       // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
-      return Boolean(source?.cast?.paid?.includes(String(cond.cost)));
+      return Boolean(source?.cast?.paid?.includes(String(cond.cost))) !== Boolean(cond.not);
     case 'cast_by_you': {
       // "if you cast it" — the spell or permanent itself, or what "it" names.
       const o = cond.of ? refObjects(ctx, cond.of as never)[0] : source;
@@ -157,8 +230,37 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       }
       return cmp(mine, cond);
     }
-    case 'graveyard':
-      return cmp(zoneList(g, 'graveyard', controller).length, cond);
+    case 'graveyard': {
+      const cards = zoneList(g, 'graveyard', controller).map((id) => g.objects[id]!);
+      // Delirium: "four or more card types among cards in your graveyard" (CR 300.1's card types).
+      if (cond.cardTypes) return cmp(new Set(cards.flatMap((o) => faceOf(g, o).types)).size, cond);
+      // Descend: "four or more permanent cards in your graveyard"
+      if (cond.filter) return cmp(cards.filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, anyZone: true })).length, cond);
+      return cmp(cards.length, cond);
+    }
+    case 'poison': {
+      // Corrupted: "an opponent has three or more poison counters"
+      const players = cond.who === 'any_opponent' ? livePlayers(g).filter((p) => p !== controller) : [controller];
+      return players.some((p) => cmp(g.players[p]!.poison, cond));
+    }
+    case 'different_powers': {
+      // Coven: "three or more creatures with different powers"
+      const powers = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).map((o) => power(g, o));
+      return cmp(new Set(powers).size, cond);
+    }
+    case 'total_power': {
+      // Formidable: "creatures you control have total power 8 or greater"
+      const total = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).reduce((n, o) => n + Math.max(0, power(g, o)), 0);
+      return cmp(total, cond);
+    }
+    case 'entered_this_turn': {
+      // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
+      const ids = g.turnLog.entered?.[controller] ?? [];
+      const n = ids.filter((id) => g.objects[id] && matchesFilter(g, g.objects[id]!, (cond.filter ?? {}) as ObjectFilter, { controller, anyZone: true })).length;
+      return cmp(n, cond);
+    }
+    case 'or':
+      return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
     case 'this_turn': {
       const log = g.turnLog;
       switch (cond.event) {
@@ -177,6 +279,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         case 'you_cast_spell':
           // Surge (CR 702.117a): "if you … have cast another spell this turn".
           return (log.spellsCast[controller] ?? 0) > 0;
+        case 'your_permanent_left':
+          // Revolt: "if a permanent you controlled left the battlefield this turn"
+          return (log.left ?? []).includes(controller);
+        case 'nonland_left':
+          return Boolean(log.nonlandLeft);
+        case 'warped':
+          return Boolean(log.warped);
+        case 'you_committed_crime':
+          return (log.crimes ?? []).includes(controller);
         default:
           return false;
       }

@@ -52,9 +52,13 @@ export function removeFromCombat(g: GameState, id: ObjectId): void {
   for (const a of Object.values(g.combat.attackers)) a.blockers = a.blockers.filter((b) => b.id !== id);
 }
 
-/** CR 701.21a: its controller moves it from the battlefield to its owner's graveyard. Not destruction. */
-export function sacrifice(g: GameState, o: GameObject, player: PlayerId, events: GameEvent[]): boolean {
+/**
+ * CR 701.21a: its controller moves it from the battlefield to its owner's graveyard. Not destruction.
+ * `exploitedBy`: CR 702.110b — sacrificed as that creature's exploit ability resolved.
+ */
+export function sacrifice(g: GameState, o: GameObject, player: PlayerId, events: GameEvent[], exploitedBy?: ObjectId): boolean {
   if (o.zone !== 'battlefield' || o.controller !== player) return false;
+  events.push({ type: 'sacrificed', object: o.id, player, ...(exploitedBy ? { exploitedBy } : {}) });
   moveObject(g, o.id, 'graveyard', events);
   return true;
 }

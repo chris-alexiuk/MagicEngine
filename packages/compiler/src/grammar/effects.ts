@@ -1,4 +1,5 @@
-import type { EffectNode, FaceDef, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
+import type { AddManaEffect, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
+import { parseManaProduction } from '../rules/mana.js';
 import { attempt, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
@@ -62,6 +63,68 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!inner) return null;
         out.push({ type: 'may_pay', cost: pay[1]!, effects: inner });
         i++;
+        continue;
+      }
+      // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
+      const keep = i > 0 ? /^Until end of (turn|combat), you don't lose this mana as steps and phases end$/.exec(s) : null;
+      if (keep) {
+        const last = out[out.length - 1] as AddManaEffect | undefined;
+        if (last?.type !== 'add_mana') return null;
+        last.keep = keep[1] === 'turn' ? 'end_of_turn' : 'end_of_combat';
+        continue;
+      }
+      // "If that spell would be put into its owner's graveyard, exile it instead." after a counterspell or a free cast.
+      if (i > 0 && /^If (?:that spell|that card|it) would be put into (?:its owner's|your|a) graveyard(?: this turn)?, exile it instead$/.test(s)) {
+        const last = out[out.length - 1];
+        if (last?.type === 'counter') last.exile = true;
+        else if (last?.type === 'cast_free') last.exileOnLeave = true;
+        else return null;
+        continue;
+      }
+      // "Reveal cards from the top of your library until you reveal a creature card. Put that card into your hand and the
+      // rest on the bottom of your library in a random order."
+      const until = /^([Rr]eveal|[Ee]xile) cards from the top of your library until you (?:reveal|exile) (?:a|an) (.+?)$/.exec(s);
+      const after = until ? sentences[i + 1] : undefined;
+      if (until && after) {
+        const pf = parseFilter(`${until[2]} in your library`, b);
+        if (!pf || pf.plural || pf.filter.zone !== 'library') return null;
+        const { zone: _z, owner: _o, ...filter } = pf.filter;
+        const exile = /^[Ee]xile/.test(until[1]!);
+        const put = /^(You may put|Put) that card (into your hand|onto the battlefield( tapped)?|into your graveyard)(?: and (?:the rest|all other cards revealed this way) (on the bottom of your library in a random order|into your graveyard)|, then shuffle(?: the rest into your library)?)?$/.exec(after);
+        const castIt = exile && /^You may cast (?:that card|it) without paying its mana cost$/.test(after);
+        if (put) {
+          const to = put[2] === 'into your hand' ? 'hand' : put[2]!.startsWith('onto') ? 'battlefield' : 'graveyard';
+          let rest = put[4] === 'into your graveyard' ? 'graveyard' : /shuffle/.test(after) ? 'shuffle' : put[4] ? 'bottom' : null;
+          let used = 1;
+          if (!rest) {
+            const restS = sentences[i + 2] ?? '';
+            if (/^Put (?:the rest|all other cards revealed this way) on the bottom of your library in a random order$/.test(restS)) rest = 'bottom';
+            else if (/^Put (?:the rest|all other cards revealed this way) into your graveyard$/.test(restS)) rest = 'graveyard';
+            else if (/^(?:Then )?[Ss]huffle(?: the rest into your library| your library)?$/.test(restS)) rest = 'shuffle';
+            else return null;
+            used = 2;
+          }
+          out.push({ type: 'reveal_until', filter, to, rest, ...(exile ? { exile: true } : {}), ...(put[1] === 'You may put' ? { optional: true } : {}), ...(put[3] ? { tapped: true } : {}) });
+          i += used;
+          continue;
+        }
+        if (castIt) {
+          // The rest go on the bottom in a random order (if the text says so) — otherwise they stay exiled.
+          const restS = sentences[i + 2] ?? '';
+          const bottom = /^Put (?:the rest|the exiled cards|all other cards exiled this way)(?: that weren't cast this way)? on the bottom of your library in a random order$/.test(restS);
+          out.push({ type: 'reveal_until', filter, to: 'cast', rest: bottom ? 'bottom' : 'exile', exile: true });
+          i += bottom ? 2 : 1;
+          continue;
+        }
+        return null;
+      }
+      // CR 106.6: "Add {R}{R}{R}. Spend this mana only to cast instant or sorcery spells."
+      const spendOnly = i > 0 ? /^Spend this mana only (.+)$/.exec(s) : null;
+      if (spendOnly) {
+        const last = out[out.length - 1] as AddManaEffect | undefined;
+        const spend = last?.type === 'add_mana' ? parseManaSpend(spendOnly[1]!, b) : null;
+        if (!spend) return null;
+        last!.spend = spend;
         continue;
       }
       // CR 702.32a (fading): "Remove a fade counter from it. If you can't, sacrifice it."
@@ -543,6 +606,14 @@ function parseCounted(s: string, b: Binder): EffectNode[] | null {
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
+  const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
+  if (whileTapped) {
+    const base = s.replace(/\.$/, '').slice(0, whileTapped.index);
+    const durable = (r: EffectNode[] | null) => (r && r.every((x) => x.type === 'modify' || x.type === 'gain_control') ? r : null);
+    const inner = attempt(b, (b) => durable(parseSentence(`${base} until end of turn`, b))) ?? attempt(b, (b) => durable(parseSentence(base, b)));
+    if (inner) return inner.map((x) => ({ ...x, until: 'source_tapped' }));
+  }
   // "…, where X is the number of creatures you control." (CR 107.3a: X defined by the text)
   const where = /^(.+), where X is (.+)$/.exec(s);
   if (where) {
@@ -599,6 +670,23 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (may) {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
+  }
+  // CR 707.2: "~ becomes a copy of target creature until end of turn, except it has this ability",
+  // "you may have ~ become a copy of that creature", "Until end of turn, ~ becomes a copy of …".
+  const becomeCopy =
+    /^(?:[Hh]ave )?(.+?) (?:becomes?|become) a copy of (.+?)(?: (until end of turn))?(?:, except (.+))?$/.exec(s) ??
+    /^[Uu]ntil end of turn, (.+?) (?:becomes?|become) a copy of (.+?)()(?:, except (.+))?$/.exec(s);
+  if (becomeCopy && !/^[Uu]ntil /.test(becomeCopy[1]!)) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(becomeCopy[1]!, b);
+      const of = what ? parseObjectRef(becomeCopy[2]!, b) : null;
+      if (!what || !of || of.plural) return null;
+      const except = becomeCopy[4] ? parseCopyExcept(becomeCopy[4], b) : undefined;
+      if (becomeCopy[4] && !except) return null;
+      const until = becomeCopy[3] || /^[Uu]ntil end of turn, /.test(s) ? 'eot' : undefined;
+      return [{ type: 'become_copy', what: what.ref, of: of.ref, ...(until ? { until } : {}), ...(except ? { except } : {}) }];
+    });
+    if (r) return r;
   }
   // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …",
   // "Copy target activated or triggered ability you control", "copy that ability".
@@ -1312,12 +1400,34 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const who = parsePlayerRef(monarch[1]!, b);
     return who ? [{ type: 'become_monarch', who }] : null;
   }
+  // CR 701.49: "Venture into the dungeon." / "Venture into Undercity."; CR 726: "You take the initiative."
+  if (/^venture into the dungeon$/i.test(c)) return [{ type: 'venture' }];
+  if (/^venture into undercity$/i.test(c)) return [{ type: 'venture', undercity: true }];
+  if (/^you take the initiative$/i.test(c)) return [{ type: 'take_initiative', who: { ref: 'you' } }];
+  // "It doesn't untap during its controller's untap step for as long as ~ remains tapped."
+  const lock = /^(.+?) (?:doesn't|don't) untap during (?:its|their) controller(?:'s|s') untap steps? for as long as ~ remains tapped$/i.exec(c);
+  if (lock) {
+    const what = parseObjectRef(lock[1]!, b);
+    return what ? [{ type: 'lock_untap', what: what.ref }] : null;
+  }
+  // CR 702.26: "Target creature phases out.", "All permanents you control phase out."
+  const phase = /^(.+?) phases? out$/i.exec(c);
+  if (phase) {
+    const what = parseObjectRef(phase[1]!, b);
+    return what ? [{ type: 'phase_out', what: what.ref }] : null;
+  }
+  // CR 500.8: "After this phase, there is an additional combat phase (followed by an additional main phase)."
+  const extraCombat = /^after this (?:main )?phase, there is an additional combat phase( followed by an additional main phase)?$/i.exec(c);
+  if (extraCombat) return [{ type: 'extra_combat', ...(extraCombat[1] ? { main: true } : {}) }];
+  // CR 701.54a: "The Ring tempts you."
+  if (/^the ring tempts you$/i.test(c)) return [{ type: 'ring_tempts' }];
   // CR 701.27a: transforming turns a double-faced permanent over.
   const transform = /^transform (~|it)$/i.exec(c);
   if (transform && (transform[1] === '~' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
-  // CR 106.4: "Add {R}{R}{R}." as an instruction (rituals, triggered mana).
-  const add = /^add ((?:\{[WUBRGC]\})+)$/i.exec(c);
-  if (add) return [{ type: 'add_mana', options: [[...add[1]!.matchAll(/\{([WUBRGC])\}/g)].map((m) => m[1]!)] }];
+  // CR 106.4: "Add {R}{R}{R}." as an instruction (rituals, triggered mana); "Add one mana of any color."
+  const add = /^add (.+)$/i.exec(c);
+  const produced = add ? parseManaProduction(add[1]!) : null;
+  if (produced) return [produced];
   return null;
 }
 
@@ -1520,4 +1630,23 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(m[1]!, b);
     return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: 'eot' }] : null;
   });
+}
+
+/** CR 106.6: "to cast creature spells", "to cast artifact spells or activate abilities of artifacts", "to activate abilities". */
+export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
+  if (text === 'to activate abilities') return { abilities: {} };
+  const m = /^to cast (.+?)(?:,? or (?:to )?activate (?:abilities of (.+)|an ability of (?:a|an) (.+?)(?: source)?))?$/.exec(text);
+  if (!m) return null;
+  const what = m[1]!.replace(/^(\w+) and(?:\/or)? (\w+) spells$/, '$1 or $2 spells');
+  const spells = /^(?:a |an )?spells?$/.test(what) ? { filter: {} as ObjectFilter } : parseFilter(what.replace(/^(?:a|an) /, ''), b);
+  if (!spells || (Object.keys(spells.filter).length && spells.filter.zone !== 'stack')) return null;
+  const { zone: _z, ...spellFilter } = spells.filter;
+  const out: ManaSpend = { spells: spellFilter };
+  const of = m[2] ?? m[3];
+  if (of) {
+    const pf = parseFilter(of, b);
+    if (!pf || pf.filter.zone) return null;
+    out.abilities = pf.filter;
+  }
+  return out;
 }

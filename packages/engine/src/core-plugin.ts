@@ -1,9 +1,11 @@
+import { phaseOut } from './phasing.js';
+import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
 import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, matchesFilter, power, toughness } from './characteristics.js';
+import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -17,10 +19,10 @@ import { dayNightCard, setDayNight } from './day-night.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
-import { installPlugin, matchTrigger, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
+import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, apnap, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
@@ -67,21 +69,38 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   add_mana(node, ctx) {
     const effect = node as AddManaEffect;
     let mana: ManaColor[] | undefined;
+    let choice = ctx.choice;
+    // As a spell or a non-mana ability resolves, its controller chooses which mana (a mana ability is told up front).
+    const many = effect.anyColor || (effect.options?.length ?? 0) > 1;
+    if (many && choice === undefined) {
+      const labels = effect.anyColor
+        ? anyColorChoices(ctx.g, ctx.controller, effect.identity)
+        : effect.options!.map((opt) => opt.map((s) => `{${s === 'chosen' ? ctx.source?.chosen?.color ?? '?' : s}}`).join(''));
+      if (!labels.length) return true;
+      const answer = answerOf(ctx, 'choose_option');
+      if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: labels, text: 'Choose which mana to add.', sourceName: sourceName(ctx) } };
+      const i = labels.indexOf(answer.choice);
+      if (i < 0) throw new RulesError('Choose one of the options.');
+      choice = effect.anyColor ? (labels[i] as ManaColor) : i;
+    }
     if (effect.anyColor) {
-      const color = typeof ctx.choice === 'string' ? ctx.choice : undefined;
+      const color = typeof choice === 'string' ? choice : undefined;
       if (!color || color === 'C' || !MANA_COLORS.includes(color)) return false;
       // CR 903.4f: only a color in the commander's color identity.
       if (effect.identity && !anyColorChoices(ctx.g, ctx.controller, true).includes(color)) return false;
       mana = Array.from({ length: effect.anyColor }, () => color);
     } else if (effect.options) {
-      const index = typeof ctx.choice === 'number' ? ctx.choice : effect.options.length === 1 ? 0 : -1;
+      const index = typeof choice === 'number' ? choice : effect.options.length === 1 ? 0 : -1;
       const option = effect.options[index];
       if (!option) return false;
       mana = manaOption(option, ctx.source) ?? undefined;
     }
     if (!mana) return false;
-    const pool = ctx.g.players[ctx.controller]!.pool;
-    for (const c of mana) pool[c]++;
+    const ps = ctx.g.players[ctx.controller]!;
+    // CR 106.6: "Spend this mana only to …" — kept apart from the rest of the pool.
+    if (effect.spend || effect.keep) {
+      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}) });
+    } else for (const c of mana) ps.pool[c]++;
     ctx.events.push({ type: 'mana_added', player: ctx.controller, mana });
     return true;
   },
@@ -263,8 +282,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
-      until: node.until === 'game' ? 'game' : 'eot',
+      until: node.until === 'game' || node.until === 'source_tapped' ? 'game' : 'eot',
+      ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
     });
+    return true;
+  },
+
+  // "It doesn't untap during its controller's untap step for as long as ~ remains tapped."
+  lock_untap(node, ctx) {
+    if (!ctx.source) return true;
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') (o.untapLocks ??= []).push({ id: ctx.source.id, zcc: ctx.source.zcc });
     return true;
   },
 
@@ -848,8 +875,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.37a: if it isn't monstrous, put N +1/+1 counters on it and it becomes monstrous.
     for (const o of refObjects(ctx, { ref: 'self' })) {
       if (o.zone !== 'battlefield' || o.monstrous) continue;
-      addCounters(ctx, o, '+1/+1', amountOf(ctx, node.amount));
+      const n = amountOf(ctx, node.amount);
+      addCounters(ctx, o, '+1/+1', n);
       o.monstrous = true;
+      ctx.events.push({ type: 'became_monstrous', object: o.id, amount: n });
     }
     return true;
   },
@@ -1024,6 +1053,118 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 701.49: venture into the dungeon (CR 701.49d: "venture into Undercity" brings in only Undercity).
+  venture(node, ctx) {
+    const g = ctx.g;
+    const p = ctx.controller;
+    const answer = answerOf(ctx, 'choose_option');
+    const room = currentRoom(g, p);
+    const start = (): EffectResult => {
+      // CR 309.2a / 701.49a: bring a dungeon into the command zone, the marker on its topmost room.
+      const options = dungeonChoices(g, Boolean(node.undercity));
+      if (!options.length) return true;
+      let card = options[0]!;
+      if (options.length > 1) {
+        const names = options.map((k) => g.cards[k]!.name);
+        if (!answer) return { ask: { kind: 'choose_option', player: p, options: names, text: 'Choose a dungeon to venture into.', sourceName: sourceName(ctx) } };
+        const i = names.indexOf(answer.choice);
+        if (i < 0) throw new RulesError('Choose one of the dungeons.');
+        card = options[i]!;
+      }
+      enterDungeon(g, p, card, ctx.events);
+      return true;
+    };
+    if (!room) return start();
+    // CR 701.49c: from the bottommost room, the dungeon is completed and a new one begins.
+    if (!room.leadsTo.length) {
+      completeDungeon(g, p, ctx.events);
+      return start();
+    }
+    // CR 701.49b: follow an arrow to an adjacent room (choosing, if there are several).
+    if (room.leadsTo.length === 1) {
+      moveToRoom(g, p, room.leadsTo[0]!, ctx.events);
+      return true;
+    }
+    if (!answer) return { ask: { kind: 'choose_option', player: p, options: room.leadsTo, text: `Venture from ${room.name}: choose the next room.`, sourceName: sourceName(ctx) } };
+    if (!room.leadsTo.includes(answer.choice)) throw new RulesError('Choose one of the rooms.');
+    moveToRoom(g, p, answer.choice, ctx.events);
+    return true;
+  },
+
+  // CR 726.3: "You take the initiative" (whoever had it stops having it).
+  take_initiative(node, ctx) {
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      ctx.g.initiative = p;
+      ctx.events.push({ type: 'initiative', player: p });
+    }
+    return true;
+  },
+
+  // CR 702.26: "Target creature phases out." (It phases in during its controller's next untap step.)
+  phase_out(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield' && !o.phasedOut) phaseOut(ctx.g, o, ctx.events);
+    return true;
+  },
+
+  // CR 500.8: "After this phase, there is an additional combat phase [followed by an additional main phase]."
+  extra_combat(node, ctx) {
+    (ctx.g.extraPhases ??= []).push({ main: Boolean(node.main) });
+    return true;
+  },
+
+  // CR 707.2 / 613.2a: "~ becomes a copy of target creature [until end of turn][, except …]" — layer 1.
+  become_copy(node, ctx) {
+    const g = ctx.g;
+    const of = refObjects(ctx, ref(node, 'of'))[0];
+    if (!of) return true;
+    const except = { ...((node.except ?? {}) as CopyExcept) };
+    if (except.keepThisAbility) {
+      delete except.keepThisAbility;
+      const entry = ctx.resolution?.entry;
+      const text = entry?.kind === 'ability' ? entry.text : undefined;
+      const ability = ctx.source && text ? faceOf(g, ctx.source).abilities.find((a) => a.text === text) : undefined;
+      if (ability) except.abilities = [structuredClone(ability)];
+    }
+    const to = withExceptions(g, copiable(of), except);
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      if (node.until === 'eot') (o.copyRevert ??= []).push(o.copyOf ? { ...o.copyOf } : null);
+      o.copyOf = { ...to };
+    }
+    return true;
+  },
+
+  // CR 702.174: the promised opponent gets the gift ("Gift a card": they draw a card; "Gift a Food": they create a Food).
+  give_gift(node, ctx) {
+    const to = ctx.source?.cast?.giftTo;
+    if (!to || !livePlayers(ctx.g).includes(to)) return true;
+    for (const effect of (node.effects ?? []) as EffectNode[]) {
+      const r = runEffect(effect, { ...ctx, controller: to, memo: {} });
+      if (r !== true) return false;
+    }
+    return true;
+  },
+
+  // CR 701.54a: "The Ring tempts you" — choose a creature you control as your Ring-bearer (getting the emblem first).
+  ring_tempts(node, ctx) {
+    const g = ctx.g;
+    const p = ctx.controller;
+    const creatures = g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && hasType(g, g.objects[id]!, 'Creature'));
+    let chosen = creatures[0];
+    if (creatures.length > 1) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: p, candidates: creatures, min: 1, max: 1, text: 'The Ring tempts you: choose your Ring-bearer.' } };
+      if (answer.objects.length !== 1 || !creatures.includes(answer.objects[0]!)) throw new RulesError('Choose one creature you control.');
+      chosen = answer.objects[0];
+    }
+    const ps = g.players[p]!;
+    ps.ringTempted = (ps.ringTempted ?? 0) + 1;
+    for (const o of Object.values(g.objects)) if (o.ringBearer === p && o.id !== chosen) delete o.ringBearer;
+    if (chosen) g.objects[chosen]!.ringBearer = p;
+    ctx.events.push({ type: 'ring_tempted', player: p, ...(chosen ? { object: chosen } : {}) });
+    return true;
+  },
+
   become_monarch(node, ctx) {
     // CR 725.3: only one player is the monarch; the current one stops being it.
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
@@ -1156,14 +1297,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (answer.objects.length !== Math.min(n, candidates.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${Math.min(n, candidates.length)} permanent(s) to sacrifice.`);
       }
-      for (const id of answer.objects) sacrifice(g, g.objects[id]!, p, ctx.events);
+      for (const id of answer.objects) sacrifice(g, g.objects[id]!, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
       done.push(p);
     }
     for (const p of players) {
       if (done.includes(p)) continue;
       const candidates = candidatesOf(p);
       if (candidates.length <= n) {
-        for (const id of candidates) sacrifice(g, g.objects[id]!, p, ctx.events);
+        for (const id of candidates) sacrifice(g, g.objects[id]!, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
         done.push(p);
         continue;
       }
@@ -1249,6 +1390,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   cast_free(node, ctx) {
     const o = refObjects(ctx, ref(node, 'what'))[0];
     if (!o || o.zone === 'stack' || o.zone === 'battlefield' || !castableCard(ctx.g, o)) return true;
+    // "If that spell would be put into your graveyard, exile it instead."
+    if (node.exileOnLeave) ctx.memo.exileOnLeave = true;
     return offerFreeCast(ctx, o.id) ?? true;
   },
 
@@ -1286,6 +1429,66 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // CR 702.85a: cascade.
   cascade(node, ctx) {
     return revealUntilCast(ctx, (o, g) => manaValueOf(g, o) < (ctx.source ? manaValueOf(g, ctx.source) : 0), 'bottom');
+  },
+
+  // "Reveal cards from the top of your library until you reveal a creature card. Put that card into your hand and the
+  // rest on the bottom of your library in a random order." — and "Exile cards … until you exile …" (CR 701.20a).
+  reveal_until(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { seen?: string[]; hit?: string | null };
+    if (!memo.seen) {
+      const filter = { ...((node.filter ?? {}) as ObjectFilter), zone: 'library' as const };
+      const seen: string[] = [];
+      let hit: string | null = null;
+      for (const id of zoneList(g, 'library', ctx.controller)) {
+        seen.push(id);
+        if (matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null })) {
+          hit = id;
+          break;
+        }
+      }
+      memo.seen = seen;
+      memo.hit = hit;
+      if (node.exile) for (const id of seen) moveObject(g, id, 'exile', ctx.events);
+      else if (seen.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...seen] });
+    }
+    const hit = memo.hit;
+    const where = (id: string) => g.objects[id]?.zone;
+    const from = node.exile ? 'exile' : 'library';
+    if (hit && where(hit) === from) {
+      const to = String(node.to);
+      if (to === 'cast') {
+        // "You may cast that card without paying its mana cost."
+        if (ctx.memo.castFree === undefined) {
+          const asked = castableCard(g, g.objects[hit]!) ? offerFreeCast(ctx, hit) : null;
+          if (asked) return asked;
+        }
+      } else if (node.optional && ctx.memo.put === undefined) {
+        const answer = answerOf(ctx, 'may');
+        if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Put ${nameOf(g, g.objects[hit]!)} ${to === 'battlefield' ? 'onto the battlefield' : 'into your hand'}?`, sourceName: sourceName(ctx) } };
+        ctx.memo.put = answer.yes;
+      }
+      if (to !== 'cast' && (!node.optional || ctx.memo.put)) {
+        if (to === 'battlefield') moveObject(g, hit, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+        else moveObject(g, hit, to === 'graveyard' ? 'graveyard' : 'hand', ctx.events);
+      }
+    }
+    // The rest: on the bottom in a random order, into the graveyard, or shuffled in.
+    const rest = memo.seen!.filter((id) => where(id) === from);
+    const r = String(node.rest ?? 'bottom');
+    if (r === 'graveyard') {
+      for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
+    } else if (r === 'exile') {
+      if (from !== 'exile') for (const id of rest) moveObject(g, id, 'exile', ctx.events);
+    } else if (r === 'shuffle') {
+      if (from === 'exile') for (const id of rest) moveObject(g, id, 'library', ctx.events);
+      shuffleInPlace(g, zoneList(g, 'library', ctx.controller));
+      ctx.events.push({ type: 'shuffled', player: ctx.controller });
+    } else {
+      shuffleInPlace(g, rest);
+      for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+    }
+    return true;
   },
 
   // CR 701.57a: discover N — like cascade, but with mana value N or less, and to hand if not cast.
@@ -1368,6 +1571,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
       control: ctx.controller,
       until: node.until === 'eot' ? 'eot' : 'game',
+      ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
     });
     applyControlEffects(g, ctx.events);
     return true;
@@ -1432,7 +1636,7 @@ function offerFreeCast(ctx: EffectContext, id: string): EffectResult | null {
     return { ask: { kind: 'cast_free', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, g.objects[id]!)} without paying its mana cost?` } };
   }
   ctx.memo.castFree = answer.cast;
-  if (answer.cast) castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events);
+  if (answer.cast) castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, ctx.memo.exileOnLeave ? { exileOnLeave: true } : {});
   return null;
 }
 
@@ -1586,8 +1790,17 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (check.sourceLeft) return [];
     const id = e.type === 'created' ? e.object : e.type === 'moved' && e.to === 'battlefield' ? e.object : null;
     const o = id ? check.g.objects[id] : undefined;
-    if (!o || o.zone !== 'battlefield') return [];
-    return subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o) }] : [];
+    if (!o || o.zone !== 'battlefield' || !subjectMatches(check, t.subject as Ref, o)) return [];
+    // "Whenever one or more tokens you control enter": once for the batch.
+    if (t.batch) {
+      const first = (check.batch ?? [e]).find((x) => {
+        const xid = x.type === 'created' ? x.object : x.type === 'moved' && x.to === 'battlefield' ? x.object : null;
+        const xo = xid ? check.g.objects[xid] : undefined;
+        return Boolean(xo && xo.zone === 'battlefield' && subjectMatches(check, t.subject as Ref, xo));
+      });
+      return first === e ? [{}] : [];
+    }
+    return [{ object: refTo(o) }];
   },
   // CR 700.4: "dies" means put into a graveyard from the battlefield. CR 603.10a: these look back in time.
   dies(t, check) {
@@ -1623,6 +1836,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       }
       // CR 702.149a (training): with at least one other attacker with greater power.
       if (t.withGreaterPower && !e.attacks.some((x) => x.attacker !== o.id && check.g.objects[x.attacker] && power(check.g, check.g.objects[x.attacker]!) > power(check.g, o))) return [];
+      // "Whenever ~ and at least two other creatures attack"
+      if (typeof t.withOthers === 'number' && e.attacks.length < t.withOthers + 1) return [];
+      // "Whenever a creature attacks you or a planeswalker you control"
+      if (t.defender === 'you' && (target.kind === 'player' ? target.player !== check.controller : check.g.objects[target.object]?.controller !== check.controller)) return [];
+      // "Whenever a creature attacks you"
+      if (t.defender === 'you_only' && (target.kind !== 'player' || target.player !== check.controller)) return [];
+      // "Whenever ~ attacks for the first time each turn"
+      if (t.firstTime && (check.g.turnLog.attacks?.[o.id] ?? 0) !== 1) return [];
       // CR 702.171b: "attacks while saddled" — saddled this turn, before it attacked.
       if (t.saddled && o.saddledTurn !== check.g.turn) return [];
       // "Whenever a creature attacks enchanted player"
@@ -1669,6 +1890,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'became_target' || check.sourceLeft) return [];
     if (t.by === 'opponent' && e.controller === check.controller) return [];
+    if (t.by === 'you' && e.controller !== check.controller) return [];
+    // Valiant: "for the first time each turn"
+    if (t.first && !e.first) return [];
     const o = check.g.objects[e.object];
     if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
     const spell = e.spell ? check.g.objects[e.spell] : undefined;
@@ -1684,8 +1908,17 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true })) return [];
       return chars(check.g, hit).types.includes('Creature') ? [{ object: refTo(hit), amount: e.amount }] : [];
     }
+    // "deals combat damage to a player or planeswalker" / "… or battle": that player is the permanent's controller.
+    if ((t.to === 'player_or_planeswalker' || t.to === 'player_or_battle') && e.type === 'damage' && e.combat && e.to.kind === 'permanent' && !check.sourceLeft) {
+      const src = check.g.objects[e.source];
+      const hit = check.g.objects[e.to.object];
+      if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true })) return [];
+      return chars(check.g, hit).types.includes(t.to === 'player_or_battle' ? 'Battle' : 'Planeswalker') ? [{ object: refTo(src), player: hit.controller, amount: e.amount }] : [];
+    }
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
     if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
+    // "Whenever a creature deals combat damage to one of your opponents"
+    if (t.to === 'opponent' && e.to.player === check.controller) return [];
     const o = check.g.objects[e.source];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), player: e.to.player, amount: e.amount }] : [];
   },
@@ -1706,7 +1939,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever ~ becomes tapped" (CR 701.26a).
   becomes_tapped(t, check) {
     const e = check.event;
-    if (e.type !== 'tapped' || !e.tapped || check.sourceLeft) return [];
+    // "becomes tapped", or "becomes untapped" with `untapped`.
+    if (e.type !== 'tapped' || e.tapped === Boolean(t.untapped) || check.sourceLeft) return [];
     const o = check.g.objects[e.object];
     return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o), player: o.controller }] : [];
   },
@@ -1746,6 +1980,23 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   deals_damage(t, check) {
     const e = check.event;
     if (e.type !== 'damage' || (t.combat && !e.combat) || check.sourceLeft) return [];
+    // "Whenever ~ deals damage to a creature": once for each creature, which is the trigger's object.
+    if (t.to === 'creature') {
+      if (e.to.kind !== 'permanent') return [];
+      const src = check.g.objects[e.source];
+      const hit = check.g.objects[e.to.object];
+      if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true }) || !chars(check.g, hit).types.includes('Creature')) return [];
+      return [{ object: refTo(hit), amount: e.amount }];
+    }
+    // "Whenever ~ deals damage to a player" / "to an opponent": once for each player dealt damage.
+    if (t.to === 'player' || t.to === 'opponent') {
+      if (e.to.kind !== 'player' || (t.to === 'opponent' && e.to.player === check.controller)) return [];
+      const to = e.to.player;
+      const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat && x.to.kind === 'player' && x.to.player === to);
+      if (hits[0] !== e) return [];
+      const src = check.g.objects[e.source];
+      return src && subjectMatches(check, t.subject as Ref, src, { anyZone: true }) ? [{ object: refTo(src), player: to, amount: hits.reduce((n, x) => n + x.amount, 0) }] : [];
+    }
     const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat);
     if (together[0] !== e) return [];
     const o = check.g.objects[e.source];
@@ -1789,6 +2040,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.whose === 'opponent' && active === check.controller) return [];
     // Curses: "At the beginning of enchanted player's upkeep"
     if (t.whose === 'enchanted' && active !== check.source.attachedToPlayer) return [];
+    // "At the beginning of the upkeep of enchanted creature's controller"
+    if (t.whose === 'attached_controller') {
+      const r = check.source.attachedTo;
+      const host = r ? check.g.objects[r.id] : undefined;
+      if (!host || host.zcc !== r!.zcc || host.controller !== active) return [];
+    }
     return [{ player: active }];
   },
   // CR 506.3: "Whenever enchanted player is attacked" — once per combat, as attackers are declared.
@@ -1803,15 +2060,159 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   gain_life(t, check) {
     const e = check.event;
     if (e.type !== 'life' || e.delta <= 0 || check.sourceLeft || e.player !== check.controller) return [];
+    // "Whenever you gain life for the first time each turn"
+    if (t.first && !e.firstGain) return [];
     return [{ player: e.player, amount: e.delta }];
   },
   draw(t, check) {
     const e = check.event;
     if (e.type !== 'drew' || check.sourceLeft) return [];
-    if (e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
+    // "Whenever an opponent draws a card"
+    if (t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     // "Whenever you draw your second card each turn"
     if (t.nth && e.nth !== t.nth) return [];
     return [{ player: e.player }];
+  },
+  // CR 508.3d: "Whenever you attack" (with N or more creatures) — once as you declare attackers;
+  // CR 508.3e: "Whenever you attack a player" — once for each player attacked.
+  you_attack(t, check) {
+    const e = check.event;
+    if (e.type !== 'attacks_declared' || check.sourceLeft || check.g.active !== check.controller || !e.attacks.length) return [];
+    if (typeof t.min === 'number' && e.attacks.length < t.min) return [];
+    if (t.perPlayer) {
+      const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
+      return players.map((player) => ({ player }));
+    }
+    return [{}];
+  },
+  // CR 509.3g: "Whenever ~ attacks and isn't blocked" — once blockers have been declared.
+  unblocked(t, check) {
+    const e = check.event;
+    const c = check.g.combat;
+    if (e.type !== 'blockers_done' || check.sourceLeft || !c) return [];
+    return Object.entries(c.attackers).flatMap(([id, a]) => {
+      const o = check.g.objects[id];
+      if (!o || o.zcc !== a.zcc || a.blocked || !subjectMatches(check, t.subject as Ref, o)) return [];
+      const player = a.target.kind === 'player' ? a.target.player : check.g.objects[a.target.object]?.controller;
+      return [{ object: refTo(o), ...(player ? { player } : {}) }];
+    });
+  },
+  // "Whenever one or more creatures you control deal combat damage to a player": once for each player dealt damage.
+  combat_damage_batch(t, check) {
+    const e = check.event;
+    if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
+    const to = e.to.player;
+    if (t.opponent && to === check.controller) return [];
+    const matches = (x: GameEvent) => {
+      if (x.type !== 'damage' || !x.combat || x.to.kind !== 'player' || x.to.player !== to) return false;
+      const src = check.g.objects[x.source];
+      return Boolean(src && matchesFilter(check.g, src, t.filter as ObjectFilter, { controller: check.controller, source: check.source, anyZone: true }));
+    };
+    const batch = (check.batch ?? [e]).filter(matches);
+    if (batch[0] !== e) return [];
+    return [{ player: to, amount: batch.reduce((n, x) => n + (x.type === 'damage' ? x.amount : 0), 0) }];
+  },
+  // "Whenever one or more cards leave your graveyard": once per batch.
+  leave_graveyard(t, check) {
+    const e = check.event;
+    if (e.type !== 'moved' || e.from !== 'graveyard' || check.sourceLeft) return [];
+    const mine = (x: GameEvent) => {
+      if (x.type !== 'moved' || x.from !== 'graveyard') return false;
+      const o = check.g.objects[x.object];
+      return Boolean(o && o.owner === check.controller && (!t.filter || matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true })));
+    };
+    const batch = (check.batch ?? [e]).filter(mine);
+    return batch[0] === e ? [{}] : [];
+  },
+  // CR 701.9: "Whenever you discard a card", "Whenever an opponent discards a card", "… one or more cards" (once per
+  // batch). CR 702.29d: "cycles or discards" triggers once when a card is cycled (cycling discards it).
+  discard(t, check) {
+    const e = check.event;
+    if (e.type !== 'discarded' || check.sourceLeft) return [];
+    if (t.who === 'you' && e.player !== check.controller) return [];
+    if (t.who === 'opponent' && e.player === check.controller) return [];
+    const ok = (id: ObjectId) => {
+      const x = check.g.objects[id];
+      return !t.filter || Boolean(x && matchesFilter(check.g, x, t.filter as ObjectFilter, { controller: check.controller, anyZone: true }));
+    };
+    if (!ok(e.object)) return [];
+    if (t.batch) {
+      const first = (check.batch ?? [e]).find((x) => x.type === 'discarded' && x.player === e.player && ok(x.object));
+      if (first !== e) return [];
+    }
+    const o = check.g.objects[e.object];
+    return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
+  },
+  // CR 701.27e: "When this creature transforms into [this face]" — the ability is on the face it became.
+  transforms(t, check) {
+    const e = check.event;
+    return e.type === 'transformed' && e.object === check.source.id && !check.sourceLeft ? [{ object: refTo(check.source) }] : [];
+  },
+  // CR 700.13: "Whenever you commit a crime"
+  crime(t, check) {
+    const e = check.event;
+    return e.type === 'crime' && e.player === check.controller && !check.sourceLeft ? [{ player: e.player }] : [];
+  },
+  // CR 700.14: "Whenever you expend 4" — the mana you've spent on spells this turn reaches 4.
+  expend(t, check) {
+    const e = check.event;
+    if (e.type !== 'cast' || e.player !== check.controller || check.sourceLeft || e.manaBefore === undefined) return [];
+    const n = Number(t.n);
+    return e.manaBefore < n && e.manaBefore + (e.manaSpent ?? 0) >= n ? [{ player: e.player }] : [];
+  },
+  // CR 309.7: "Whenever you complete a dungeon"
+  dungeon_completed(t, check) {
+    const e = check.event;
+    return e.type === 'dungeon_completed' && e.player === check.controller && !check.sourceLeft ? [{ player: e.player }] : [];
+  },
+  // CR 309.4c: room abilities are put on the stack by the dungeon's own trigger handling (dungeons.ts).
+  room() {
+    return [];
+  },
+  // CR 701.54d: "Whenever the Ring tempts you"; "Whenever you choose a creature as your Ring-bearer".
+  ring_tempted(t, check) {
+    const e = check.event;
+    if (e.type !== 'ring_tempted' || e.player !== check.controller || check.sourceLeft) return [];
+    if (t.chose && !e.object) return [];
+    const o = e.object ? check.g.objects[e.object] : undefined;
+    return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
+  },
+  // CR 701.37: "When ~ becomes monstrous" — X is the N it became monstrous with (CR 701.37c).
+  becomes_monstrous(t, check) {
+    const e = check.event;
+    if (e.type !== 'became_monstrous' || e.object !== check.source.id || check.sourceLeft) return [];
+    return [{ object: refTo(check.source), amount: e.amount }];
+  },
+  // "Whenever you scry", "Whenever you scry or surveil" (CR 701.22, 701.25).
+  scry(t, check) {
+    const e = check.event;
+    if (check.sourceLeft || (e.type !== 'scried' && e.type !== 'surveilled')) return [];
+    if (e.player !== check.controller || !(t.kinds as string[]).includes(e.type === 'scried' ? 'scry' : 'surveil')) return [];
+    return [{ player: e.player }];
+  },
+  // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
+  counters_put(t, check) {
+    const e = check.event;
+    if (e.type !== 'counters' || e.delta <= 0 || check.sourceLeft || e.counter !== t.counter) return [];
+    const o = check.g.objects[e.object];
+    if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+    const together = (check.batch ?? [e]).filter((x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && x.counter === e.counter);
+    if (together[0] !== e) return [];
+    return [{ object: refTo(o), amount: together.reduce((n, x) => n + (x.type === 'counters' ? x.delta : 0), 0) }];
+  },
+  // "Whenever you sacrifice a Clue", "Whenever you sacrifice another permanent" (CR 701.21a).
+  sacrificed(t, check) {
+    const e = check.event;
+    if (e.type !== 'sacrificed' || e.player !== check.controller) return [];
+    const o = check.g.objects[e.object];
+    if (!o) return [];
+    // "another": not this permanent (which may itself have been sacrificed); "When you sacrifice ~".
+    if (t.other && o.id === check.source.id) return [];
+    if (t.self && o.id !== check.source.id) return [];
+    // CR 702.110b: "When ~ exploits a creature" — sacrificed as its exploit ability resolved.
+    if (t.exploit && e.exploitedBy !== check.source.id) return [];
+    if (t.filter && !matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true, lastController: e.player })) return [];
+    return [{ object: refTo(o) }];
   },
   // CR 701.43d: "When you do" (linked to "You may exert ~ as it attacks"), "Whenever you exert a creature".
   exerted(t, check) {
@@ -1841,8 +2242,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
     if (t.loyalty && !e.loyalty) return [];
-    // A keyword ability: "an exhaust ability" (its text starts with the keyword).
-    if (typeof t.keyword === 'string' && !e.text.toLowerCase().startsWith(t.keyword)) return [];
+    // A keyword ability: "an exhaust ability" (its text starts with the keyword); CR 702.29f: typecycling is cycling.
+    const text = e.text.toLowerCase();
+    if (typeof t.keyword === 'string' && (t.keyword === 'cycling' ? !/^[a-z -]*cycling\b/.test(text) : !text.startsWith(t.keyword))) return [];
+    // CR 702.29c: "When you cycle this card" — it triggers from wherever the card went.
+    if (t.self && e.source !== check.source.id) return [];
+    if (t.other && e.source === check.source.id) return [];
     if (t.subject) {
       const src = check.g.objects[e.source];
       if (!src || !subjectMatches(check, t.subject as Ref, src)) return [];
@@ -1851,7 +2256,28 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   cast(t, check) {
     const e = check.event;
+    // CR 707.10: "Whenever you cast or copy an instant or sorcery spell" — a copy put on the stack counts too.
+    if (e.type === 'copied' && t.orCopy && !check.sourceLeft) {
+      const copy = check.g.objects[e.object];
+      if (!copy || copy.zone !== 'stack' || e.controller !== check.controller) return [];
+      const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
+      return matchesFilter(check.g, copy, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(copy), player: e.controller }] : [];
+    }
     if (e.type !== 'cast' || check.sourceLeft) return [];
+    // "Whenever you cast your second spell each turn"
+    if (typeof t.nth === 'number' && e.nth !== t.nth) return [];
+    // CR 702.191a (increment): more mana spent on it than this creature's power or toughness.
+    if (t.increment) {
+      const src = check.source;
+      if (src.zone !== 'battlefield' || !chars(check.g, src).types.includes('Creature')) return [];
+      if ((e.manaSpent ?? 0) <= Math.min(power(check.g, src), toughness(check.g, src))) return [];
+    }
+    // "… during an opponent's turn"
+    if (t.opponentsTurn && check.g.active === e.player) return [];
+    // "… from your hand", "… from exile", "… from anywhere other than your hand"
+    const from = check.g.objects[e.object]?.cast?.from;
+    if (typeof t.from === 'string' && from !== t.from) return [];
+    if (typeof t.notFrom === 'string' && from === t.notFrom) return [];
     // "When you cast this spell" (it triggers from the stack).
     if (t.self) return e.object === check.source.id ? [{ object: refTo(check.source), player: e.player }] : [];
     if (t.who === 'you' && e.player !== check.controller) return [];
@@ -1865,6 +2291,20 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const src = check.source;
       if (!entry || !entry.targets.some((list) => list.some((x) => x.kind === 'object' && x.id === src.id && x.zcc === src.zcc))) return [];
     }
+    // "Whenever you cast a kicked spell" (CR 702.33d)
+    if (t.kicked && !spell.cast?.kicked) return [];
+    // "… a spell that targets a creature you control" — as it was cast (CR 601.2c).
+    if (t.targets) {
+      const entry = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object);
+      const hit = entry?.targets.some((list) =>
+        list.some((x) => {
+          if (x.kind !== 'object') return false;
+          const o = check.g.objects[x.id];
+          return Boolean(o && o.zcc === x.zcc && matchesFilter(check.g, o, t.targets as ObjectFilter, { controller: check.controller, source: check.source }));
+        }),
+      );
+      if (!hit) return [];
+    }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
     return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player }] : [];
   },
@@ -1877,7 +2317,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

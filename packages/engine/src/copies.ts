@@ -43,6 +43,8 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
   if (x.power !== undefined) f.power = String(x.power);
   if (x.toughness !== undefined) f.toughness = String(x.toughness);
   if (x.keywords) f.keywords.push(...structuredClone(x.keywords));
+  // "except it has this ability"
+  if (x.abilities) for (const a of x.abilities) if (!f.abilities.some((b) => b.text === a.text)) f.abilities.push(structuredClone(a));
   // CR 202.3a: with no mana cost its mana value is 0.
   if (x.noManaCost) f.manaCost = '';
   f.typeLine = typeLine(f);

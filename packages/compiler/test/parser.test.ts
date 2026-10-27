@@ -87,19 +87,19 @@ describe('core grammar rules', () => {
   });
 
   it('records unparsed lines verbatim (minus reminder text)', () => {
-    const r = parser.parse('Venture into the dungeon. (Reminder.)', ctx('Into the Dark', 'Instant'));
-    expect(r.unparsed).toEqual(['Venture into the dungeon.']);
+    const r = parser.parse('Open an Attraction. (Reminder.)', ctx('Into the Dark', 'Instant'));
+    expect(r.unparsed).toEqual(['Open an Attraction.']);
   });
 
   it('accepts plugin grammar rules', () => {
     const ventureRule: GrammarRule = {
       id: 'venture',
-      parse: (line, original) => (line === 'Venture into the dungeon.' ? { kind: 'spell', text: original, effects: [{ type: 'venture' }] } : null),
+      parse: (line, original) => (line === 'Open an Attraction.' ? { kind: 'spell', text: original, effects: [{ type: 'venture' }] } : null),
     };
-    expect(parser.parse('Venture into the dungeon.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual(['Venture into the dungeon.']);
+    expect(parser.parse('Open an Attraction.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual(['Open an Attraction.']);
     const extended = new ParserRegistry();
     extended.addRule(ventureRule);
-    expect(extended.parse('Venture into the dungeon.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual([]);
+    expect(extended.parse('Open an Attraction.', ctx('Into the Dark', 'Sorcery')).unparsed).toEqual([]);
     expect(() => extended.addRule(ventureRule)).toThrow(/duplicate/);
   });
 });

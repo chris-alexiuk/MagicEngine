@@ -118,7 +118,21 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
    - ✅ Ninjutsu (CR 702.49) and sneak (CR 702.190): an unblocked attacker returns to hand; the card enters tapped and attacking what it attacked
    - ✅ Keywords: casualty (CR 702.153), graft (CR 702.58: "move a counter"), devour (CR 702.82, as it enters), umbra armor (CR 702.89), jump-start (CR 702.133), surge (CR 702.117), awaken (CR 702.113: the land is targeted only when awakened), "Equip legendary creature {1}", flashback with other costs
    - ✅ Myriad (CR 702.116), encore (CR 702.141: copies that attack each opponent if able), miracle (CR 702.94: a trigger on the first draw), emerge (CR 702.119), enlist (CR 702.154: chosen with the attackers)
-   - Next: "becomes a copy of", alternative costs, text-changing effects, blockers that block several creatures, "from the top of your library", static type changes ("is an Island in addition")
+   - ✅ Trigger batch: "Whenever you attack" (CR 508.3d–e), "attacks and isn't blocked" (CR 509.3g, after every defender has declared), cycling triggers (CR 702.29c–d, from the graveyard), "your second spell each turn", "cast or copy", batched combat damage, discard, scry/surveil, counters, sacrifice (CR 701.21a, looking back), exploit (CR 702.110b), monstrous (CR 701.37c's X), "first time each turn", "a spell that targets …"
+   - ✅ Restricted mana (CR 106.6): "Spend this mana only to cast creature spells / activate abilities of artifacts", kept apart from the pool and spent first; "any combination of colors", "different colors"; mana chosen as a spell or ability resolves
+   - ✅ Blocking several attackers (CR 509.1a: "can block an additional creature", "any number"); the defending player divides its damage after the active player (CR 510.1d)
+   - ✅ The Ring tempts you (CR 701.54): the Ring-bearer (legendary, evasion), the emblem's triggers at two, three and four temptations, "Whenever the Ring tempts you"
+   - ✅ Dungeons (CR 309, 701.49): rooms compiled from the dungeon cards ("Room — effect. (Leads to: …)"), the venture marker, choosing arrows, completing a dungeon (CR 704.5t); the initiative (CR 726) and Undercity
+   - ✅ Ability-word conditions: delirium (card types in your graveyard), domain (CR 305.6), corrupted, coven, revolt, formidable, celebration, descend, valiant ("for the first time each turn"), void; "… or …" conditions
+   - ✅ Reveal until (CR 701.20a: "Reveal cards from the top of your library until you reveal a creature card. Put that card …"), "exile it instead" after counterspells and free casts, mana that isn't lost as steps end (CR 500.5), firebending (CR 702.189)
+   - ✅ Spree (CR 702.172) and tiered (CR 702.183): each chosen mode's cost is an additional cost
+   - ✅ Gift (CR 702.174): promising an opponent the gift as an additional cost; the gift given first (instants and sorceries) or as the permanent enters; "if the gift was promised"
+   - ✅ Crimes (CR 700.13), expend (CR 700.14), increment (CR 702.191), "a creature dealt damage by ~ this turn", "transforms into ~" (CR 701.27e)
+   - ✅ Becoming a copy (CR 707.2): "~ becomes a copy of target creature [until end of turn][, except it has this ability]" — layer 1, reverted at cleanup
+   - ✅ Additional combat phases (CR 500.8, "followed by an additional main phase"), "attacks for the first time each turn"; phasing (CR 702.26, 502.1: out and in at the untap step, Auras and Equipment with it)
+   - ✅ Casting restrictions (CR 601.3: "Cast this spell only during combat", "… only if you've been attacked this step"), "costs {2} less to cast if it targets a tapped creature" (targets come first, CR 601.2f), "as though it had flash"
+   - ✅ "For as long as ~ remains tapped" (CR 611.2b: pump, control and untap locks that end when it untaps); "You may choose not to untap ~ during your untap step" (CR 502.3)
+   - Next: mutate, Rooms (unlocking doors), teamwork, text-changing effects
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers
 6. Coverage grind guided by the report

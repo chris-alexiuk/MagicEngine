@@ -313,6 +313,10 @@ function layered(g: GameState, o: GameObject): Characteristics {
     }
     if (c.types.includes('Creature')) c.hasPT = true;
   }
+  // CR 701.54c: "Your Ring-bearer is legendary …" (the Ring's emblem, layer 4).
+  if (o.ringBearer !== undefined && o.ringBearer === o.controller && o.zone === 'battlefield' && !c.supertypes.includes('Legendary')) {
+    c.supertypes = [...c.supertypes, 'Legendary'];
+  }
   // CR 613.1e: layer 5 — color-changing effects.
   for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
@@ -464,6 +468,8 @@ export function matchesFilter(
   if (f.sameManaValueAs === 'self' && (!ctx.source || manaValueOf(g, o) !== manaValueOf(g, ctx.source))) return false;
   // CR 700.6: historic
   if (f.historic && !(c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
+  // "a creature dealt damage by ~ this turn"
+  if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;

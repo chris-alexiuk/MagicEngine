@@ -3,7 +3,7 @@ import { chars, matchesFilter } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
-import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nextPlayer } from './zones.js';
+import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nextPlayer, zoneList } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // References: who and what an effect acts on
@@ -185,7 +185,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -250,6 +250,20 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller).length;
     case 'devotion':
       return devotion(ctx, e.colors);
+    case 'domain': {
+      // CR 305.6: basic land types among lands you control.
+      const types = new Set<string>();
+      for (const id of g.zones.battlefield) {
+        const o = g.objects[id]!;
+        if (o.controller !== ctx.controller) continue;
+        const c = chars(g, o);
+        if (c.types.includes('Land')) for (const t of ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']) if (c.subtypes.includes(t)) types.add(t);
+      }
+      return types.size;
+    }
+    case 'card_types':
+      // "the number of card types among cards in your graveyard"
+      return new Set(zoneList(g, 'graveyard', ctx.controller).flatMap((id) => faceOf(g, g.objects[id]!).types)).size;
     case 'x':
       return ctx.x;
     case 'event':

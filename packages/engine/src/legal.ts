@@ -5,7 +5,7 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withC
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { addPerTargetCost, additionalCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
+import { addModeCosts, addPerTargetCost, additionalCosts, castRestrictionProblem, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
 import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -68,26 +68,29 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       }
       const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
       if (!instantSpeed && !mainPhaseEmptyStack) return;
+      if (castRestrictionProblem(g, player, face, o)) return;
       const cost = parseManaCost(face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
       if (cost.unsupported.length || cost.x > 0) return; // X spells need a value; the UI asks for one
       // Convoke, improvise, delve: what they can cover, if mana alone isn't enough.
       const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
       let help: CostChoices = {};
-      if (!planAutoTap(g, player, cost)) {
+      const purpose = { kind: 'spell' as const, object: o };
+      if (!planAutoTap(g, player, cost, 0, [], purpose)) {
         if (!helpers.length) return;
         help = helperChoices(g, player, o, helpers, cost);
         const rest = { ...cost, specific: { ...cost.specific } };
         payWithHelpersDry(g, help, rest);
-        if (!planAutoTap(g, player, rest, 0, [...(help.convoke ?? []), ...(help.improvise ?? [])])) return;
+        if (!planAutoTap(g, player, rest, 0, [...(help.convoke ?? []), ...(help.improvise ?? [])], purpose)) return;
       }
       const choice = defaultSpellChoice(g, player, o, face);
       const costs = defaultCostChoices(g, player, o, additionalCosts(face));
       if (!choice || !costs) return;
-      // Strive: the chosen targets add to the cost.
-      if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost')) {
+      // Strive: the chosen targets add to the cost; spree and tiered: the chosen modes do.
+      if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face)) {
         addPerTargetCost(face, choice.targets, cost);
-        if (!planAutoTap(g, player, cost)) return;
+        addModeCosts(face, choice.modes, cost);
+        if (!planAutoTap(g, player, cost, 0, [], purpose)) return;
       }
       const all = { ...costs, ...help };
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
@@ -118,6 +121,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (opt.id === 'plot' && !mainPhaseEmptyStack) continue;
     const instant = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (opt.id === 'foretell' && !instant && !mainPhaseEmptyStack) continue;
+    if (castRestrictionProblem(g, player, face, o)) continue;
     if (!planAutoTap(g, player, parseManaCost(opt.cost.mana ?? ''))) continue;
     const choice = defaultSpellChoice(g, player, o, face);
     if (choice) out.push({ type: 'cast', player, object: id, autoTap: true, alt: opt.id, ...choice });
@@ -140,9 +144,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (!fb) continue;
     const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (!instantSpeed && !mainPhaseEmptyStack) continue;
+    if (castRestrictionProblem(g, player, face, o)) continue;
     const fbCost = parseManaCost(fb);
     applyCostModifiers(g, player, o, face, fbCost);
-    if (!planAutoTap(g, player, fbCost)) continue;
+    if (!planAutoTap(g, player, fbCost, 0, [], { kind: 'spell', object: o })) continue;
     const choice = defaultSpellChoice(g, player, o, face);
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
     if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
@@ -155,9 +160,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (!face.keywords.some((k) => k.id === 'aftermath')) return;
       const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
       if (!instantSpeed && !mainPhaseEmptyStack) return;
+      if (castRestrictionProblem(g, player, face, o)) return;
       const cost = parseManaCost(face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
-      if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost)) return;
+      if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost, 0, [], { kind: 'spell', object: o })) return;
       const choice = defaultSpellChoice(g, player, o, face);
       const costs = defaultCostChoices(g, player, o, additionalCosts(face));
       if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, face: faceIndex, ...choice, ...withCosts(costs) });
@@ -168,7 +174,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const o = g.objects[id]!;
     activatedAbilities(g, o).forEach((ab, ability) => {
       const mana = parseManaCost(ab.cost.mana ?? '');
-      if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana))) return;
+      if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana, 0, [], { kind: 'ability', source: o }))) return;
       if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
       // "Activate only during your upkeep." (CR 602.5b)
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
@@ -221,7 +227,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (mana.unsupported.length || mana.x > 0) return;
       const costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
-      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? [])])) return;
+      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? [])], { kind: 'ability', source: o })) return;
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
       out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
@@ -255,6 +261,8 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       if (!downCost.unsupported.length && planAutoTap(g, player, downCost)) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
       continue;
     }
+    // CR 601.3: "Cast this spell only during combat" applies whatever cost it's cast for (not face down: no text).
+    if (castRestrictionProblem(g, player, face, o)) continue;
     // CR 702.190a: sneak only during your declare blockers step.
     if (opt.id === 'sneak') {
       if (fromGraveyard || g.active !== player || g.step !== 'declare_blockers') continue;
@@ -277,7 +285,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       const sac = defaultCostChoices(g, player, o, opt.cost.other ?? [])?.sacrifice?.[0];
       if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, g.objects[sac]!));
     }
-    if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost)) continue;
+    if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost, 0, [], { kind: 'spell', object: o })) continue;
     // Entwine casts it with every mode; otherwise the default choices.
     // Overload: the "each" version takes no targets; disturb: the back face is cast.
     const asCast = opt.spell

@@ -19,6 +19,7 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
   let usedModes = false;
   let manual = false;
   for (const p of programs) {
+    if ((p as { manual?: true }).manual) manual = true;
     if (p.modes) {
       // CR 700.2a / CR 700.2d: the chosen modes, each at most once, followed in printed order.
       const chosen = modes ?? [];

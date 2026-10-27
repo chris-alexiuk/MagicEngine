@@ -55,6 +55,12 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
     const all = parts.map((p) => parseOne(p, b));
     if (all.every(Boolean)) return { type: 'and', all: all as ConditionNode[] };
   }
+  // "if a nonland permanent left the battlefield this turn or a spell was warped this turn"
+  const either = t.split(/ or (?=a |an |you |there |it's )/);
+  if (either.length > 1) {
+    const any = either.map((p) => parseOne(p, b));
+    if (any.every(Boolean)) return { type: 'or', any: any as ConditionNode[] };
+  }
   return null;
 }
 
@@ -65,6 +71,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 722.3a: "if this creature isn't prepared"
   const prepared = /^(?:it|~) (is|isn't) prepared$/.exec(t);
   if (prepared) return { type: 'prepared', ...(prepared[1] === "isn't" ? { not: true } : {}) };
+  // CR 309.7: "if you've completed a dungeon", "if you haven't completed Tomb of Annihilation"; CR 726: "if you have the initiative"
+  const completed = /^you(?:'ve| have)( not|n't)? completed (a dungeon|.+)$/.exec(t) ?? /^you have(n't| not) completed (a dungeon|.+)$/.exec(t);
+  if (completed) return { type: 'completed_dungeon', ...(completed[2] !== 'a dungeon' ? { name: completed[2] } : {}), ...(completed[1] ? { not: true } : {}) };
+  if (t === 'you have the initiative') return { type: 'initiative' };
+  if (t === "you don't have the initiative") return { type: 'initiative', not: true };
+  // CR 701.54e: "if ~ is your Ring-bearer", "if you don't control a Ring-bearer", "if you chose a creature other than ~ …"
+  const bearer = /^(?:it|~) (is|isn't) your Ring-bearer$/.exec(t);
+  if (bearer) return { type: 'ring_bearer', ...(bearer[1] === "isn't" ? { not: true } : {}) };
+  if (/^you (?:don't|do not) control a Ring-bearer$/.test(t)) return { type: 'ring_bearer', any: true, not: true };
+  if (/^you control a Ring-bearer$/.test(t)) return { type: 'ring_bearer', any: true };
+  if (t === 'you chose a creature other than ~ as your Ring-bearer') return { type: 'chose_other_ring_bearer' };
   // CR 702.171b (saddle): "if it's saddled", "~ is saddled"
   if (/^(?:it(?:'s| is)|~ is) saddled$/.test(t)) return { type: 'saddled' };
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
@@ -78,6 +95,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
   // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
+  // CR 702.174: "if the gift was promised", "if the gift wasn't promised"
+  const promised = /^the gift (was|wasn't|was not) promised$/.exec(t);
+  if (promised) return { type: 'paid', cost: 'gift', ...(promised[1] !== 'was' ? { not: true } : {}) };
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
@@ -128,6 +148,31 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^there is no monarch$/.test(t)) return { type: 'monarch', none: true };
   if (/^it's not your turn$|^it isn't your turn$/.test(t)) return { type: 'your_turn', value: false };
 
+  // Coven: "you control three or more creatures with different powers"
+  const coven = /^you control (\w+ or more) creatures with different powers$/.exec(t);
+  if (coven) {
+    const c = compare(coven[1]!);
+    return c ? { type: 'different_powers', ...c } : null;
+  }
+  // Formidable: "creatures you control have total power 8 or greater"
+  const total = /^creatures you control have total power (\d+) or greater$/.exec(t);
+  if (total) return { type: 'total_power', op: 'ge', n: Number(total[1]) };
+  // Corrupted: "an opponent has three or more poison counters"
+  const poison = /^(an opponent|you) ha(?:s|ve) (\w+ or more) poison counters$/.exec(t);
+  if (poison) {
+    const c = compare(poison[2]!);
+    return c ? { type: 'poison', ...c, ...(poison[1] === 'you' ? {} : { who: 'any_opponent' }) } : null;
+  }
+  // Celebration: "two or more nonland permanents entered the battlefield under your control this turn";
+  // "you had a land enter the battlefield under your control this turn"
+  const entered = /^(\w+ or more) (.+?) entered the battlefield under your control this turn$/.exec(t);
+  const hadEnter = /^you had (?:a|an) (.+?) enter the battlefield under your control this turn$/.exec(t);
+  if (entered || hadEnter) {
+    const c = entered ? compare(entered[1]!) : { op: 'ge', n: 1 };
+    const pf = parseFilter(entered ? entered[2]! : hadEnter![1]!, b);
+    if (!c || !pf || pf.filter.zone) return null;
+    return { type: 'entered_this_turn', filter: pf.filter, ...c };
+  }
   // "you control a Forest", "you control three or more artifacts", "an opponent controls no creatures",
   // "you control a Plains or an Island", "you control two or more other lands", "your opponents control eight or more lands".
   const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer) (other )?(.+)$/.exec(t);
@@ -160,6 +205,21 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(hand[1]!);
     return c ? { type: 'hand', ...c } : null;
   }
+  // Delirium: "there are four or more card types among cards in your graveyard"
+  const cardTypes = /^there are (\w+ or more) card types among cards in your graveyard$/.exec(t);
+  if (cardTypes) {
+    const c = compare(cardTypes[1]!);
+    return c ? { type: 'graveyard', ...c, cardTypes: true } : null;
+  }
+  // Descend: "there are four or more permanent cards in your graveyard", "five or more creature cards are in your graveyard"
+  const gyKind = /^there are (\w+ or more) (.+?) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) (.+?) cards are in your graveyard$/.exec(t);
+  if (gyKind) {
+    const c = compare(gyKind[1]!);
+    const pf = parseFilter(`${gyKind[2]} cards in your graveyard`, b);
+    if (!c || !pf || pf.filter.zone !== 'graveyard') return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'graveyard', ...c, filter };
+  }
   // Threshold and friends: "there are seven or more cards in your graveyard", "seven or more cards are in your graveyard".
   const gy = /^there are (\w+ or more) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) cards are in your graveyard$/.exec(t);
   if (gy) {
@@ -176,6 +236,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'an opponent lost life this turn': 'opponent_lost_life',
     'you cast a noncreature spell this turn': 'you_cast_noncreature',
     "you've cast a noncreature spell this turn": 'you_cast_noncreature',
+    // Revolt; void (CR 702.185c: "a spell was warped this turn").
+    'a permanent you controlled left the battlefield this turn': 'your_permanent_left',
+    'a nonland permanent left the battlefield this turn': 'nonland_left',
+    'a spell was warped this turn': 'warped',
+    // CR 700.13
+    "you've committed a crime this turn": 'you_committed_crime',
+    'you committed a crime this turn': 'you_committed_crime',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   // Werewolves (and others) look at the previous turn.
@@ -214,6 +281,8 @@ export function conditionSubject(c: ConditionNode): Ref | null {
     case 'saddled':
     case 'prepared':
       return { ref: 'self' };
+    case 'ring_bearer':
+      return c.any ? null : { ref: 'self' };
     case 'is':
     case 'counters':
       return c.of as Ref;

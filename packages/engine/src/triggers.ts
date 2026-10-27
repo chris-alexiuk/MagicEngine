@@ -21,6 +21,8 @@ import {
 } from './types.js';
 import { faceOf, livePlayers, abilitySources } from './zones.js';
 import { faceDownFace } from './face-down.js';
+import { ringAbilities } from './ring.js';
+import { collectDungeonTriggers } from './dungeons.js';
 
 /**
  * Triggered abilities (CR 603). Events are checked in batches: after each action,
@@ -32,8 +34,11 @@ import { faceDownFace } from './face-down.js';
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
+  'sacrificed', 'blockers_done', 'scried', 'surveilled', 'copied', 'became_monstrous', 'ring_tempted',
+  'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed',
 ]);
-const LOOK_BACK = new Set(['dies', 'leaves']);
+/** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
+const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
 /** CR 603.10a: leaves-the-battlefield abilities "look back in time" ("When ~ enters or dies" too). */
 const looksBack = (t: TriggerNode): boolean => LOOK_BACK.has(t.type) || (t.type === 'either' && ((t.of as TriggerNode[] | undefined) ?? []).some(looksBack));
 
@@ -68,6 +73,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   collectDelayed(g, batch);
   collectMonarch(g, batch);
   collectSpeed(g, batch);
+  collectDungeonTriggers(g, batch);
   collectExileKeywords(g, batch);
 
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
@@ -113,7 +119,7 @@ function collect(g: GameState, events: GameEvent[]): void {
           : g.cards[at.card]?.faces[at.face];
     if (!face) return [];
     const lastGranted = last && last.zcc === c.o.zcc - 1 ? (last.granted ?? []) : [];
-    const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? printedAbilities(face) : abilitiesOf(g, c.o);
+    const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? printedAbilities(face) : [...abilitiesOf(g, c.o), ...ringAbilities(g, c.o)];
     return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];
   });
 
@@ -292,7 +298,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     ...(ability.condition ? { condition: ability.condition } : {}),
   });
   events.push({ type: 'triggered', source: t.source.id, text: ability.text, controller: t.controller });
-  announceTargets(g.stack[g.stack.length - 1]!, events);
+  announceTargets(g.stack[g.stack.length - 1]!, events, g);
 }
 
 /** The answer to a trigger_targets prompt. */
@@ -320,7 +326,23 @@ export function answerTriggerTargets(g: GameState, player: PlayerId, modes: numb
 }
 
 /** Records that a spell or ability on the stack targets objects ("becomes the target", e.g. ward, CR 702.21a). */
-export function announceTargets(entry: StackEntry, events: GameEvent[]): void {
+export function announceTargets(entry: StackEntry, events: GameEvent[], g?: GameState): void {
+  // CR 700.13: targeting an opponent, something an opponent controls, or a card in an opponent's graveyard is a crime.
+  if (g) {
+    const me = entry.controller;
+    const crime = entry.targets.flat().some((t) => {
+      if (t.kind === 'player') return t.player !== me;
+      if (t.kind === 'ability') {
+        const other = g.stack.find((s) => s.kind === 'ability' && s.id === t.entry);
+        return Boolean(other && other.controller !== me);
+      }
+      const o = g.objects[t.id];
+      if (!o) return false;
+      if (o.zone === 'battlefield' || o.zone === 'stack') return o.controller !== me;
+      return o.zone === 'graveyard' && o.owner !== me;
+    });
+    if (crime) events.push({ type: 'crime', player: me });
+  }
   const seen = new Set<string>();
   for (const t of entry.targets.flat()) {
     if (t.kind !== 'object' || seen.has(t.id)) continue;

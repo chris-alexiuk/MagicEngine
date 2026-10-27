@@ -1,4 +1,4 @@
-import type { AbilityNode, AsEntersNode, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AsEntersNode, ManaSpend, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
@@ -52,6 +52,15 @@ export interface GameConfig {
   seed: number;
 }
 
+export interface RestrictedMana {
+  color: ManaColor;
+  amount: number;
+  /** What it can be spent on (CR 106.6); anything, if absent. */
+  spend?: ManaSpend;
+  /** Mana that isn't lost as steps and phases end, until then (CR 500.5). */
+  keep?: 'end_of_turn' | 'end_of_combat';
+}
+
 export interface PlayerState {
   id: PlayerId;
   name: string;
@@ -60,6 +69,14 @@ export interface PlayerState {
   /** CR 122.1: other counters a player can have — energy (CR 107.14), experience, rad. */
   counters?: Record<string, number>;
   pool: ManaPool;
+  /** CR 106.6: mana that can be spent only on certain things; it empties with the pool (CR 500.5). */
+  restricted?: RestrictedMana[];
+  /** CR 309.3: the dungeon card this player owns in the command zone, and the room their venture marker is in. */
+  dungeon?: { card: string; room: string };
+  /** CR 309.7: names of the dungeons this player has completed. */
+  completed?: string[];
+  /** CR 701.54c: how many times the Ring has tempted this player (their emblem named The Ring). */
+  ringTempted?: number;
   landsPlayedThisTurn: number;
   /** "You may play an additional land this turn." (CR 305.2) */
   extraLands?: { turn: number; n: number };
@@ -138,6 +155,8 @@ export interface GameObject {
   arrived?: number;
   /** CR 707.2: the card (and face) whose copiable values this permanent has, if it's a copy. */
   copyOf?: { card: string; face: number };
+  /** CR 611.2a: what it was a copy of before an "until end of turn" copy effect (restored at cleanup). */
+  copyRevert?: ({ card: string; face: number } | null)[];
   /** CR 303.4: the player an Aura with "enchant player" is attached to. */
   attachedToPlayer?: PlayerId;
   /** CR 701.19a: regeneration shields until end of turn. */
@@ -148,6 +167,12 @@ export interface GameObject {
   triggeredTurn?: Record<number, number>;
   /** CR 107.3m: the X paid for the spell it was, for its enters abilities. */
   x?: number;
+  /** "It doesn't untap during its controller's untap step for as long as ~ remains tapped." */
+  untapLocks?: ObjectRef[];
+  /** CR 702.26: phased out (treated as though it doesn't exist), directly or along with what it's attached to. */
+  phasedOut?: 'directly' | 'indirectly';
+  /** CR 701.54a: this is that player's Ring-bearer (until another creature is, or another player controls it). */
+  ringBearer?: PlayerId;
   /** CR 701.37b: monstrous until it leaves the battlefield. */
   monstrous?: true;
   /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. */
@@ -157,7 +182,8 @@ export interface GameObject {
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true };
+  /** `giftTo`: the opponent promised the gift (CR 702.174a). */
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -215,12 +241,17 @@ export interface AttackerState {
 export interface CombatState {
   attackers: Record<ObjectId, AttackerState>;
   /** Blocker id → the attacker it blocks. */
-  blockers: Record<ObjectId, { zcc: number; blocking: ObjectId }>;
+  blockers: Record<ObjectId, { zcc: number; blocking: ObjectId; alsoBlocking?: ObjectId[] }>;
+  /** CR 510.1: damage assignments still to be announced (defending players after the active player), and those made. */
+  damageQueue?: { player: PlayerId; choices: DamageChoice[] }[];
+  assigned?: Record<ObjectId, DamageAssignment[]>;
   attackersDeclared: boolean;
   /** Defending players still to declare blockers, in APNAP order (CR 802.4). */
   toDeclareBlockers: PlayerId[];
   /** Creatures that had first strike or double strike when a first-strike damage step began (CR 510.4). */
   firstStrikers: ObjectId[] | null;
+  /** CR 509: blockers have been declared (the blockers_done event was sent). */
+  blockersDone?: true;
   /** Which damage step is current: the extra first-strike step or the regular one. */
   damageStep: 'first' | 'regular' | null;
 }
@@ -321,6 +352,8 @@ export interface ContinuousEffect {
   switchPT?: true;
   /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
   until: 'eot' | 'game';
+  /** CR 611.2b: "for as long as ~ remains tapped" — it ends once that object isn't tapped (or is gone). */
+  whileTapped?: ObjectRef;
 }
 
 /** CR 603.7: a delayed triggered ability waiting for its moment ("at the beginning of the next end step"). */
@@ -399,6 +432,8 @@ export interface TargetPrompt {
   text: string;
   count: number;
   upTo: boolean;
+  /** With `upTo`: the fewest that may be chosen. */
+  min?: number;
   candidates: Target[];
 }
 
@@ -408,6 +443,8 @@ export type PendingChoice =
   /** CR 103.6a: cards in the opening hand that may begin the game on the battlefield (leylines). */
   | { kind: 'opening_battlefield'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
+  /** CR 502.3: permanents its controller may choose not to untap ("You may choose not to untap ~ during your untap step"). */
+  | { kind: 'keep_tapped'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
   | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
   /** `exertable`: attackers that may be exerted as they attack (CR 701.43d). */
@@ -482,6 +519,7 @@ export type ChoiceAnswer =
   | { kind: 'bottom_cards'; objects: ObjectId[] }
   | { kind: 'opening_battlefield'; objects: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
+  | { kind: 'keep_tapped'; objects: ObjectId[] }
   | { kind: 'legend_rule'; keep: ObjectId }
   | { kind: 'manual_resolution'; done: true }
   | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[]; exert?: ObjectId[]; enlist?: { attacker: ObjectId; tap: ObjectId }[] }
@@ -526,6 +564,8 @@ export interface CostChoices {
   delve?: ObjectId[];
   /** CR 702.126a: artifacts tapped for a spell with improvise. */
   improvise?: ObjectId[];
+  /** CR 702.174a: the opponent chosen as the gift cost is paid (the next opponent in turn order by default). */
+  giftTo?: PlayerId;
   /** Ninjutsu, sneak: the unblocked attacking creature returned to its owner's hand (CR 702.49a, 702.190a). */
   returned?: ObjectId[];
 }
@@ -631,7 +671,8 @@ export type GameEvent =
   | { type: 'fizzled'; entry: StackEntry }
   | { type: 'regenerated'; object: ObjectId }
   /** A spell (object) or ability (entry) was put on the stack targeting this object. */
-  | { type: 'became_target'; object: ObjectId; spell?: ObjectId; entry?: string; controller: PlayerId }
+  /** `first`: the first time this turn that player targeted it (set as the turn log records it). */
+  | { type: 'became_target'; object: ObjectId; spell?: ObjectId; entry?: string; controller: PlayerId; first?: true }
   | { type: 'transformed'; object: ObjectId; face: number }
   | { type: 'scried'; player: PlayerId; top: number; bottom: number }
   | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
@@ -648,11 +689,31 @@ export type GameEvent =
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
   | { type: 'land_played'; player: PlayerId; object: ObjectId }
-  | { type: 'cast'; player: PlayerId; object: ObjectId }
+  /** `nth`: which spell this is for its caster this turn (1 = their first). */
+  | { type: 'cast'; player: PlayerId; object: ObjectId; nth?: number; manaBefore?: number; manaSpent?: number }
+  /** CR 700.13: a player committed a crime (a spell or ability of theirs targets an opponent or what they have). */
+  | { type: 'crime'; player: PlayerId }
+  /** CR 701.21a: a permanent was sacrificed (by its controller). */
+  | { type: 'sacrificed'; object: ObjectId; player: PlayerId; exploitedBy?: ObjectId }
+  /** CR 701.37a: a permanent became monstrous; `amount` is its N (CR 701.37c). */
+  | { type: 'became_monstrous'; object: ObjectId; amount: number }
+  /** CR 701.54a: the Ring tempted a player, who chose `object` (if they had a creature) as their Ring-bearer. */
+  | { type: 'ring_tempted'; player: PlayerId; object?: ObjectId }
+  /** CR 309.4c: a player moved their venture marker into a room (the room ability triggers). */
+  | { type: 'room_entered'; player: PlayerId; card: string; room: string }
+  /** CR 309.7 */
+  | { type: 'dungeon_completed'; player: PlayerId; card: string }
+  /** CR 726.3: a player took the initiative. */
+  | { type: 'initiative'; player: PlayerId }
+  /** CR 702.26: a permanent phased out or in. */
+  | { type: 'phased'; object: ObjectId; out: boolean }
+  /** CR 509.1: every defending player has declared blockers (or had none to declare). */
+  | { type: 'blockers_done' }
   /** `entry`: the ability on the stack; `loyalty`: a loyalty ability (CR 606). Mana abilities don't use the stack and aren't reported. */
   | { type: 'ability_activated'; player: PlayerId; source: ObjectId; text: string; entry: string; loyalty?: true }
   | { type: 'resolved'; entry: StackEntry }
-  | { type: 'life'; player: PlayerId; delta: number; life: number }
+  /** `firstGain`: the first time this player gained life this turn (set as the turn log records it). */
+  | { type: 'life'; player: PlayerId; delta: number; life: number; firstGain?: true }
   | { type: 'counters'; object: ObjectId; counter: string; delta: number }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
   | { type: 'attacks_declared'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
@@ -731,6 +792,14 @@ export interface GameState {
   heldEvents?: GameEvent[];
   /** What happened this turn, and how many spells each player cast last turn. */
   turnLog: TurnLog;
+  /** CR 726.1: the player who has the initiative. */
+  initiative?: PlayerId;
+  /** CR 702.26b: phased-out permanents — still on the battlefield, but not in its list (they're treated as though they don't exist). */
+  phasedOut?: ObjectId[];
+  /** CR 500.8: additional combat phases to come after the current phase (each maybe followed by a main phase). */
+  extraPhases?: { main: boolean }[];
+  /** The phases being added now: whether a main phase follows this combat, and the step the turn goes back to. */
+  inExtra?: { main: boolean; then: Step; mainNow?: true };
   lastTurnSpells: Record<PlayerId, number>;
   winner: PlayerId | null;
   over: boolean;

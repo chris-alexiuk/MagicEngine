@@ -11,6 +11,7 @@ import type {
   CostModifierNode,
   QuantityReplacementNode,
   ExileInsteadNode,
+  ManaSpend,
   ObjectFilter,
   PlayerRule,
   PlayerRuleNode,
@@ -31,9 +32,9 @@ import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept } from './copies.js';
-import { parseEffectText, splitSentences } from './effects.js';
+import { parseEffectText, parseManaSpend, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
-import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
+import { COLOR_WORDS, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
 function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
@@ -265,6 +266,20 @@ export const activatedRule: GrammarRule = {
     if (cost.loyalty === undefined) {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       const effect = mana && parseManaProduction(mana[1]!);
+      // CR 106.6: "Spend this mana only to cast creature spells."
+      const spendOnly = mana?.[2] ? /^Spend this mana only ([^.]+)\.(?: (.+))?$/.exec(mana[2]) : null;
+      if (mana && effect && spendOnly) {
+        const spend = parseManaSpend(spendOnly[1]!, new Binder(env));
+        if (!spend) return null;
+        effect.spend = spend;
+        mana[2] = spendOnly[2]!;
+      }
+      // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
+      const keep = mana?.[2] ? /^Until end of turn, you don't lose this mana as steps and phases end\.(?: (.+))?$/.exec(mana[2]) : null;
+      if (mana && effect && keep) {
+        effect.keep = 'end_of_turn';
+        mana[2] = keep[1]!;
+      }
       if (mana && effect) {
         // Restricted mana abilities ("Activate only during your turn") aren't modelled yet.
         if (node.timing || node.activateIf) return null;
@@ -309,6 +324,9 @@ const STEP_WORDS: Record<string, string> = {
   'first main phase': 'main1',
   'end step': 'end',
   combat: 'beginning_of_combat',
+  // CR 505.1: the second (postcombat) main phase.
+  'second main phase': 'main2',
+  'postcombat main phase': 'main2',
 };
 
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
@@ -317,10 +335,18 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
     const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
     if (cursed) return { trigger: { type: 'phase', step: STEP_WORDS[cursed[1]!]!, whose: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
-    const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|first main phase|end step|combat)( on your turn)?$/.exec(t);
+    // CR 511.1: "At end of combat"
+    if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
+    if (t === "the beginning of the upkeep of enchanted creature's controller") {
+      return { trigger: { type: 'phase', step: 'upkeep', whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    }
+    if (t === 'the beginning of each of your postcombat main phases' || t === 'the beginning of each of your second main phases') {
+      return { trigger: { type: 'phase', step: 'main2', whose: 'you' }, it: { ref: 'self' }, player: null };
+    }
+    const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|first main phase|second main phase|postcombat main phase|end step|combat)( on your turn| on each opponent's turn)?$/.exec(t);
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
-    const whose = m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
+    const whose = m[3] === " on each opponent's turn" ? 'opponent' : m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
     // "At the beginning of each player's upkeep, that player …": the player whose turn it is.
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: whose === 'you' ? null : { ref: 'trigger_player' } };
   }
@@ -336,10 +362,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const level = /^~ becomes level (\d+)$/.exec(t);
   if (level) return { trigger: { type: 'becomes_level', level: Number(level[1]) }, it: { ref: 'self' }, player: null };
   // CR 702.21a (ward): "becomes the target of a spell or ability an opponent controls".
-  const targeted = /^~ becomes the target of a spell or ability(?: an opponent controls)?$/.exec(t);
+  const targeted = /^~ becomes the target of a spell or ability(?: (an opponent|you) controls?)?( for the first time each turn)?$/.exec(t);
   if (targeted) {
     return {
-      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...(/opponent/.test(t) ? { by: 'opponent' } : {}) },
+      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...(targeted[1] ? { by: targeted[1] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[2] ? { first: true } : {}) },
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -375,6 +401,41 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger, it: subject, player: null };
   }
+  // "Whenever ~ deals damage to a player", "… to an opponent": "that player" is the player dealt damage.
+  const damageTo = /^(~|enchanted creature|equipped creature) deals (combat )?damage to (a player|an opponent|a creature)$/.exec(t);
+  if (damageTo && !(damageTo[2] && damageTo[3] !== 'an opponent')) {
+    const subject: Ref = damageTo[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    b.eventAmount = true;
+    // "Whenever ~ deals damage to a creature" — "that creature" is the creature dealt damage.
+    if (damageTo[3] === 'a creature') {
+      b.named['that creature'] = { ref: 'trigger_object' };
+      return { trigger: { type: 'deals_damage', subject, to: 'creature' }, it: subject, player: null };
+    }
+    return {
+      trigger: { type: 'deals_damage', subject, to: damageTo[3] === 'a player' ? 'player' : 'opponent', ...(damageTo[2] ? { combat: true } : {}) },
+      it: subject,
+      player: { ref: 'trigger_player' },
+    };
+  }
+  // "Whenever ~ deals combat damage to a player or planeswalker" / "… or battle"
+  const hitsOr = /^(~|enchanted creature|equipped creature) deals combat damage to a player or (planeswalker|battle)$/.exec(t);
+  if (hitsOr) {
+    const subject: Ref = hitsOr[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    b.eventAmount = true;
+    return { trigger: { type: 'deals_combat_damage', subject, to: `player_or_${hitsOr[2]}` }, it: subject, player: { ref: 'trigger_player' } };
+  }
+  // "Whenever a source deals damage to ~"
+  if (t === 'a source deals damage to ~') {
+    b.eventAmount = true;
+    return { trigger: { type: 'dealt_damage', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+  }
+  // CR 701.37: "When ~ becomes monstrous"; CR 702.110b: "When ~ exploits a creature"; "When you sacrifice ~".
+  if (t === '~ becomes monstrous') {
+    b.eventAmount = true;
+    return { trigger: { type: 'becomes_monstrous' }, it: { ref: 'self' }, player: null };
+  }
+  if (t === '~ exploits a creature') return { trigger: { type: 'sacrificed', exploit: true, filter: { types: ['Creature'] } }, it: { ref: 'self' }, player: null };
+  if (t === 'you sacrifice ~') return { trigger: { type: 'sacrificed', self: true }, it: { ref: 'trigger_object' }, player: null };
   const attachedHits = /^(enchanted|equipped) creature deals combat damage to a player$/.exec(t);
   if (attachedHits) {
     b.eventAmount = true;
@@ -426,20 +487,71 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === "~ and at least one other creature with power greater than ~'s power attack") {
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, withGreaterPower: true }, it: { ref: 'self' }, player: null };
   }
+  // "Whenever ~ and at least two other creatures attack"
+  const withOthers = /^~ and at least (\w+) other creatures? attack$/.exec(t);
+  if (withOthers) {
+    const n = NUMBER_WORDS[withOthers[1]!];
+    if (!n) return null;
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, withOthers: n }, it: { ref: 'self' }, player: null };
+  }
+  // "Whenever a creature attacks you or a planeswalker you control"
+  const attacksYou = /^(?:a|an) (.+?) attacks you or a planeswalker you control$/.exec(t);
+  if (attacksYou) {
+    const pf = parseFilter(attacksYou[1]!, b);
+    if (!pf || pf.plural) return null;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'attacks', subject: { ref: 'all', filter: pf.filter }, defender: 'you' }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // CR 508.3d: "Whenever you attack", "… with two or more creatures", "Whenever one or more creatures you control attack".
+  const youAttack = /^(?:you attack|one or more creatures you control attack)(?: with (\w+) or more creatures)?$/.exec(t);
+  if (youAttack) {
+    const min = youAttack[1] ? (NUMBER_WORDS[youAttack[1]] ?? Number(youAttack[1])) : undefined;
+    if (youAttack[1] && !min) return null;
+    return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
+  }
+  // CR 508.3e: "Whenever you attack a player" — "that player" is the one attacked.
+  if (t === 'you attack a player') return { trigger: { type: 'you_attack', perPlayer: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  // CR 509.3g: "Whenever ~ attacks and isn't blocked"
+  const unblocked = /^(~|(?:enchanted|equipped) creature|(?:a|an) (.+?)) attacks and isn't blocked$/.exec(t);
+  if (unblocked) {
+    let subject: Ref = unblocked[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    if (unblocked[2]) {
+      const pf = parseFilter(unblocked[2], b);
+      if (!pf || pf.plural) return null;
+      subject = { ref: 'all', filter: pf.filter };
+    }
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'unblocked', subject }, it: subject.ref === 'all' ? { ref: 'trigger_object' } : subject, player: null };
+  }
+  // "Whenever one or more creatures you control deal combat damage to a player": once for each player.
+  const batchHits = /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
+  if (batchHits) {
+    const pf = parseFilter(batchHits[1]!, b);
+    if (!pf || !pf.plural) return null;
+    b.eventAmount = true;
+    return { trigger: { type: 'combat_damage_batch', filter: pf.filter, ...(batchHits[2] !== 'a player' ? { opponent: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
+  // "Whenever ~ attacks for the first time each turn" (with additional combat phases, CR 500.8)
+  if (t === '~ attacks for the first time each turn') {
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, firstTime: true }, it: { ref: 'self' }, player: null };
+  }
   // CR 702.171b: "Whenever ~ attacks while saddled" — it's saddled as it attacks.
   if (t === '~ attacks while saddled') {
     b.named['defending player'] = { ref: 'trigger_player' };
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, saddled: true }, it: { ref: 'self' }, player: null };
   }
   // "Whenever equipped creature attacks", "When enchanted creature dies" (CR 603.10a: it looks back).
-  const attachedEvent = /^(?:enchanted|equipped) creature (dies|is put into a graveyard|leaves the battlefield|attacks|blocks)$/.exec(t);
+  const attachedEvent = /^(?:enchanted|equipped) (?:creature|land|permanent|artifact) (dies|is put into a graveyard|leaves the battlefield|attacks alone|attacks|blocks)$/.exec(t);
   if (attachedEvent) {
     const type = eventType(attachedEvent[1] === 'is put into a graveyard' ? 'dies' : attachedEvent[1]!);
     if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
     const leaves = type === 'dies' || type === 'leaves';
-    return { trigger: { type, subject: { ref: 'attached' } }, it: leaves ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
+    const alone = attachedEvent[1] === 'attacks alone' ? { alone: true } : {};
+    return { trigger: { type, subject: { ref: 'attached' }, ...alone }, it: leaves ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
   }
-  const self = /^~ (enters(?: the battlefield)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
+  const self = /^~ (enters(?: the battlefield)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
     if (type === 'deals_combat_damage') b.eventAmount = true;
@@ -447,7 +559,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // CR 506.2: for an attacking creature, "defending player" is the player it's attacking.
     if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
     return {
-      trigger: { type, subject: { ref: 'self' }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}) },
+      trigger: { type, subject: { ref: 'self' }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}), ...(self[1] === 'attacks alone' ? { alone: true } : {}) },
       // After a zone change "it" is the new object in the graveyard or wherever it went (CR 603.10a looks back to find it).
       it: leaves ? { ref: 'trigger_object' } : { ref: 'self' },
       player: type === 'deals_combat_damage' ? { ref: 'trigger_player' } : null,
@@ -461,16 +573,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
-  const either = /^~ (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield)$/.exec(t);
-  if (either && either[1] !== either[2]) {
-    const one = parseTrigger(word, `~ ${either[1]}`, b);
-    const two = one ? parseTrigger(word, `~ ${either[2]}`, b) : null;
+  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~)$/.exec(t);
+  if (either && either[2] !== either[3]) {
+    const one = parseTrigger(word, `${either[1]} ${either[2]}`, b);
+    const two = one ? parseTrigger(word, `${either[1]} ${either[3]}`, b) : null;
     if (!one || !two) return null;
     // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies").
     return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
   }
   // "Whenever ~ becomes tapped", "Whenever enchanted land becomes tapped", "Whenever a creature you control becomes tapped"
-  const tapped = /^(~|enchanted (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes tapped$/.exec(t);
+  const tapped = /^(~|enchanted (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes (un)?tapped$/.exec(t);
   if (tapped) {
     let subject: Ref;
     if (tapped[1] === '~') subject = { ref: 'self' };
@@ -481,7 +593,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (/^another /.test(tapped[1]!)) pf.filter.other = true;
       subject = { ref: 'all', filter: pf.filter };
     }
-    return { trigger: { type: 'becomes_tapped', subject }, it: subject.ref === 'all' ? { ref: 'trigger_object' } : subject, player: null };
+    return { trigger: { type: 'becomes_tapped', subject, ...(tapped[3] ? { untapped: true } : {}) }, it: subject.ref === 'all' ? { ref: 'trigger_object' } : subject, player: null };
   }
   // "Whenever ~ or another Ally you control enters": the source itself, or another such object.
   const orSelf = /^~ or (?:another|other) (.+)$/.exec(t);
@@ -500,7 +612,27 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['that creature'] = { ref: 'trigger_object' };
     return { trigger: { type: 'deals_combat_damage', subject: { ref: 'self' }, to: 'creature' }, it: { ref: 'self' }, player: null };
   }
-  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
+  // "Whenever a creature you control becomes blocked", "Whenever a permanent you control is turned face up"
+  const otherEvent = /^(?:a|an|another) (.+?) (becomes blocked|is turned face up)$/.exec(t);
+  if (otherEvent) {
+    const pf = parseFilter(otherEvent[1]!, b);
+    if (!pf || pf.plural) return null;
+    if (/^another /.test(t)) pf.filter.other = true;
+    const subject: Ref = { ref: 'all', filter: pf.filter };
+    return { trigger: { type: otherEvent[2] === 'becomes blocked' ? 'becomes_blocked' : 'turned_face_up', subject }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // "Whenever one or more tokens you control enter": once for the batch.
+  const batchEnter = /^one or more (.+?) enter(?: the battlefield)?( under your control)?$/.exec(t);
+  if (batchEnter) {
+    const pf = parseFilter(batchEnter[1]!, b);
+    if (!pf || !pf.plural) return null;
+    if (batchEnter[2]) {
+      if (pf.filter.controller) return null;
+      pf.filter.controller = 'you';
+    }
+    return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
+  }
+  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents))$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
     if (!pf || pf.plural) return null;
@@ -509,12 +641,19 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (pf.filter.controller) return null;
       pf.filter.controller = 'you';
     }
-    const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, ''));
+    // "is put into your graveyard from the battlefield": a card you own.
+    if (/your graveyard/.test(other[2]!)) {
+      if (pf.filter.owner) return null;
+      pf.filter.owner = 'you';
+    }
+    const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, '').replace(/ you$/, '').replace(/ to (?:an opponent|one of your opponents)$/, ' to a player'));
+    if (type === 'attacks' && / you$/.test(other[2]!)) b.named['that creature'] = { ref: 'trigger_object' };
     return {
       trigger: {
         type,
         subject: { ref: 'all', filter: pf.filter },
-        ...(type === 'deals_combat_damage' ? { to: 'player' } : {}),
+        ...(type === 'deals_combat_damage' ? { to: / to a player$/.test(other[2]!) ? 'player' : 'opponent' } : {}),
+        ...(/ you$/.test(other[2]!) ? { defender: 'you_only' } : {}),
         // CR 702.83b: it's the only creature declared as an attacker.
         ...(/ alone$/.test(other[2]!) ? { alone: true } : {}),
       },
@@ -524,14 +663,87 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
-  const life = /^(you) gain life$/.exec(t);
+  // "Whenever one or more cards leave your graveyard", "… creature cards …"
+  const leaveGy = /^one or more (cards|.+? cards) leave your graveyard$/.exec(t);
+  if (leaveGy) {
+    let filter: ObjectFilter | undefined;
+    if (leaveGy[1] !== 'cards') {
+      const pf = parseFilter(`${leaveGy[1]} in your graveyard`, b);
+      if (!pf || !pf.plural || pf.filter.zone !== 'graveyard') return null;
+      const { zone: _z, owner: _o, ...rest } = pf.filter;
+      filter = rest;
+    }
+    return { trigger: { type: 'leave_graveyard', ...(filter ? { filter } : {}) }, it: { ref: 'self' }, player: null };
+  }
+  // CR 701.9 / 702.29d: "Whenever you discard a card", "an opponent discards a card", "you cycle or discard a card",
+  // "you discard one or more cards", "you discard a creature card".
+  const discard = /^(you|an opponent|a player) (?:cycles? or )?discards? (a card|one or more cards|(?:a|an) (.+?) card|one or more (.+?) cards)$/.exec(t);
+  if (discard) {
+    const kind = discard[3] ?? discard[4];
+    let filter: ObjectFilter | undefined;
+    if (kind) {
+      const pf = parseFilter(`${kind} card in your hand`, b);
+      if (!pf || pf.filter.zone !== 'hand') return null;
+      const { zone: _z, owner: _o, ...rest } = pf.filter;
+      filter = rest;
+    }
+    const batch = /^one or more/.test(discard[2]!);
+    if (!batch) b.named['that card'] = { ref: 'trigger_object' };
+    return {
+      trigger: { type: 'discard', who: discard[1] === 'you' ? 'you' : discard[1] === 'an opponent' ? 'opponent' : 'any', ...(batch ? { batch: true } : {}), ...(filter ? { filter } : {}) },
+      it: batch ? { ref: 'self' } : { ref: 'trigger_object' },
+      player: { ref: 'trigger_player' },
+    };
+  }
+  // CR 702.29c: "When you cycle ~" — when it's discarded to pay a cycling cost; it triggers from the graveyard.
+  if (t === 'you cycle ~' || t === 'you cycle this card') {
+    b.selfZone = 'graveyard';
+    return { trigger: { type: 'activate', who: 'you', keyword: 'cycling', self: true }, it: { ref: 'self' }, player: null };
+  }
+  // "Whenever you cycle a card", "Whenever a player cycles a card", "Whenever you cycle another card"
+  const cycles = /^(you|a player|an opponent) cycles? (a|another) card$/.exec(t);
+  if (cycles) {
+    const who = cycles[1] === 'you' ? 'you' : cycles[1] === 'an opponent' ? 'opponent' : 'any';
+    return { trigger: { type: 'activate', who, keyword: 'cycling', ...(cycles[2] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
+  // CR 701.22 / 701.25: "Whenever you scry", "Whenever you surveil", "Whenever you scry or surveil"
+  const scry = /^you (scry|surveil|scry or surveil)$/.exec(t);
+  if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
+  // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
+  const countersOn = /^one or more ([+-]\d+\/[+-]\d+|\w+) counters are put on (~|(?:a|an|another) (.+?))$/.exec(t);
+  if (countersOn) {
+    let subject: Ref = { ref: 'self' };
+    if (countersOn[3]) {
+      const pf = parseFilter(countersOn[3], b);
+      if (!pf || pf.plural) return null;
+      if (/^another /.test(countersOn[2]!)) pf.filter.other = true;
+      subject = { ref: 'all', filter: pf.filter };
+    }
+    b.eventAmount = true;
+    return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+  }
+  // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
+  const sacrificed = /^you sacrifice (a|an|another) (.+)$/.exec(t);
+  if (sacrificed) {
+    const pf = parseFilter(sacrificed[2]!, b);
+    if (!pf || pf.plural || (pf.filter.controller && pf.filter.controller !== 'you')) return null;
+    const { controller: _c, ...filter } = pf.filter;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    b.named['that permanent'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'sacrificed', filter, ...(sacrificed[1] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+  }
+  const life = /^(you) gain life( for the first time each turn)?$/.exec(t);
   if (life) {
     b.eventAmount = true;
-    return { trigger: { type: 'gain_life', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
   // "Whenever you draw your second card each turn"
-  const nth = /^you draw your (first|second|third) card each turn$/.exec(t);
-  if (nth) return { trigger: { type: 'draw', who: 'you', nth: ['first', 'second', 'third'].indexOf(nth[1]!) + 1 }, it: { ref: 'self' }, player: { ref: 'you' } };
+  const nth = /^(you|an opponent) draws? (?:your|their) (first|second|third) card each turn$/.exec(t);
+  if (nth) {
+    const opp = nth[1] !== 'you';
+    return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', nth: ['first', 'second', 'third'].indexOf(nth[2]!) + 1 }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
+  }
+  if (t === 'an opponent draws a card') return { trigger: { type: 'draw', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   const draw = /^(you draw|enchanted player draws) a card$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
@@ -573,6 +785,22 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.selfZone = 'graveyard';
     return { trigger: { type: 'put_into_graveyard', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   }
+  // CR 309.4c: a room ability's trigger (the dungeon parser fills in the room).
+  if (t === 'you move your venture marker into this room' || t === 'you move your venture marker into ~') return { trigger: { type: 'room' }, it: { ref: 'self' }, player: null };
+  // CR 701.27e: "When this creature transforms into ~", "Whenever ~ transforms"
+  if (t === '~ transforms into ~' || t === '~ transforms') return { trigger: { type: 'transforms' }, it: { ref: 'self' }, player: null };
+  // CR 700.13: "Whenever you commit a crime"; CR 700.14: "Whenever you expend 4"
+  if (t === 'you commit a crime') return { trigger: { type: 'crime' }, it: { ref: 'self' }, player: null };
+  const expend = /^you expend (\d+)$/.exec(t);
+  if (expend) return { trigger: { type: 'expend', n: Number(expend[1]) }, it: { ref: 'self' }, player: null };
+  // CR 309.7: "Whenever you complete a dungeon"
+  if (t === 'you complete a dungeon') return { trigger: { type: 'dungeon_completed' }, it: { ref: 'self' }, player: null };
+  // CR 701.54d: "Whenever the Ring tempts you"; "Whenever you choose a creature as your Ring-bearer".
+  if (t === 'the Ring tempts you') return { trigger: { type: 'ring_tempted' }, it: { ref: 'self' }, player: null };
+  if (t === 'you choose a creature as your Ring-bearer') {
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'ring_tempted', chose: true }, it: { ref: 'trigger_object' }, player: null };
+  }
   // CR 701.43: "Whenever you exert a creature"; CR 701.30: "Whenever you clash", "Whenever you win a clash".
   if (t === 'you exert a creature') {
     return { trigger: { type: 'exerted', subject: { ref: 'all', filter: { types: ['Creature'], controller: 'you' } } }, it: { ref: 'trigger_object' }, player: null };
@@ -583,23 +811,61 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
   const heroic = /^you cast a spell that targets ~$/.exec(t);
   if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targetsSource: true }, it: { ref: 'self' }, player: { ref: 'you' } };
-  const cast = /^(you|an opponent|a player|enchanted player) casts? (?:a|an) (.+)$/.exec(t);
+  // "Whenever you cast your second spell each turn", "… your first spell during each opponent's turn"
+  const nthSpell = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) spell (each turn|during each opponent's turn|during each of your opponents' turns)$/.exec(t);
+  if (nthSpell) {
+    const who = nthSpell[1] === 'you' ? 'you' : nthSpell[1] === 'an opponent' ? 'opponent' : 'any';
+    const nth = ['first', 'second', 'third'].indexOf(nthSpell[2]!) + 1;
+    return {
+      trigger: { type: 'cast', who, filter: {}, nth, ...(nthSpell[3] !== 'each turn' ? { opponentsTurn: true } : {}) },
+      it: { ref: 'trigger_object' },
+      player: { ref: 'trigger_player' },
+    };
+  }
+  const cast = /^(you|an opponent|a player|enchanted player) (casts?|cast or copy|casts or copies) (?:a|an) (.+)$/.exec(t);
   if (cast) {
-    const spell = cast[2] === 'spell' ? { filter: {}, plural: false } : parseFilter(cast[2]!, b);
-    if (!spell || spell.plural || (cast[2] !== 'spell' && spell.filter.zone !== 'stack')) return null;
+    let what = cast[3]!;
+    const extra: Record<string, unknown> = {};
+    // Where it was cast from, and when.
+    const from = / from (anywhere other than your hand|your hand|exile|your graveyard)$/.exec(what);
+    if (from) {
+      what = what.slice(0, from.index);
+      if (from[1] === 'anywhere other than your hand') extra.notFrom = 'hand';
+      else extra.from = from[1] === 'your hand' ? 'hand' : from[1] === 'exile' ? 'exile' : 'graveyard';
+    }
+    // "Whenever you cast a kicked spell"
+    if (/^kicked /.test(what)) {
+      what = what.slice('kicked '.length);
+      extra.kicked = true;
+    }
+    // "… an instant or sorcery spell that targets a creature" — as it's cast.
+    const targets = / that targets (?:a|an) (.+)$/.exec(what);
+    if (targets) {
+      const pf = parseFilter(targets[1]!, b);
+      if (!pf || pf.plural) return null;
+      extra.targets = pf.filter;
+      what = what.slice(0, targets.index);
+    }
+    if (/ during an opponent's turn$/.test(what)) {
+      what = what.replace(/ during an opponent's turn$/, '');
+      extra.opponentsTurn = true;
+    }
+    if (/or cop/.test(cast[2]!)) extra.orCopy = true;
+    const spell = what === 'spell' ? { filter: {}, plural: false } : parseFilter(what, b);
+    if (!spell || spell.plural || (what !== 'spell' && spell.filter.zone !== 'stack')) return null;
     delete spell.filter.zone;
     const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : 'any';
     // "that player" is whoever cast the spell.
-    return { trigger: { type: 'cast', who, filter: spell.filter }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
+    return { trigger: { type: 'cast', who, filter: spell.filter, ...extra }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   return null;
 }
 
 function eventType(verb: string): string {
   if (verb.startsWith('enters')) return 'enters';
-  if (verb === 'dies' || verb === 'is put into a graveyard from the battlefield') return 'dies';
+  if (verb === 'dies' || /^is put into (?:a|your) graveyard from the battlefield$/.test(verb)) return 'dies';
   if (verb === 'leaves the battlefield') return 'leaves';
-  if (verb === 'attacks') return 'attacks';
+  if (verb === 'attacks' || verb === 'attacks alone') return 'attacks';
   if (verb === 'blocks') return 'blocks';
   return 'deals_combat_damage';
 }
@@ -660,6 +926,8 @@ export const triggeredRule: GrammarRule = {
           node.zone = 'stack';
         }
         if (r.condition) node.condition = r.condition;
+        // CR 701.37c: in "When ~ becomes monstrous", X is the N it became monstrous with.
+        if (node.trigger.type === 'becomes_monstrous' && node.effects) node.effects = bindX(node.effects, { kind: 'event' });
         return node;
       }
     }
@@ -822,7 +1090,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+|(?:is|are) .+ in addition to (?:its|their) other types.*)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+|(?:is|are) .+ in addition to (?:its|their) other types.*)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -900,6 +1168,57 @@ export const deckRule: GrammarRule = {
  * CR 601.2f: "Creature spells you cast cost {1} less to cast.", "Spells your opponents cast cost {1} more
  * to cast.", "This spell costs {2} less to cast if you control a Wizard.", "… for each artifact you control."
  */
+/** CR 502.3: "You may choose not to untap ~ during your untap step." */
+export const optionalUntapRule: GrammarRule = {
+  id: 'optional_untap',
+  parse(line, original) {
+    if (!/^You may choose not to untap ~ during your untap step\.$/.test(line)) return null;
+    return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['may_not_untap'] } };
+  },
+};
+
+/** CR 601.3: "Cast this spell only during combat.", "… only during the declare attackers step and only if you've been attacked this step." */
+export const castRestrictionRule: GrammarRule = {
+  id: 'cast_restriction',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^Cast (?:this spell|~) only (.+)\.$/.exec(line);
+    if (!env || !m) return null;
+    const DURING: Record<string, string> = {
+      'during combat': 'combat',
+      'during the declare attackers step': 'declare_attackers',
+      'during the declare blockers step': 'declare_blockers',
+      'during combat before blockers are declared': 'before_blockers',
+      'during combat after blockers are declared': 'after_blockers',
+      'before the combat damage step': 'before_damage',
+      'after combat': 'after_combat',
+      'before combat or during combat before blockers are declared': 'before_combat',
+      'during your upkeep': 'upkeep',
+    };
+    let rest = m[1]!;
+    const effect: Record<string, unknown> = { type: 'cast_restriction' };
+    if (/ and only if you've been attacked this step$/.test(rest)) {
+      effect.attacked = true;
+      rest = rest.replace(/ and only if you've been attacked this step$/, '');
+    }
+    const turn = / on (?:an opponent's|your) turn$/.exec(rest);
+    if (turn) {
+      effect.whose = /opponent/.test(turn[0]) ? 'opponent' : 'your';
+      rest = rest.slice(0, turn.index);
+    }
+    if (rest === "during an opponent's turn") effect.whose = 'opponent';
+    else if (rest === 'during your turn') effect.whose = 'your';
+    else if (DURING[rest]) effect.during = DURING[rest];
+    else {
+      const iff = /^if (.+)$/.exec(rest);
+      const cond = iff ? parseCondition(iff[1]!, new Binder(env)) : null;
+      if (!cond) return null;
+      effect.condition = cond;
+    }
+    return { kind: 'static', text: original, effect: effect as never };
+  },
+};
+
 export const costModifierRule: GrammarRule = {
   id: 'cost_modifier',
   parse(line, original, ctx) {
@@ -919,6 +1238,14 @@ export const costModifierRule: GrammarRule = {
       const a = amountOf(own[1]!);
       if (!a) return null;
       const node: CostModifierNode = { type: 'cost_modifier', self: true, change: own[2] as 'less' | 'more', ...a };
+      // "if it targets a tapped creature", "if it targets an attacking creature"
+      const targets = own[4] ? /^it targets (?:a|an) (.+)$/.exec(own[4]) : null;
+      if (targets) {
+        const pf = parseFilter(targets[1]!, b);
+        if (!pf || pf.plural || a.amount === 'X') return null;
+        node.ifTargets = pf.filter;
+        return { kind: 'static', text: original, effect: node };
+      }
       if (own[3]) {
         const each = parseForEach(own[3], b);
         if (!each || a.amount === 'X') return null;
@@ -1411,6 +1738,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   asEntersRule,
   entersAsCopyRule,
   deckRule,
+  optionalUntapRule,
+  castRestrictionRule,
   costModifierRule,
   quantityReplacementRule,
   exileInsteadRule,

@@ -145,6 +145,8 @@ export interface ModeOption {
   effects: EffectNode[];
   /** The compiler couldn't read this mode: choosing it means players resolve the whole thing by hand. */
   manual?: true;
+  /** CR 702.172a (spree) / 702.183a (tiered): the additional cost paid for choosing this mode. */
+  cost?: string;
 }
 
 export interface ActivatedAbility extends AbilityBase, Program {
@@ -180,6 +182,8 @@ export interface TriggeredAbility extends AbilityBase, Program {
    * "When you cast this spell" works on the stack (storm, CR 702.40a).
    */
   zone?: 'graveyard' | 'stack';
+  /** The compiler couldn't read its effect (a dungeon's room ability, CR 309.4c): it triggers, then is resolved by hand. */
+  manual?: true;
 }
 
 export interface StaticAbility extends AbilityBase {
@@ -308,6 +312,8 @@ export interface ObjectFilter {
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
   chosenType?: true;
   chosenColor?: true;
+  /** "a creature dealt damage by ~ this turn" */
+  damagedBySource?: true;
 }
 
 export interface Compare {
@@ -379,6 +385,10 @@ export type AmountExpr = (
   | { kind: 'paid_times'; cost: string }
   /** CR 700.8: the creatures in your party (up to one each of Cleric, Rogue, Warrior and Wizard). */
   | { kind: 'party' }
+  /** CR 305.6 (domain): the number of basic land types among lands you control. */
+  | { kind: 'domain' }
+  /** Delirium: the number of card types among cards in your graveyard. */
+  | { kind: 'card_types' }
   /** "the total life lost this way" (extort, CR 702.101a). */
   | { kind: 'life_lost' }
   /** "for each opponent you attacked with a creature this combat" (melee, CR 702.121a). */
@@ -407,6 +417,8 @@ export const RULE_FLAGS = [
   'can_attack_with_defender',
   /** "its activated abilities can't be activated" (CR 602.5). */
   'cant_activate',
+  /** CR 502.3: "You may choose not to untap ~ during your untap step." */
+  'may_not_untap',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -423,6 +435,18 @@ export interface AddManaEffect extends EffectNode {
   anyColor?: number;
   /** CR 903.4: "any color in your commander's color identity" — only those colors. */
   identity?: true;
+  /** CR 106.6: "Spend this mana only to …" — what the mana can pay for. */
+  spend?: ManaSpend;
+  /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
+  keep?: 'end_of_turn' | 'end_of_combat';
+}
+
+/** CR 106.6: what restricted mana can be spent on. */
+export interface ManaSpend {
+  /** Casting spells that match ("to cast creature spells"); {} for any spell. */
+  spells?: ObjectFilter;
+  /** Activating abilities of sources that match ("or activate abilities of artifacts"); {} for any. */
+  abilities?: ObjectFilter;
 }
 
 export interface EntersTappedEffect extends EffectNode {
@@ -447,6 +471,8 @@ export interface CombatRules {
   mustBeBlocked?: 'one' | 'all';
   /** "can't attack unless defending player controls an Island" (CR 508.1c) */
   attackOnlyIfDefenderControls?: ObjectFilter;
+  /** CR 509.1a: "can block an additional creature each combat" (1); "can block any number of creatures" (99). */
+  extraBlocks?: number;
 }
 
 /** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
@@ -471,6 +497,8 @@ export interface CastOptionNode extends EffectNode {
   withManaCost?: true;
   /** Disturb (CR 702.146a): cast transformed — its back face is the spell. */
   transformed?: true;
+  /** CR 702.174a (gift): "As an additional cost to cast this spell, you may choose an opponent." */
+  chooseOpponent?: true;
   /** Overload (CR 702.96a): the spell as it reads with "target" changed to "each". */
   spell?: SpellAbility;
   /** Replicate, squad: "you may pay [cost] any number of times" (CR 702.56a, 702.157a). */
@@ -508,6 +536,9 @@ export interface CopyExcept {
   keywords?: KeywordInstance[];
   /** CR 707.9d: "it has no mana cost" */
   noManaCost?: true;
+  /** "except it has this ability" — the ability doing the copying (the engine fills in `abilities`). */
+  keepThisAbility?: true;
+  abilities?: AbilityNode[];
 }
 
 export interface ContinuousEffectNode extends EffectNode {
@@ -574,6 +605,8 @@ export interface CostModifierNode extends EffectNode {
   color?: Color;
   change: 'less' | 'more';
   condition?: ConditionNode;
+  /** "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first). */
+  ifTargets?: ObjectFilter;
 }
 
 /**
@@ -651,23 +684,27 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
+    'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -688,7 +725,7 @@ export const CORE_NODES = {
     // CR 702.89a (umbra armor, formerly totem armor): a destruction replacement, in the engine's destroy.
     'umbra_armor', 'totem_armor',
     // CR 702.94a (miracle), 702.119a (emerge), 702.154a (enlist): in the engine's drawing, casting and attacking rules.
-    'miracle', 'emerge', 'enlist',
+    'miracle', 'emerge', 'enlist', 'phasing',
   ],
 } as const;
 

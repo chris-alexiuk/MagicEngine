@@ -97,6 +97,10 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       if (!typeWords(becomes[4]!.split(' '), out, true)) return null;
       continue;
     }
+    if (/^it has this ability$/.test(p)) {
+      out.keepThisAbility = true;
+      continue;
+    }
     const has = /^it has (.+)$/.exec(p);
     if (has) {
       const kws = parseKeywordList(has[1]!, b, true);

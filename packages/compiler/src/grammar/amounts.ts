@@ -54,6 +54,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^color of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
+  // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
+  if (t === 'basic land type among lands you control') return { kind: 'domain' };
+  if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };
   // "for each instant and sorcery card in your graveyard": a card of either type.
   const both = /^(\w+) and (\w+) card (in .+)$/.exec(t);
   if (both) return objects(`${both[1]} or ${both[2]} card ${both[3]}`, b, false);
@@ -113,6 +116,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (t === 'the total life lost this way' || t === 'the life lost this way') return { kind: 'life_lost' };
   if (/^the number of colors of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
   if (t === 'the number of creatures in your party') return { kind: 'party' };
+  if (t === 'the number of basic land types among lands you control') return { kind: 'domain' };
+  if (t === 'the number of card types among cards in your graveyard') return { kind: 'card_types' };
   // CR 700.5: "your devotion to black", "your devotion to white and black".
   const devotion = /^your devotion to (\w+)(?: and (\w+))?$/.exec(t);
   if (devotion) {

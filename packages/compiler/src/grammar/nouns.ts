@@ -26,6 +26,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Transmute (CR 702.53a), transfigure (CR 702.71a)
   [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],

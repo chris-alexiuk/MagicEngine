@@ -1,3 +1,4 @@
+import { parseEffectText } from './grammar/effects.js';
 import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
@@ -73,6 +74,34 @@ export class ParserRegistry {
       parseAbilities: (t, name, typeLine) => this.parse(t, { cardName: name, faceName: name, typeLine }),
     };
     const result: ParseResult = { keywords: [], abilities: [], unparsed: [], manualKeywords: [] };
+    // CR 309.4: a dungeon's rooms, topmost first — "Room — Effect. (Leads to: A, B)", each a room ability (CR 309.4c).
+    if (/^Dungeon\b/.test(ctx.typeLine)) {
+      for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (/^You can't enter this dungeon unless you /.test(line)) {
+          result.abilities.push({ kind: 'static', text: line, effect: { type: 'dungeon_entry' } });
+          continue;
+        }
+        const room = /^(.+?) — (.+?)(?: \(Leads to: ([^)]+)\))?$/.exec(line);
+        const node = room ? this.parseBlock([`When you move your venture marker into this room, ${room[2]!.replace(/^\w/, (ch) => ch.toLowerCase())}`], env) : null;
+        if (!room) {
+          result.unparsed.push(line);
+          continue;
+        }
+        const trigger = { type: 'room', room: room[1]!, leadsTo: room[3] ? room[3].split(/, (?:or )?| or /) : [] };
+        if (node?.kind === 'triggered') {
+          node.text = line;
+          node.trigger = trigger;
+          result.abilities.push(node);
+        } else {
+          // The room still exists (the marker can move through it); its ability is resolved by hand.
+          result.abilities.push({ kind: 'triggered', text: line, trigger, effects: [], manual: true });
+          result.unparsed.push(line);
+        }
+      }
+      return result;
+    }
     const lines = text.split('\n').map(stripReminder);
     // Abilities below a class level bar (CR 716.2a) or a level symbol (CR 711.2a) exist only at that level.
     let gate: ConditionNode | undefined;
@@ -180,6 +209,64 @@ export class ParserRegistry {
         continue;
       }
 
+      // "You may cast this spell as though it had flash." — that's flash (CR 702.8a).
+      if (line === 'You may cast this spell as though it had flash.' || line === 'You may cast ~ as though it had flash.') {
+        result.keywords.push({ id: 'flash' });
+        continue;
+      }
+      // CR 702.174: "Gift a card" — an optional additional cost (choose an opponent), and what they get: first, as an
+      // instant or sorcery resolves (CR 702.174j), or "When this permanent enters, if its gift cost was paid, …".
+      const gift = /^Gift (a card|a Food|a Treasure|a tapped Fish|an Octopus|an extra turn)$/.exec(line);
+      if (gift) {
+        const what: Record<string, string> = {
+          'a card': 'Draw a card.',
+          'a Food': 'Create a Food token.',
+          'a Treasure': 'Create a Treasure token.',
+          'a tapped Fish': 'Create a tapped 1/1 blue Fish creature token.',
+          'an Octopus': 'Create an 8/8 blue Octopus creature token.',
+          'an extra turn': 'Take an extra turn after this one.',
+        };
+        const effects = parseEffectText(what[gift[1]!]!, new Binder(env as GrammarEnv));
+        if (!effects) {
+          result.unparsed.push(line);
+          continue;
+        }
+        result.abilities.push({ kind: 'static', text: line, effect: { type: 'cast_option', id: 'gift', kind: 'additional', cost: {}, chooseOpponent: true } });
+        if (/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) result.abilities.push({ kind: 'static', text: line, effect: { type: 'gift_spell', effects } });
+        else {
+          result.abilities.push({
+            kind: 'triggered',
+            text: line,
+            trigger: { type: 'enters', subject: { ref: 'self' } },
+            condition: { type: 'paid', cost: 'gift' },
+            effects: [{ type: 'give_gift', effects }],
+          });
+        }
+        continue;
+      }
+      // CR 702.172a: "Spree" — choose one or more modes, paying each one's "+ {cost} —" as an additional cost;
+      // CR 702.183a: "Tiered" — choose one, paying its "• Name — {cost} —".
+      if (line === 'Spree' || line === 'Tiered') {
+        const raw: string[] = [line];
+        const bullets: string[] = [];
+        const costs: string[] = [];
+        const spree = line === 'Spree';
+        while (i + 1 < lines.length) {
+          const m = spree ? /^\+ ((?:\{[^}]+\})+) — (.+)$/.exec(lines[i + 1]!) : /^• [^—]+ — ((?:\{[^}]+\})+) — (.+)$/.exec(lines[i + 1]!);
+          if (!m) break;
+          raw.push(lines[++i]!);
+          costs.push(m[1]!);
+          bullets.push(`• ${m[2]}`);
+        }
+        const node = bullets.length ? this.parseBlock([spree ? 'Choose one or more —' : 'Choose one —', ...bullets], env, raw.join('\n')) : null;
+        if (node && node.kind === 'spell' && node.modes && node.modes.options.length === costs.length) {
+          node.modes.options.forEach((o, k) => {
+            if (costs[k] !== '{0}') o.cost = costs[k];
+          });
+          result.abilities.push(node);
+        } else result.unparsed.push(...raw);
+        continue;
+      }
       // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
       const block = [line];
       if (/\bchoose (?:one|two|three|one or both|one or more|any number|up to one|up to two) —$/i.test(line) || /^Choose (?:one|two)\. If .+ instead\.$/.test(line)) {
@@ -192,6 +279,15 @@ export class ParserRegistry {
       else result.unparsed.push(...block);
     }
     for (const kw of result.keywords) {
+      // CR 702.110a: "When this creature enters, you may sacrifice a creature" — marked so "exploits a creature" can see it.
+      if (kw.id === 'exploit') {
+        kw.abilities = [{
+          kind: 'triggered',
+          text: 'Exploit',
+          trigger: { type: 'enters', subject: { ref: 'self' } },
+          effects: [{ type: 'may', effects: [{ type: 'sacrifice_choice', who: { ref: 'you' }, filter: { types: ['Creature'] }, amount: 1, exploit: true }] }],
+        }];
+      }
       if (kw.abilities?.length) continue;
       // CR 702.82a: "Devour N" — "As this object enters, you may sacrifice any number of creatures. This permanent
       // enters with N +1/+1 counters on it for each creature sacrificed this way."
@@ -237,7 +333,28 @@ export class ParserRegistry {
     }
     for (const kw of result.keywords) {
       if (kw.abilities?.length) continue;
+      // CR 702.191a: "Increment" — "Whenever you cast a spell, if … the amount of mana spent to cast that spell is greater
+      // than this creature's power or this creature's toughness, put a +1/+1 counter on this creature."
+      if (kw.id === 'increment') {
+        kw.abilities = [{
+          kind: 'triggered',
+          text: 'Increment',
+          trigger: { type: 'cast', who: 'you', filter: {}, increment: true },
+          effects: [{ type: 'add_counters', counter: '+1/+1', amount: 1, what: { ref: 'self' } }],
+        }];
+        result.manualKeywords = result.manualKeywords.filter((l) => l !== 'Increment');
+      }
       // CR 702.116a: "Myriad" — whenever this creature attacks, token copies attacking each other opponent.
+      // CR 702.189a: "Whenever this creature attacks, add N {R}. Until end of combat, you don't lose this mana as steps and phases end."
+      if (kw.id === 'firebending' && kw.n !== undefined) {
+        kw.abilities = [{
+          kind: 'triggered',
+          text: `Firebending ${kw.n}`,
+          trigger: { type: 'attacks', subject: { ref: 'self' } },
+          effects: [{ type: 'add_mana', options: [Array.from({ length: kw.n }, () => 'R')], keep: 'end_of_combat' }],
+        }];
+        result.manualKeywords = result.manualKeywords.filter((l) => !/^Firebending\b/.test(l));
+      }
       if (kw.id === 'myriad') {
         kw.abilities = [{ kind: 'triggered', text: 'Myriad', trigger: { type: 'attacks', subject: { ref: 'self' } }, effects: [{ type: 'myriad' }] }];
         result.manualKeywords = result.manualKeywords.filter((l) => l !== 'Myriad');

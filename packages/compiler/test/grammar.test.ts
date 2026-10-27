@@ -94,10 +94,10 @@ describe('effects', () => {
   it('is all-or-nothing', () => {
     expect(parse('Draw a card for each creature card with a name sticker on it.').unparsed).toHaveLength(1);
     // A modal spell keeps the modes it can read; the others are left to players (CR 700.2).
-    const modal = parse('Choose one —\n• Destroy target artifact.\n• Venture into the dungeon.');
+    const modal = parse('Choose one —\n• Destroy target artifact.\n• Open an Attraction.');
     expect(modal.unparsed).toEqual([]);
     expect(modal.abilities[0]).toMatchObject({ modes: { options: [{ effects: [{ type: 'destroy' }] }, { manual: true, effects: [] }] } });
-    expect(parse('Choose one —\n• Venture into the dungeon.\n• The Ring tempts you.').unparsed).toHaveLength(3);
+    expect(parse('Choose one —\n• Roll to visit your Attractions.\n• Open an Attraction.').unparsed).toHaveLength(3);
     // Bare instructions only make sense on instants and sorceries.
     expect(parse('Draw a card.', 'Creature — Elf').unparsed).toEqual(['Draw a card.']);
   });
@@ -920,5 +920,159 @@ describe('myriad, encore, miracle, emerge, enlist (slice 38)', () => {
     for (const [text, type] of [['Myriad', 'Creature — Elemental'], ['Encore {4}{U}{U}', 'Creature — Pirate'], ['Draw a card.\nMiracle {W}', 'Sorcery'], ['Emerge {5}{G}', 'Creature — Eldrazi'], ['Enlist', 'Creature — Soldier']] as const) {
       expect(parse(text, type, 'Kw').manualKeywords).toEqual([]);
     }
+  });
+});
+
+describe('trigger batch (slice 39)', () => {
+  it('reads the trigger conditions', () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ['Whenever you attack, draw a card.', { type: 'you_attack' }],
+      ['Whenever you attack with three or more creatures, draw a card.', { type: 'you_attack', min: 3 }],
+      ['Whenever you attack a player, that player loses 1 life.', { type: 'you_attack', perPlayer: true }],
+      ['Whenever this creature attacks and isn’t blocked, defending player discards a card.', { type: 'unblocked', subject: { ref: 'self' } }],
+      ['When you cycle this card, draw a card.', { type: 'activate', keyword: 'cycling', self: true }],
+      ['Whenever a player cycles a card, you gain 1 life.', { type: 'activate', who: 'any', keyword: 'cycling' }],
+      ['Whenever you cast your second spell each turn, draw a card.', { type: 'cast', nth: 2 }],
+      ["Whenever you cast your first spell during each opponent's turn, draw a card.", { type: 'cast', nth: 1, opponentsTurn: true }],
+      ['Whenever you cast or copy an instant or sorcery spell, scry 1.', { type: 'cast', orCopy: true }],
+      ['Whenever you cast a spell from anywhere other than your hand, draw a card.', { type: 'cast', notFrom: 'hand' }],
+      ['Whenever one or more creatures you control deal combat damage to a player, draw a card.', { type: 'combat_damage_batch' }],
+      ['At the beginning of your second main phase, draw a card.', { type: 'phase', step: 'main2', whose: 'you' }],
+      ['At end of combat, draw a card.', { type: 'phase', step: 'end_of_combat' }],
+      ['Whenever one or more cards leave your graveyard, draw a card.', { type: 'leave_graveyard' }],
+      ['Whenever this creature becomes untapped, draw a card.', { type: 'becomes_tapped', untapped: true }],
+      ['Whenever this creature deals damage to an opponent, that player discards a card.', { type: 'deals_damage', to: 'opponent' }],
+      ['Whenever you cycle or discard a card, draw a card.', { type: 'discard', who: 'you' }],
+      ['Whenever you discard one or more cards, draw a card.', { type: 'discard', batch: true }],
+      ['Whenever this creature and at least two other creatures attack, draw a card.', { type: 'attacks', withOthers: 2 }],
+      ['Whenever you scry or surveil, draw a card.', { type: 'scry', kinds: ['scry', 'surveil'] }],
+      ['Whenever one or more +1/+1 counters are put on this creature, draw a card.', { type: 'counters_put', counter: '+1/+1' }],
+      ['Whenever a creature attacks you or a planeswalker you control, draw a card.', { type: 'attacks', defender: 'you' }],
+      ['Whenever an opponent draws a card, you gain 1 life.', { type: 'draw', who: 'opponent' }],
+      ['Whenever you sacrifice a Clue, draw a card.', { type: 'sacrificed', filter: { subtypes: ['Clue'] } }],
+      ['Whenever you sacrifice another permanent, draw a card.', { type: 'sacrificed', other: true }],
+    ];
+    for (const [text, trigger] of cases) {
+      const r = parse(text, 'Creature — Human', 'Trig');
+      expect(r.unparsed, text).toEqual([]);
+      expect(r.abilities[0], text).toMatchObject({ kind: 'triggered', trigger });
+    }
+  });
+});
+
+describe('trigger batch 2 (slice 40)', () => {
+  it('reads the trigger conditions', () => {
+    const cases: [string, string, Record<string, unknown>][] = [
+      ['Whenever a creature you control becomes blocked, draw a card.', 'Enchantment', { type: 'becomes_blocked', subject: { ref: 'all' } }],
+      ['Whenever one or more tokens you control enter, draw a card.', 'Enchantment', { type: 'enters', batch: true }],
+      ['Whenever you cast a kicked spell, draw a card.', 'Enchantment', { type: 'cast', kicked: true }],
+      ['When enchanted land dies, draw a card.', 'Enchantment — Aura', { type: 'dies', subject: { ref: 'attached' } }],
+      ['Whenever enchanted creature attacks or blocks, draw a card.', 'Enchantment — Aura', { type: 'either' }],
+      ['Whenever this creature deals combat damage to a player or planeswalker, draw a card.', 'Creature — Human', { type: 'deals_combat_damage', to: 'player_or_planeswalker' }],
+      ['Whenever this creature attacks alone, draw a card.', 'Creature — Human', { type: 'attacks', alone: true }],
+      ['Whenever a creature attacks you, draw a card.', 'Enchantment', { type: 'attacks', defender: 'you_only' }],
+      ["At the beginning of combat on each opponent's turn, draw a card.", 'Enchantment', { type: 'phase', step: 'beginning_of_combat', whose: 'opponent' }],
+      ['Whenever this creature deals damage to a creature, draw a card.', 'Creature — Human', { type: 'deals_damage', to: 'creature' }],
+      ['Whenever you gain life for the first time each turn, draw a card.', 'Enchantment', { type: 'gain_life', first: true }],
+      ['When this creature becomes monstrous, draw a card.', 'Creature — Human', { type: 'becomes_monstrous' }],
+      ['When this creature exploits a creature, draw a card.', 'Creature — Human', { type: 'sacrificed', exploit: true }],
+      ['Whenever you cast a spell that targets a creature you control, draw a card.', 'Enchantment', { type: 'cast', targets: { types: ['Creature'], controller: 'you' } }],
+      ['Whenever a nontoken creature is put into your graveyard from the battlefield, draw a card.', 'Enchantment', { type: 'dies', subject: { filter: { owner: 'you' } } }],
+      ['Whenever a creature deals combat damage to one of your opponents, draw a card.', 'Enchantment', { type: 'deals_combat_damage', to: 'opponent' }],
+    ];
+    for (const [text, type, trigger] of cases) {
+      const r = parse(text, type, 'Trig');
+      expect(r.unparsed, text).toEqual([]);
+      expect(r.abilities.find((a) => a.kind === 'triggered'), text).toMatchObject({ kind: 'triggered', trigger });
+    }
+  });
+});
+
+describe('restricted mana, multi-blocking, the Ring, dungeons (slices 41–44)', () => {
+  it('reads them', () => {
+    const mana = parse('{T}: Add {C}{C}. Spend this mana only to cast artifact spells or activate abilities of artifacts.', 'Land', 'Shop');
+    expect(mana.abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', spend: { spells: { types: ['Artifact'] }, abilities: { types: ['Artifact'] } } }] });
+    const ritual = parse('Add {R}{R}{R}. Spend this mana only to cast instant or sorcery spells.', 'Instant', 'Rite');
+    expect(ritual.abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', spend: { spells: { types: ['Instant', 'Sorcery'] } } }] });
+    expect(parse('{T}: Add two mana in any combination of colors.', 'Artifact', 'Prism').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana' }] });
+    expect(parse('This creature can block an additional creature each combat.', 'Creature — Wall', 'Wall').abilities[0]).toMatchObject({ effect: { combat: { extraBlocks: 1 } } });
+    expect(parse('Draw a card. The Ring tempts you.', 'Sorcery', 'Birthday Escape').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'ring_tempts' }] });
+    expect(parse('When this creature enters, you take the initiative.', 'Creature — Human', 'Init').abilities[0]).toMatchObject({ effects: [{ type: 'take_initiative' }] });
+    const dungeon = parse('Cave Entrance — Scry 1. (Leads to: Goblin Lair, Mine Tunnels)\nGoblin Lair — Create a 1/1 red Goblin creature token.', 'Dungeon', 'Lost Mine');
+    expect(dungeon.unparsed).toEqual([]);
+    expect(dungeon.abilities[0]).toMatchObject({ kind: 'triggered', trigger: { type: 'room', room: 'Cave Entrance', leadsTo: ['Goblin Lair', 'Mine Tunnels'] }, effects: [{ type: 'scry' }] });
+  });
+});
+
+describe('ability words, reveal until, spree (slices 45–47)', () => {
+  it('reads them', () => {
+    const lines: [string, string][] = [
+      ['Delirium — This creature gets +2/+2 as long as there are four or more card types among cards in your graveyard.', 'Creature — Horror'],
+      ['Target creature gets +1/+1 until end of turn for each basic land type among lands you control.', 'Instant'],
+      ['Coven — At the beginning of combat on your turn, if you control three or more creatures with different powers, draw a card.', 'Creature — Human'],
+      ['Revolt — When this creature enters, if a permanent you controlled left the battlefield this turn, draw a card.', 'Creature — Human'],
+      ['Reveal cards from the top of your library until you reveal a creature card. Put that card into your hand and the rest on the bottom of your library in a random order.', 'Sorcery'],
+      ["Counter target spell. If that spell would be put into its owner's graveyard, exile it instead.", 'Instant'],
+      ['Firebending 2', 'Creature — Human'],
+      ['Spree\n+ {1} — Draw a card.\n+ {2} — You gain 3 life.', 'Sorcery'],
+    ];
+    for (const [text, type] of lines) {
+      const r = parse(text, type, 'Word');
+      expect(r.unparsed, text).toEqual([]);
+      expect(r.manualKeywords, text).toEqual([]);
+    }
+    const spree = parse('Spree\n+ {1} — Draw a card.\n+ {2} — You gain 3 life.', 'Sorcery', 'Spree Card');
+    expect(spree.abilities[0]).toMatchObject({ modes: { min: 1, max: 2, options: [{ cost: '{1}' }, { cost: '{2}' }] } });
+  });
+});
+
+describe('gift, crimes, expend, increment (slices 48–49)', () => {
+  it('reads them', () => {
+    const gift = parse('Gift a card\nDestroy target creature. If the gift was promised, you gain 3 life.', 'Sorcery', 'Gifted');
+    expect(gift.unparsed).toEqual([]);
+    expect(gift.abilities.map((a) => (a.kind === 'static' ? a.effect.type : a.kind))).toEqual(['cast_option', 'gift_spell', 'spell']);
+    const rabbit = parse('Gift a Food\nWhen this creature enters, if the gift wasn\'t promised, draw a card.', 'Creature — Rabbit', 'Rabbit');
+    expect(rabbit.abilities[1]).toMatchObject({ kind: 'triggered', condition: { type: 'paid', cost: 'gift' }, effects: [{ type: 'give_gift' }] });
+    for (const [text, trigger] of [
+      ['Whenever you commit a crime, draw a card.', { type: 'crime' }],
+      ['Whenever you expend 4, draw a card.', { type: 'expend', n: 4 }],
+      ['Whenever a creature dealt damage by this creature this turn dies, draw a card.', { type: 'dies', subject: { filter: { damagedBySource: true } } }],
+    ] as const) {
+      expect(parse(text, 'Creature — Human', 'Rogue').abilities[0], text).toMatchObject({ trigger });
+    }
+    expect(parse('Increment', 'Creature — Human', 'Rogue').manualKeywords).toEqual([]);
+  });
+});
+
+describe('copies, extra combats, phasing (slices 50–52)', () => {
+  it('reads them', () => {
+    const copy = parse('{2}: This artifact becomes a copy of target creature until end of turn.', 'Artifact', 'Mirror');
+    expect(copy.abilities[0]).toMatchObject({ effects: [{ type: 'become_copy', what: { ref: 'self' }, until: 'eot' }] });
+    const plasm = parse('At the beginning of your upkeep, you may have this creature become a copy of another target creature, except it has this ability.', 'Creature — Shapeshifter', 'Plasm');
+    expect(plasm.unparsed).toEqual([]);
+    expect(parse('After this main phase, there is an additional combat phase followed by an additional main phase.', 'Sorcery', 'Seize').abilities[0]).toMatchObject({ effects: [{ type: 'extra_combat', main: true }] });
+    expect(parse('Target creature phases out.', 'Instant', 'Blink').abilities[0]).toMatchObject({ effects: [{ type: 'phase_out' }] });
+    expect(parse('Phasing', 'Creature — Spirit', 'Phaser').manualKeywords).toEqual([]);
+  });
+});
+
+describe('casting restrictions (slice 53)', () => {
+  it('reads them', () => {
+    const blade = parse("Cast this spell only during the declare attackers step and only if you've been attacked this step.\nDestroy target attacking creature.", 'Instant', 'Blade');
+    expect(blade.abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'cast_restriction', during: 'declare_attackers', attacked: true } });
+    const response = parse('This spell costs {2} less to cast if it targets a tapped creature.\nDestroy target creature.', 'Instant', 'Response');
+    expect(response.abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', self: true, ifTargets: { types: ['Creature'] } } });
+    expect(parse('You may cast this spell as though it had flash.', 'Creature — Elf', 'Elf').keywords).toEqual([{ id: 'flash' }]);
+  });
+});
+
+describe('while tapped, optional untap (slice 54)', () => {
+  it('reads them', () => {
+    const r = parse('You may choose not to untap this creature during your untap step.\n{T}: Gain control of target creature for as long as this creature remains tapped.', 'Creature — Merfolk', 'Seasinger');
+    expect(r.unparsed).toEqual([]);
+    expect(r.abilities[0]).toMatchObject({ effect: { rules: ['may_not_untap'] } });
+    expect(r.abilities[1]).toMatchObject({ effects: [{ type: 'gain_control', until: 'source_tapped' }] });
+    const leech = parse("{T}: Tap target creature. It doesn't untap during its controller's untap step for as long as this creature remains tapped.", 'Creature — Leech', 'Leech');
+    expect(leech.abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'lock_untap' }] });
   });
 });

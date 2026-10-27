@@ -43,13 +43,13 @@ export const CORE_KEYWORDS: KeywordSpec[] = [
     'gravestorm', 'retrace', 'conspire', 'fuse', 'double team', 'demonstrate', 'banding', 'bargain',
     'living metal', 'cipher', 'aftermath', 'exploit', 'ingest', 'friends forever', 'choose a background',
     'doctor\'s companion', 'compleated', 'for mirrodin!', 'shadow', 'totem armor', 'umbra armor', 'hidden agenda',
-    'station', 'start your engines!', 'job select',
+    'station', 'start your engines!', 'job select', 'increment',
   ]),
   ...num([
     'absorb', 'afflict', 'afterlife', 'amplify', 'annihilator', 'bloodthirst', 'bushido', 'crew', 'dredge',
     'fabricate', 'fading', 'frenzy', 'graft', 'modular', 'poisonous', 'rampage', 'renown', 'ripple', 'soulshift',
     'tribute', 'vanishing', 'devour', 'toxic', 'backup', 'hideaway', 'casualty', 'saddle', 'mobilize',
-    'cumulative upkeep', 'reinforce',
+    'cumulative upkeep', 'reinforce', 'firebending',
   ]),
   ...cost([
     'bestow', 'blitz', 'buyback', 'cycling', 'dash', 'disturb', 'echo', 'embalm', 'emerge', 'encore', 'entwine',

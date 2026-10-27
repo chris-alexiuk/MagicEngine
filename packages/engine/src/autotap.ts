@@ -1,6 +1,7 @@
 import type { AddManaEffect } from '@mtg/schema';
 import { canUseTapAbilities, manaAbilities } from './characteristics.js';
 import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
+import { canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
 import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
 
 export interface PlannedActivation {
@@ -21,7 +22,7 @@ interface Source {
   modes: Mode[];
 }
 
-function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[]): Source[] {
+function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose): Source[] {
   const out: Source[] = [];
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
@@ -32,6 +33,8 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1) return;
       const effect = ab.effects[0] as AddManaEffect;
       if (effect.type !== 'add_mana') return;
+      // CR 106.6: restricted mana only helps when it can be spent on this.
+      if (effect.spend && !canSpend(g, player, effect.spend, purpose)) return;
       if (effect.anyColor) {
         for (const c of anyColorChoices(g, player, effect.identity)) {
           modes.push({ ability, mana: Array.from({ length: effect.anyColor }, () => c), choice: c });
@@ -62,10 +65,11 @@ const toActivation = (s: Source, m: Mode): PlannedActivation => ({
  * then generic mana from whatever is left. Returns null if the cost can't be met.
  */
 /** `exclude`: permanents that can't be tapped for mana here (their own cost taps or sacrifices them). */
-export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = []): PlannedActivation[] | null {
-  const need = shortfall(g.players[player]!.pool, cost, x);
+/** `purpose`: what the mana is for, which decides whether restricted mana can help (CR 106.6). */
+export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): PlannedActivation[] | null {
+  const need = shortfall(spendablePool(g, player, purpose), cost, x);
   if (!need) return null;
-  const sources = manaSources(g, player, exclude);
+  const sources = manaSources(g, player, exclude, purpose);
   const used = new Set<ObjectId>();
   const plan: PlannedActivation[] = [];
   let surplus = 0; // extra mana from a source tapped for a color (e.g. the second {C} from Sol Ring)
