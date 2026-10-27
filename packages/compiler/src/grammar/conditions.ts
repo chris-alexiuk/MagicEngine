@@ -105,6 +105,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const filter = stateFilter(itIs[1]!, b);
     if (filter) return { type: 'is', of: b.it, filter };
   }
+  // CR 705.2: "If you win the flip", "If you lose the flip"
+  if (t === 'you win the flip') return { type: 'won_flip' };
+  if (t === 'you lose the flip') return { type: 'won_flip', not: true };
   // CR 702.179e: "you have max speed"; CR 702.131c: "you have the city's blessing"
   if (/^you have max speed$/.test(t)) return { type: 'max_speed' };
   if (/^you don't have max speed$/.test(t)) return { type: 'max_speed', not: true };

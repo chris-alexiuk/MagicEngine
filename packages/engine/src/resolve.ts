@@ -160,7 +160,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -252,6 +252,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
         if (g.objects[id]?.controller === ctx.controller && a.target.kind === 'player' && a.target.player !== ctx.controller) attacked.add(a.target.player);
       }
       return attacked.size;
+    }
+    case 'cost_lki': {
+      // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
+      const lki = ctx.resolution?.entry.costLKI?.[e.cost];
+      return lki?.reduce((n, x) => n + x[e.stat], 0) ?? 0;
     }
     case 'colors_spent':
       // CR 702.44a: colors of mana spent to cast it.

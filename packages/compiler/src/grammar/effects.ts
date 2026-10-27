@@ -46,6 +46,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
       if (i > 0 && !/ instead$/.test(s)) previous = [];
+      // "Then each player draws a card." — "then" only orders what's already in order.
+      if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
       // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
         s = `${s.replace(/, and put /, ', put ')}, then shuffle`;
@@ -119,10 +121,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // "Look at the top five cards of your library. You may reveal a creature card from among them and put it
       // into your hand. Put the rest on the bottom of your library in a random order." — and its relatives.
-      const look = /^[Ll]ook at the top (\w+) cards of your library$/.exec(s);
+      const look = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library$/.exec(s);
       if (look && sentences[i + 1]) {
-        const dig = parseDig(look[1]!, sentences[i + 1]!, sentences[i + 2], b);
+        const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b);
         if (!dig) return null;
+        // Revealed: everyone sees the cards (CR 701.20a).
+        if (/^[Rr]eveal/.test(look[1]!)) dig.node.reveal = true;
         out.push(dig.node);
         i += dig.used;
         continue;
@@ -148,7 +152,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
             else return null;
             used = 3;
           }
-          return { node: { type: 'choose_from_hand', who, filter, amount, then, ...(chooses[1] ? { optional: true } : {}) } as EffectNode, used };
+          return { node: { type: 'choose_from_hand', who, filter, amount, then, revealHand: true, ...(chooses[1] ? { optional: true } : {}) } as EffectNode, used };
         });
         if (!r) return null;
         out.push(r.node);
@@ -232,7 +236,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // "Create a 1/1 Eldrazi Scion creature token. It has "Sacrifice this token: Add {C}."" — the token's own text.
       const tokenHas = /^(?:It|They) (?:has|have) (.+)$/.exec(s);
-      const made = out[out.length - 1];
+      // The token just created — maybe inside "you may create …" or "If you do, create …".
+      const lastToken = (list: EffectNode[]): EffectNode | undefined => {
+        const x = list[list.length - 1];
+        if (!x) return undefined;
+        if (x.type === 'create_token') return x;
+        for (const k of ['then', 'effects', 'else']) {
+          const inner = Array.isArray(x[k]) ? lastToken(x[k] as EffectNode[]) : undefined;
+          if (inner) return inner;
+        }
+        return undefined;
+      };
+      const made = tokenHas ? lastToken(out) : undefined;
       if (tokenHas && made?.type === 'create_token' && made.token) {
         const face = addTokenText(made.token as FaceDef, tokenHas[1]!, b);
         if (!face) return null;
@@ -258,12 +273,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
       const delayed =
-        /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ?? /^At the beginning of the next (end step|turn's upkeep), (.+)$/.exec(s);
+        /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ??
+        /^At the beginning of the next (end step|turn's upkeep), (.+)$/.exec(s) ??
+        /^(.+) at (end of combat)$/.exec(s) ??
+        /^At (end of combat), (.+)$/.exec(s);
       if (delayed) {
         const [what, when] = delayed[0].startsWith('At ') ? [delayed[2]!, delayed[1]!] : [delayed[1]!, delayed[2]!];
         const inner = parseSentence(capitalise(what), b);
         if (!inner) return null;
-        out.push({ type: 'delayed', step: when === 'end step' ? 'end' : 'upkeep', effects: inner });
+        // CR 511.2: "at end of combat" — as the end of combat step begins.
+        out.push({ type: 'delayed', step: when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep', effects: inner });
         continue;
       }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
@@ -275,9 +294,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       if (/^(?:It|They) can't be regenerated$/.test(s)) {
-        const last = out[out.length - 1];
-        if (!last || last.type !== 'destroy') return null;
-        last.noRegen = true;
+        // The destroy effects of the sentence before ("Destroy target creature and all others with the same name").
+        const destroys: EffectNode[] = [];
+        const find = (list: EffectNode[]) => {
+          for (const x of list) {
+            if (x.type === 'destroy') destroys.push(x);
+            for (const k of ['effects', 'then', 'else']) if (Array.isArray(x[k])) find(x[k] as EffectNode[]);
+          }
+        };
+        find(previous.length ? previous : out.slice(-1));
+        if (!destroys.length) return null;
+        for (const d of destroys) d.noRegen = true;
         continue;
       }
       const effects = parseSentence(s, b);
@@ -327,6 +354,15 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
       node: { type: 'dig', amount, take: n, to, filter, optional: true, ...rest, ...(reveal[1] === 'reveal' ? { reveal: true } : {}), ...(reveal[5] ? { tapped: true } : {}) },
       used: 2,
     };
+  }
+  // "Put all creature cards revealed this way into your hand and the rest into your graveyard."
+  const all = /^Put all (.+?) cards? (?:revealed this way|from among them) into your (hand|graveyard) and the (?:rest|others) (.+)$/.exec(next);
+  if (all) {
+    const rest = REST[all[3]!];
+    const pf = parseFilter(`${all[1]} cards in your library`, b);
+    if (!rest || !pf) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { node: { type: 'dig', amount, take: amount, to: all[2], filter, all: true, ...rest }, used: 1 };
   }
   // "You may put one of them back on top of your library. Put the rest into your graveyard."
   const back = /^You may put (\w+) of (?:them|those cards) (?:back )?on top of your library$/.exec(next);
@@ -479,6 +515,80 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const becomes = /^[Ii]t becomes (day|night)$/.exec(s);
   if (becomes) return [{ type: 'day_night', to: becomes[1] }];
   // CR 702.171a (saddle): "This permanent becomes saddled until end of turn."
+  // CR 500.7: "Take an extra turn after this one." / "Target player takes an extra turn after this one."
+  const extraTurn = /^(?:(.+?) takes?|[Tt]ake) an extra turn after this one$/.exec(s);
+  if (extraTurn) {
+    const r = attempt(b, (b) => {
+      const who = extraTurn[1] ? parsePlayerRef(extraTurn[1], b) : { ref: 'you' as const };
+      return who ? [{ type: 'extra_turn', who }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 613.4d (layer 7d): "Switch target creature's power and toughness until end of turn."
+  const swap = /^[Ss]witch (.+?)'s? power and toughness until end of turn$/.exec(s);
+  if (swap) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(swap[1]!.replace(/^this creature$/, '~'), b);
+      return what ? [{ type: 'modify', what: what.ref, until: 'eot', switchPT: true }] : null;
+    });
+    if (r) return r;
+  }
+  // "Choose a creature type." / "Choose a color." as it resolves: "the chosen type" afterwards.
+  const chooseValue = /^[Cc]hoose a (creature type|color)$/.exec(s);
+  if (chooseValue) return [{ type: 'choose_value', choice: chooseValue[1] === 'color' ? 'color' : 'creature_type' }];
+  // CR 701.24a: "Shuffle.", "That player shuffles.", "then shuffle" (after a draw).
+  if (/^(?:Then )?[Ss]huffle(?: your library)?$/.test(s)) return [{ type: 'shuffle', who: { ref: 'you' } }];
+  const shuffles = /^(.+?) shuffles(?: their library)?$/.exec(s);
+  if (shuffles) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(shuffles[1]!, b);
+      return who ? [{ type: 'shuffle', who }] : null;
+    });
+    if (r) return r;
+  }
+  const thenShuffle = /^(.+), then shuffle$/.exec(s);
+  if (thenShuffle && !/^[Ss]earch /.test(s)) {
+    const r = attempt(b, (b) => {
+      const first = parseSentence(thenShuffle[1]!, b);
+      return first ? [...first, { type: 'shuffle', who: { ref: 'you' } }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 701.30a: "Populate." — a copy of a creature token you control.
+  if (/^[Pp]opulate$/.test(s)) return [{ type: 'populate' }];
+  // CR 705.1: "Flip a coin."
+  if (/^[Ff]lip a coin$/.test(s)) return [{ type: 'flip_coin' }];
+  // "Look at target opponent's hand." / "Target opponent reveals their hand." (CR 701.20a)
+  const lookHand = /^[Ll]ook at (.+?)'s? hand$/.exec(s);
+  const revealHand = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
+  if (lookHand || revealHand) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef((lookHand ?? revealHand)![1]!, b);
+      return who ? [{ type: 'look_at_hand', who, ...(revealHand ? { reveal: true } : {}) }] : null;
+    });
+    if (r) return r;
+  }
+  // "Exile target player's graveyard."
+  const exileYard = /^[Ee]xile (target player's|target opponent's|each opponent's|your) graveyard$/.exec(s);
+  if (exileYard) return parseSentence(`Exile all cards from ${exileYard[1]} graveyard`, b);
+  // "You may tap or untap target creature." / "Tap or untap target permanent."
+  const tapOr = /^(You may )?[Tt]ap or untap (.+)$/.exec(s);
+  if (tapOr) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(tapOr[2]!, b);
+      return what && !what.plural ? [{ type: 'tap_or_untap', what: what.ref, ...(tapOr[1] ? { optional: true } : {}) }] : null;
+    });
+    if (r) return r;
+  }
+  // "At the beginning of each player's draw step, that player draws an additional card."
+  const additional = /^(.+?) draws? an additional card$/.exec(s);
+  if (additional) {
+    const r = attempt(b, (b) => {
+      const who = /^you$/i.test(additional[1]!) ? { ref: 'you' as const } : parsePlayerRef(additional[1]!, b);
+      return who ? [{ type: 'draw', amount: 1, who }] : null;
+    });
+    if (r) return r;
+  }
   // CR 701.39a: "Bolster N"
   const bolster = /^[Bb]olster (\w+)$/.exec(s);
   if (bolster) {
@@ -739,6 +849,21 @@ const VERBS: Record<string, VerbHandler> = {
   },
   put(args, who, b, imperative) {
     if (!imperative) return null;
+    // "Put a land card from your hand onto the battlefield (tapped)." — chosen as it resolves.
+    const fromHand = /^(a|an|up to one|up to two) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
+    if (fromHand) {
+      const n = fromHand[1] === 'up to two' ? 2 : 1;
+      const pf = parseFilter(`${fromHand[2]} in your hand`, b);
+      if (!pf || pf.plural !== n > 1) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(fromHand[1]!.startsWith('up to') ? { optional: true } : {}) }];
+    }
+    // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
+    const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) \S+ counters? on it)?$/.exec(args);
+    if (onto && !/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's) graveyards?$|^target .+ card$/.test(onto[1]!)) {
+      const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
+      if (r) return r;
+    }
     // "Put a number of +1/+1 counters equal to the power of the card you exiled on target creature." (scavenge)
     const counted = /^a number of (\S+) counters equal to (.+?) on (.+)$/.exec(args);
     if (counted) {
@@ -796,6 +921,21 @@ const VERBS: Record<string, VerbHandler> = {
   counter: objectVerb('counter'),
   regenerate: objectVerb('regenerate'),
   search(args, who, b, imperative) {
+    // "Search target opponent's library for an artifact card and exile it." — you search their library.
+    const other = imperative ? /^(target opponent's|target player's|that player's|its controller's|their) library for (.+?) and (exile (?:it|them|that card|those cards)|put (?:it|them|that card) onto the battlefield under your control|put (?:it|them|that card) into (?:its owner's|their owner's|that player's) graveyard)$/.exec(args) : null;
+    if (other) {
+      return attempt(b, (b) => {
+        const owner = other[1] === 'their' ? b.player : parsePlayerRef(other[1]!.replace(/'s$/, ''), b);
+        const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(other[2]!);
+        if (!owner || !q) return null;
+        const amount = q[1] ? 1 : parseAmount(q[2] ?? q[3]!);
+        const pf = typeof amount === 'number' ? parseFilter(`${q[4]} in your library`, b) : null;
+        if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
+        const { owner: _o, ...filter } = pf.filter;
+        const to = other[3]!.startsWith('exile') ? 'exile' : other[3]!.includes('battlefield') ? 'battlefield' : 'graveyard';
+        return [{ type: 'search', filter, amount, to, library: owner, ...(q[2] ? { upTo: true } : {}) }];
+      });
+    }
     // CR 701.23: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle."
     // "Target player may search their library for a card named …, reveal it, put it into their hand, then shuffle."
     const theirs = !imperative && /^their library /.test(args);

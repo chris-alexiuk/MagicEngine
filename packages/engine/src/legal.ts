@@ -145,6 +145,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const mana = parseManaCost(ab.cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana))) return;
       if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
+      // "Activate only during your upkeep." (CR 602.5b)
+      if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       const choice = defaultProgramChoice(g, player, o, [ab]);
       const costs = defaultCostChoices(g, player, o, ab.cost.other ?? []);
       if (choice && costs) out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });

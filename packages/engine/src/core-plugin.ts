@@ -1,5 +1,5 @@
 import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
-import { CORE_NODES } from '@mtg/schema';
+import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
@@ -18,7 +18,7 @@ import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
-import { shuffleInPlace } from './rng.js';
+import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
@@ -217,6 +217,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
       ...(Array.isArray(node.colors) ? { colors: node.colors as Color[] } : {}),
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
+      ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
       until: node.until === 'game' ? 'game' : 'eot',
     });
@@ -376,15 +377,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       chosen = answer.objects;
     } else {
-      ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
+      if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
       if (!candidates.length) return true;
       if (candidates.length > n || node.optional) {
-        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: node.optional ? 0 : n, max: n, text: `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p}'s hand.`, revealed: [...hand] } };
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: node.optional ? 0 : n, max: n, text: `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`, ...(node.revealHand ? { revealed: [...hand] } : {}) } };
       }
       chosen = candidates;
     }
     for (const id of chosen) {
       if (node.then === 'exile') moveObject(g, id, 'exile', ctx.events);
+      else if (node.then === 'battlefield') moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
       else discardCard(g, id, ctx.events);
     }
     return true;
@@ -490,6 +492,82 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       chosen = list;
     }
     for (const id of chosen) moveObject(g, id, 'hand', ctx.events);
+    return true;
+  },
+
+  // CR 500.7: "Take an extra turn after this one."
+  extra_turn(node, ctx) {
+    for (const p of refPlayers(ctx, ref(node, 'who'))) (ctx.g.extraTurns ??= []).unshift(p);
+    return true;
+  },
+
+  // "Choose a creature type." / "Choose a color." — remembered for "the chosen type" (on the spell or permanent).
+  choose_value(node, ctx) {
+    const answer = answerOf(ctx, 'choose_option');
+    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : [...SUBTYPES.creature];
+    if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text: node.choice === 'color' ? 'Choose a color.' : 'Choose a creature type.', sourceName: sourceName(ctx) } };
+    if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+    const s = ctx.source;
+    if (s) s.chosen = { ...s.chosen, ...(node.choice === 'color' ? { color: answer.choice as Color } : { creatureType: answer.choice }) };
+    ctx.events.push({ type: 'chosen', object: s?.id ?? '', choice: answer.choice });
+    return true;
+  },
+
+  // CR 701.24a: shuffle a library.
+  shuffle(node, ctx) {
+    for (const p of node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]) {
+      shuffleInPlace(ctx.g, zoneList(ctx.g, 'library', p));
+      ctx.events.push({ type: 'shuffled', player: p });
+    }
+    return true;
+  },
+
+  // CR 701.30a: "Populate" — choose a creature token you control and create a token that's a copy of it.
+  populate(_node, ctx) {
+    const g = ctx.g;
+    const tokens = g.zones.battlefield.filter((id) => {
+      const o = g.objects[id]!;
+      return o.token && o.controller === ctx.controller && chars(g, o).types.includes('Creature');
+    });
+    if (!tokens.length) return true;
+    const answer = answerOf(ctx, 'choose_objects');
+    let pick = tokens[0]!;
+    if (answer) {
+      if (answer.objects.length !== 1 || !tokens.includes(answer.objects[0]!)) throw new RulesError('Choose a creature token you control.');
+      pick = answer.objects[0]!;
+    } else if (tokens.length > 1) {
+      return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: tokens, min: 1, max: 1, text: 'Choose a creature token to copy.' } };
+    }
+    const t = createTokenCopy(g, copiable(g.objects[pick]!), ctx.controller, ctx.events, {});
+    if (ctx.resolution) ctx.resolution.created = [{ id: t.id, zcc: t.zcc }];
+    return true;
+  },
+
+  // CR 705.1: flip a coin; "if you win the flip" checks the result (CR 705.2).
+  flip_coin(_node, ctx) {
+    const won = nextRandom(ctx.g) < 0.5;
+    if (ctx.resolution) ctx.resolution.flipWon = won;
+    ctx.events.push({ type: 'coin_flip', player: ctx.controller, won });
+    return true;
+  },
+
+  // "Look at target opponent's hand." — its controller looks (CR 701.20a reveals it to everyone).
+  look_at_hand(node, ctx) {
+    const [p] = refPlayers(ctx, ref(node, 'who'));
+    if (!p || answerOf(ctx, 'choose_objects')) return true;
+    const hand = [...zoneList(ctx.g, 'hand', p)];
+    if (node.reveal) ctx.events.push({ type: 'revealed', player: p, objects: hand });
+    if (!hand.length) return true;
+    return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `${node.reveal ? 'Revealed' : 'Looking at'}: ${p}'s hand.`, seen: hand, ...(node.reveal ? { revealed: hand } : {}) } };
+  },
+
+  // "You may tap or untap target creature."
+  tap_or_untap(node, ctx) {
+    const [o] = refObjects(ctx, ref(node, 'what'));
+    if (!o || o.zone !== 'battlefield') return true;
+    const answer = answerOf(ctx, 'may');
+    if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Tap ${nameOf(ctx.g, o)}? (No: untap it${node.optional ? ', or leave it' : ''}.)`, sourceName: sourceName(ctx) } };
+    setTapped(ctx.g, o.id, answer.yes, ctx.events);
     return true;
   },
 
@@ -783,7 +861,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Target player may search their library …": that player searches.
     const player = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
     if (!player) return true;
-    const library = zoneList(g, 'library', player);
+    // "Search target opponent's library for …": you search theirs.
+    const owner = node.library ? refPlayers(ctx, ref(node, 'library'))[0] : player;
+    if (!owner) return true;
+    const library = zoneList(g, 'library', owner);
     const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
     const candidates = library.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: player }));
     const count = amountOf(ctx, node.amount);
@@ -800,14 +881,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
       throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
     }
-    const to = node.to as 'hand' | 'battlefield' | 'graveyard' | 'library';
+    const to = node.to as 'hand' | 'battlefield' | 'graveyard' | 'library' | 'exile';
     if (to !== 'library') {
       for (const id of chosen) {
         moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}) } : {});
       }
     }
     // CR 701.24a: then the library is shuffled.
-    const rest = zoneList(g, 'library', player);
+    const rest = zoneList(g, 'library', owner);
     if (to === 'library') rest.splice(0, rest.length, ...rest.filter((id) => !chosen.includes(id)));
     shuffleInPlace(g, rest);
     if (to === 'library') rest.unshift(...chosen);
@@ -1008,7 +1089,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: source ? { id: source.id, zcc: ctx.resolution?.found?.[source.id] === source.zcc ? source.zcc : (ctx.sourceZcc ?? source.zcc) } : { id: '', zcc: 0 },
       sourceName: sourceName(ctx),
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
-      step: node.step === 'upkeep' ? 'upkeep' : 'end',
+      step: node.step === 'upkeep' ? 'upkeep' : node.step === 'end_of_combat' ? 'end_of_combat' : 'end',
       createdTurn: g.turn,
       createdStep: g.step,
       effects: node.effects as EffectNode[],
@@ -1213,7 +1294,7 @@ function describeEffects(list: EffectNode[]): string {
 }
 
 function describeSearch(node: EffectNode): string {
-  const to = { hand: 'into your hand', battlefield: 'onto the battlefield', graveyard: 'into your graveyard', library: 'on top' }[String(node.to)];
+  const to = { hand: 'into your hand', battlefield: 'onto the battlefield', graveyard: 'into your graveyard', library: 'on top', exile: 'into exile' }[String(node.to)];
   return `search your library for ${node.upTo ? 'up to ' : ''}${node.amount} card(s), put ${to}`;
 }
 
@@ -1299,7 +1380,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const o = check.g.objects[blocker];
       // "Whenever ~ blocks a creature with flying"
       const blockedOk = !t.blocked || Boolean(check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.blocked as ObjectFilter, { controller: check.controller, source: check.source }));
-      if (o && blockedOk && subjectMatches(check, t.subject as Ref, o)) out.set(o.id, { object: refTo(o) });
+      // With a kind of blocked creature, the trigger is about that creature ("destroy that creature").
+      if (o && blockedOk && subjectMatches(check, t.subject as Ref, o)) out.set(o.id, { object: refTo(t.blocked ? check.g.objects[attacker]! : o) });
       // "blocks or becomes blocked" (bushido, CR 702.45a).
       const a = check.g.objects[attacker];
       if (t.orBlocked && a && subjectMatches(check, t.subject as Ref, a)) out.set(a.id, { object: refTo(a) });

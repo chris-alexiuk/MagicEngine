@@ -597,6 +597,7 @@ export function dealDamage(
   // CR 702.16e: damage from a source with the protected-against quality is prevented.
   if (hasProtectionFrom(g, o, source)) return 0;
   events.push({ type: 'damage', source: source.id, to, amount, combat });
+  o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
     // CR 120.3c: damage to a planeswalker removes that many loyalty counters.
     o.counters.loyalty = Math.max(0, (o.counters.loyalty ?? 0) - amount);
@@ -613,6 +614,7 @@ export function dealDamage(
   } else {
     // CR 120.3e: otherwise damage is marked on the creature.
     o.damage += amount;
+    o.damagedTurn = g.turn;
   }
   // CR 702.2b: any damage from a deathtouch source makes the creature subject to destruction.
   if (hasKeyword(g, source, 'deathtouch')) o.deathtouched = true;

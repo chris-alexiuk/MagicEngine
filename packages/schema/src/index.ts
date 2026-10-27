@@ -282,6 +282,8 @@ export interface ObjectFilter {
   orSource?: true;
   /** "a card named Pir, Imaginative Rascal" */
   name?: string;
+  /** "creature that was dealt damage this turn" */
+  damagedThisTurn?: true;
   /** Any one of these ("creature or Vehicle"). */
   anyOf?: ObjectFilter[];
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
@@ -362,6 +364,8 @@ export type AmountExpr = (
   | { kind: 'opponents_attacked' }
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
   | { kind: 'colors_spent' }
+  /** "the sacrificed creature's power", "the discarded card's mana value" — as it was when the cost was paid. */
+  | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
 ) & { times?: number; plus?: number };
 
 /**
@@ -487,6 +491,8 @@ export interface ContinuousEffectNode extends EffectNode {
   combat?: CombatRules;
   /** Layer 2: the source's controller controls the affected permanents. */
   control?: 'you';
+  /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */
+  addTypes?: { types: string[]; subtypes: string[] };
   /** "As long as [condition], …" / "During your turn, …": applies only while this is true. */
   condition?: ConditionNode;
 }
@@ -605,11 +611,11 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed',
+    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
@@ -622,7 +628,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

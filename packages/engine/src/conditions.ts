@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -76,6 +76,17 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const upkeeps = g.players[controller]?.upkeeps ?? [];
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
+    }
+    case 'won_flip':
+      // CR 705.2
+      return Boolean(ctx.resolution?.flipWon) !== Boolean(cond.not);
+    case 'before_attackers':
+      // CR 602.5b: "Activate only during your turn, before attackers are declared."
+      return g.active === controller && ['untap', 'upkeep', 'draw', 'main1', 'beginning_of_combat'].includes(g.step) && !g.combat?.attackersDeclared;
+    case 'step': {
+      if (cond.yours && g.active !== controller) return false;
+      if (cond.combat) return ['beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat'].includes(g.step);
+      return g.step === cond.step;
     }
     case 'max_speed':
       // CR 702.179e: speed 4.

@@ -176,6 +176,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     }
     case 'proliferate':
       return { player: me, answer: { kind: 'proliferate', objects: p.objects.filter(() => rnd() < 0.6), players: p.players.filter(() => rnd() < 0.5) } };
+    case 'choose_option':
+      return { player: me, answer: { kind: 'choose_option', choice: pick(p.options) } };
     case 'choose_objects': {
       const n = p.min + Math.floor(rnd() * (Math.min(p.max, p.candidates.length) - p.min + 1));
       return { player: me, answer: { kind: 'choose_objects', objects: shuffle([...p.candidates]).slice(0, n) } };

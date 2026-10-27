@@ -285,7 +285,10 @@ export function endStep(g: GameState, events: GameEvent[]): void {
       beginStep(g, 'cleanup', events);
       return;
     }
-    beginTurn(g, nextPlayer(g, g.active), events);
+    // CR 500.7: an extra turn comes next (the most recently created first).
+    while (g.extraTurns?.length && g.players[g.extraTurns[0]!]?.lost) g.extraTurns.shift();
+    const extra = g.extraTurns?.shift();
+    beginTurn(g, extra ?? nextPlayer(g, g.active), events);
     return;
   }
   let next = nextStepAfter(g.step);

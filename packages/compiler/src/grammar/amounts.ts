@@ -94,6 +94,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     }
     return objects(what, b, true);
   }
+  // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
+  const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t);
+  if (lki) return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
   // "its power", "~'s toughness", "that creature's power", "the sacrificed creature's power".
   const stat = /^(.+?)(?:'s?)? (power|toughness|mana value)$/.exec(t);
   if (stat) {

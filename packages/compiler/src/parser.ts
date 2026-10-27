@@ -198,10 +198,13 @@ export class ParserRegistry {
     // A sentence that ends with the quote has its period inside it ('have "{T}: Add {G}."'): keep one outside.
     const masked = block.map((l) =>
       l.replace(/"([^"]*)"|“([^”]*)”/g, (_m, a: string | undefined, b: string | undefined, at: number, all: string) => {
-        const inner = (a ?? b)!;
+        let inner = (a ?? b)!;
         const after = all.slice(at + _m.length);
         const ends = inner.endsWith('.') && (after === '' || /^\s+[A-Z]/.test(after));
-        return `QUOTED_${quotes.push(inner) - 1}${ends ? '.' : ''}`;
+        // 'has "Whenever this creature attacks, untap target creature," and is a Cleric' — the comma is the outer sentence's.
+        const comma = inner.endsWith(',');
+        if (comma) inner = `${inner.slice(0, -1)}.`;
+        return `QUOTED_${quotes.push(inner) - 1}${ends ? '.' : comma ? ',' : ''}`;
       }),
     );
     const normalised = masked

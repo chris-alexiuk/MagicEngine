@@ -54,6 +54,8 @@ interface ActiveEffect {
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
+  /** Layer 7d: switch power and toughness. */
+  switchPT?: true;
   /** Does it apply to `o`, whose characteristics so far are `c`? */
   applies(o: GameObject, c: Characteristics): boolean;
 }
@@ -202,6 +204,8 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.keywords ? { keywords: e.keywords } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
         ...(e.combat ? { combat: e.combat } : {}),
+        // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
+        ...(e.addTypes ? { types: { types: e.addTypes.types, subtypes: e.addTypes.subtypes, retain: true } } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
       });
@@ -233,6 +237,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
+    ...(e.switchPT ? { switchPT: true as const } : {}),
     // CR 611.2c: locked to the objects it affected when it was created.
     applies: (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc),
   }));
@@ -317,6 +322,9 @@ function layered(g: GameState, o: GameObject): Characteristics {
     for (const r of e.rules ?? []) c.rules.add(r);
     if (e.combat) c.combat.push(e.combat);
   }
+  // Granted static abilities about the object itself ('gains "This creature can't block."'): their
+  // effects apply along with the grant (layer 6; +N/+N in 7c).
+  const grantedPT = applyGrantedStatics(c);
   // CR 613.4a / 613.4b: layer 7a (characteristic-defining abilities), then 7b (effects that set P/T).
   for (const layer of ['7a', '7b'] as const) {
     for (const e of effects) {
@@ -333,7 +341,37 @@ function layered(g: GameState, o: GameObject): Characteristics {
     c.power += p;
     c.toughness += t;
   }
-  return withCounters(c, o);
+  c.power += grantedPT[0];
+  c.toughness += grantedPT[1];
+  const out = withCounters(c, o);
+  // CR 613.4d: layer 7d — switching power and toughness, after counters (each switch undoes the last).
+  for (const e of effects) {
+    if (!e.switchPT || !e.applies(o, out)) continue;
+    [out.power, out.toughness] = [out.toughness, out.power];
+  }
+  return out;
+}
+
+/** Granted self-only static abilities (see grantableStatic in the compiler). Returns their +N/+N. */
+function applyGrantedStatics(c: Characteristics): [number, number] {
+  const pt: [number, number] = [0, 0];
+  const seen = new Set<KeywordInstance>();
+  for (let i = 0; i < c.keywords.length; i++) {
+    const k = c.keywords[i]!;
+    if (k.id !== 'ability' || seen.has(k)) continue;
+    seen.add(k);
+    for (const a of k.abilities ?? []) {
+      if (a.kind !== 'static' || a.gate || a.effect.type !== 'continuous') continue;
+      const e = a.effect as ContinuousEffectNode;
+      if (e.affected.ref !== 'self' || e.condition) continue;
+      for (const r of e.rules ?? []) c.rules.add(r);
+      if (e.combat) c.combat.push(e.combat);
+      if (e.keywords) c.keywords.push(...e.keywords);
+      if (typeof e.power === 'number') pt[0] += e.power;
+      if (typeof e.toughness === 'number') pt[1] += e.toughness;
+    }
+  }
+  return pt;
 }
 
 /** CR 604.3 / CR 113.6a: a characteristic-defining ability works in every zone. */
@@ -444,6 +482,8 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  // "that was dealt damage this turn"
+  if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
   // "a card named …" (CR 201.2)
   if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
   // "with a +1/+1 counter on it" (CR 122.1)

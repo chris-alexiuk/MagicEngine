@@ -458,8 +458,12 @@ describe('quoted abilities (CR 113.1a)', () => {
     });
   });
 
-  it('granted static abilities and the card’s own name inside the quotes stay unread', () => {
-    expect(parse('Creatures you control have "This creature can\'t block."', 'Enchantment').unparsed).toHaveLength(1);
+  it('granted static abilities about the object itself are read; others, and the card’s own name inside the quotes, stay unread', () => {
+    expect(one('Creatures you control have "This creature can\'t block."', 'Enchantment')).toMatchObject({
+      effect: { keywords: [{ id: 'ability', abilities: [{ kind: 'static', effect: { rules: ['cant_block'] } }] }] },
+    });
+    expect(parse('Creatures you control have "Other creatures you control get +1/+1."', 'Enchantment').unparsed).toHaveLength(1);
+    expect(parse('Creatures you control have "This creature gets +1/+1 as long as you control a Swamp."', 'Enchantment').unparsed).toHaveLength(1);
     expect(parse('Creatures you control have "{T}: Sacrifice Bomb Totem."', 'Enchantment', 'Bomb Totem').unparsed).toHaveLength(1);
   });
 
@@ -693,5 +697,33 @@ describe('partner with, strive, sea serpents (slice 22)', () => {
     expect(one("This creature can't attack unless defending player controls an Island.", 'Creature — Serpent')).toMatchObject({ effect: { combat: { attackOnlyIfDefenderControls: { subtypes: ['Island'] } } } });
     expect(one('When you control no Islands, sacrifice this creature.', 'Creature — Serpent')).toMatchObject({ trigger: { type: 'state' } });
     expect(parse('Diana — Equip {2}', 'Artifact — Equipment', 'Blade').keywords[0]).toMatchObject({ id: 'equip' });
+  });
+});
+
+describe('granted statics and one-liners (slice 23)', () => {
+  it('reads them', () => {
+    expect(one('Equipped creature gets +1/+0 and is a Wizard in addition to its other types.', 'Artifact — Equipment')).toMatchObject({ effect: { power: 1, addTypes: { subtypes: ['Wizard'] } } });
+    expect(one('Other creatures you control have "Ward—Pay 2 life."', 'Enchantment')).toMatchObject({ effect: { keywords: [{ id: 'ward' }] } });
+    expect(one('{T}: You gain 1 life. Activate only during your turn.', 'Creature — Human')).toMatchObject({ activateIf: { type: 'your_turn' } });
+    expect(one('{T}: You gain 1 life. Activate only if you control an Island.', 'Creature — Human')).toMatchObject({ activateIf: { type: 'count' } });
+    expect(one('Flip a coin. If you win the flip, draw two cards.', 'Sorcery')).toMatchObject({ effects: [{ type: 'flip_coin' }, { type: 'if', cond: { type: 'won_flip' } }] });
+    expect(one('Destroy target creature. Then each player draws a card.', 'Sorcery')).toMatchObject({ effects: [{ type: 'destroy' }, { type: 'draw' }] });
+    expect(one("At the beginning of each player's draw step, that player draws an additional card.", 'Artifact')).toMatchObject({ effects: [{ type: 'draw', who: { ref: 'trigger_player' } }] });
+    expect(one('Whenever this creature blocks a creature, destroy that creature at end of combat.', 'Creature — Human')).toMatchObject({
+      effects: [{ type: 'delayed', step: 'end_of_combat', effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] }],
+    });
+  });
+});
+
+describe('extra turns, switching P/T, cost LKI (slice 24)', () => {
+  it('reads them', () => {
+    expect(one('Take an extra turn after this one.', 'Sorcery')).toMatchObject({ effects: [{ type: 'extra_turn', who: { ref: 'you' } }] });
+    expect(one("Switch target creature's power and toughness until end of turn.", 'Instant')).toMatchObject({ effects: [{ type: 'modify', switchPT: true }] });
+    expect(parse("As an additional cost to cast this spell, sacrifice a creature.\nYou gain life equal to the sacrificed creature's toughness.", 'Sorcery', 'Rite').abilities[1]).toMatchObject({
+      effects: [{ type: 'gain_life', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'toughness' } }],
+    });
+    expect(one('Destroy target creature that was dealt damage this turn.', 'Instant')).toMatchObject({ targets: [{ filter: { damagedThisTurn: true } }] });
+    // Restricted mana abilities stay unread for now.
+    expect(parse('{T}: Add {G}. Activate only during your turn.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
   });
 });

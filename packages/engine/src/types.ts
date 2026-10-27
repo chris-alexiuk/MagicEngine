@@ -75,6 +75,12 @@ export interface PlayerState {
   cityBlessing?: true;
 }
 
+/** What paid costs were, for "the sacrificed creature's power" (CR 608.2h: as it last existed). */
+export interface CostLKI {
+  sacrificed?: { power: number; toughness: number; mana_value: number }[];
+  discarded?: { power: number; toughness: number; mana_value: number }[];
+}
+
 export interface GameObject {
   id: ObjectId;
   /** Key into GameState.cards. */
@@ -104,6 +110,8 @@ export interface GameObject {
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */
   emblem?: true;
+  /** The last turn it was dealt damage ("creature that was dealt damage this turn"). */
+  damagedTurn?: number;
   /** CR 702.171b: saddled this turn. */
   saddledTurn?: number;
   /** CR 702.112b: it became renowned. */
@@ -246,6 +254,8 @@ interface StackBase {
   /** Chosen targets, one list per target spec. */
   targets: TargetRef[][];
   x: number;
+  /** What the costs paid for it sacrificed or discarded. */
+  costLKI?: CostLKI;
 }
 
 export type StackEntry =
@@ -284,6 +294,8 @@ export interface ContinuousEffect {
   setToughness?: number;
   /** Layer 2 (CR 613.1b): this player controls the objects. */
   control?: PlayerId;
+  /** Layer 7d (CR 613.4d): power and toughness switched. */
+  switchPT?: true;
   /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
   until: 'eot' | 'game';
 }
@@ -295,7 +307,8 @@ export interface DelayedTrigger {
   source: ObjectRef;
   sourceName: string;
   text: string;
-  step: 'end' | 'upkeep';
+  /** CR 511.2: "at end of combat" is the end of combat step. */
+  step: 'end' | 'upkeep' | 'end_of_combat';
   createdTurn: number;
   createdStep: Step;
   effects: EffectNode[];
@@ -352,6 +365,8 @@ export interface Resolution {
   created?: ObjectRef[];
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
   lifeLost?: number;
+  /** CR 705: the result of this resolution's coin flip. */
+  flipWon?: boolean;
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
@@ -386,6 +401,8 @@ export type PendingChoice =
   | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
   | { kind: 'discard'; player: PlayerId; count: number }
   | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
+  /** A choice among named options as something resolves ("Choose a creature type."). */
+  | { kind: 'choose_option'; player: PlayerId; options: string[]; text: string; sourceName: string }
   /** CR 608.2g: cast this card now without paying its mana cost? (cascade, discover, rebound, "you may cast it …") */
   | { kind: 'cast_free'; player: PlayerId; object: ObjectId; sourceName: string; text: string }
   /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */
@@ -448,6 +465,7 @@ export type ChoiceAnswer =
   | { kind: 'surveil'; top: ObjectId[]; graveyard: ObjectId[] }
   | { kind: 'discard'; objects: ObjectId[] }
   | { kind: 'may'; yes: boolean }
+  | { kind: 'choose_option'; choice: string }
   | { kind: 'pay'; pay: boolean }
   | { kind: 'search'; objects: ObjectId[] }
   | { kind: 'sacrifice'; objects: ObjectId[] }
@@ -560,6 +578,7 @@ export type GameEvent =
   | { type: 'day_night'; to: 'day' | 'night'; from?: 'day' | 'night' }
   /** CR 702.179: a player's speed changed; CR 702.131: a player got the city's blessing. */
   | { type: 'speed'; player: PlayerId; speed: number }
+  | { type: 'coin_flip'; player: PlayerId; won: boolean }
   | { type: 'city_blessing'; player: PlayerId }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
@@ -658,6 +677,8 @@ export interface GameState {
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
   asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode }[];
+  /** CR 500.7: extra turns to take, the most recently created first. */
+  extraTurns?: PlayerId[];
   /** CR 731.1: the game's day/night designation, once it has one. */
   dayNight?: 'day' | 'night';
   /** Events whose triggers wait for a copy choice (CR 707.5). */

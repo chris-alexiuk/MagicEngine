@@ -17,7 +17,7 @@ import {
   settle,
 } from './flow.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
-import { autoTap, checkOtherCosts, payOtherCosts, runManaAbility } from './payment.js';
+import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets } from './targets.js';
@@ -184,6 +184,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
     case 'sacrifice':
     case 'proliferate':
     case 'choose_objects':
+    case 'choose_option':
     case 'copy_targets':
     case 'cast_free':
       // A choice made while a spell or ability resolves: carry on resolving with it.
@@ -518,6 +519,7 @@ function cast(
   g.players[player]!.pool = left;
   // CR 702.44a / converge: the colors of mana spent to cast it.
   const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => poolBefore[m] > left[m]).length;
+  const lki = costLKI(g, additional, costChoices);
   payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
@@ -540,7 +542,7 @@ function cast(
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
   };
-  g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}) });
+  g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}) });
   events.push({ type: 'cast', player, object: id });
   announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
@@ -649,6 +651,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
   if (ability.oncePerGame) (o.activatedOnce ??= {})[index] = true;
+  const lki = costLKI(g, cost, choices.costs);
   payOtherCosts(g, player, o, cost, events, choices.costs);
 
   // CR 602.2: the ability goes on the stack.
@@ -662,6 +665,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     program,
     targets,
     x: choices.x,
+    ...(lki ? { costLKI: lki } : {}),
   });
   events.push({ type: 'ability_activated', player, source: id, text: ability.text });
   announceTargets(g.stack[g.stack.length - 1]!, events);

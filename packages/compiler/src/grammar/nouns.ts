@@ -34,6 +34,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
+  // "creature that was dealt damage this turn"
+  [/ that was dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
   // "a card named Pir, Imaginative Rascal" (CR 201.2) — after any zone words are peeled off.
   [/ named ([A-Z].*)$/, (f, m) => !f.name && ((f.name = m[1]!.trim()), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],

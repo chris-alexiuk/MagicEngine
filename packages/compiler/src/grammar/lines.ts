@@ -33,7 +33,7 @@ import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept } from './copies.js';
 import { parseEffectText, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
-import { COLOR_WORDS, parseAmount, parsePT } from './words.js';
+import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
 function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
@@ -199,7 +199,13 @@ const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mil
 const noChoices = (e: EffectNode): boolean =>
   e.type === 'if' ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices) : NO_CHOICE.has(e.type);
 
+const andIf = (a: ActivatedAbility, c: ConditionNode) => (a.activateIf = a.activateIf ? { type: 'and', all: [a.activateIf, c] } : c);
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
+  // CR 602.5b: timing restrictions on activating.
+  [/ Activate only during your turn, before attackers are declared\.$/, (a) => andIf(a, { type: 'before_attackers' })],
+  [/ Activate only during your turn\.$/, (a) => andIf(a, { type: 'your_turn', value: true })],
+  [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
+  [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
   [/ Activate only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
   // CR 702.177a (exhaust)
@@ -230,13 +236,23 @@ export const activatedRule: GrammarRule = {
           changed = true;
         }
       }
+      // "Activate only if you control an Island." (CR 602.5b)
+      const onlyIf = / Activate only if ([^.]+)\.$/.exec(effectText);
+      if (onlyIf) {
+        const cond = parseCondition(onlyIf[1]!, new Binder(env));
+        if (!cond) return null;
+        andIf(node, cond);
+        effectText = effectText.slice(0, onlyIf.index);
+        changed = true;
+      }
     }
     // CR 605.1a: mana abilities produce mana and have no targets; loyalty abilities never are.
     if (cost.loyalty === undefined) {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       const effect = mana && parseManaProduction(mana[1]!);
       if (mana && effect) {
-        if (node.timing) return null;
+        // Restricted mana abilities ("Activate only during your turn") aren't modelled yet.
+        if (node.timing || node.activateIf) return null;
         // "{T}: Add {R} or {W}. ~ deals 1 damage to you." — extra untargeted effects (CR 605.1a allows them).
         const b = new Binder(env);
         b.it = { ref: 'self' };
@@ -290,7 +306,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
     const whose = m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
-    return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: null };
+    // "At the beginning of each player's upkeep, that player …": the player whose turn it is.
+    return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: whose === 'you' ? null : { ref: 'trigger_player' } };
   }
 
   // CR 731.1a: "Whenever day becomes night or night becomes day"
@@ -317,6 +334,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (blocksA) {
     const pf = parseFilter(blocksA[1]!, b);
     if (!pf || pf.plural) return null;
+    // "that creature" is the one it blocks (the trigger's object).
+    b.named['that creature'] = { ref: 'trigger_object' };
     return { trigger: { type: 'blocks', subject: { ref: 'self' }, blocked: pf.filter }, it: { ref: 'self' }, player: null };
   }
   // CR 509.3c: "blocks or becomes blocked", "becomes blocked", "becomes blocked by a creature without flanking".
@@ -727,14 +746,30 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+|(?:is|are) .+ in addition to (?:its|their) other types.*)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
   const effect: ContinuousEffectNode = { type: 'continuous', affected: subject.ref };
   // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
-  for (const part of m[2]!.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |doesn't )/)) {
+  // "gets +1/+0, has "…," and is a Wizard in addition to its other types": a list of predicates.
+  const predicates = m[2]!.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are ))/g, ' and ').replace(/ and and /g, ' and ');
+  for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |doesn't |is |are )/)) {
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
+    // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
+    const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other types$/.exec(part);
+    if (also && !effect.addTypes) {
+      const types: string[] = [];
+      const subtypes: string[] = [];
+      for (const w of also[1]!.split(' ')) {
+        const t = TYPE_NOUNS[w.toLowerCase()];
+        if (t && t.toLowerCase() === w.toLowerCase()) types.push(t);
+        else if (subtypeOf(w) === w || subtypeOf(w.replace(/s$/, '')) === w.replace(/s$/, '')) subtypes.push(subtypeOf(w) === w ? w : w.replace(/s$/, ''));
+        else return null;
+      }
+      effect.addTypes = { types, subtypes };
+      continue;
+    }
     const has = /^ha(?:s|ve) (.+)$/.exec(part);
     const flags = STATIC_FLAGS[part];
     const combat = flags ? null : parseCombatRule(part, b);
