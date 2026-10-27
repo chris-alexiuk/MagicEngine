@@ -106,6 +106,10 @@ export function toStep(g: GameState, step: Step, player?: PlayerId): GameState {
       g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_attackers', attacks: [] } });
       continue;
     }
+    if (g.pending?.kind === 'dredge') {
+      g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'dredge', object: null } });
+      continue;
+    }
     if (g.pending?.kind === 'keep_tapped') {
       g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'keep_tapped', objects: [] } });
       continue;

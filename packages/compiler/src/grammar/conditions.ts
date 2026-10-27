@@ -95,6 +95,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
   // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
+  // CR 702.194b: "if this spell was cast using teamwork"
+  if (/^(?:~|this spell|it) was cast using teamwork$/.test(t)) return { type: 'paid', cost: 'teamwork' };
   // CR 702.174: "if the gift was promised", "if the gift wasn't promised"
   const promised = /^the gift (was|wasn't|was not) promised$/.exec(t);
   if (promised) return { type: 'paid', cost: 'gift', ...(promised[1] !== 'was' ? { not: true } : {}) };
@@ -205,6 +207,22 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(hand[1]!);
     return c ? { type: 'hand', ...c } : null;
   }
+  // CR 701.59c: "if evidence was collected"
+  if (t === 'evidence was collected') return { type: 'paid', cost: 'collect_evidence' };
+  // CR 702.187b (mayhem): "you discarded this card this turn"
+  if (/^you discarded (?:~|it) this turn$/.test(t)) return { type: 'discarded_this_turn' };
+  // CR 702.76a (prowl), CR 702.173a (freerunning)
+  if (/^a player was dealt combat damage this turn by a source that, at the time it dealt that damage, was under your control and had any of ~'s creature types$/.test(t)) {
+    return { type: 'combat_damage_by', sharesType: true };
+  }
+  const freerun = /^a player was dealt combat damage this turn by a creature that, at the time it dealt that damage, was an? (\w+) creature or a commander under your control$/.exec(t);
+  if (freerun) return { type: 'combat_damage_by', subtype: freerun[1]!, orCommander: true };
+  // CR 702.156a (ravenous): "if X is 5 or more"
+  const xIs = /^X is (\w+ or (?:more|greater|less|fewer))$/.exec(t);
+  if (xIs) {
+    const c = compare(xIs[1]!);
+    return c ? { type: 'amount', amount: { kind: 'x' }, ...c } : null;
+  }
   // Delirium: "there are four or more card types among cards in your graveyard"
   const cardTypes = /^there are (\w+ or more) card types among cards in your graveyard$/.exec(t);
   if (cardTypes) {
@@ -256,6 +274,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "if it had no -1/-1 counters on it" (persist, CR 702.79a) — about the object as it last existed.
   const counters = /^it had no (\S+) counters on it$/.exec(t);
   if (counters && b.it) return { type: 'counters', of: b.it, counter: counters[1]!, max: 0 };
+  // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
+  const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);
+  if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] ?? none[2]!, max: 0 };
   // "~ has a +1/+1 counter on it", "~ has three or more +1/+1 counters on it", "~ has a counter on it".
   const has =
     /^(?:~|it) has (a|an|one or more|\w+ or more) (?:(\S+) )?counters? on (?:it|him|her|them)$/.exec(t) ??

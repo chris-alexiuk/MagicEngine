@@ -115,6 +115,7 @@ export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetS
     upTo: Boolean(spec.upTo),
     // "one, two, or three targets": at least this many (CR 601.2c).
     ...(spec.upTo && spec.min ? { min: spec.min } : {}),
+    ...(spec.sameOwner ? { sameOwner: true as const } : {}),
     candidates: targetCandidates(g, controller, spec, source),
   }));
 }
@@ -163,7 +164,10 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
     const candidates = targetCandidates(g, controller, spec, source);
     const n = spec.count ?? 1;
     if (candidates.length < (spec.upTo ? (spec.min ?? 0) : n)) return null;
-    out.push(candidates.slice(0, n));
+    // "from a single graveyard": the first candidate's owner's cards.
+    const first = candidates[0];
+    const owner = spec.sameOwner && first?.kind === 'object' ? g.objects[first.object]?.owner : undefined;
+    out.push((owner ? candidates.filter((t) => t.kind === 'object' && g.objects[t.object]?.owner === owner) : candidates).slice(0, n));
   }
   return out;
 }
@@ -192,6 +196,10 @@ export function chooseTargets(
     const n = spec.count ?? 1;
     if (list.length > n || (!spec.upTo && list.length < n) || list.length < (spec.min ?? 0)) {
       throw new RulesError(`Choose ${spec.upTo ? `${spec.min ? `${spec.min} to ` : 'up to '}` : ''}${n} for “${spec.text}”.`);
+    }
+    // "from a single graveyard"
+    if (spec.sameOwner && new Set(list.map((t) => (t.kind === 'object' ? g.objects[t.object]?.owner : undefined))).size > 1) {
+      throw new RulesError(`The targets for “${spec.text}” must all be in one graveyard.`);
     }
     list.forEach((t, j) => {
       if (list.slice(0, j).some((u) => sameTarget(t, u))) throw new RulesError(`The same target was chosen twice for “${spec.text}”.`);

@@ -303,6 +303,27 @@ describe('Sagas (CR 714)', () => {
     expect(g.objects[tale]!.zone).toBe('graveyard');
   });
 
+  it('CR 702.155: read ahead — start on a chosen chapter; skipped chapters don’t trigger', () => {
+    const ahead = makeCard({
+      name: 'Tale Ahead',
+      type_line: 'Enchantment — Saga',
+      oracle_text: 'Read ahead (Choose a chapter and start with that many lore counters. Add one after your draw step. Skipped chapters don\'t trigger.)\nI — You gain 1 life.\nII — You gain 2 life.\nIII — You gain 3 life.',
+      mana_cost: '{0}',
+    });
+    let g = toStep(start({ extra: [ahead] }), 'main1');
+    const t = give(g, 'alice', 'Tale Ahead', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: t });
+    g = passRound(g);
+    expect(g.pending).toMatchObject({ kind: 'as_enters', choice: 'read_ahead', options: ['1', '2', '3'] });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', choice: '2' } });
+    expect(g.objects[t]!.counters.lore).toBe(2);
+    g = passRound(g);
+    expect(g.players.alice!.life).toBe(22); // only chapter II
+    g = toStep(toStep(g, 'upkeep', 'bob'), 'main1', 'alice');
+    g = passRound(g);
+    expect(g.players.alice!.life).toBe(25);
+  });
+
   it('CR 400.7j / CR 712.14a: “Exile this Saga, then return it to the battlefield transformed”', () => {
     let g = toStep(start({ extra: [saga, flip] }), 'main1');
     const story = give(g, 'alice', 'Moth Story // Moth', 'battlefield');

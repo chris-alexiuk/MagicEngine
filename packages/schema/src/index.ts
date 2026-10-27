@@ -137,6 +137,8 @@ export interface ModeChoice {
   options: ModeOption[];
   /** "If you control a commander as you cast this spell, you may choose both instead." */
   bonus?: { condition: ConditionNode; max: number };
+  /** CR 700.2d: "You may choose the same mode more than once." */
+  repeat?: true;
 }
 
 export interface ModeOption {
@@ -162,6 +164,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   oncePerTurn?: true;
   /** CR 702.177a (exhaust): "Activate only once." */
   oncePerGame?: true;
+  /** CR 702.193a (power-up): reduced by the permanent's mana cost if it entered this turn. */
+  powerUp?: true;
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
   /** CR 602.2: "Any player may activate this ability." */
@@ -250,6 +254,8 @@ export interface TargetSpec {
   upTo?: true;
   /** "one, two, or three targets": at least this many. */
   min?: number;
+  /** "up to two target cards from a single graveyard": all of them with the same owner. */
+  sameOwner?: true;
   /** The printed phrase, for prompts ("target creature you control"). */
   text: string;
 }
@@ -281,7 +287,8 @@ export interface ObjectFilter {
   colorless?: true;
   multicolored?: true;
   /** 'enchanted': the player the source Aura is attached to ("creatures enchanted player controls"). */
-  controller?: 'you' | 'opponent' | 'not_you' | 'enchanted';
+  /** defending: the player the source is attacking ("target creature defending player controls", CR 506.2). */
+  controller?: 'you' | 'opponent' | 'not_you' | 'enchanted' | 'defending';
   owner?: 'you' | 'opponent';
   /** "another" / "other": not the source itself. */
   other?: true;
@@ -297,6 +304,14 @@ export interface ObjectFilter {
   manaValue?: Compare;
   /** CR 702.134a (mentor): power less than the source's. */
   powerBelowSource?: true;
+  /** CR 702.78a (conspire): "that each share a color with it" — the source. */
+  sharesColorWithSource?: true;
+  /** Attached to a permanent ("if this permanent is attached to a creature", reconfigure). */
+  attached?: true;
+  /** "all creatures target player controls": controlled by the player(s) this refers to (as an effect resolves). */
+  controlledBy?: Ref;
+  /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
+  attachedTo?: 'self' | 'attached';
   /** CR 903.3: a commander. */
   commander?: true;
   /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
@@ -389,6 +404,8 @@ export type AmountExpr = (
   | { kind: 'domain' }
   /** Delirium: the number of card types among cards in your graveyard. */
   | { kind: 'card_types' }
+  /** CR 702.23a (rampage): "for each creature blocking it beyond the first" — creatures blocking it, less `beyond`. */
+  | { kind: 'blockers'; of: Ref; beyond?: number }
   /** "the total life lost this way" (extort, CR 702.101a). */
   | { kind: 'life_lost' }
   /** "for each opponent you attacked with a creature this combat" (melee, CR 702.121a). */
@@ -411,6 +428,10 @@ export const RULE_FLAGS = [
   'cant_block_alone',
   'cant_be_blocked',
   'attacks_each_combat',
+  /** CR 509.1c: "blocks each combat if able". */
+  'blocks_each_combat',
+  /** CR 510.1c: "You may have ~ assign its combat damage as though it weren't blocked." */
+  'assign_as_unblocked',
   'cant_be_countered',
   'doesnt_untap',
   /** "can attack as though it didn't have defender" (CR 702.3b). */
@@ -439,6 +460,8 @@ export interface AddManaEffect extends EffectNode {
   spend?: ManaSpend;
   /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
   keep?: 'end_of_turn' | 'end_of_combat';
+  /** "Add {G} for each Elf you control", "an amount of {G} equal to ~'s power": the option this many times. */
+  times?: Amount;
 }
 
 /** CR 106.6: what restricted mana can be spent on. */
@@ -447,6 +470,8 @@ export interface ManaSpend {
   spells?: ObjectFilter;
   /** Activating abilities of sources that match ("or activate abilities of artifacts"); {} for any. */
   abilities?: ObjectFilter;
+  /** Special actions it can pay for: "unlock doors" (CR 709.5e), "turn a permanent face up" (CR 702.37e). */
+  special?: ('unlock' | 'face_up')[];
 }
 
 export interface EntersTappedEffect extends EffectNode {
@@ -509,6 +534,10 @@ export interface CastOptionNode extends EffectNode {
   duringResolution?: true;
   /** Emerge: the total cost is reduced by the sacrificed creature's mana value (CR 702.119a). */
   reduceBySacrificed?: true;
+  /** Harmonize: reduced by the tapped creature's power (CR 702.180a). */
+  reduceByTappedPower?: true;
+  /** CR 702.160a / 718.3b: cast prototyped — the inset power and toughness (with this mana cost and its colors). */
+  prototype?: { power: string; toughness: string };
 }
 
 /**
@@ -562,6 +591,16 @@ export interface ContinuousEffectNode extends EffectNode {
   control?: 'you';
   /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */
   addTypes?: { types: string[]; subtypes: string[] };
+  /** Layer 4: "is a Frog creature" — types and subtypes it becomes, replacing its own (CR 205.1b). */
+  setTypes?: { types: string[]; subtypes: string[] };
+  /** Layer 4: "is a Bird" — its creature types become these (CR 205.1b). */
+  creatureTypes?: string[];
+  /** Layer 4: "Enchanted land is an Island" — CR 305.7: its land types become these, and it loses its rules-text abilities. */
+  landTypes?: string[];
+  /** Layer 5: "is blue", "is colorless" ([]). */
+  colors?: Color[];
+  /** Layer 6: "loses all abilities" (CR 613.1f). */
+  loseAbilities?: true;
   /** "As long as [condition], …" / "During your turn, …": applies only while this is true. */
   condition?: ConditionNode;
 }
@@ -575,7 +614,8 @@ export interface AsEntersNode extends EffectNode {
   type: 'as_enters';
   /** copy: "You may have ~ enter as a copy of any creature on the battlefield" (CR 707.5, CR 614.1c). */
   /** counter: "You may have ~ enter with an additional +1/+1 counter on it" (riot, unleash; `elseHaste` for riot). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour';
+  /** read_ahead: "As this Saga enters, choose a number between one and this Saga's final chapter number" (CR 702.155b). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead';
   elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
@@ -684,12 +724,12 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
@@ -700,11 +740,11 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -726,6 +766,10 @@ export const CORE_NODES = {
     'umbra_armor', 'totem_armor',
     // CR 702.94a (miracle), 702.119a (emerge), 702.154a (enlist): in the engine's drawing, casting and attacking rules.
     'miracle', 'emerge', 'enlist', 'phasing',
+    // CR 702.155: read ahead, in the engine's Saga rules; CR 702.52: dredge, in its drawing rules.
+    'read_ahead', 'dredge',
+    // CR 702.180: harmonize, in the engine's casting rules (castOptions); CR 702.120: escalate, in its costs.
+    'harmonize', 'escalate',
   ],
 } as const;
 
@@ -738,7 +782,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge', 'harmonize', 'escalate'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]
   if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;

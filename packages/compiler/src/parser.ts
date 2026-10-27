@@ -1,6 +1,6 @@
 import { parseEffectText } from './grammar/effects.js';
 import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, SpellAbility } from '@mtg/schema';
-import { keywordSupported, shortName, stripReminder } from '@mtg/schema';
+import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
 import { parseCost } from './grammar/lines.js';
@@ -168,11 +168,13 @@ export class ParserRegistry {
         continue;
       }
       // CR 702.177a: "Exhaust — [Cost]: [Effect]" means "[Cost]: [Effect]. Activate only once."
-      const exhaust = /^Exhaust — (.+)$/.exec(line);
+      // CR 702.193a: "Power-up — [Cost]: [Effect]" also costs less by its mana cost the turn it entered.
+      const exhaust = /^(Exhaust|Power-up) — (.+)$/.exec(line);
       if (exhaust) {
-        const node = this.parseBlock([exhaust[1]!], env, line);
+        const node = this.parseBlock([exhaust[2]!], env, line);
         if (node?.kind === 'activated') {
           node.oncePerGame = true;
+          if (exhaust[1] === 'Power-up') node.powerUp = true;
           if (gate) node.gate = gate;
           result.abilities.push(node);
         } else result.unparsed.push(line);
@@ -269,7 +271,11 @@ export class ParserRegistry {
       }
       // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
       const block = [line];
-      if (/\bchoose (?:one|two|three|one or both|one or more|any number|up to one|up to two) —$/i.test(line) || /^Choose (?:one|two)\. If .+ instead\.$/.test(line)) {
+      if (
+        /\bchoose (?:one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i.test(line) ||
+        /^Choose (?:one|two)\. If .+ instead\.$/.test(line) ||
+        /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line)
+      ) {
         while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
       }
 
@@ -333,6 +339,28 @@ export class ParserRegistry {
     }
     for (const kw of result.keywords) {
       if (kw.abilities?.length) continue;
+      // CR 702.194a: "Teamwork N" — "As an additional cost to cast this spell, you may tap any number of creatures you
+      // control with total power N or more."
+      // CR 702.167a: "Craft with [materials] [cost]" — "[Cost], Exile this permanent, Exile [materials] from among
+      // permanents you control and/or cards in your graveyard: Return this card to the battlefield transformed under its
+      // owner's control. Activate only as a sorcery."
+      const craft = kw.id === 'craft' ? /^with (an? |one or more )?(artifact|creature|land|enchantment|artifacts|creatures|lands) ((?:\{[^}]+\})+)$/.exec(kw.cost ?? '') : null;
+      if (craft) {
+        const TYPES: Record<string, string> = { artifact: 'Artifact', creature: 'Creature', land: 'Land', enchantment: 'Enchantment' };
+        const type = TYPES[craft[2]!.replace(/s$/, '')]!;
+        kw.abilities = [{
+          kind: 'activated',
+          text: `Craft with ${craft[1] ?? ''}${craft[2]} ${craft[3]}`,
+          cost: { mana: craft[3]!, other: [{ type: 'craft', filter: { types: [type] }, amount: 1, ...(craft[1] === 'one or more ' ? { anyNumber: true } : {}) }] },
+          effects: [{ type: 'craft_return' }],
+          timing: 'sorcery',
+        }];
+        result.manualKeywords = result.manualKeywords.filter((l) => !/^Craft\b/.test(l));
+      }
+      if (kw.id === 'teamwork' && kw.n !== undefined) {
+        kw.abilities = [{ kind: 'static', text: `Teamwork ${kw.n}`, effect: { type: 'cast_option', id: 'teamwork', kind: 'additional', cost: { other: [{ type: 'crew', power: kw.n }] } } }];
+        result.manualKeywords = result.manualKeywords.filter((l) => !/^Teamwork\b/.test(l));
+      }
       // CR 702.191a: "Increment" — "Whenever you cast a spell, if … the amount of mana spent to cast that spell is greater
       // than this creature's power or this creature's toughness, put a +1/+1 counter on this creature."
       if (kw.id === 'increment') {
@@ -498,6 +526,15 @@ export class ParserRegistry {
  * rule does nothing in a game; the other ability is this trigger.
  */
 const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+  // CR 702.151a: two activated abilities, quoted in one sentence of the rule.
+  reconfigure: {
+    rule: '702.151a',
+    pattern: 'Reconfigure [cost]',
+    meaning: [
+      '[cost]: Attach this permanent to another target creature you control. Activate only as a sorcery.',
+      '[cost]: Unattach this permanent. Activate only if this permanent is attached to a creature and only as a sorcery.',
+    ],
+  },
   casualty: {
     rule: '702.153a',
     pattern: 'Casualty N',
@@ -575,9 +612,23 @@ export function stripAbilityWord(line: string): string {
 const SELF_NOUNS =
   'creature|land|artifact|enchantment|planeswalker|battle|spell|card|permanent|aura|equipment|vehicle|token|saga|class|case|room|siege|spacecraft|planet';
 
+const TITLES = new Set(['The', 'Lord', 'Lady', 'Captain', 'King', 'Queen', 'General', 'Sir', 'Saint', 'Mother', 'Father', 'Doctor', 'Professor', 'Agent', 'Ambassador', 'Prince', 'Princess', 'Grand', 'High', 'Old', 'Young', 'Great', 'Elder', 'Master', 'Commander', 'Baron', 'Count', 'Duke', 'Sister', 'Brother', 'Uncle', 'Aunt', 'Mister', 'Miss', 'Admiral', 'Chief', 'Emperor', 'Empress']);
+function firstName(name: string): string | undefined {
+  if (name.includes(',') || name.includes(' // ')) return undefined;
+  const m = /^([A-Z][\p{L}'’-]{2,}) (?:of |the |[A-Z])/u.exec(name);
+  const w = m?.[1];
+  if (!w || TITLES.has(w) || /['’]s$/.test(w)) return undefined;
+  // A creature type or card type word is more likely the type than the card ("Goblin …").
+  if ((SUBTYPES.creature as readonly string[]).includes(w) || TYPE_NOUNS[w.toLowerCase()]) return undefined;
+  return w;
+}
+
 export function normaliseSelf(line: string, ctx: ParseContext): string {
   let out = line;
-  const names = new Set([ctx.faceName, ctx.cardName, shortName(ctx.faceName)].filter((n) => n.length > 1));
+  // A legendary card may call itself by the first word of its name: "Barrowin of Clan Undurr" → "Barrowin",
+  // "Acererak the Archlich" → "Acererak", "Ajani Vengeant" → "Ajani" (not a title or a type word).
+  const ofName = /\bLegendary\b/.test(ctx.typeLine) ? firstName(ctx.faceName) : undefined;
+  const names = new Set([ctx.faceName, ctx.cardName, shortName(ctx.faceName), ...(ofName ? [ofName] : [])].filter((n) => n.length > 1));
   // Longest first so "Kinnan, Bonder Prodigy" is replaced before "Kinnan".
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
     out = out.replace(new RegExp(`(?<![\\w'])${escapeRegExp(name)}(?![\\w])`, 'g'), '~');

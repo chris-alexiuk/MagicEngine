@@ -57,6 +57,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
   if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };
+  // CR 702.23a (rampage): "for each creature blocking it beyond the first"
+  const blocking = /^creature blocking (it|~)( beyond the first)?$/.exec(t);
+  if (blocking) return { kind: 'blockers', of: blocking[1] === '~' ? { ref: 'self' } : (b.it ?? { ref: 'self' }), ...(blocking[2] ? { beyond: 1 } : {}) };
   // "for each instant and sorcery card in your graveyard": a card of either type.
   const both = /^(\w+) and (\w+) card (in .+)$/.exec(t);
   if (both) return objects(`${both[1]} or ${both[2]} card ${both[3]}`, b, false);

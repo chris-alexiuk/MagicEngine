@@ -94,9 +94,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
             : zone === 'exile'
               ? g.zones.exile
               : g.order.flatMap((p) => g.zones[zone][p] ?? []);
+      // "all creatures target player controls"
+      const owners = ref.filter.controlledBy ? refPlayers(ctx, ref.filter.controlledBy as Ref) : null;
       return ids
         .map((id) => g.objects[id]!)
-        .filter((o) => o && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
+        .filter((o) => o && (!owners || owners.includes(o.controller)) && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
     }
     case 'created': {
       // "the token", "sacrifice it at the beginning of the next end step"
@@ -185,7 +187,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -226,8 +228,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
   const { g } = ctx;
   const source = ctx.source ?? null;
   switch (e.kind) {
-    case 'count':
-      return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, e.filter, { controller: ctx.controller, source })).length;
+    case 'count': {
+      // "for each creature target player controls"
+      const owners = e.filter.controlledBy ? refPlayers(ctx, e.filter.controlledBy as Ref) : null;
+      return g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, e.filter, { controller: ctx.controller, source })).length;
+    }
     case 'cards': {
       const players = e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
       const zone = e.zone;
@@ -260,6 +265,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
         if (c.types.includes('Land')) for (const t of ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']) if (c.subtypes.includes(t)) types.add(t);
       }
       return types.size;
+    }
+    case 'blockers': {
+      // CR 702.23a: "for each creature blocking it beyond the first"
+      const [o] = refObjects(ctx, e.of);
+      const blocking = o && g.combat ? Object.entries(g.combat.blockers).filter(([id, bl]) => g.objects[id]?.zcc === bl.zcc && (bl.blocking === o.id || bl.alsoBlocking?.includes(o.id))).length : 0;
+      return Math.max(0, blocking - (e.beyond ?? 0));
     }
     case 'card_types':
       // "the number of card types among cards in your graveyard"

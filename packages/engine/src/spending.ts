@@ -7,7 +7,7 @@ import type { GameObject, GameState, ManaPool, PlayerId } from './types.js';
  * CR 106.6: some mana can be spent only on certain things ("Spend this mana only to cast creature spells").
  * Restricted mana sits beside the player's pool, and a payment can use it only when it's for one of those things.
  */
-export type ManaPurpose = { kind: 'spell'; object: GameObject } | { kind: 'ability'; source: GameObject } | { kind: 'other' };
+export type ManaPurpose = { kind: 'spell'; object: GameObject } | { kind: 'ability'; source: GameObject } | { kind: 'unlock' } | { kind: 'face_up' } | { kind: 'other' };
 
 export const OTHER_PURPOSE: ManaPurpose = { kind: 'other' };
 
@@ -17,6 +17,7 @@ export function canSpend(g: GameState, player: PlayerId, spend: ManaSpend | unde
   const ok = (o: GameObject, f: ObjectFilter) => matchesFilter(g, o, f, { controller: player, anyZone: true });
   if (purpose.kind === 'spell') return Boolean(spend.spells && ok(purpose.object, spend.spells));
   if (purpose.kind === 'ability') return Boolean(spend.abilities && ok(purpose.source, spend.abilities));
+  if (purpose.kind === 'unlock' || purpose.kind === 'face_up') return Boolean(spend.special?.includes(purpose.kind));
   return false;
 }
 

@@ -72,7 +72,8 @@ export function canAttach(g: GameState, attachment: GameObject, target: GameObje
   if (target.zone !== 'battlefield' || target.id === attachment.id) return false;
   const face = faceOf(g, attachment);
   if (face.subtypes.includes('Equipment')) {
-    return hasType(g, target, 'Creature') && !hasType(g, attachment, 'Creature');
+    // CR 301.5c: an Equipment that's also a creature can't equip a creature unless it has reconfigure (CR 702.151b).
+    return hasType(g, target, 'Creature') && (!hasType(g, attachment, 'Creature') || face.keywords.some((k) => k.id === 'reconfigure'));
   }
   if (face.subtypes.includes('Aura')) {
     const enchant = chars(g, attachment).keywords.find((k) => k.id === 'enchant');

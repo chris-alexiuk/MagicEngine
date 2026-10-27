@@ -267,6 +267,8 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   const b = (k: string) => hasKeyword(g, blocker, k);
   const aName = nameOf(g, attacker);
   if (hasRule(g, attacker, 'cant_be_blocked')) return `${aName} can’t be blocked.`;
+  // "Target creature can't block ~ this turn."
+  if (blocker.cantBlockThis?.some((x) => x.turn === g.turn && x.attacker.id === attacker.id && x.attacker.zcc === attacker.zcc)) return `${nameOf(g, blocker)} can’t block ${aName} this turn.`;
   // CR 702.16f: an attacker with protection can't be blocked by creatures with that quality.
   if (hasProtectionFrom(g, attacker, blocker)) return `${aName} has protection from it.`;
   // CR 702.9b / CR 702.17b: flying can be blocked only by flying or reach.
@@ -420,6 +422,21 @@ export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: 
     const lure = lures.find((l) => able(b, l) && (perAttacker.get(l.id)?.length ?? 0) < blockerLimits(g, l).max);
     if (lure) return `${nameOf(g, b)} must block ${nameOf(g, lure)} if able.`;
   }
+  // "blocks each combat if able", "blocks ~ this turn if able" (requirements on the blocker).
+  const room = (a: GameObject) => (perAttacker.get(a.id)?.length ?? 0) < blockerLimits(g, a).max;
+  for (const b of potential) {
+    const target = blocking.get(b.id);
+    if (target && lures.some((l) => l.id === target)) continue;
+    const reqs = (b.mustBlock ?? []).filter((m) => m.turn === g.turn);
+    for (const m of reqs) {
+      if (!m.attacker) continue;
+      const a = attackers.find((x) => x.id === m.attacker!.id && x.zcc === m.attacker!.zcc);
+      if (a && target !== a.id && able(b, a) && reachable(a) && room(a)) return `${nameOf(g, b)} must block ${nameOf(g, a)} if able.`;
+    }
+    if ((hasRule(g, b, 'blocks_each_combat') || reqs.some((m) => !m.attacker)) && !target && attackers.some((a) => able(b, a) && reachable(a) && room(a))) {
+      return `${nameOf(g, b)} must block if able.`;
+    }
+  }
   for (const a of attackers.filter((x) => requirement(x, 'one') && reachable(x))) {
     if (perAttacker.has(a.id)) continue;
     // Blocking it would obey this requirement; a creature already blocking a lure is obeying another one.
@@ -516,12 +533,15 @@ export function startCombatDamage(g: GameState, events: GameEvent[]): void {
     const blockers = a.blockers.map((b) => stillThere(g, b.id, b.zcc)).filter((b): b is GameObject => b !== null);
     const trample = hasKeyword(g, o, 'trample');
     const target = targetRecipient(g, a.target);
-    if (a.blocked && (blockers.length > 1 || (trample && blockers.length > 0))) {
+    // CR 510.1c: "You may have ~ assign its combat damage as though it weren't blocked."
+    const asUnblocked = a.blocked && target && hasRule(g, o, 'assign_as_unblocked') ? target : undefined;
+    if (a.blocked && (blockers.length > 1 || (trample && blockers.length > 0) || asUnblocked)) {
       choices.push({
         attacker: o.id,
         power: amount,
         blockers: blockers.map((b) => b.id),
         trampleTarget: trample ? target : null,
+        ...(asUnblocked ? { unblockedTarget: asUnblocked } : {}),
         suggested: suggestAssignment(g, o, blockers, trample ? target : null, amount),
       });
     }
@@ -604,6 +624,8 @@ export function assignCombatDamage(g: GameState, assignments: Record<ObjectId, D
     if (total !== choice.power || given.some((d) => !Number.isInteger(d.amount) || d.amount < 0)) {
       throw new RulesError(`${name} must assign exactly ${choice.power} damage.`);
     }
+    // CR 510.1c: all of it to what it's attacking, as though it weren't blocked.
+    if (choice.unblockedTarget && given.every((d) => d.amount === 0 || sameRecipient(d.to, choice.unblockedTarget!))) continue;
     const toBlocker = (id: ObjectId) =>
       given.filter((d) => d.to.kind === 'permanent' && d.to.object === id).reduce((n, d) => n + d.amount, 0);
     const pastBlockers = given.filter((d) => !(d.to.kind === 'permanent' && choice.blockers.includes(d.to.object)));
@@ -718,7 +740,9 @@ export function dealDamage(
 ): number {
   // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
   amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
-  amount = prevent(g, source, to, amount, combat, events);
+  // CR 615.12: "Damage can't be prevented this turn."
+  const unpreventable = g.unpreventableTurn === g.turn;
+  if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
   if (amount <= 0) return 0;
   const infect = hasKeyword(g, source, 'infect');
   if (to.kind === 'player') {
@@ -748,7 +772,7 @@ export function dealDamage(
   const o = g.objects[to.object];
   if (!o || o.zone !== 'battlefield') return 0;
   // CR 702.16e: damage from a source with the protected-against quality is prevented.
-  if (hasProtectionFrom(g, o, source)) return 0;
+  if (!unpreventable && hasProtectionFrom(g, o, source)) return 0;
   events.push({ type: 'damage', source: source.id, to, amount, combat });
   o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
@@ -786,7 +810,10 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
       if (!hit) continue;
     }
     if (p.by && !(p.by.kind === 'object' && p.by.id === source.id && p.by.zcc === source.zcc)) continue;
-    if (p.amount === 'all') amount = 0;
+    if (p.once) {
+      amount = 0;
+      p.amount = 0;
+    } else if (p.amount === 'all') amount = 0;
     else {
       // CR 615.7: a shield prevents that much and is used up.
       const used = Math.min(p.amount, amount);
@@ -794,7 +821,7 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
       amount -= used;
     }
   }
-  g.prevention = g.prevention.filter((p) => p.amount === 'all' || p.amount > 0);
+  g.prevention = g.prevention.filter((p) => (p.amount === 'all' || p.amount > 0) && !(p.once && p.amount === 0));
   if (amount < left0) events.push({ type: 'prevented', source: source.id, amount: left0 - amount });
   return amount;
 }

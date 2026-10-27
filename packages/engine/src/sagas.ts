@@ -19,9 +19,21 @@ export function finalChapter(face: FaceDef): number {
   return n;
 }
 
+/** CR 702.155b: a Saga with read ahead entering chooses its starting chapter instead. */
+export function hasReadAhead(g: GameState, o: GameObject): boolean {
+  return faceOf(g, o).keywords.some((k) => k.id === 'read_ahead');
+}
+
 /** CR 714.3a / 714.3c: put a lore counter on a Saga (which can trigger its chapter abilities). */
-export function addLore(g: GameState, o: GameObject, events: GameEvent[]): void {
-  if (!finalChapter(faceOf(g, o))) return;
+export function addLore(g: GameState, o: GameObject, events: GameEvent[], entering = false): void {
+  const final = finalChapter(faceOf(g, o));
+  if (!final) return;
+  // CR 702.155b: "As this Saga enters, choose a number …; it enters with that many lore counters" — asked before
+  // anything triggers (as-enters.ts), so the count is set as it enters.
+  if (entering && hasReadAhead(g, o) && final > 1) {
+    (g.asEnters ??= []).push({ object: o.id, zcc: o.zcc, node: { type: 'as_enters', choice: 'read_ahead', amount: final } });
+    return;
+  }
   o.counters.lore = (o.counters.lore ?? 0) + 1;
   events.push({ type: 'counters', object: o.id, counter: 'lore', delta: 1 });
 }

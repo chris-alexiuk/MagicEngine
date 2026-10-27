@@ -1,3 +1,6 @@
+import { dredgeOptions, drawOrDredge } from './dredge.js';
+import { hasReadAhead } from './sagas.js';
+import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
 import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
@@ -11,7 +14,7 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
-import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
+import { removeFromCombat, attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -96,6 +99,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       mana = manaOption(option, ctx.source) ?? undefined;
     }
     if (!mana) return false;
+    // "Add {G} for each Elf you control"
+    if (effect.times !== undefined) {
+      const n = Math.max(0, amountOf(ctx, effect.times));
+      mana = Array.from({ length: n }, () => mana!).flat();
+      if (!mana.length) return true;
+    }
     const ps = ctx.g.players[ctx.controller]!;
     // CR 106.6: "Spend this mana only to …" — kept apart from the rest of the pool.
     if (effect.spend || effect.keep) {
@@ -135,9 +144,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   draw(node, ctx) {
-    // CR 121.2: several cards are drawn one at a time.
-    const n = amountOf(ctx, node.amount);
-    for (const p of refPlayers(ctx, ref(node, 'who'))) for (let i = 0; i < n; i++) drawCard(ctx.g, p, ctx.events);
+    // CR 121.2: several cards are drawn one at a time; CR 702.52a: each may be replaced by a dredge.
+    const memo = ctx.memo as { n?: number; players?: PlayerId[]; done?: number };
+    memo.n ??= amountOf(ctx, node.amount);
+    memo.players ??= refPlayers(ctx, ref(node, 'who'));
+    let answer = answerOf(ctx, 'choose_objects');
+    for (let k = memo.done ?? 0; k < memo.players.length * memo.n; k++) {
+      const p = memo.players[Math.floor(k / memo.n)]!;
+      const options = dredgeOptions(ctx.g, p);
+      if (options.length && !answer) {
+        memo.done = k;
+        return { ask: { kind: 'choose_objects', player: p, candidates: options, min: 0, max: 1, text: 'Dredge a card instead of drawing? (Choose none to draw.)' } };
+      }
+      const chosen = answer?.objects[0] ?? null;
+      if (chosen !== null && !options.includes(chosen)) throw new RulesError('Choose a card with dredge, or none.');
+      answer = null;
+      drawOrDredge(ctx.g, p, options.length ? chosen : null, ctx.events);
+    }
     return true;
   },
 
@@ -253,6 +276,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 702.167a (craft): "Return this card to the battlefield transformed under its owner's control." — the card the
+  // cost exiled (it's a new object there, CR 400.7).
+  craft_return(_node, ctx) {
+    const entry = ctx.resolution?.entry;
+    const r = entry?.kind === 'ability' ? entry.source : undefined;
+    const o = r ? ctx.g.objects[r.id] : undefined;
+    const def = o ? ctx.g.cards[o.card] : undefined;
+    if (!o || o.zone !== 'exile' || o.zcc !== r!.zcc + 1 || def?.layout !== 'transform' || def.faces.length !== 2) return true;
+    moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller: o.owner, face: 1 });
+    return true;
+  },
+
+  // CR 615.12: "Damage can't be prevented this turn."
+  damage_unpreventable(_node, ctx) {
+    ctx.g.unpreventableTurn = ctx.g.turn;
+    return true;
+  },
+
+  // "Untap up to two lands." — chosen as it resolves (no targets).
+  untap_chosen(node, ctx) {
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount ?? 1);
+    const candidates = g.zones.battlefield.filter((id) => g.objects[id]!.tapped && matchesFilter(g, g.objects[id]!, node.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null }));
+    if (!candidates.length || n <= 0) return true;
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: Math.min(n, candidates.length), text: `Untap up to ${n}.` } };
+    if (answer.objects.length > n || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose up to ${n} to untap.`);
+    for (const id of answer.objects) setTapped(g, id, false, ctx.events);
+    return true;
+  },
+
   add_counters(node, ctx) {
     // CR 122.6: counters are put on permanents (CR 122.1a for +1/+1 counters).
     const n = amountOf(ctx, node.amount);
@@ -265,6 +319,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
     if (!objects.length) return true;
     const g = ctx.g;
+    const chosen = ctx.resolution?.chosen ?? {};
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
@@ -278,7 +333,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
-      ...(Array.isArray(node.colors) ? { colors: node.colors as Color[] } : {}),
+      // "the color of your choice", "the creature type of your choice" — chosen earlier as this resolved.
+      ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : [c as Color])) } : {}),
+      ...(Array.isArray(node.creatureTypes) ? { creatureTypes: (node.creatureTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.creatureType ? [chosen.creatureType] : []) : [t])) } : {}),
+      ...(Array.isArray(node.landTypes) ? { landTypes: (node.landTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.landType ? [chosen.landType] : []) : [t])) } : {}),
+      ...(node.loseAbilities ? { loseAbilities: true as const } : {}),
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
@@ -386,6 +445,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const what = refObjects(ctx, ref(node, 'what'))[0];
     const to = refObjects(ctx, ref(node, 'to'))[0];
     if (what && to) attach(ctx.g, what, to, ctx.events);
+    return true;
+  },
+
+  // CR 506.4: "Remove target attacking creature from combat." (A blocked creature stays blocked.)
+  remove_from_combat(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') removeFromCombat(ctx.g, o.id);
+    return true;
+  },
+
+  // CR 702.151a (reconfigure): "Unattach this permanent."
+  unattach(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield' || !o.attachedTo) continue;
+      delete o.attachedTo;
+      o.timestamp = ++ctx.g.clock;
+    }
     return true;
   },
 
@@ -594,9 +669,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // "Choose a creature type." / "Choose a color." — remembered for "the chosen type" (on the spell or permanent).
   choose_value(node, ctx) {
     const answer = answerOf(ctx, 'choose_option');
-    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : [...SUBTYPES.creature];
-    if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text: node.choice === 'color' ? 'Choose a color.' : 'Choose a creature type.', sourceName: sourceName(ctx) } };
+    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : [...SUBTYPES.creature];
+    const text = node.choice === 'color' ? 'Choose a color.' : node.choice === 'land_type' ? 'Choose a basic land type.' : 'Choose a creature type.';
+    if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text, sourceName: sourceName(ctx) } };
     if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+    // "… of your choice": remembered for this resolution only.
+    if (node.scope === 'resolution') {
+      if (ctx.resolution) {
+        const key = node.choice === 'color' ? 'color' : node.choice === 'land_type' ? 'landType' : 'creatureType';
+        ctx.resolution.chosen = { ...ctx.resolution.chosen, [key]: answer.choice };
+      }
+      return true;
+    }
     const s = ctx.source;
     if (s) s.chosen = { ...s.chosen, ...(node.choice === 'color' ? { color: answer.choice as Color } : { creatureType: answer.choice }) };
     ctx.events.push({ type: 'chosen', object: s?.id ?? '', choice: answer.choice });
@@ -932,10 +1016,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
     const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' } | undefined;
+    const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
         moveObject(g, id, 'exile', ctx.events);
         const o = g.objects[id]!;
+        exiled.push({ id, zcc: o.zcc });
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
           const lastTurn = lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
@@ -943,6 +1029,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         }
       }
     }
+    // "that card", "those cards" in what follows.
+    if (ctx.resolution) ctx.resolution.created = exiled;
     return true;
   },
 
@@ -1096,6 +1184,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       ctx.g.initiative = p;
       ctx.events.push({ type: 'initiative', player: p });
+    }
+    return true;
+  },
+
+  // CR 509.1b: "Target creature can't block ~ this turn."
+  cant_block_attacker(node, ctx) {
+    const attacker = refObjects(ctx, ref(node, 'attacker'))[0];
+    if (!attacker) return true;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone === 'battlefield') (o.cantBlockThis ??= []).push({ attacker: { id: attacker.id, zcc: attacker.zcc }, turn: ctx.g.turn });
+    }
+    return true;
+  },
+
+  // CR 509.1c: "Target creature blocks ~ this turn if able", "… blocks this turn if able".
+  must_block(node, ctx) {
+    const attacker = node.attacker ? refObjects(ctx, ref(node, 'attacker'))[0] : undefined;
+    if (node.attacker && !attacker) return true;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      (o.mustBlock ??= []).push({ ...(attacker ? { attacker: { id: attacker.id, zcc: attacker.zcc } } : {}), turn: ctx.g.turn });
+    }
+    return true;
+  },
+
+  // CR 709.5f: "Unlock a locked door of target Room you control" — the first locked one.
+  unlock(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield' || !o.unlocked) continue;
+      const half = o.unlocked[0] ? 1 : 0;
+      if (!o.unlocked[half]) unlockHalf(ctx.g, o, half, ctx.events);
     }
     return true;
   },
@@ -1377,12 +1496,32 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // CR 701.40a / 701.58a: manifest or cloak the top card(s) of your library.
+  // CR 701.62a: "manifest dread" — look at the top two, manifest one, put the other into your graveyard.
   manifest(node, ctx) {
-    const n = amountOf(ctx, node.amount ?? 1);
-    ensureFaceDownDefs(ctx.g);
-    for (const id of zoneList(ctx.g, 'library', ctx.controller).slice(0, n)) {
-      moveObject(ctx.g, id, 'battlefield', ctx.events, { controller: ctx.controller, faceDown: node.cloak ? 'cloak' : 'manifest' });
+    const g = ctx.g;
+    ensureFaceDownDefs(g);
+    let chosen: string[];
+    let rest: string[] = [];
+    if (node.dread) {
+      const memo = ctx.memo as { looked?: string[] };
+      const looked = (memo.looked ??= zoneList(g, 'library', ctx.controller).slice(0, 2)).filter((id) => g.objects[id]?.zone === 'library');
+      const answer = answerOf(ctx, 'choose_objects');
+      if (looked.length < 2) chosen = looked;
+      else if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: looked, min: 1, max: 1, text: 'Choose a card to manifest (the other goes into your graveyard).', seen: looked } };
+      else {
+        if (answer.objects.length !== 1 || !looked.includes(answer.objects[0]!)) throw new RulesError('Choose one of those two cards.');
+        chosen = answer.objects;
+      }
+      rest = looked.filter((id) => !chosen.includes(id));
+    } else chosen = zoneList(g, 'library', ctx.controller).slice(0, amountOf(ctx, node.amount ?? 1));
+    const made: { id: string; zcc: number }[] = [];
+    for (const id of chosen) {
+      moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, faceDown: node.cloak ? 'cloak' : 'manifest' });
+      if (g.objects[id]?.zone === 'battlefield') made.push({ id, zcc: g.objects[id]!.zcc });
     }
+    for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
+    // "then put three +1/+1 counters on that creature" — the manifested permanent.
+    if (ctx.resolution) ctx.resolution.created = made;
     return true;
   },
 
@@ -1603,6 +1742,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         });
       }
     }
+    return true;
+  },
+
+  // CR 615 / Circle of Protection: "The next time a red source of your choice would deal damage to you this turn,
+  // prevent that damage." — the source is chosen as it resolves (CR 609.7a).
+  prevent_chosen_source(node, ctx) {
+    const g = ctx.g;
+    const filter = (node.filter ?? {}) as ObjectFilter;
+    const sources = [...g.zones.battlefield, ...g.stack.flatMap((e) => (e.kind === 'spell' ? [e.object] : []))].filter((id) =>
+      matchesFilter(g, g.objects[id]!, { ...filter, zone: undefined }, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }),
+    );
+    if (!sources.length) return true;
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: sources, min: 1, max: 1, text: 'Choose a source.' } };
+    const chosen = answer.objects[0];
+    if (answer.objects.length !== 1 || !chosen || !sources.includes(chosen)) throw new RulesError('Choose one of those sources.');
+    g.prevention.push({ id: `p${g.nextId++}`, turn: g.turn, amount: 'all', once: true, to: { kind: 'player', player: ctx.controller }, by: { kind: 'object', id: chosen, zcc: g.objects[chosen]!.zcc } });
     return true;
   },
 
@@ -1879,9 +2035,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const a = check.g.objects[attacker];
       const b = check.g.objects[blocker];
       if (!a || !b || !subjectMatches(check, t.subject as Ref, a)) continue;
+      // "defending player": the blocking creature's controller (CR 506.2).
       if (t.by) {
-        if (matchesFilter(check.g, b, t.by as ObjectFilter, { controller: check.controller, source: check.source })) each.push({ object: refTo(b) });
-      } else once.set(a.id, { object: refTo(a) });
+        if (matchesFilter(check.g, b, t.by as ObjectFilter, { controller: check.controller, source: check.source })) each.push({ object: refTo(b), player: b.controller });
+      } else once.set(a.id, { object: refTo(a), player: b.controller });
     }
     return t.by ? each : [...once.values()];
   },
@@ -1974,7 +2131,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'counters' || e.counter !== 'lore' || e.delta <= 0 || e.object !== check.source.id || check.sourceLeft) return [];
     const after = check.source.counters.lore ?? 0;
     const before = after - e.delta;
-    return (t.chapters as number[]).some((n) => before < n && after >= n) ? [{ object: refTo(check.source) }] : [];
+    // CR 702.155a: with read ahead, the turn it entered only the chapter matching its exact count triggers.
+    const exact = hasReadAhead(check.g, check.source) && Boolean(check.g.turnLog.entered?.[check.source.controller]?.includes(check.source.id));
+    return (t.chapters as number[]).some((n) => before < n && after >= n && (!exact || after === n)) ? [{ object: refTo(check.source) }] : [];
   },
   // "Whenever ~ deals damage" / "deals combat damage": once for everything it dealt at the same time.
   deals_damage(t, check) {
@@ -2142,6 +2301,19 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     const o = check.g.objects[e.object];
     return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
+  },
+  // CR 709.5h: "When you unlock this door" — the door the ability is printed on (rooms.ts tags it).
+  unlock_door(t, check) {
+    const e = check.event;
+    return e.type === 'unlocked' && e.object === check.source.id && e.half === t.door && !check.sourceLeft ? [{ object: refTo(check.source) }] : [];
+  },
+  // CR 709.5i: "Whenever you fully unlock a Room", "When you fully unlock this Room"
+  fully_unlocked(t, check) {
+    const e = check.event;
+    if (e.type !== 'unlocked' || !e.full || e.player !== check.controller || check.sourceLeft) return [];
+    if (t.self && e.object !== check.source.id) return [];
+    const o = check.g.objects[e.object];
+    return o ? [{ object: refTo(o) }] : [];
   },
   // CR 701.27e: "When this creature transforms into [this face]" — the ability is on the face it became.
   transforms(t, check) {
@@ -2351,6 +2523,8 @@ export const corePlugin: MechanicPlugin = {
     enters_with_counters(node, o, g) {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
       if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+      // "This land enters tapped with two charge counters on it."
+      if (node.tapped) o.tapped = true;
       // CR 107.3m: X is the X paid for the spell that became this permanent.
       const per = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
       // Converge: "… for each color of mana spent to cast it"

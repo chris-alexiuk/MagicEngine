@@ -35,7 +35,7 @@ const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
   'sacrificed', 'blockers_done', 'scried', 'surveilled', 'copied', 'became_monstrous', 'ring_tempted',
-  'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed',
+  'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked',
 ]);
 /** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
 const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
@@ -141,7 +141,7 @@ function collect(g: GameState, events: GameEvent[]): void {
         }
         for (const info of infos) {
           // CR 603.4: an intervening "if" must be true for it to trigger at all.
-          if (ability.condition && !evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info))) continue;
+          if (ability.condition && !evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability))) continue;
           // CR 603.3a: controlled by whoever controlled the source when it triggered.
           g.triggers.push({
             id: `t${g.nextId++}`,
@@ -269,6 +269,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
               modes: {
                 min: ability.modes.min,
                 max: ability.modes.max,
+                ...(ability.modes.repeat ? { repeat: true as const } : {}),
                 options: ability.modes.options.map((m) => ({ text: m.text, prompts: targetPrompts(g, t.controller, m.targets ?? [], source) })),
               },
             }
@@ -292,7 +293,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     text: ability.text,
     program,
     targets,
-    x: 0,
+    x: entersX(ability, source, t.info),
     ...(division ? { division } : {}),
     trigger: t.info,
     ...(ability.condition ? { condition: ability.condition } : {}),
@@ -357,8 +358,13 @@ export function announceTargets(entry: StackEntry, events: GameEvent[], g?: Game
 }
 
 /** The context a trigger's condition is checked in as it triggers. */
-export function triggerContext(g: GameState, controller: PlayerId, source: GameObject, info: TriggerInfo): EffectContext {
-  return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: 0, memo: {}, trigger: info };
+export function triggerContext(g: GameState, controller: PlayerId, source: GameObject, info: TriggerInfo, ability?: TriggeredAbility): EffectContext {
+  return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: ability ? entersX(ability, source, info) : 0, memo: {}, trigger: info };
+}
+
+/** CR 107.3m: an object's own enters-the-battlefield trigger uses the X its spell was cast with. */
+function entersX(ability: TriggeredAbility, source: GameObject | null, info: TriggerInfo): number {
+  return source && ability.trigger.type === 'enters' && info.object?.id === source.id ? (source.x ?? 0) : 0;
 }
 
 /**

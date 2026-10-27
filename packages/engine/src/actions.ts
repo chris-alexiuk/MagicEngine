@@ -1,3 +1,5 @@
+import { drawOrDredge } from './dredge.js';
+import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
 import { STEPS } from './types.js';
 import { livePlayers } from './zones.js';
@@ -7,7 +9,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, SpellAbility } from '@mtg/schema';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
-import { hasKeyword, printedAbilities } from './characteristics.js';
+import { hasKeyword, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -19,8 +21,10 @@ import {
   playerLoses,
   settle,
 } from './flow.js';
-import { parseManaCost, type ManaCost } from './mana.js';
-import { OTHER_PURPOSE, payMana } from './spending.js';
+import { reduceCostBy, parseManaCost, type ManaCost } from './mana.js';
+import { OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
+const UNLOCK: ManaPurpose = { kind: 'unlock' };
+const FACE_UP: ManaPurpose = { kind: 'face_up' };
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
@@ -100,6 +104,8 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
       return playLand(g, a.player, a.object, a.face ?? 0, events);
     case 'turn_face_up':
       return turnFaceUp(g, a.player, a.object, a.autoTap ?? false, events);
+    case 'unlock':
+      return unlockDoor(g, a.player, a.object, a.half, a.autoTap ?? false, events);
     case 'foretell':
     case 'plot':
     case 'suspend':
@@ -139,6 +145,14 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       // CR 514.1: the active player discards down to their maximum hand size.
       for (const id of ids) discardCard(g, id, events);
       finishCleanup(g, events);
+      return;
+    }
+    case 'dredge': {
+      const candidates = (p as Extract<typeof p, { kind: 'dredge' }>).candidates;
+      if (answer.object !== null && !candidates.includes(answer.object)) throw new RulesError('Choose a card with dredge in your graveyard, or draw.');
+      g.pending = null;
+      drawOrDredge(g, player, answer.object, events);
+      givePriority(g, g.active);
       return;
     }
     case 'keep_tapped': {
@@ -259,6 +273,21 @@ function exileToCastLater(g: GameState, player: PlayerId, id: ObjectId, kind: 'f
   givePriority(g, player);
 }
 
+/** CR 709.5e: pay the mana cost of a locked door — a special action, at sorcery timing. */
+function unlockDoor(g: GameState, player: PlayerId, id: ObjectId, half: 0 | 1, wantsAutoTap: boolean, events: GameEvent[]): void {
+  const o = obj(g, id);
+  if (o.zone !== 'battlefield' || o.controller !== player || !o.unlocked) throw new RulesError('You can only unlock a Room you control.');
+  if (o.unlocked[half]) throw new RulesError('That door is already unlocked.');
+  if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) throw new RulesError('Doors can be unlocked only during your main phase while the stack is empty.');
+  const cost = parseManaCost(g.cards[o.card]!.faces[half]!.manaCost);
+  if (cost.unsupported.length || cost.x) throw new RulesError('That unlock cost isn’t supported yet.');
+  if (wantsAutoTap) autoTap(g, player, cost, 0, events, [], UNLOCK);
+  if (!payMana(g, player, cost, 0, UNLOCK)) throw new RulesError('Not enough mana to unlock that door.');
+  unlockHalf(g, o, half, events);
+  // CR 116.3: a player who takes a special action receives priority afterward.
+  givePriority(g, player);
+}
+
 /** CR 702.37e / 116.2b: turn a face-down permanent you control face up — a special action. */
 function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: boolean, events: GameEvent[]): void {
   const o = obj(g, id);
@@ -267,8 +296,8 @@ function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: 
   if (!costText) throw new RulesError('That can’t be turned face up.');
   const cost = parseManaCost(costText);
   if (cost.unsupported.length || cost.x) throw new RulesError(`Paying ${costText} isn’t supported yet.`);
-  if (wantsAutoTap) autoTap(g, player, cost, 0, events);
-  if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`Not enough mana to pay ${costText}.`);
+  if (wantsAutoTap) autoTap(g, player, cost, 0, events, [], FACE_UP);
+  if (!payMana(g, player, cost, 0, FACE_UP)) throw new RulesError(`Not enough mana to pay ${costText}.`);
   const face = g.cards[o.card]!.faces[o.face] ?? g.cards[o.card]!.faces[0]!;
   // CR 708.8: it's the same permanent, now with its own characteristics; nothing about entering happens.
   delete o.faceDown;
@@ -384,6 +413,14 @@ export function castOptions(face: FaceDef): CastOptionNode[] {
     if (kw.id === 'miracle') out.push({ type: 'cast_option', id: 'miracle', kind: 'alternative', cost: { mana }, duringResolution: true });
     // CR 702.119a: emerge — pay [cost] and sacrifice a creature; its mana value comes off the generic part.
     if (kw.id === 'emerge') out.push({ type: 'cast_option', id: 'emerge', kind: 'alternative', cost: { mana, other: [{ type: 'sacrifice', filter: { types: ['Creature'] }, amount: 1 }] }, reduceBySacrificed: true });
+    // CR 702.180a: harmonize — from your graveyard, paying [cost] and tapping up to one untapped creature you control
+    // (its power comes off the generic part); exiled instead of going anywhere else as it leaves the stack.
+    if (kw.id === 'harmonize') {
+      out.push({
+        type: 'cast_option', id: 'harmonize', kind: 'alternative', zone: 'graveyard', exileOnLeave: true, reduceByTappedPower: true,
+        cost: { mana, other: [{ type: 'tap_creatures', amount: 1, upTo: true, filter: { types: ['Creature'], controller: 'you' } }] },
+      });
+    }
     // CR 702.190a: sneak — pay [cost] and return an unblocked creature you control rather than the mana cost.
     if (kw.id === 'sneak') out.push({ type: 'cast_option', id: 'sneak', kind: 'alternative', cost: { mana, other: [{ type: 'return_unblocked' }] } });
   }
@@ -525,7 +562,10 @@ function cast(
 
   // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
   // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
-  const program = spellProgram(castFace, modes, (c) => evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} }), added.some((a) => a.allModes));
+  // A bonus that depends on a cost ("if this spell was cast using teamwork") looks at the costs being chosen now.
+  const holds = (c: ConditionNode) =>
+    c.type === 'paid' ? extras.includes(String(c.cost)) || altId === c.cost : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
+  const program = spellProgram(castFace, modes, holds, added.some((a) => a.allModes));
   const targets = program
     ? chooseTargets(g, player, program.specs, chosenTargets, o)
     : chosenTargets?.some((t) => t.length)
@@ -556,6 +596,11 @@ function cast(
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
     if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, sac));
   }
+  // CR 702.180a: harmonize — reduced by the tapped creature's power.
+  if (alt?.reduceByTappedPower) {
+    const tapped = costChoices.crew?.[0] ? g.objects[costChoices.crew[0]] : undefined;
+    if (tapped) cost.generic = Math.max(0, cost.generic - Math.max(0, power(g, tapped)));
+  }
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, castFace, cost, targets);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
@@ -565,10 +610,14 @@ function cast(
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
-  const additional: Cost = { other: [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])] };
+  // "discard X cards", "pay X life": X is the value chosen for the spell (CR 107.3a).
+  const additional: Cost = {
+    other: [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((a) => a.cost.other ?? [])].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
+  };
   checkOtherCosts(g, player, o, additional, costChoices);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
-  if (wantsAutoTap) autoTap(g, player, cost, x, events, [], { kind: 'spell', object: o });
+  // Creatures tapped for a cost (teamwork, conspire, harmonize) can't also tap for mana.
+  if (wantsAutoTap) autoTap(g, player, cost, x, events, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
   const spent = payMana(g, player, cost, x, { kind: 'spell', object: o });
@@ -585,6 +634,7 @@ function cast(
   if (faceDown) ensureFaceDownDefs(g);
   // CR 702.103b: it becomes an Aura spell as it's put on the stack.
   if (alt?.id === 'bestow') o.bestowed = true;
+  if (alt?.prototype) o.prototyped = true;
   // CR 722.3c: the permanent loses the prepared designation as the spell becomes cast; the copy is a spell copy now.
   if (prepared) {
     delete o.prepareOf;
@@ -667,8 +717,18 @@ export function castRestrictionProblem(g: GameState, player: PlayerId, face: Fac
   return null;
 }
 
+/** CR 702.193a: "If this permanent entered this turn, this ability's cost is reduced by this permanent's mana cost." */
+export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbility, mana: ManaCost): void {
+  if (!ability.powerUp) return;
+  const entered = Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id));
+  if (entered) reduceCostBy(mana, parseManaCost(faceOf(g, o).manaCost));
+}
+
 /** CR 702.172a / 702.183a: spree and tiered — each chosen mode's cost is an additional cost. */
 export function addModeCosts(face: FaceDef, modes: readonly number[] | undefined, cost: ManaCost): void {
+  // CR 702.120a: escalate — an additional [cost] for each mode chosen beyond the first.
+  const escalate = face.keywords.find((k) => k.id === 'escalate' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+  if (escalate) for (let i = 1; i < (modes?.length ?? 0); i++) addCost(cost, parseManaCost(escalate.cost!));
   for (const a of face.abilities) {
     if (a.kind !== 'spell' || !a.modes) continue;
     for (const m of modes ?? []) {
@@ -677,7 +737,7 @@ export function addModeCosts(face: FaceDef, modes: readonly number[] | undefined
     }
   }
 }
-export const hasModeCosts = (face: FaceDef) => face.abilities.some((a) => a.kind === 'spell' && a.modes?.options.some((o) => o.cost));
+export const hasModeCosts = (face: FaceDef) => face.keywords.some((k) => k.id === 'escalate') || face.abilities.some((a) => a.kind === 'spell' && a.modes?.options.some((o) => o.cost));
 
 /** Strive: "This spell costs {2}{W} more to cast for each target beyond the first." (CR 601.2f) */
 export function addPerTargetCost(face: FaceDef, targets: readonly (readonly unknown[])[] | undefined, cost: ManaCost): void {
@@ -765,10 +825,11 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
 
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
   const mana = parseManaCost(cost.mana ?? '');
+  applyPowerUp(g, o, ability, mana);
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
-  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? [])];
+  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? []), ...(choices.costs.crew ?? [])];
   if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
   if (cost.mana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
   if (cost.tap) setTapped(g, id, true, events);

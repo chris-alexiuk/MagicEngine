@@ -1,4 +1,5 @@
 import type { AddManaEffect, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
+import { SUBTYPES } from '@mtg/schema';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
@@ -61,8 +62,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (pay && then) {
         const inner = parseSentence(capitalise(then[1]!), b);
         if (!inner) return null;
-        out.push({ type: 'may_pay', cost: pay[1]!, effects: inner });
-        i++;
+        // CR 702.59a (recover): "… Otherwise, exile this card."
+        const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't), (.+)$/.exec(sentences[i + 2]!) : null;
+        const no = otherwise ? parseSentence(capitalise(otherwise[1]!), b) : null;
+        if (otherwise && !no) return null;
+        out.push({ type: 'may_pay', cost: pay[1]!, effects: inner, ...(no ? { else: no } : {}) });
+        i += otherwise ? 2 : 1;
         continue;
       }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
@@ -281,7 +286,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         let yes = parseSentence(capitalise(instead), b);
         if (b.targets.length !== targetsBefore) return null;
         // "If this spell was kicked, it deals 5 damage instead." — the same damage, a new amount.
-        const more = /^(?:it|~) deals (\S+) damage$/i.exec(instead);
+        // "…, it deals 4 damage to that creature instead." names the same recipient.
+        const more = /^(?:it|~) deals (\S+) damage(?: to (?:that creature|that permanent|that player|it|them|each of them))?$/i.exec(instead);
         const n = more ? parseAmount(more[1]!) : null;
         if (!yes && n !== null && previous.every((x) => x.type === 'deal_damage')) yes = previous.map((x) => ({ ...structuredClone(x), amount: n }));
         if (!yes) return null;
@@ -653,6 +659,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unless[3]!, effects: inner }] : null;
     });
   }
+  // "Then discard a card unless this spell was cast using teamwork." — a condition, not a choice (CR 608.2c).
+  const unlessCond = /^(.+) unless (.+)$/.exec(s);
+  if (unlessCond) {
+    const r = attempt(b, (b) => {
+      const cond = parseCondition(unlessCond[2]!, b);
+      const inner = cond ? parseSentence(unlessCond[1]!, b) : null;
+      return cond && inner ? [{ type: 'if', cond, effects: [], else: inner }] : null;
+    });
+    if (r) return r;
+  }
   // CR 608.2g: "You may cast it without paying its mana cost" — cast during resolution, timing ignored.
   // CR 305.2: "You may play an additional land this turn."
   const extraLand = /^(You|Each player) may play (an|two) additional lands? this turn$/.exec(s);
@@ -971,6 +987,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 615.12: "Damage can't be prevented this turn."
+  if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
+  // Circle of Protection: "The next time a red source of your choice would deal damage to you this turn, prevent that damage."
+  const nextSource = /^The next time (?:a|an) (?:(white|blue|black|red|green|artifact|creature) )?source of your choice would deal damage to you this turn, prevent that damage$/.exec(s);
+  if (nextSource) {
+    const COLORS: Record<string, string> = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };
+    const k = nextSource[1];
+    const filter = !k ? {} : COLORS[k] ? { colors: [COLORS[k]] } : { types: [k[0]!.toUpperCase() + k.slice(1)] };
+    return [{ type: 'prevent_chosen_source', filter }];
+  }
   // CR 701.57a: "discover N".
   const discover = /^[Dd]iscover (\d+)$/.exec(s);
   if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
@@ -997,7 +1023,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
-  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?) (.+)$/.exec(s);
+  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
 
   const whole = attempt(b, (b) => parseClause(s, b, null));
@@ -1011,7 +1037,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const left = s.slice(0, j.index);
     const right = s.slice(j.index! + j[0].length);
     const r = attempt(b, (b) => {
-      const l = parseClause(left, b, null);
+      // "Target creature becomes black and gains fear until end of turn": the duration is both parts'.
+      const shared = j[0] === ' and ' && / until end of turn$/.test(s) && !/ until end of turn$/.test(left);
+      const l = (shared ? attempt(b, (b) => parseClause(`${left} until end of turn`, b, null)) : null) ?? parseClause(left, b, null);
       if (!l) return null;
       // "Target creature gets +3/+3 until end of turn and must be blocked this turn if able": the object goes on.
       const rest = parseSentenceWithSubject(right, b, l.subject) ?? (!l.subject && b.it ? attempt(b, (b) => parseClause(`it ${right}`, b, null))?.effects ?? null : null);
@@ -1188,6 +1216,19 @@ const VERBS: Record<string, VerbHandler> = {
   },
   destroy: objectVerb('destroy'),
   exile(args, who, b, imperative) {
+    // "that player exiles the top card of their library" (ingest), "Exile the top two cards of target player's library".
+    const top = /^the top (card|(\w+) cards) of (your|their|(.+?)'s) library$/.exec(args);
+    if (top) {
+      const amount = top[2] ? parseAmount(top[2]) : 1;
+      if (amount === null || amount === undefined) return null;
+      let owner: Ref | null = who;
+      if (top[4]) owner = imperative ? parsePlayerRef(top[4], b) : null;
+      else if ((top[3] === 'your') !== imperative) return null;
+      if (!owner) return null;
+      // "it", "that card", "those cards" afterward: the exiled cards.
+      b.it = { ref: 'created' };
+      return [{ type: 'exile_top', amount, who: owner }];
+    }
     if (!imperative) return null;
     // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
     const until = / until ~ leaves the battlefield$/.exec(args);
@@ -1218,7 +1259,17 @@ const VERBS: Record<string, VerbHandler> = {
     return null;
   },
   tap: objectVerb('tap'),
-  untap: objectVerb('untap'),
+  untap(args, who, b, imperative) {
+    // "untap up to two lands", "untap up to four target lands" (the latter targets)
+    const upTo = imperative ? /^up to (\w+) (?!target )(.+)$/.exec(args) : null;
+    if (upTo) {
+      const n = parseAmount(upTo[1]!);
+      const pf = typeof n === 'number' ? parseFilter(upTo[2]!, b) : null;
+      if (!pf || !pf.plural || pf.filter.zone || typeof n !== 'number') return null;
+      return [{ type: 'untap_chosen', filter: pf.filter, amount: n }];
+    }
+    return objectVerb('untap')(args, who, b, imperative);
+  },
   counter: objectVerb('counter'),
   regenerate: objectVerb('regenerate'),
   search(args, who, b, imperative) {
@@ -1267,6 +1318,22 @@ const VERBS: Record<string, VerbHandler> = {
     if (q[2]) node.upTo = true;
     if (m[3]) node.tapped = true;
     return [node];
+  },
+  // CR 701.62a: "manifest dread" — "that creature" is the manifested permanent afterward.
+  manifest(args, who, b) {
+    if (args !== 'dread' || who.ref !== 'you') return null;
+    b.it = { ref: 'created' };
+    return [{ type: 'manifest', amount: 1, dread: true }];
+  },
+  // CR 506.4: "Remove target attacking creature from combat", "remove it from combat".
+  remove(args, who, b, imperative) {
+    const m = imperative ? /^(.+) from combat$/.exec(args) : null;
+    const what = m ? parseObjectRef(m[1]!, b) : null;
+    return what ? [{ type: 'remove_from_combat', what: what.ref }] : null;
+  },
+  // CR 702.151a: "Unattach this permanent."
+  unattach(args, who, b, imperative) {
+    return imperative && args === '~' ? [{ type: 'unattach', what: { ref: 'self' } }] : null;
   },
   attach(args, who, b, imperative) {
     const m = /^(~|it) to (.+)$/.exec(args);
@@ -1404,6 +1471,12 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   if (/^venture into the dungeon$/i.test(c)) return [{ type: 'venture' }];
   if (/^venture into undercity$/i.test(c)) return [{ type: 'venture', undercity: true }];
   if (/^you take the initiative$/i.test(c)) return [{ type: 'take_initiative', who: { ref: 'you' } }];
+  // CR 709.5f: "Unlock a locked door of target Room you control."
+  const unlockDoorText = /^unlock a locked door of (.+)$/i.exec(c);
+  if (unlockDoorText) {
+    const what = parseObjectRef(unlockDoorText[1]!, b);
+    return what ? [{ type: 'unlock', what: what.ref }] : null;
+  }
   // "It doesn't untap during its controller's untap step for as long as ~ remains tapped."
   const lock = /^(.+?) (?:doesn't|don't) untap during (?:its|their) controller(?:'s|s') untap steps? for as long as ~ remains tapped$/i.exec(c);
   if (lock) {
@@ -1428,6 +1501,59 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;
   if (produced) return [produced];
+  return null;
+}
+
+const BASIC_LAND_TYPES = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
+const CHOICE_OF: Record<string, 'color' | 'creature_type' | 'land_type'> = { 'color': 'color', 'creature type': 'creature_type', 'basic land type': 'land_type' };
+
+/**
+ * Layers 4–6 (CR 613.1d–f): "Target creature loses all abilities until end of turn", "~ becomes blue until end of turn",
+ * "Target creature becomes a Coward until end of turn", "Target land becomes an Island until end of turn" (CR 305.7),
+ * "~ becomes the creature type of your choice until end of turn".
+ */
+function parseLayerChange(c: string, b: Binder): EffectNode[] | null {
+  const until = / until end of turn$/.test(c) ? 'eot' : 'game';
+  const body = c.replace(/ until end of turn$/, '');
+  // "loses all abilities [and has base power and toughness 0/1]"
+  const loses = /^(.+?) loses? all abilities(?:,? and (?:has|have) base power and toughness (\d+)\/(\d+))?$/.exec(body);
+  if (loses) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(loses[1]!, b);
+      return what ? [{ type: 'modify', what: what.ref, loseAbilities: true, ...(loses[2] ? { setPower: Number(loses[2]), setToughness: Number(loses[3]) } : {}), until }] : null;
+    });
+  }
+  // "becomes the color of your choice", "… the creature type of your choice", "… the basic land type of your choice"
+  const choice = /^(.+?) becomes? the (color|creature type|basic land type) of your choice$/.exec(body);
+  if (choice) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(choice[1]!, b);
+      if (!what) return null;
+      const kind = CHOICE_OF[choice[2]!]!;
+      const change = kind === 'color' ? { colors: ['chosen'] } : kind === 'creature_type' ? { creatureTypes: ['chosen'] } : { landTypes: ['chosen'] };
+      return [{ type: 'choose_value', choice: kind, scope: 'resolution' }, { type: 'modify', what: what.ref, ...change, until }];
+    });
+  }
+  // "becomes blue", "becomes black and red", "becomes colorless"
+  const color = /^(.+?) becomes? ((?:white|blue|black|red|green)(?: and (?:white|blue|black|red|green))?|colorless)$/.exec(body);
+  if (color) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(color[1]!, b);
+      const colors = color[2] === 'colorless' ? [] : color[2]!.split(' and ').map((w) => COLOR_WORDS[w]!);
+      return what ? [{ type: 'modify', what: what.ref, colors, until }] : null;
+    });
+  }
+  // "becomes a Coward", "becomes an Island"
+  const sub = /^(.+?) becomes? an? ([A-Z][\w’'-]*)$/.exec(body);
+  if (sub) {
+    const word = sub[2]!;
+    const land = BASIC_LAND_TYPES.includes(word);
+    if (!land && !(SUBTYPES.creature as readonly string[]).includes(word)) return null;
+    return attempt(b, (b) => {
+      const what = parseObjectRef(sub[1]!, b);
+      return what ? [{ type: 'modify', what: what.ref, ...(land ? { landTypes: [word] } : { creatureTypes: [word] }), until }] : null;
+    });
+  }
   return null;
 }
 
@@ -1492,7 +1618,7 @@ function singlePlayer(text: string, b: Binder): Ref | null {
 
 function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
   // Object-subject clauses first: damage, pumps, restrictions.
-  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
+  const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseLayerChange(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
   if (special) return { effects: special, subject: null };
 
   const imp = IMPERATIVE.exec(c);
@@ -1619,6 +1745,38 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 509.1c: "Target creature blocks this turn if able", "Target creature attacks or blocks this turn if able",
+  // "Target creature blocks ~ this turn if able", "you may have target creature block it this turn if able".
+  const anyBlock = /^(?:[Hh]ave )?(.+?) (blocks?|attacks? or blocks?|attack or block) (?:this turn|this combat|each combat this turn) if able$/.exec(c);
+  if (anyBlock) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(anyBlock[1]!, b);
+      const rules = /attack/.test(anyBlock[2]!) ? ['attacks_each_combat', 'blocks_each_combat'] : ['blocks_each_combat'];
+      return what ? [{ type: 'modify', what: what.ref, rules, until: 'eot' }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 509.1b: "Target creature can't block ~ this turn", "… can't block it this turn"
+  const cantBlockThat = /^(.+?) can't block (~|it|this creature) this turn$/.exec(c);
+  if (cantBlockThat) {
+    const r = attempt(b, (b) => {
+      const attacker = cantBlockThat[2] === 'it' ? parseObjectRef('it', b) : { ref: { ref: 'self' } as Ref, plural: false };
+      const what = attacker ? parseObjectRef(cantBlockThat[1]!, b) : null;
+      return what && attacker && !attacker.plural ? [{ type: 'cant_block_attacker', what: what.ref, attacker: attacker.ref }] : null;
+    });
+    if (r) return r;
+  }
+  const blockThat = /^(?:[Hh]ave |[Cc]hoose to have )?(.+?) (?:blocks?|block) (~|it|this creature|that creature|target creature|enchanted creature|equipped creature) (?:this turn|this combat) if able$/.exec(c);
+  if (blockThat) {
+    const r = attempt(b, (b) => {
+      // "you may have target creature block it": the target is read first, "it" refers back past it.
+      const attacker = blockThat[2] === 'this creature' ? { ref: { ref: 'self' } as Ref, plural: false } : parseObjectRef(blockThat[2]!, b);
+      const what = attacker ? parseObjectRef(blockThat[1]!, b) : null;
+      if (!what || !attacker || attacker.plural) return null;
+      return [{ type: 'must_block', what: what.ref, attacker: attacker.ref }];
+    });
+    if (r) return r;
+  }
   const lure = /^All creatures able to block (.+?) this turn do so$/.exec(c);
   if (lure) {
     const what = parseObjectRef(lure[1]!, b);
@@ -1635,6 +1793,20 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
 /** CR 106.6: "to cast creature spells", "to cast artifact spells or activate abilities of artifacts", "to activate abilities". */
 export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
   if (text === 'to activate abilities') return { abilities: {} };
+  // "to cast Room spells and unlock doors", "to cast an enchantment spell, unlock a door, or turn a permanent face up"
+  const special: ('unlock' | 'face_up')[] = [];
+  for (;;) {
+    const sp = /(?:,? (?:and|or)|,) (unlock (?:a door|doors)|turn (?:a permanent|permanents) face up)$/.exec(text);
+    if (!sp) break;
+    special.unshift(/^unlock/.test(sp[1]!) ? 'unlock' : 'face_up');
+    text = text.slice(0, sp.index);
+  }
+  const only = /^to (unlock (?:a door|doors)|turn (?:a permanent|permanents) face up)$/.exec(text);
+  if (only) return { special: [/^unlock/.test(only[1]!) ? 'unlock' : 'face_up'] };
+  if (special.length) {
+    const rest = parseManaSpend(text, b);
+    return rest ? { ...rest, special } : null;
+  }
   const m = /^to cast (.+?)(?:,? or (?:to )?activate (?:abilities of (.+)|an ability of (?:a|an) (.+?)(?: source)?))?$/.exec(text);
   if (!m) return null;
   const what = m[1]!.replace(/^(\w+) and(?:\/or)? (\w+) spells$/, '$1 or $2 spells');

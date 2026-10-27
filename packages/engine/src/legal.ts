@@ -5,11 +5,11 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withC
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { addModeCosts, addPerTargetCost, additionalCosts, castRestrictionProblem, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
-import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
+import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
+import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
-import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
+import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { mayPlayFrom, playableFromExile } from './permissions.js';
@@ -71,26 +71,35 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (castRestrictionProblem(g, player, face, o)) return;
       const cost = parseManaCost(face.manaCost);
       applyCostModifiers(g, player, o, face, cost);
-      if (cost.unsupported.length || cost.x > 0) return; // X spells need a value; the UI asks for one
+      // X spells need a value; the UI asks for one (also "discard X cards" as an additional cost).
+      if (cost.unsupported.length || cost.x > 0 || additionalCosts(face).some((c) => c.amount === 'X')) return;
       // Convoke, improvise, delve: what they can cover, if mana alone isn't enough.
       const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
       let help: CostChoices = {};
       const purpose = { kind: 'spell' as const, object: o };
-      if (!planAutoTap(g, player, cost, 0, [], purpose)) {
+      const costs = defaultCostChoices(g, player, o, additionalCosts(face));
+      if (!costs) return;
+      // Creatures tapped for an additional cost can't also tap for mana.
+      const tappedForCost = costs.crew ?? [];
+      if (!planAutoTap(g, player, cost, 0, tappedForCost, purpose)) {
         if (!helpers.length) return;
         help = helperChoices(g, player, o, helpers, cost);
         const rest = { ...cost, specific: { ...cost.specific } };
         payWithHelpersDry(g, help, rest);
-        if (!planAutoTap(g, player, rest, 0, [...(help.convoke ?? []), ...(help.improvise ?? [])], purpose)) return;
+        if (!planAutoTap(g, player, rest, 0, [...(help.convoke ?? []), ...(help.improvise ?? []), ...tappedForCost], purpose)) return;
       }
       const choice = defaultSpellChoice(g, player, o, face);
-      const costs = defaultCostChoices(g, player, o, additionalCosts(face));
-      if (!choice || !costs) return;
-      // Strive: the chosen targets add to the cost; spree and tiered: the chosen modes do.
-      if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face)) {
-        addPerTargetCost(face, choice.targets, cost);
-        addModeCosts(face, choice.modes, cost);
-        if (!planAutoTap(g, player, cost, 0, [], purpose)) return;
+      if (!choice) return;
+      // Strive: the chosen targets add to the cost; spree and tiered: the chosen modes do; "costs {3} more to cast
+      // if it targets a creature" looks at the targets (CR 601.2f).
+      const lookAtTargets = face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as { ifTargets?: unknown }).ifTargets));
+      if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face) || lookAtTargets) {
+        const total = parseManaCost(face.manaCost);
+        const refs = (choice.targets ?? []).map((list) => list.map((t): TargetRef => (t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : (t as TargetRef))));
+        applyCostModifiers(g, player, o, face, total, refs);
+        addPerTargetCost(face, choice.targets, total);
+        addModeCosts(face, choice.modes, total);
+        if (!planAutoTap(g, player, total, 0, tappedForCost, purpose)) return;
       }
       const all = { ...costs, ...help };
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
@@ -127,13 +136,25 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (choice) out.push({ type: 'cast', player, object: id, autoTap: true, alt: opt.id, ...choice });
   }
 
+  // CR 709.5e: unlocking a locked door of a Room you control (a special action, at sorcery timing).
+  if (mainPhaseEmptyStack) {
+    for (const id of g.zones.battlefield) {
+      const o = g.objects[id]!;
+      if (o.controller !== player || !o.unlocked) continue;
+      ([0, 1] as const).forEach((half) => {
+        if (o.unlocked![half]) return;
+        const cost = parseManaCost(g.cards[o.card]!.faces[half]!.manaCost);
+        if (!cost.unsupported.length && !cost.x && planAutoTap(g, player, cost, 0, [], { kind: 'unlock' })) out.push({ type: 'unlock', player, object: id, half, autoTap: true });
+      });
+    }
+  }
   // CR 702.37e: turning face-down permanents face up (a special action, any time with priority).
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     if (!o.faceDown || o.controller !== player) continue;
     const costText = faceUpCost(g, o);
     const cost = costText ? parseManaCost(costText) : null;
-    if (cost && !cost.unsupported.length && !cost.x && planAutoTap(g, player, cost)) out.push({ type: 'turn_face_up', player, object: id, autoTap: true });
+    if (cost && !cost.unsupported.length && !cost.x && planAutoTap(g, player, cost, 0, [], { kind: 'face_up' })) out.push({ type: 'turn_face_up', player, object: id, autoTap: true });
   }
 
   // CR 702.34a: flashback spells in the graveyard.
@@ -193,6 +214,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (mine) manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
       if (ab.cost.mana) return;
+      if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+      if (ab.oncePerTurn && o.activatedTurn?.[-1 - ability] === g.turn) return;
       let costs: CostChoices = {};
       if (ab.cost.other) {
         if (ab.cost.other.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
@@ -225,9 +248,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
       const mana = parseManaCost(cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0) return;
+      applyPowerUp(g, o, ab, mana);
       const costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
-      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? [])], { kind: 'ability', source: o })) return;
+      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])], { kind: 'ability', source: o })) return;
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
       out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
@@ -285,7 +309,10 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       const sac = defaultCostChoices(g, player, o, opt.cost.other ?? [])?.sacrifice?.[0];
       if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, g.objects[sac]!));
     }
-    if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost, 0, [], { kind: 'spell', object: o })) continue;
+    // Creatures it would tap for the cost: harmonize's lowers it; none of them can also tap for mana.
+    const tappedForCost = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])])?.crew ?? [];
+    if (opt.reduceByTappedPower && tappedForCost[0]) cost.generic = Math.max(0, cost.generic - Math.max(0, power(g, g.objects[tappedForCost[0]]!)));
+    if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost, 0, tappedForCost, { kind: 'spell', object: o })) continue;
     // Entwine casts it with every mode; otherwise the default choices.
     // Overload: the "each" version takes no targets; disturb: the back face is cast.
     const asCast = opt.spell
@@ -320,6 +347,8 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   const crew: ObjectId[] = [];
   const exile: ObjectId[] = [];
   const returned: ObjectId[] = [];
+  // "Remove any number of storage counters": all of them, by default.
+  let counters: number | undefined;
   for (const c of other) {
     const n = Number(c.amount ?? 1);
     if (c.type === 'sacrifice') {
@@ -330,17 +359,41 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       const pick = discardCandidates(g, player, source, c.filter as ObjectFilter | undefined).filter((id) => !discard.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       discard.push(...pick);
+    } else if (c.type === 'collect_evidence') {
+      // The biggest cards first, until there's enough.
+      const yard = zoneList(g, 'graveyard', player).filter((id) => id !== source.id && !exile.includes(id)).sort((a, b) => manaValueOf(g, g.objects[b]!) - manaValueOf(g, g.objects[a]!));
+      let total = 0;
+      for (const id of yard) {
+        if (total >= n) break;
+        exile.push(id);
+        total += manaValueOf(g, g.objects[id]!);
+      }
+      if (total < n) return null;
+    } else if (c.type === 'craft') {
+      // Cards in the graveyard first, then permanents.
+      const pick = craftCandidates(g, player, source, c).filter((id) => !exile.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      exile.push(...pick);
     } else if (c.type === 'exile_cards') {
       const pick = exileCostCandidates(g, player, source, c).filter((id) => !exile.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       exile.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
+    else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
     else if (c.type === 'return_unblocked') {
       const first = unblockedAttackers(g, player)[0];
       if (!first) return null;
       returned.push(first);
+    } else if (c.type === 'tap_creatures') {
+      // "up to one" (harmonize): the strongest, for the biggest reduction; otherwise what doesn't make mana first.
+      const options = tapCostCandidates(g, player, source, c).filter((id) => !crew.includes(id));
+      if (c.upTo) options.sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!));
+      else options.sort((a, b) => Number(manaAbilities(g, g.objects[a]!).length > 0) - Number(manaAbilities(g, g.objects[b]!).length > 0));
+      const pick = options.slice(0, n);
+      if (pick.length < n && !c.upTo) return null;
+      crew.push(...pick);
     } else if (c.type === 'station') {
       // The strongest other creature.
       const best = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!))[0];
@@ -358,10 +411,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(counters !== undefined ? { counters } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.counters !== undefined ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {
@@ -376,7 +429,7 @@ function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typ
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
   const modal = programs.find((p) => p.modes);
   const modeSets: (number[] | undefined)[] = modal
-    ? modal.modes!.options.map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => i + k)).filter((m) => m.every((i) => i < modal.modes!.options.length))
+    ? modal.modes!.options.map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => (modal.modes!.repeat ? i : i + k))).filter((m) => m.every((i) => i < modal.modes!.options.length))
     : [undefined];
   // Modes the engine runs come first; one it can't read is still a legal choice.
   const manual = (modes: number[] | undefined) => (modes ?? []).some((i) => modal!.modes!.options[i]!.manual);

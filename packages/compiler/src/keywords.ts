@@ -49,7 +49,7 @@ export const CORE_KEYWORDS: KeywordSpec[] = [
     'absorb', 'afflict', 'afterlife', 'amplify', 'annihilator', 'bloodthirst', 'bushido', 'crew', 'dredge',
     'fabricate', 'fading', 'frenzy', 'graft', 'modular', 'poisonous', 'rampage', 'renown', 'ripple', 'soulshift',
     'tribute', 'vanishing', 'devour', 'toxic', 'backup', 'hideaway', 'casualty', 'saddle', 'mobilize',
-    'cumulative upkeep', 'reinforce', 'firebending',
+    'cumulative upkeep', 'reinforce', 'firebending', 'teamwork',
   ]),
   ...cost([
     'bestow', 'blitz', 'buyback', 'cycling', 'dash', 'disturb', 'echo', 'embalm', 'emerge', 'encore', 'entwine',
@@ -58,7 +58,7 @@ export const CORE_KEYWORDS: KeywordSpec[] = [
     'plot', 'prowl', 'reconfigure', 'replicate', 'scavenge', 'spectacle', 'surge', 'transmute', 'unearth', 'ward',
     'miracle', 'disguise', 'cleave', 'offspring', 'freerunning', 'squad', 'suspend', 'impending', 'transfigure',
     'more than meets the eye', 'aura swap', 'recover', 'warp', 'harmonize', 'sneak', 'exhaust', 'craft',
-    'cumulative upkeep', 'reinforce', 'awaken',
+    'cumulative upkeep', 'reinforce', 'awaken', 'escalate', 'mayhem',
   ]),
   ...quality([
     ['protection', 'protection from'],

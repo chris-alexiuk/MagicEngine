@@ -1,3 +1,4 @@
+import { dredgeOptions } from './dredge.js';
 import { phasingStep } from './phasing.js';
 import { checkDungeonDone } from './dungeons.js';
 import type { ConditionNode } from '@mtg/schema';
@@ -144,7 +145,7 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
   // CR 603.4: an intervening "if" is checked again; if it's false now, the ability does nothing.
   if (entry.kind === 'ability' && entry.condition) {
     const source = g.objects[entry.source.id];
-    const ok = source ? evalCondition(entry.condition, triggerContext(g, entry.controller, source, entry.trigger ?? {})) : false;
+    const ok = source ? evalCondition(entry.condition, { ...triggerContext(g, entry.controller, source, entry.trigger ?? {}), x: entry.x }) : false;
     if (!ok) {
       finishResolution(g, entry, events);
       return;
@@ -411,7 +412,15 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       const skip = g.turn === 1 && g.order.length === 2;
       // CR 504.1: the active player draws a card — unless they skip it (CR 614.10: "Skip your draw step" is
       // "instead of drawing, do nothing"; the step still happens for priority).
-      if (!skip && !playerRule(g, g.active, 'skip_draw')) drawCard(g, g.active, events);
+      if (!skip && !playerRule(g, g.active, 'skip_draw')) {
+        // CR 702.52a: the player may dredge instead.
+        const dredge = dredgeOptions(g, g.active);
+        if (dredge.length) {
+          g.pending = { kind: 'dredge', player: g.active, candidates: dredge };
+          return;
+        }
+        drawCard(g, g.active, events);
+      }
       break;
     }
     case 'main1':

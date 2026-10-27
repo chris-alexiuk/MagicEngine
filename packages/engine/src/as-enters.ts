@@ -65,6 +65,9 @@ export function promptAsEnters(g: GameState): boolean {
         // CR 702.136a / CR 702.98a: riot and unleash.
         g.pending = { ...base, text: node.elseHaste ? `Have ${nameOf(g, o)} enter with an additional +1/+1 counter? If not, it gains haste.` : `Have ${nameOf(g, o)} enter with an additional +1/+1 counter?` };
         break;
+      case 'read_ahead':
+        g.pending = { ...base, text: `Choose a chapter for ${nameOf(g, o)} to start on (read ahead).`, options: Array.from({ length: node.amount ?? 1 }, (_, i) => String(i + 1)) };
+        break;
       case 'copy': {
         // CR 707.5: "You may have ~ enter as a copy of any creature on the battlefield."
         // Or "any creature card in a graveyard" (Body Double).
@@ -135,6 +138,14 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       }
       break;
     }
+    case 'read_ahead': {
+      // CR 702.155b: it enters with the chosen number of lore counters.
+      const n = Number(answer.choice);
+      if (!p.options?.includes(String(answer.choice))) throw new RulesError(`Choose a chapter from 1 to ${p.options?.length}.`);
+      o.counters.lore = (o.counters.lore ?? 0) + n;
+      events.push({ type: 'counters', object: o.id, counter: 'lore', delta: n });
+      break;
+    }
     case 'color':
     case 'creature_type': {
       const choice = answer.choice;
@@ -150,5 +161,5 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
 
 /** CR 603.6d / 707.5: while a permanent is choosing what to enter as a copy of, its "enters" triggers wait. */
 export function copyChoicePending(g: GameState): boolean {
-  return Boolean(g.asEnters?.some((e) => e.node.choice === 'copy' && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
+  return Boolean(g.asEnters?.some((e) => (e.node.choice === 'copy' || e.node.choice === 'read_ahead') && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
 }

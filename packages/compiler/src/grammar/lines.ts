@@ -45,13 +45,15 @@ function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
 // Programs: effect text, possibly modal
 // ---------------------------------------------------------------------------
 
-const MODAL_HEADER = /^choose (one|two|three|one or both|one or more|any number|up to one|up to two) —$/i;
+const MODAL_HEADER = /^choose (one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i;
 
 function modeCount(word: string, options: number): { min: number; max: number } {
   switch (word.toLowerCase()) {
     case 'one': return { min: 1, max: 1 };
     case 'two': return { min: 2, max: 2 };
     case 'three': return { min: 3, max: 3 };
+    case 'four': return { min: 4, max: 4 };
+    case 'five': return { min: 5, max: 5 };
     case 'one or both': return { min: 1, max: 2 };
     case 'one or more': return { min: 1, max: options };
     // CR 700.2: "choose up to one —" allows choosing none.
@@ -68,13 +70,24 @@ function modeCount(word: string, options: number): { min: number; max: number } 
 export function parseProgram(text: string, b: Binder): Program | null {
   const [head, ...bullets] = text.split('\n');
   // "Choose one. If you control a commander as you cast this spell, you may choose both instead."
-  const bonus = /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|three) instead\.$/.exec(head!.trim());
+  const bonus =
+    /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|three) instead\.$/.exec(head!.trim()) ??
+    // CR 702.194b: "Choose one. If this spell was cast using teamwork, choose both instead."
+    /^Choose (one|two)\. If ~ (was cast using teamwork), choose (both|any number|three) instead\.$/.exec(head!.trim());
   if (bonus) {
-    const cond = parseCondition(bonus[2]!, b);
+    const cond = bonus[2] === 'was cast using teamwork' ? ({ type: 'paid', cost: 'teamwork' } as ConditionNode) : parseCondition(bonus[2]!, b);
     const inner = cond && parseProgram([`Choose ${bonus[1]} —`, ...bullets].join('\n'), b);
     if (!cond || !inner?.modes) return null;
     const max = bonus[3] === 'both' ? 2 : bonus[3] === 'three' ? 3 : inner.modes.options.length;
     return { ...inner, modes: { ...inner.modes, bonus: { condition: cond, max } } };
+  }
+  // CR 700.2d: "Choose three. You may choose the same mode more than once."
+  const repeat = /^Choose (one|two|three|four|five)\. You may choose the same mode more than once\.$/.exec(head!.trim());
+  if (repeat) {
+    // With repeats, there can be more choices than modes ("Choose three" of two).
+    const inner = parseProgram(['Choose one —', ...bullets].join('\n'), b);
+    const n = modeCount(repeat[1]!, 99).min;
+    return inner?.modes ? { ...inner, modes: { ...inner.modes, min: n, max: n, repeat: true } } : null;
   }
   const modal = MODAL_HEADER.exec(head!.trim());
   if (modal) {
@@ -136,6 +149,12 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
   if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  // CR 701.59a: "Collect evidence 6"
+  const evidence = /^[Cc]ollect evidence (\d+)$/.exec(item);
+  if (evidence) return { type: 'collect_evidence', amount: Number(evidence[1]) };
+  // "As an additional cost to cast this spell, discard X cards." / "pay X life" — X as the spell is cast.
+  if (/^[Dd]iscard X cards$/.test(item)) return { type: 'discard', amount: 'X' };
+  if (/^[Pp]ay X life$/.test(item)) return { type: 'pay_life', amount: 'X' };
   const discardSome = /^[Dd]iscard (a|an|one|two|three) (.+? cards?)$/.exec(item);
   if (discardSome && b) {
     const amount = parseAmount(discardSome[1]!.replace(/^an$/, 'a'));
@@ -143,6 +162,15 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     return { type: 'discard', amount, filter };
+  }
+  // "Tap an untapped creature you control", "tap two untapped creatures you control that each share a color with it"
+  const tap = /^[Tt]ap (a|an|one|two|three|four|five) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
+  if (tap && b) {
+    const amount = parseAmount(tap[1]!.replace(/^an$/, 'a'));
+    const pf = parseFilter(tap[2]!, b);
+    if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || pf.filter.zone) return null;
+    if (tap[3]) pf.filter.sharesColorWithSource = true;
+    return { type: 'tap_creatures', amount, filter: pf.filter };
   }
   // "As an additional cost to cast this spell, pay 3 life." (CR 119.4)
   const life = /^[Pp]ay (\d+) life$/.exec(item);
@@ -185,6 +213,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
       if (typeof amount !== 'number') return null;
       (cost.other ??= []).push({ type: 'remove_counters_self', counter: m[2]!.replace(/−/g, '-'), amount });
     }
+    // Storage lands: "Remove any number of storage counters from ~" (the number is X for the ability).
+    else if (/^[Rr]emove any number of (\S+) counters from ~$/.test(item)) {
+      (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove any number of (\S+)/.exec(item)![1]!, amount: 'X' });
+    }
     // Escape's "Exile five other cards from your graveyard" (CR 702.138a).
     else if (/^[Ee]xile (\w+) other cards? from your graveyard$/.test(item) && typeof parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) === 'number') {
       (cost.other ??= []).push({ type: 'exile_cards', amount: parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) as number, other: true });
@@ -209,7 +241,9 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
 /** Effects that never stop for a player's choice (for the extra effects of mana abilities). */
 const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mill', 'add_counters', 'tap', 'untap', 'create_token', 'add_mana', 'skip_untap']);
 const noChoices = (e: EffectNode): boolean =>
-  e.type === 'if' ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices) : NO_CHOICE.has(e.type);
+  e.type === 'if'
+    ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices)
+    : NO_CHOICE.has(e.type) || (e.type === 'sacrifice' && (e.what as Ref | undefined)?.ref === 'self');
 
 const andIf = (a: ActivatedAbility, c: ConditionNode) => (a.activateIf = a.activateIf ? { type: 'and', all: [a.activateIf, c] } : c);
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
@@ -219,6 +253,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
   [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
   [/ (?:Activate|Transmute|Transfigure) only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
+  // CR 702.151a (reconfigure)
+  [/ Activate only if ~ is attached to a creature and only as a sorcery\.$/, (a) => ((a.timing = 'sorcery'), andIf(a, { type: 'is', of: { ref: 'self' }, filter: { attached: true } }))],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
   [/ Activate no more than twice each turn\.$/, (a) => (a.maxPerTurn = 2)],
   [/ Activate no more than three times each turn\.$/, (a) => (a.maxPerTurn = 3)],
@@ -265,7 +301,12 @@ export const activatedRule: GrammarRule = {
     // CR 605.1a: mana abilities produce mana and have no targets; loyalty abilities never are.
     if (cost.loyalty === undefined) {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
-      const effect = mana && parseManaProduction(mana[1]!);
+      // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
+      // counter removed this way" (X, the number removed).
+      const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}) equal to (.+))$/.exec(mana[1]!) : null;
+      const removedThisWay = scaled?.[2] && /^\S+ counter removed this way$/.test(scaled[2]) && cost.other?.some((c) => c.amount === 'X');
+      const times = scaled ? (removedThisWay ? { kind: 'x' as const } : scaled[2] ? parseForEach(scaled[2], new Binder(env)) : parseCount(scaled[4]!, new Binder(env))) : null;
+      const effect = scaled ? (times ? { ...parseManaProduction(scaled[1] ?? scaled[3]!)!, times } : null) : mana && parseManaProduction(mana[1]!);
       // CR 106.6: "Spend this mana only to cast creature spells."
       const spendOnly = mana?.[2] ? /^Spend this mana only ([^.]+)\.(?: (.+))?$/.exec(mana[2]) : null;
       if (mana && effect && spendOnly) {
@@ -281,8 +322,9 @@ export const activatedRule: GrammarRule = {
         mana[2] = keep[1]!;
       }
       if (mana && effect) {
-        // Restricted mana abilities ("Activate only during your turn") aren't modelled yet.
-        if (node.timing || node.activateIf) return null;
+        // Mana abilities with timing restrictions ("Activate only as a sorcery") aren't modelled yet;
+        // conditions ("Activate only if you control a Swamp") are checked as they're activated (CR 602.5b).
+        if (node.timing || node.maxPerTurn || node.oncePerGame) return null;
         // "{T}: Add {R} or {W}. ~ deals 1 damage to you." — extra untargeted effects (CR 605.1a allows them).
         const b = new Binder(env);
         b.it = { ref: 'self' };
@@ -292,6 +334,8 @@ export const activatedRule: GrammarRule = {
         return { ...node, effects: [effect, ...rest], mana: true };
       }
     }
+    // "Remove any number of … counters" is X only for mana abilities so far.
+    if (cost.other?.some((c) => c.amount === 'X')) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
     const program = parseProgram(effectText, b);
@@ -385,6 +429,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const by = blocked[2] ? parseFilter(blocked[2], b) : null;
     if (blocked[2] && (!by || by.plural)) return null;
     if (by) b.named['the blocking creature'] = { ref: 'trigger_object' };
+    // CR 506.2: the defending player is the one whose creatures block it.
+    if (blocked[1] === 'becomes blocked') b.named['defending player'] = { ref: 'trigger_player' };
     const trigger: TriggerNode =
       blocked[1] === 'becomes blocked'
         ? { type: 'becomes_blocked', subject: { ref: 'self' }, ...(by ? { by: by.filter } : {}) }
@@ -570,6 +616,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (word === 'When' && /^you control no /.test(t)) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
+  }
+  // Eerie (before the "~ or another …" subjects): "Whenever an enchantment you control enters and whenever you fully unlock a Room"
+  const eerie = /^(.+?) and whenever you fully unlock a Room$/.exec(t);
+  if (eerie) {
+    const one = parseTrigger(word, eerie[1]!, b);
+    if (!one) return null;
+    return { trigger: { type: 'either', of: [one.trigger, { type: 'fully_unlocked' }] }, it: { ref: 'trigger_object' }, player: one.player };
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
@@ -787,6 +840,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // CR 309.4c: a room ability's trigger (the dungeon parser fills in the room).
   if (t === 'you move your venture marker into this room' || t === 'you move your venture marker into ~') return { trigger: { type: 'room' }, it: { ref: 'self' }, player: null };
+  // CR 709.5h–i: "When you unlock this door", "Whenever you fully unlock a Room", "When you fully unlock ~"
+  if (t === 'you unlock this door' || t === 'you unlock ~') return { trigger: { type: 'unlock_door' }, it: { ref: 'self' }, player: null };
+  if (t === 'you fully unlock a Room') return { trigger: { type: 'fully_unlocked' }, it: { ref: 'trigger_object' }, player: null };
+  if (t === 'you fully unlock ~' || t === 'you fully unlock this Room') return { trigger: { type: 'fully_unlocked', self: true }, it: { ref: 'self' }, player: null };
   // CR 701.27e: "When this creature transforms into ~", "Whenever ~ transforms"
   if (t === '~ transforms into ~' || t === '~ transforms') return { trigger: { type: 'transforms' }, it: { ref: 'self' }, player: null };
   // CR 700.13: "Whenever you commit a crime"; CR 700.14: "Whenever you expend 4"
@@ -953,6 +1010,11 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't be blocked": ['cant_be_blocked'],
   'attacks each combat if able': ['attacks_each_combat'],
   'attack each combat if able': ['attacks_each_combat'],
+  // CR 509.1c
+  'blocks each combat if able': ['blocks_each_combat'],
+  'block each combat if able': ['blocks_each_combat'],
+  'attacks or blocks each combat if able': ['attacks_each_combat', 'blocks_each_combat'],
+  'attack or block each combat if able': ['attacks_each_combat', 'blocks_each_combat'],
   "can't be countered": ['cant_be_countered'],
   "doesn't untap during your untap step": ['doesnt_untap'],
   "doesn't untap during its controller's untap step": ['doesnt_untap'],
@@ -1090,7 +1152,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|doesn't untap during .+|(?:is|are) .+ in addition to (?:its|their) other types.*)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|(?:is|are) .+ in addition to (?:its|their) other types.*)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1098,7 +1160,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
   // "gets +1/+0, has "…," and is a Wizard in addition to its other types": a list of predicates.
   const predicates = m[2]!.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are ))/g, ' and ').replace(/ and and /g, ' and ');
-  for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |doesn't |is |are )/)) {
+  for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? )/)) {
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
     const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other types$/.exec(part);
@@ -1112,6 +1174,43 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
         else return null;
       }
       effect.addTypes = { types, subtypes };
+      continue;
+    }
+    // CR 613.1f: "loses all abilities" (layer 6).
+    if (/^loses? all abilities$/.test(part)) {
+      effect.loseAbilities = true;
+      continue;
+    }
+    // Layer 7b: "has base power and toughness 1/1"
+    const basePT = /^ha(?:s|ve) base power and toughness (\d+)\/(\d+)$/.exec(part);
+    if (basePT && effect.setPower === undefined) {
+      effect.setPower = Number(basePT[1]);
+      effect.setToughness = Number(basePT[2]);
+      effect.setLayer = '7b';
+      continue;
+    }
+    // Layers 4, 5, 7b: "is a blue Frog creature with base power and toughness 1/1"
+    const isA = /^(?:is|are) (?:an? )?((?:(?:white|blue|black|red|green|colorless) )*)((?:[A-Z][\w’'-]* )*)creature with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    if (isA && !effect.setTypes) {
+      const colors = isA[1]!.trim() ? isA[1]!.trim().split(' ').filter((w) => w !== 'colorless').map((w) => COLOR_WORDS[w]!) : null;
+      const subtypes = isA[2]!.trim() ? isA[2]!.trim().split(' ') : [];
+      if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
+      effect.setTypes = { types: ['Creature'], subtypes };
+      if (colors) effect.colors = colors as Color[];
+      effect.setPower = Number(isA[3]);
+      effect.setToughness = Number(isA[4]);
+      effect.setLayer = '7b';
+      continue;
+    }
+    // Layer 5: "is blue"; layer 4 (CR 305.7): "Enchanted land is an Island"
+    const isColor = /^is (white|blue|black|red|green|colorless)$/.exec(part);
+    if (isColor && !effect.colors) {
+      effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];
+      continue;
+    }
+    const isLand = /^is an? (Plains|Island|Swamp|Mountain|Forest)$/.exec(part);
+    if (isLand && !effect.landTypes) {
+      effect.landTypes = [isLand[1]!];
       continue;
     }
     const has = /^ha(?:s|ve) (.+)$/.exec(part);
@@ -1168,6 +1267,15 @@ export const deckRule: GrammarRule = {
  * CR 601.2f: "Creature spells you cast cost {1} less to cast.", "Spells your opponents cast cost {1} more
  * to cast.", "This spell costs {2} less to cast if you control a Wizard.", "… for each artifact you control."
  */
+/** CR 510.1c: "You may have ~ assign its combat damage as though it weren't blocked." */
+export const asUnblockedRule: GrammarRule = {
+  id: 'assign_as_unblocked',
+  parse(line, original) {
+    if (!/^You may have ~ assign its combat damage as though it weren't blocked\.$/.test(line)) return null;
+    return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['assign_as_unblocked'] } };
+  },
+};
+
 /** CR 502.3: "You may choose not to untap ~ during your untap step." */
 export const optionalUntapRule: GrammarRule = {
   id: 'optional_untap',
@@ -1500,7 +1608,9 @@ export const entersWithCountersRule: GrammarRule = {
       const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: escapes[2]!.replace(/−/g, '-'), amount: n, condition: { type: 'paid', cost: 'escape' } } };
       return node;
     }
-    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)? with (\S+) (\S+) counters? on it( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
+    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (\S+) (\S+) counters? on it( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
+    const tapped = Boolean(m?.[2]);
+    if (m) m.splice(2, 1);
     const amount = m && parseAmount(m[2]!);
     // X is the value paid as it was cast (CR 107.3m).
     if (!m || amount === null || amount === undefined) return null;
@@ -1521,6 +1631,7 @@ export const entersWithCountersRule: GrammarRule = {
         ...(condition ? { condition } : {}),
         // CR 702.33c (multikicker); converge
         ...(m[4] === ' for each time it was kicked' ? { perKick: true } : m[4] ? { perColor: true } : {}),
+        ...(tapped ? { tapped: true } : {}),
       },
     };
     return node;
@@ -1553,9 +1664,12 @@ export const castOptionRule: GrammarRule = {
       if (!choice) return null;
       return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost: { other: [choice] }, zone: 'graveyard', withManaCost: true } as CastOptionNode };
     }
-    const byPaying = /^You may cast ~( transformed)?( from your graveyard| from your hand)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);
+    // "As long as you discarded this card this turn, you may cast it from your graveyard by paying …" (mayhem).
+    const byPaying = /^(?:As long as (.+?), )?[Yy]ou may cast (?:~|it)( transformed)?( from your graveyard| from your hand)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);
     if (byPaying) {
-      return make('alternative', byPaying[3]!, { ...(byPaying[2] === ' from your graveyard' ? { zone: 'graveyard' } : {}), ...(byPaying[1] ? { transformed: true } : {}) });
+      const condition = byPaying[1] ? parseCondition(byPaying[1], b) : undefined;
+      if (byPaying[1] && !condition) return null;
+      return make('alternative', byPaying[4]!, { ...(byPaying[3] === ' from your graveyard' ? { zone: 'graveyard' } : {}), ...(byPaying[2] ? { transformed: true } : {}), ...(condition ? { condition } : {}) });
     }
     const ratherThan = /^(?:If (.+?), )?[Yy]ou may (?:choose to )?pay (.+?) rather than pay ~'s mana cost(?: as you cast ~)?(?: if (.+))?$/.exec(t);
     if (ratherThan) {
@@ -1570,16 +1684,28 @@ export const castOptionRule: GrammarRule = {
     const anyTimes = /^As an additional cost to cast ~, you may pay (.+?) any number of times$/.exec(t);
     if (anyTimes) return make('additional', anyTimes[1]!, { repeatable: true });
     // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
-    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+)$/.exec(t);
+    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+)$/.exec(t);
     if (mayAdditional) {
       const choice = choiceCost(mayAdditional[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
       if (!choice) return null;
-      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'additional', cost: { other: [choice] } } as CastOptionNode };
+      // "If evidence was collected, …" (CR 701.59c) names it.
+      const id = choice.type === 'collect_evidence' ? 'collect_evidence' : 'alt';
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id, kind: 'additional', cost: { other: [choice] } } as CastOptionNode };
     }
     // CR 702.42a: "You may choose all modes of this spell instead of just the number specified. If you do, you pay an additional [cost]."
     const entwine = /^You may choose all modes of ~ instead of just the number specified\. If you do, you pay an additional (.+)$/.exec(t);
     if (entwine) return make('additional', entwine[1]!, { allModes: true });
     return null;
+  },
+};
+
+/** CR 702.160a: "Prototype {1}{R} — 2/2" — an alternative cost with an inset mana cost, power and toughness (CR 718). */
+export const prototypeRule: GrammarRule = {
+  id: 'prototype',
+  parse(line, original) {
+    const m = /^Prototype ((?:\{[^}]+\})+) — (\d+|\*)\/(\d+|\*)$/.exec(line);
+    if (!m) return null;
+    return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'prototype', kind: 'alternative', cost: { mana: m[1]! }, prototype: { power: m[2]!, toughness: m[3]! } } as CastOptionNode };
   },
 };
 
@@ -1739,6 +1865,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   entersAsCopyRule,
   deckRule,
   optionalUntapRule,
+  prototypeRule,
+  asUnblockedRule,
   castRestrictionRule,
   costModifierRule,
   quantityReplacementRule,

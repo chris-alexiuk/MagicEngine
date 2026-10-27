@@ -1,5 +1,6 @@
 import type { AddManaEffect } from '@mtg/schema';
 import { canUseTapAbilities, manaAbilities } from './characteristics.js';
+import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
 import { canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
 import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
@@ -30,9 +31,11 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {
       // Only simple "{T}: Add …" abilities are used automatically.
-      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1) return;
+      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn) return;
+      // CR 602.5b: "Activate only if you control a Swamp."
+      if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       const effect = ab.effects[0] as AddManaEffect;
-      if (effect.type !== 'add_mana') return;
+      if (effect.type !== 'add_mana' || effect.times !== undefined) return;
       // CR 106.6: restricted mana only helps when it can be spent on this.
       if (effect.spend && !canSpend(g, player, effect.spend, purpose)) return;
       if (effect.anyColor) {

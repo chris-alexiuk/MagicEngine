@@ -31,7 +31,8 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
       if (chosen.length < p.modes.min || chosen.length > max) {
         throw new RulesError(`Choose ${p.modes.min === max ? p.modes.min : `${p.modes.min}–${max}`} mode(s).`);
       }
-      if (new Set(chosen).size !== chosen.length || chosen.some((m) => !p.modes!.options[m])) {
+      // CR 700.2d: "You may choose the same mode more than once" — each time is its own instance, with its own targets.
+      if ((!p.modes.repeat && new Set(chosen).size !== chosen.length) || chosen.some((m) => !p.modes!.options[m])) {
         throw new RulesError('Choose each mode at most once.');
       }
       for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);

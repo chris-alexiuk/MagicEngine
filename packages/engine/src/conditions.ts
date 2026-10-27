@@ -1,7 +1,7 @@
 import type { ConditionNode, ObjectFilter } from '@mtg/schema';
 import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
-import { refObjects } from './resolve.js';
+import { amountOf, refObjects } from './resolve.js';
 import type { GameEvent, GameState, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -43,6 +43,10 @@ export interface TurnLog {
   damagedBy?: Record<ObjectId, ObjectId[]>;
   /** How many times each creature has been declared as an attacker this turn. */
   attacks?: Record<ObjectId, number>;
+  /** Cards discarded this turn, as the objects they became (mayhem). */
+  discarded?: { id: ObjectId; zcc: number }[];
+  /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
+  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean }[];
 }
 
 export function newTurnLog(): TurnLog {
@@ -93,6 +97,11 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         break;
       case 'damage':
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
+        if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
+          const s = g.objects[e.source]!;
+          const c = chars(g, s);
+          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander) });
+        }
         if (e.to.kind === 'permanent') {
           const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
           if (!by.includes(e.source)) by.push(e.source);
@@ -101,6 +110,11 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'crime':
         if (!(log.crimes ??= []).includes(e.player)) log.crimes.push(e.player);
         break;
+      case 'discarded': {
+        const o = g.objects[e.object];
+        if (o) (log.discarded ??= []).push({ id: o.id, zcc: o.zcc });
+        break;
+      }
       case 'cast': {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
         const o = g.objects[e.object];
@@ -169,6 +183,23 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
     case 'city_blessing':
       return Boolean(g.players[controller]?.cityBlessing);
+    case 'discarded_this_turn':
+      // CR 702.187b (mayhem): "As long as you discarded this card this turn" — it's still the card that was discarded.
+      return Boolean(source && (g.turnLog.discarded ?? []).some((d) => d.id === source.id && d.zcc === source.zcc));
+    case 'combat_damage_by': {
+      // CR 702.76a (prowl): "a source you controlled that had any of this spell's creature types";
+      // CR 702.173a (freerunning): "an Assassin creature or a commander under your control".
+      const mine = (g.turnLog.combatDamagers ?? []).filter((d) => d.controller === controller);
+      if (cond.sharesType) {
+        const f = source ? faceOf(g, source) : null;
+        const kinds = f && (f.types.includes('Creature') || f.types.includes('Kindred') || f.types.includes('Tribal')) ? f.subtypes : [];
+        return mine.some((d) => d.subtypes.some((s) => kinds.includes(s)));
+      }
+      return mine.some((d) => (cond.subtype !== undefined && d.types.includes('Creature') && d.subtypes.includes(String(cond.subtype))) || (cond.orCommander && d.commander));
+    }
+    case 'amount':
+      // "if X is 5 or more" (ravenous, CR 702.156a)
+      return cmp(amountOf(ctx, cond.amount), cond);
     case 'compare_stats': {
       // CR 702.100a (evolve): either stat greater.
       const [a] = refObjects(ctx, cond.of as never);

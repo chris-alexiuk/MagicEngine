@@ -51,6 +51,11 @@ interface ActiveEffect {
   types?: { types: string[]; subtypes: string[]; retain: boolean };
   /** Layer 5: colors it becomes. */
   colors?: Color[];
+  /** Layer 4: creature types it becomes; land types it becomes (CR 305.7). */
+  creatureTypes?: string[];
+  landTypes?: string[];
+  /** Layer 6: "loses all abilities". */
+  loseAbilities?: true;
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
@@ -61,6 +66,7 @@ interface ActiveEffect {
 }
 
 const CREATURE_TYPES = SUBTYPES.creature;
+const LAND_TYPES: readonly string[] = SUBTYPES.land;
 
 function printed(face: FaceDef): Characteristics {
   // CR 702.73a / CR 604.3: changeling is a characteristic-defining ability — every creature type.
@@ -99,12 +105,78 @@ export function gateOpen(g: GameState, o: GameObject, a: AbilityNode): boolean {
 
 /** The abilities printed on an object (and its printed keywords) that it has right now. */
 export function objectAbilities(g: GameState, o: GameObject): AbilityNode[] {
+  if (o.zone === 'battlefield' && lostAbilities(g).has(o.id)) return [];
   return printedAbilities(faceOf(g, o)).filter((a) => gateOpen(g, o, a));
 }
 
 /** Every ability an object has now: printed, and those its current keywords stand for (granted ones too). */
 export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
-  return [...faceOf(g, o).abilities.filter((a) => gateOpen(g, o, a)), ...keywordAbilities(chars(g, o).keywords)];
+  const printedOnes = o.zone === 'battlefield' && lostAbilities(g).has(o.id) ? [] : faceOf(g, o).abilities.filter((a) => gateOpen(g, o, a));
+  return [...printedOnes, ...keywordAbilities(chars(g, o).keywords)];
+}
+
+const removesAbilities = (e: { loseAbilities?: true; landTypes?: string[] }) => Boolean(e.loseAbilities || e.landTypes);
+/** Card definitions (by id) with an effect that removes abilities. */
+const LOSING_CARD = new Map<string, boolean>();
+const LOSING_GAME = new WeakMap<GameState, { n: number; v: boolean }>();
+/** Whether anything in this game can remove abilities (most games: nothing, so the check is skipped). */
+function mayLoseAbilities(g: GameState): boolean {
+  if (g.effects.length && g.effects.some(removesAbilities)) return true;
+  const ids = Object.keys(g.cards);
+  const memo = LOSING_GAME.get(g);
+  if (memo && memo.n === ids.length) return memo.v;
+  const v = ids.some((id) => {
+    let hit = LOSING_CARD.get(id);
+    if (hit === undefined) {
+      hit = /"(?:loseAbilities|landTypes)"/.test(JSON.stringify(g.cards[id]!.faces));
+      LOSING_CARD.set(id, hit);
+    }
+    return hit;
+  });
+  LOSING_GAME.set(g, { n: ids.length, v });
+  return v;
+}
+
+let lostMemo: { g: GameState; key: string; ids: Set<string>; retyped: Set<string> } | null = null;
+const NONE = new Set<string>();
+/**
+ * CR 613.1f / 305.7: permanents that have lost the abilities printed on them ("loses all abilities"; a land whose
+ * land types an effect sets). Worked out from the effects that remove abilities alone — without the abilities of
+ * the permanents they affect — so it can be asked while the other effects are being gathered.
+ */
+export function lostAbilities(g: GameState): Set<string> {
+  return lostSets(g).ids;
+}
+function lostSets(g: GameState): { ids: Set<string>; retyped: Set<string> } {
+  if (!mayLoseAbilities(g)) return { ids: NONE, retyped: NONE };
+  // Recomputed only when something that could change it has happened (objects moving, attaching, effects).
+  const key = `${g.clock}|${g.nextId}|${g.effects.length}|${g.zones.battlefield.length}|${g.turn}`;
+  if (lostMemo && lostMemo.g === g && lostMemo.key === key) return lostMemo;
+  const ids = new Set<string>();
+  const retyped = new Set<string>();
+  const mark = (id: string, e: { loseAbilities?: true; landTypes?: string[] }) => {
+    ids.add(id);
+    if (e.landTypes && !e.loseAbilities) retyped.add(id);
+  };
+  for (const e of g.effects) {
+    if (!removesAbilities(e)) continue;
+    for (const r of e.objects) if (g.objects[r.id]?.zcc === r.zcc) mark(r.id, e);
+  }
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id];
+    if (!source || ids.has(id)) continue;
+    for (const a of printedAbilities(faceOf(g, source))) {
+      if (a.kind !== 'static' || a.gate || a.effect.type !== 'continuous') continue;
+      const e = a.effect as ContinuousEffectNode;
+      if (!removesAbilities(e) || e.condition) continue;
+      for (const oid of g.zones.battlefield) {
+        const o = g.objects[oid]!;
+        if (affectedBy(g, e.affected, source, o, printed(faceOf(g, o)))) mark(oid, e);
+      }
+    }
+  }
+  lostMemo = { g, key, ids, retyped };
+  return lostMemo;
 }
 
 /**
@@ -206,6 +278,11 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.combat ? { combat: e.combat } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes ? { types: { types: e.addTypes.types, subtypes: e.addTypes.subtypes, retain: true } } : {}),
+        ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
+        ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
+        ...(e.landTypes ? { landTypes: e.landTypes } : {}),
+        ...(e.colors ? { colors: e.colors } : {}),
+        ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
       });
@@ -234,6 +311,9 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.setPower !== undefined ? { set: { layer: '7b' as const, pt: (): [number, number] => [e.setPower!, e.setToughness ?? 0] } } : {}),
     ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
     ...(e.colors ? { colors: e.colors } : {}),
+    ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
+    ...(e.landTypes ? { landTypes: e.landTypes } : {}),
+    ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
@@ -313,6 +393,20 @@ function layered(g: GameState, o: GameObject): Characteristics {
     }
     if (c.types.includes('Creature')) c.hasPT = true;
   }
+  for (const e of effects) {
+    if (!(e.creatureTypes || e.landTypes) || !e.applies(o, c)) continue;
+    // CR 205.1b: "becomes a Bird" replaces its creature types; CR 305.7: "is an Island" replaces its land types,
+    // and it loses the abilities its rules text gives it (its printed keywords here; the rest in objectAbilities).
+    if (e.creatureTypes) c.subtypes = [...c.subtypes.filter((s) => !CREATURE_TYPES.includes(s)), ...e.creatureTypes];
+    if (e.landTypes) {
+      c.subtypes = [...c.subtypes.filter((s) => !LAND_TYPES.includes(s)), ...e.landTypes];
+      c.keywords = [];
+    }
+  }
+  // CR 702.151b: an Equipment with reconfigure that's attached to a creature stops being a creature.
+  if (o.zone === 'battlefield' && o.attachedTo && c.types.includes('Creature') && c.subtypes.includes('Equipment') && c.keywords.some((k) => k.id === 'reconfigure')) {
+    c.types = c.types.filter((t) => t !== 'Creature');
+  }
   // CR 701.54c: "Your Ring-bearer is legendary …" (the Ring's emblem, layer 4).
   if (o.ringBearer !== undefined && o.ringBearer === o.controller && o.zone === 'battlefield' && !c.supertypes.includes('Legendary')) {
     c.supertypes = [...c.supertypes, 'Legendary'];
@@ -320,8 +414,11 @@ function layered(g: GameState, o: GameObject): Characteristics {
   // CR 613.1e: layer 5 — color-changing effects.
   for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
-  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat) && e.applies(o, c));
+  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat || e.loseAbilities) && e.applies(o, c));
   for (const e of inLayer6) {
+    // "loses all abilities": what it has so far goes (its own static abilities aren't applying, see lostAbilities);
+    // later effects can still grant it more (CR 613.7).
+    if (e.loseAbilities) c.keywords = [];
     if (e.keywords) c.keywords.push(...e.keywords);
     for (const r of e.rules ?? []) c.rules.add(r);
     if (e.combat) c.combat.push(e.combat);
@@ -473,6 +570,12 @@ export function matchesFilter(
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;
+  if (f.controller === 'defending') {
+    // CR 506.2: the player the source is attacking (or whose planeswalker it's attacking).
+    const a = ctx.source ? g.combat?.attackers[ctx.source.id] : undefined;
+    const defender = a ? (a.target.kind === 'player' ? a.target.player : g.objects[a.target.object]?.controller) : undefined;
+    if (!defender || controller !== defender) return false;
+  }
   if (f.owner === 'you' && o.owner !== ctx.controller) return false;
   if (f.owner === 'opponent' && o.owner === ctx.controller) return false;
   if (f.other && ctx.source && ctx.source.id === o.id) return false;
@@ -500,6 +603,15 @@ export function matchesFilter(
   if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
+  if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;
+  if (f.attachedTo) {
+    const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;
+    if (!host || o.attachedTo?.id !== host.id || o.attachedTo.zcc !== host.zcc) return false;
+  }
+  if (f.sharesColorWithSource) {
+    const theirs = ctx.source ? chars(g, ctx.source).colors : [];
+    if (!c.colors.some((x) => theirs.includes(x))) return false;
+  }
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
@@ -532,13 +644,17 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
   if (o.zone === 'battlefield' && anyCantActivate(g) && hasRule(g, o, 'cant_activate')) return [];
   const face = faceOf(g, o);
   const out: ActivatedAbility[] = [];
-  if (face.types.includes('Land')) {
-    for (const sub of face.subtypes) {
+  // CR 613.1f: "loses all abilities"; CR 305.7: a land whose land types were set has only those types' mana abilities.
+  const lost = o.zone === 'battlefield' ? lostSets(g) : { ids: NONE, retyped: NONE };
+  const gone = lost.ids.has(o.id);
+  const retyped = lost.retyped.has(o.id);
+  if (retyped || (!gone && face.types.includes('Land'))) {
+    for (const sub of retyped ? chars(g, o).subtypes : face.subtypes) {
       const color = BASIC_LAND_MANA[sub];
       if (color) out.push(intrinsicManaAbility(color));
     }
   }
-  for (const a of face.abilities) if (a.kind === 'activated' && a.mana && gateOpen(g, o, a)) out.push(a);
+  if (!gone) for (const a of face.abilities) if (a.kind === 'activated' && a.mana && gateOpen(g, o, a)) out.push(a);
   // Granted ones ("Creatures you control have "{T}: Add {G}."", CR 613.1f).
   if (o.zone === 'battlefield' && anyGrantedMana(g)) for (const a of keywordAbilities(chars(g, o).keywords)) if (a.kind === 'activated' && a.mana) out.push(a);
   return out;

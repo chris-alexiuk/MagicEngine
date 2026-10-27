@@ -23,6 +23,18 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
+  [/ defending player controls$/, (f) => !f.controller && ((f.controller = 'defending'), true)],
+  // "all creatures target player controls", "each creature that player controls"
+  [/ (target player|target opponent|that player|the chosen player|chosen player) controls$/, (f, m, b) => {
+    if (f.controller || f.controlledBy) return false;
+    const who = parsePlayerRef(m[1]!, b);
+    return Boolean(who && ((f.controlledBy = who), true));
+  }],
+  // "for each Aura attached to it": it is the source, or what the source enchants or equips.
+  [/ attached to (it|~|this creature)$/, (f, m, b) => {
+    const to = m[1] !== 'it' ? 'self' : b.it?.ref === 'attached' ? 'attached' : !b.it || b.it.ref === 'self' ? 'self' : null;
+    return !f.attachedTo && to !== null && ((f.attachedTo = to), true);
+  }],
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
@@ -264,7 +276,7 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
 
 export type RefMode = 'effect' | 'static';
 
-const PRONOUNS = /^(?:it|them|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
+const PRONOUNS = /^(?:it|them|they|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
 
 export interface ParsedRef {
   ref: Ref;
@@ -324,7 +336,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       b.selfZone = 'graveyard';
       return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     }
-    if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|those)/i.test(t), targeted: false } : null;
+    if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
       return set(b, { ref: { ref: 'attached' }, plural: false, targeted: false });
     }
@@ -352,14 +364,26 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       // CR 113.1c: "target activated or triggered ability you control from an artifact source" — an ability on the stack.
       const ability = parseAbilityTarget(t, b);
       if (ability) return set(b, { ref: b.addTarget(ability), plural: false, targeted: true });
+      // "one or two target creatures", "one, two, or three target creatures", "one or more target creatures": at least one.
+      const oneOr = /^(one or two|one, two, or three|one or more) (other )?target (.+)$/i.exec(t);
+      if (oneOr) {
+        const pf = parseFilter(oneOr[3]!, b);
+        if (!pf || !pf.plural) return null;
+        if (oneOr[2]) pf.filter.other = true;
+        const count = /two$/i.test(oneOr[1]!) ? 2 : /three$/i.test(oneOr[1]!) ? 3 : 100;
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, upTo: true, min: 1 };
+        return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
+      }
       const tm = /^(?:(up to )?((?!another\b|other\b)\w+) )?(another |other )?target (.+)$/i.exec(t);
       if (tm) {
         const count = tm[2] ? parseAmount(tm[2]) : 1;
         if (typeof count !== 'number' || count < 1) return null;
-        const pf = parseFilter(tm[4]!, b);
+        // "up to two target cards from a single graveyard"
+        const single = / from a single graveyard$/.test(tm[4]!);
+        const pf = parseFilter(single ? `${tm[4]!.replace(/ from a single graveyard$/, '')} in a graveyard` : tm[4]!, b);
         if (!pf || pf.plural !== count > 1) return null;
         if (tm[3]) pf.filter.other = true;
-        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()) };
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), ...(single ? { sameOwner: true } : {}) };
         if (count > 1) spec.count = count;
         if (tm[1]) spec.upTo = true;
         return set(b, { ref: b.addTarget(spec), plural: count > 1, targeted: true });

@@ -723,8 +723,9 @@ describe('extra turns, switching P/T, cost LKI (slice 24)', () => {
       effects: [{ type: 'gain_life', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'toughness' } }],
     });
     expect(one('Destroy target creature that was dealt damage this turn.', 'Instant')).toMatchObject({ targets: [{ filter: { damagedThisTurn: true } }] });
-    // Restricted mana abilities stay unread for now.
-    expect(parse('{T}: Add {G}. Activate only during your turn.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
+    // Mana abilities with a condition on activating (CR 602.5b); timing restrictions stay unread.
+    expect(parse('{T}: Add {G}. Activate only during your turn.', 'Creature — Elf', 'Elf').abilities[0]).toMatchObject({ mana: true, activateIf: { type: 'your_turn', value: true } });
+    expect(parse('{T}: Add {G}. Activate only as a sorcery.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
   });
 });
 
@@ -1074,5 +1075,100 @@ describe('while tapped, optional untap (slice 54)', () => {
     expect(r.abilities[1]).toMatchObject({ effects: [{ type: 'gain_control', until: 'source_tapped' }] });
     const leech = parse("{T}: Tap target creature. It doesn't untap during its controller's untap step for as long as this creature remains tapped.", 'Creature — Leech', 'Leech');
     expect(leech.abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'lock_untap' }] });
+  });
+});
+
+describe('Rooms, manifest dread, teamwork (slices 55–56)', () => {
+  it('reads them', () => {
+    const door = parse('When you unlock this door, manifest dread, then put three +1/+1 counters on that creature.', 'Enchantment — Room', 'Hall');
+    expect(door.abilities[0]).toMatchObject({
+      trigger: { type: 'unlock_door' },
+      effects: [{ type: 'manifest', dread: true }, { type: 'add_counters', what: { ref: 'created' } }],
+    });
+    const eerie = parse('Eerie — Whenever this creature or another enchantment you control enters and whenever you fully unlock a Room, you gain 1 life.', 'Enchantment Creature — Spirit', 'Watcher');
+    expect(eerie.abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{}, { type: 'fully_unlocked' }] } });
+    const mana = parse('{T}: Add {U}. Spend this mana only to cast an enchantment spell, unlock a door, or turn a permanent face up.', 'Artifact', 'Key');
+    expect(JSON.stringify(mana.abilities[0])).toContain('"special":["unlock","face_up"]');
+    const plan = parse('Teamwork 4 (As an additional cost to cast this spell, you may tap any number of creatures you control with total power 4 or more.)\nChoose one. If this spell was cast using teamwork, choose both instead.\n• You gain 3 life.\n• Draw a card.', 'Sorcery', 'Plan');
+    expect(plan.unparsed).toEqual([]);
+    expect(plan.manualKeywords).toEqual([]);
+    expect(parse('One or two target creatures each get +2/+1 until end of turn.', 'Instant', 'Pump').abilities[0]).toMatchObject({ targets: [{ count: 2, upTo: true, min: 1 }] });
+    expect(parse('Draw two cards. Then discard a card unless this spell was kicked.', 'Instant', 'Loot').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'if', effects: [], else: [{ type: 'discard' }] }] });
+  });
+});
+
+describe('keywords from CR definitions, read ahead, dredge, blocking requirements (slices 57–60)', () => {
+  it('reads them', () => {
+    for (const [text, type] of [['Rampage 2', 'Creature — Beast'], ['Afflict 2', 'Creature — Zombie'], ['Ingest', 'Creature — Eldrazi'], ['Ravenous', 'Creature — Dinosaur'], ['Recover {1}{U}', 'Creature — Bird'], ['Provoke', 'Creature — Beast'], ['Dredge 3', 'Creature — Zombie']] as const) {
+      const r = parse(text, type, 'Card');
+      expect([text, r.manualKeywords, r.unparsed]).toEqual([text, [], []]);
+    }
+    expect(parse('Prowl {1}{B}\nDraw a card.', 'Kindred Sorcery — Rogue', 'Card').keywords[0]).toMatchObject({ abilities: [{ effect: { type: 'cast_option', id: 'prowl', condition: { type: 'combat_damage_by', sharesType: true } } }] });
+    expect(parse('This creature blocks each combat if able.', 'Creature — Ogre', 'Ogre').abilities[0]).toMatchObject({ effect: { rules: ['blocks_each_combat'] } });
+    expect(parse('{G}: Target creature blocks this creature this turn if able.', 'Creature — Beast', 'Beast').abilities[0]).toMatchObject({ effects: [{ type: 'must_block', attacker: { ref: 'self' } }] });
+    expect(parse('Whenever this creature attacks, tap target creature defending player controls.', 'Creature — Bear', 'Bear').abilities[0]).toMatchObject({ targets: [{ filter: { controller: 'defending' } }] });
+    expect(parse('Each opponent exiles the top card of their library.', 'Sorcery', 'Ingest').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', who: { ref: 'players', who: 'opponents' } }] });
+  });
+});
+
+describe('conspire, reconfigure, harmonize, prototype, escalate (slices 61–62)', () => {
+  it('reads them', () => {
+    for (const [text, type] of [['Conspire', 'Instant'], ['Reconfigure {2}', 'Artifact Creature — Equipment Lizard'], ['Harmonize {4}{G}', 'Sorcery'], ['Escalate {1}', 'Sorcery']] as const) {
+      const r = parse(text, type, 'Card');
+      expect([text, r.manualKeywords, r.unparsed]).toEqual([text, [], []]);
+    }
+    expect(parse('Prototype {1}{R} — 2/2', 'Artifact Creature — Golem', 'Golem').abilities[0]).toMatchObject({ effect: { type: 'cast_option', id: 'prototype', cost: { mana: '{1}{R}' }, prototype: { power: '2', toughness: '2' } } });
+    expect(parse('{T}, Tap an untapped creature you control: Add one mana of any color.', 'Artifact', 'Relic').abilities[0]).toMatchObject({ mana: true, cost: { tap: true, other: [{ type: 'tap_creatures', amount: 1 }] } });
+    expect(parse('This creature gets +2/+2 for each Aura attached to it.', 'Creature — Spirit', 'Spirit').abilities[0]).toMatchObject({ effect: { power: { kind: 'count', filter: { attachedTo: 'self' } } } });
+    expect(parse('This land enters tapped with two charge counters on it.', 'Land', 'Vault').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', counter: 'charge', amount: 2, tapped: true } });
+  });
+});
+
+describe('mayhem, power-up, removal from combat, single graveyard, Circles of Protection (slice 63)', () => {
+  it('reads them', () => {
+    expect(parse('Mayhem {1}{R}', 'Creature — Goblin', 'Goblin').keywords[0]).toMatchObject({ abilities: [{ effect: { type: 'cast_option', id: 'mayhem', zone: 'graveyard', condition: { type: 'discarded_this_turn' } } }] });
+    expect(parse('Power-up — {4}{W}: Put two +1/+1 counters on this creature.', 'Creature — Human', 'Human').abilities[0]).toMatchObject({ kind: 'activated', oncePerGame: true, powerUp: true });
+    expect(parse("You may have this creature assign its combat damage as though it weren't blocked.", 'Creature — Elemental', 'Thorn').abilities[0]).toMatchObject({ effect: { rules: ['assign_as_unblocked'] } });
+    expect(parse('Remove target attacking creature from combat.', 'Instant', 'Fog').abilities[0]).toMatchObject({ effects: [{ type: 'remove_from_combat' }] });
+    expect(parse('Exile up to two target cards from a single graveyard.', 'Sorcery', 'Scrub').abilities[0]).toMatchObject({ targets: [{ count: 2, upTo: true, sameOwner: true, filter: { zone: 'graveyard' } }] });
+    expect(parse('{1}: The next time a red source of your choice would deal damage to you this turn, prevent that damage.', 'Enchantment', 'Circle').abilities[0]).toMatchObject({ effects: [{ type: 'prevent_chosen_source', filter: { colors: ['R'] } }] });
+  });
+});
+
+describe('layers 4–6 (slice 64)', () => {
+  it('reads them', () => {
+    const frog = parse('Enchant creature\nEnchanted creature loses all abilities and is a blue Frog creature with base power and toughness 1/1.', 'Enchantment — Aura', 'Frog Curse');
+    expect(frog.abilities[0]).toMatchObject({ effect: { type: 'continuous', affected: { ref: 'attached' }, loseAbilities: true, setTypes: { types: ['Creature'], subtypes: ['Frog'] }, colors: ['U'], setPower: 1, setToughness: 1, setLayer: '7b' } });
+    expect(parse('Enchant land\nEnchanted land is an Island.', 'Enchantment — Aura', 'Flood').abilities[0]).toMatchObject({ effect: { landTypes: ['Island'] } });
+    expect(parse('{1}: This creature becomes the creature type of your choice until end of turn.', 'Creature — Shapeshifter', 'Shifter').abilities[0]).toMatchObject({
+      effects: [{ type: 'choose_value', choice: 'creature_type', scope: 'resolution' }, { type: 'modify', creatureTypes: ['chosen'], until: 'eot' }],
+    });
+    expect(parse('Target creature becomes black and gains fear until end of turn.', 'Instant', 'Fear').abilities[0]).toMatchObject({ effects: [{ colors: ['B'], until: 'eot' }, { keywords: [{ id: 'fear' }], until: 'eot' }] });
+    expect(parse('Until end of turn, target creature loses all abilities and has base power and toughness 0/1.', 'Instant', 'Hush').abilities[0]).toMatchObject({ effects: [{ type: 'modify', loseAbilities: true, setPower: 0, setToughness: 1, until: 'eot' }] });
+  });
+});
+
+describe('mana abilities, craft, storage lands (slices 65–67)', () => {
+  it('reads them', () => {
+    expect(parse('{T}: Add {G} for each Elf you control.', 'Creature — Elf', 'Archdruid').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', options: [['G']], times: { kind: 'count' } }] });
+    expect(parse('{1}: Add two mana of any one color. Activate only once each turn.', 'Artifact', 'Prism').abilities[0]).toMatchObject({ mana: true, oncePerTurn: true });
+    expect(parse('{T}, Remove a depletion counter from this land: Add {U}{U}. If there are no depletion counters on this land, sacrifice it.', 'Land', 'Depleted').unparsed).toEqual([]);
+    expect(parse('{1}, Remove any number of storage counters from this land: Add {B} for each storage counter removed this way.', 'Land', 'Vault').abilities[0]).toMatchObject({
+      mana: true, cost: { other: [{ type: 'remove_counters_self', counter: 'storage', amount: 'X' }] }, effects: [{ times: { kind: 'x' } }],
+    });
+    expect(parse('Craft with artifact {3}{W}', 'Artifact', 'Idol').keywords[0]).toMatchObject({ abilities: [{ kind: 'activated', timing: 'sorcery', cost: { mana: '{3}{W}', other: [{ type: 'craft', filter: { types: ['Artifact'] } }] } }] });
+    expect(parse('When this creature enters, untap up to seven lands.', 'Creature — Whale', 'Whale').abilities[0]).toMatchObject({ effects: [{ type: 'untap_chosen', amount: 7 }] });
+    expect(parse("{1}{R}: Target creature can't block this creature this turn.", 'Creature — Goblin', 'Goblin').abilities[0]).toMatchObject({ effects: [{ type: 'cant_block_attacker', attacker: { ref: 'self' } }] });
+  });
+});
+
+describe('repeatable modes, unpreventable damage, "target player controls", X costs, collect evidence (slice 68)', () => {
+  it('reads them', () => {
+    const conf = parse('Choose three. You may choose the same mode more than once.\n• You gain 2 life.\n• Draw a card.', 'Instant', 'Confluence');
+    expect(conf.abilities[0]).toMatchObject({ modes: { min: 3, max: 3, repeat: true } });
+    expect(parse("Damage can't be prevented this turn. Stomp deals 2 damage to any target.", 'Instant', 'Stomp').abilities[0]).toMatchObject({ effects: [{ type: 'damage_unpreventable' }, { type: 'deal_damage' }] });
+    expect(parse('Destroy all creatures target opponent controls.', 'Sorcery', 'Wipe').abilities[0]).toMatchObject({ targets: [{ what: 'player', player: 'opponent' }], effects: [{ type: 'destroy', what: { ref: 'all', filter: { controlledBy: { ref: 'target', index: 0 } } } }] });
+    expect(parse('As an additional cost to cast this spell, pay X life.', 'Sorcery', 'Agony').abilities[0]).toMatchObject({ effect: { type: 'additional_cost', cost: { type: 'pay_life', amount: 'X' } } });
+    expect(parse('As an additional cost to cast this spell, you may collect evidence 6.', 'Instant', 'Study').abilities[0]).toMatchObject({ effect: { type: 'cast_option', id: 'collect_evidence', cost: { other: [{ type: 'collect_evidence', amount: 6 }] } } });
   });
 });

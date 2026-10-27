@@ -109,7 +109,14 @@ function makeDeck(colors: Color[]): string[] {
 // Bots
 // ---------------------------------------------------------------------------
 
-function sample(candidates: Target[], count: number, upTo: boolean, min = 0): Target[] {
+/** The game the bots are looking at (for owners of target candidates). */
+let current: GameState | null = null;
+const ownerOf = (t: Target) => (t.kind === 'object' ? current?.objects[t.object]?.owner : undefined);
+
+function sample(all: Target[], count: number, upTo: boolean, min = 0, sameOwner?: boolean): Target[] {
+  // "from a single graveyard": one owner's cards.
+  const owner = sameOwner && all.length ? ownerOf(pick(all)) : undefined;
+  const candidates = owner ? all.filter((t) => ownerOf(t) === owner) : all;
   const most = Math.min(count, candidates.length);
   const n = upTo ? Math.min(most, min + Math.floor(rnd() * (most - min + 1))) : count;
   return shuffle([...candidates]).slice(0, n);
@@ -117,6 +124,7 @@ function sample(candidates: Target[], count: number, upTo: boolean, min = 0): Ta
 
 /** Re-picks targets at random for a cast/activate action that came with defaults. */
 function randomiseTargets(g: GameState, a: Action): Action {
+  current = g;
   if ((a.type !== 'cast' && a.type !== 'activate') || !a.targets?.length) return a;
   const o = g.objects[a.object]!;
   let specs;
@@ -132,10 +140,11 @@ function randomiseTargets(g: GameState, a: Action): Action {
   } catch {
     return a;
   }
-  return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0)) };
+  return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)) };
 }
 
 function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | null {
+  current = g;
   const p = g.pending;
   if (!p) return null;
   const me = p.player;
@@ -147,6 +156,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'bottom_cards', objects: shuffle(hand()).slice(0, p.count) } };
     case 'opening_battlefield':
       return { player: me, answer: { kind: 'opening_battlefield', objects: p.candidates.filter(() => rnd() < 0.8) } };
+    case 'dredge':
+      return { player: me, answer: { kind: 'dredge', object: rnd() < 0.5 && p.candidates.length ? pick(p.candidates) : null } };
     case 'keep_tapped':
       return { player: me, answer: { kind: 'keep_tapped', objects: p.candidates.filter(() => rnd() < 0.5) } };
     case 'discard_to_hand_size':
@@ -212,8 +223,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           const ok = p.targets.filter((t) => !attackRestriction(g, g.objects[attacker]!, t));
           return ok.length ? [{ attacker, target: pick(ok) }] : [];
         });
-      // CR 506.5: a creature that can't attack alone stays home on its own.
-      if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) attacks.length = 0;
+      // CR 506.5: a creature that can't attack alone stays home on its own — or, if it must attack (CR 508.1d), brings a friend.
+      if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) {
+        const friend = mustAttack(g, g.objects[attacks[0]!.attacker]!) ? p.attackers.find((id) => id !== attacks[0]!.attacker && p.targets.some((t) => !attackRestriction(g, g.objects[id]!, t))) : undefined;
+        if (friend) attacks.push({ attacker: friend, target: pick(p.targets.filter((t) => !attackRestriction(g, g.objects[friend]!, t))) });
+        else attacks.length = 0;
+      }
       // CR 701.43d: exert some of those that can be.
       const exert = attacks.map((a) => a.attacker).filter((id) => p.exertable?.includes(id) && rnd() < 0.6);
       // CR 702.154a: enlist a creature that stays home, sometimes.
@@ -244,6 +259,16 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           const lure = p.attackers.find((a) => must(a, 'all') && !blockProblem(g, g.objects[blocker]!, g.objects[a]!));
           if (lure) blocks.push({ blocker, attacker: lure });
         }
+        // "blocks ~ this turn if able", "blocks each combat if able" (requirements on blockers).
+        for (const blocker of p.blockers) {
+          if (blocks.some((x) => x.blocker === blocker)) continue;
+          const o = g.objects[blocker]!;
+          const reqs = (o.mustBlock ?? []).filter((m) => m.turn === g.turn);
+          const wanted = reqs.flatMap((m) => (m.attacker && p.attackers.includes(m.attacker.id) && !blockProblem(g, o, g.objects[m.attacker.id]!) ? [m.attacker.id] : []));
+          const any = hasRule(g, o, 'blocks_each_combat') || reqs.some((m) => !m.attacker);
+          const choice = wanted[0] ?? (any ? p.attackers.find((a) => !blockProblem(g, o, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace')) : undefined);
+          if (choice) blocks.push({ blocker, attacker: choice });
+        }
         for (const a of p.attackers.filter((x) => must(x, 'one'))) {
           if (blocks.some((x) => x.attacker === a)) continue;
           const free = p.blockers.find((b) => !blocks.some((x) => x.blocker === b) && !blockProblem(g, g.objects[b]!, g.objects[a]!));
@@ -258,18 +283,22 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'declare_blockers', blocks: forced() } };
     }
     case 'assign_combat_damage':
-      return { player: me, answer: { kind: 'assign_combat_damage', assignments: Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested])) } };
+      // CR 510.1c: sometimes all of it past the blockers, as though unblocked.
+      return { player: me, answer: { kind: 'assign_combat_damage', assignments: Object.fromEntries(p.choices.map((c) => [c.attacker, c.unblockedTarget && rnd() < 0.5 ? [{ to: c.unblockedTarget, amount: c.power }] : c.suggested])) } };
     case 'trigger_targets': {
       if (p.modes) {
         const legal = p.modes.options
           .map((o, i) => ({ i, o }))
           .filter(({ o }) => o.prompts.every((pr) => (pr.upTo ? pr.candidates.length >= (pr.min ?? 0) : pr.candidates.length >= pr.count)));
-        const n = Math.max(p.modes.min, Math.min(p.modes.max, legal.length, 1 + Math.floor(rnd() * p.modes.max)));
-        const chosen = shuffle(legal).slice(0, n).sort((a, b) => a.i - b.i);
-        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min)));
-        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min))] } };
+        const n = Math.max(p.modes.min, Math.min(p.modes.max, p.modes.repeat ? p.modes.max : legal.length, 1 + Math.floor(rnd() * p.modes.max)));
+        const picked = shuffle(legal).slice(0, n);
+        // CR 700.2d: the same mode again, if it may be chosen more than once.
+        while (p.modes.repeat && picked.length < n && legal.length) picked.push(pick(legal));
+        const chosen = picked.sort((a, b) => a.i - b.i);
+        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner)));
+        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner))] } };
       }
-      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min)) } };
+      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner)) } };
     }
   }
   return null;

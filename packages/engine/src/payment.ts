@@ -1,3 +1,4 @@
+import { evalCondition } from './conditions.js';
 import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power, toughness } from './characteristics.js';
@@ -10,7 +11,7 @@ import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -29,6 +30,14 @@ export function unblockedAttackers(g: GameState, player: PlayerId): ObjectId[] {
   return Object.entries(c.attackers).flatMap(([id, a]) => {
     const o = g.objects[id];
     return o && o.zone === 'battlefield' && o.zcc === a.zcc && o.controller === player && !a.blocked ? [id] : [];
+  });
+}
+
+/** "Tap two untapped creatures you control that each share a color with it" (conspire), "Tap an untapped creature you control". */
+export function tapCostCandidates(g: GameState, player: PlayerId, source: GameObject, c: EffectNode): ObjectId[] {
+  return g.zones.battlefield.filter((id) => {
+    const o = g.objects[id]!;
+    return id !== source.id && o.controller === player && !o.tapped && matchesFilter(g, o, (c.filter ?? {}) as ObjectFilter, { controller: player, source });
   });
 }
 
@@ -57,6 +66,16 @@ function checkChosen(chosen: ObjectId[] | undefined, candidates: ObjectId[], n: 
 
 /** Non-mana costs (CR 118): checked before anything is paid, paid together with the rest (CR 601.2h). */
 /** Other cards in your graveyard that could be exiled to pay a cost. */
+/** CR 702.167a (craft): "Exile [materials] from among permanents you control and/or cards in your graveyard". */
+export function craftCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
+  const filter = (c.filter ?? {}) as ObjectFilter;
+  const ctx = { controller: player, source: o, anyZone: true };
+  return [
+    ...zoneList(g, 'graveyard', player).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: 'graveyard' }, ctx)),
+    ...g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === player && matchesFilter(g, g.objects[id]!, filter, ctx)),
+  ];
+}
+
 export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject, c?: EffectNode): ObjectId[] {
   const filter = c?.filter as ObjectFilter | undefined;
   // "Exile a creature card from your graveyard"
@@ -89,9 +108,26 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
       if (o.zone !== 'graveyard' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your graveyard.`);
+    } else if (c.type === 'collect_evidence') {
+      // CR 701.59a: exile cards from your graveyard with total mana value N or greater.
+      const chosen = choices.exile ?? [];
+      const yard = zoneList(g, 'graveyard', player);
+      if (new Set(chosen).size !== chosen.length || !chosen.every((id) => yard.includes(id) && id !== o.id)) throw new RulesError('Choose cards in your graveyard to collect as evidence.');
+      if (chosen.reduce((n, id) => n + manaValueOf(g, g.objects[id]!), 0) < Number(c.amount)) throw new RulesError(`Collect evidence ${c.amount}: total mana value ${c.amount} or greater.`);
+    } else if (c.type === 'craft') {
+      // CR 702.167a: exile this permanent and the materials.
+      const n = Number(c.amount ?? 1);
+      const chosen = choices.exile ?? [];
+      const ok = craftCandidates(g, player, o, c);
+      const count = c.anyNumber ? chosen.length >= n : chosen.length === n;
+      if (o.zone !== 'battlefield' || !count || new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) {
+        throw new RulesError(`Choose ${c.anyNumber ? `${n} or more` : n} material(s) to craft with.`);
+      }
     } else if (c.type === 'remove_counters_self') {
       // CR 118.3: a cost can be paid only if it's possible — enough counters of that kind.
-      if ((o.counters[String(c.counter)] ?? 0) < Number(c.amount ?? 1)) throw new RulesError(`${nameOf(g, o)} doesn’t have enough ${c.counter} counters.`);
+      const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
+      if (!Number.isInteger(n) || n < 0) throw new RulesError('Choose how many counters to remove.');
+      if ((o.counters[String(c.counter)] ?? 0) < n) throw new RulesError(`${nameOf(g, o)} doesn’t have enough ${c.counter} counters.`);
     } else if (c.type === 'pay_energy') {
       // CR 107.14: paying {E} removes an energy counter from you.
       if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
@@ -100,6 +136,12 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
       if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your graveyard to exile.`);
+    } else if (c.type === 'tap_creatures') {
+      const n = Number(c.amount ?? 1);
+      const chosen = choices.crew ?? [];
+      const ok = tapCostCandidates(g, player, o, c);
+      const count = c.upTo ? chosen.length <= n : chosen.length === n;
+      if (!count || new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${c.upTo ? 'up to ' : ''}${n} untapped creature(s) you control to tap.`);
     } else if (c.type === 'crew') {
       // CR 702.122a: untapped creatures you control (not this one) with total power N or greater.
       const chosen = choices.crew ?? [];
@@ -147,7 +189,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     if (c.type === 'sacrifice') {
       const n = Number(c.amount ?? 1);
       // CR 701.21a: each chosen permanent goes to its owner's graveyard.
-      for (const id of choices.sacrifice!.slice(sacUsed, sacUsed + n)) {
+      for (const id of (choices.sacrifice ?? []).slice(sacUsed, sacUsed + n)) {
         events.push({ type: 'sacrificed', object: id, player });
         moveObject(g, id, 'graveyard', events);
       }
@@ -157,7 +199,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     if (c.type === 'discard') {
       const n = Number(c.amount ?? 1);
       // CR 701.9a
-      for (const id of choices.discard!.slice(discardUsed, discardUsed + n)) discardCard(g, id, events);
+      for (const id of (choices.discard ?? []).slice(discardUsed, discardUsed + n)) discardCard(g, id, events);
       discardUsed += n;
       continue;
     }
@@ -172,15 +214,21 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'exile_self') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
+    } else if (c.type === 'collect_evidence') {
+      for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
+      events.push({ type: 'evidence_collected', player });
+    } else if (c.type === 'craft') {
+      moveObject(g, o.id, 'exile', events);
+      for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
     } else if (c.type === 'pay_energy') {
       payEnergy(g, player, Number(c.amount), events);
     } else if (c.type === 'remove_counters_self') {
       const counter = String(c.counter);
-      const n = Number(c.amount ?? 1);
+      const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
       o.counters[counter] = (o.counters[counter] ?? 0) - n;
       if (o.counters[counter]! <= 0) delete o.counters[counter];
       events.push({ type: 'counters', object: o.id, counter, delta: -n });
-    } else if (c.type === 'crew' || c.type === 'station') {
+    } else if (c.type === 'crew' || c.type === 'station' || c.type === 'tap_creatures') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
     } else if (c.type === 'return_unblocked') {
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
@@ -216,6 +264,14 @@ export function runManaAbility(
     if (!canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
   }
   if (ability.cost.untap && !o.tapped) throw new RulesError(`${nameOf(g, o)} is already untapped.`);
+  // CR 602.5b: "Activate only if you control a Swamp."
+  if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
+    throw new RulesError(`${nameOf(g, o)}'s ability can't be activated now.`);
+  }
+  // "Activate only once each turn." (kept apart from its other abilities' activations).
+  const onceKey = -1 - index;
+  if (ability.oncePerTurn && o.activatedTurn?.[onceKey] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
+  if (ability.oncePerTurn) (o.activatedTurn ??= {})[onceKey] = g.turn;
   checkOtherCosts(g, player, o, ability.cost, costChoices);
   if (ability.cost.mana && !payMana(g, player, parseManaCost(ability.cost.mana), 0, { kind: 'ability', source: o })) {
     throw new RulesError('Not enough mana in your pool to activate that.');
@@ -228,7 +284,7 @@ export function runManaAbility(
   const queue = [...ability.effects];
   while (queue.length) {
     const e = queue.shift()!;
-    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: 0, memo: {} });
+    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {} });
     // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
     if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
     else if (ok !== true) throw new RulesError(e.type === 'add_mana' ? 'Choose which mana to add.' : 'That mana ability can’t be resolved automatically.');

@@ -55,6 +55,22 @@ export interface ManaCost {
   unsupported: string[];
 }
 
+/**
+ * CR 118.7 / 702.193b: reduce a cost by a mana cost — generic by generic; colored and colorless symbols reduce the same
+ * type, and any excess reduces generic.
+ */
+export function reduceCostBy(cost: ManaCost, by: ManaCost): void {
+  let generic = by.generic;
+  for (const [c, n] of Object.entries(by.specific) as [ManaColor, number][]) {
+    const have = cost.specific[c] ?? 0;
+    const off = Math.min(have, n);
+    if (off) cost.specific[c] = have - off;
+    generic += n - off;
+  }
+  generic += by.hybrid.length;
+  cost.generic = Math.max(0, cost.generic - generic);
+}
+
 /** CR 107.4: parses "{2}{G}{G}", "{X}{R}", "{G/U}", "{2/W}". */
 export function parseManaCost(cost: string): ManaCost {
   const out: ManaCost = { generic: 0, specific: {}, hybrid: [], x: 0, unsupported: [] };

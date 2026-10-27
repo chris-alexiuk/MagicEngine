@@ -1,5 +1,6 @@
+import { isRoom, roomFace } from './rooms.js';
 import { faceDownFace } from './face-down.js';
-import type { ExileInsteadNode, FaceDef } from '@mtg/schema';
+import type { CastOptionNode, ExileInsteadNode, FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
 import { chars, matchesFilter, objectAbilities } from './characteristics.js';
@@ -19,8 +20,28 @@ export function faceOf(g: GameState, o: GameObject): FaceDef {
   const at = o.copyOf ?? o;
   const def = g.cards[at.card];
   if (!def) throw new RulesError(`no card definition for ${at.card}`);
+  // CR 709.5: a Room on the battlefield has only its unlocked doors' name, mana cost and rules text.
+  if (o.unlocked && o.zone === 'battlefield' && !o.copyOf) return roomFace(def, o.unlocked);
   const face = def.faces[at.face] ?? def.faces[0]!;
+  // CR 718.3b / 718.3d: a prototyped spell or permanent (or a copy of one) has the prototype characteristics.
+  if (o.prototyped && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return prototypedFace(face);
   return o.bestowed && (o.zone === 'battlefield' || o.zone === 'stack') ? bestowedFace(face) : face;
+}
+
+const PROTOTYPED = new WeakMap<FaceDef, FaceDef>();
+/** CR 718.3b: the inset mana cost, power and toughness; colored symbols in that cost are its colors (CR 105.2). */
+export function prototypedFace(face: FaceDef): FaceDef {
+  let out = PROTOTYPED.get(face);
+  if (!out) {
+    const opt = face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' && a.effect.prototype ? [a.effect as CastOptionNode] : []))[0];
+    if (!opt) return face;
+    const manaCost = String(opt.cost.mana ?? '');
+    const symbols = manaCost.match(/\{[^}]+\}/g) ?? [];
+    const colors = (['W', 'U', 'B', 'R', 'G'] as const).filter((c) => symbols.some((s) => s.includes(c)));
+    out = { ...face, manaCost, power: opt.prototype!.power, toughness: opt.prototype!.toughness, colors: colors.length ? [...colors] : face.colors };
+    PROTOTYPED.set(face, out);
+  }
+  return out;
 }
 
 const BESTOWED = new WeakMap<FaceDef, FaceDef>();
@@ -55,7 +76,27 @@ export function abilitySources(g: GameState): ObjectId[] {
 /** CR 202.3: mana value, from the mana cost it has (a copy's is the original's, CR 707.2). */
 export function manaValueOf(g: GameState, o: GameObject): number {
   if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) return 0; // CR 708.2: no mana cost
-  return g.cards[(o.copyOf ?? o).card]?.cmc ?? 0;
+  // CR 718.3b: a prototyped spell or permanent; CR 709.5c: a Room's unlocked doors.
+  if ((o.prototyped || o.unlocked) && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return costManaValue(faceOf(g, o).manaCost);
+  const def = g.cards[(o.copyOf ?? o).card];
+  // CR 709.3b / 715.3b / 712.8f: a split half, an adventure or a modal double-faced card's face being cast (or, for a
+  // modal double-faced card, on the battlefield) has only that face's mana cost.
+  if (def && !o.copyOf && def.faces.length > 1 && ((o.zone === 'stack' && ['split', 'adventure', 'modal_dfc'].includes(def.layout)) || (o.zone === 'battlefield' && def.layout === 'modal_dfc'))) {
+    return costManaValue(faceOf(g, o).manaCost);
+  }
+  return def?.cmc ?? 0;
+}
+
+/** CR 202.3: the total of a mana cost's symbols ({X} is 0; {2/W} counts 2). */
+export function costManaValue(cost: string): number {
+  let n = 0;
+  for (const m of cost.matchAll(/\{([^}]+)\}/g)) {
+    const s = m[1]!;
+    if (/^\d+$/.test(s)) n += Number(s);
+    else if (/^2\//.test(s)) n += 2;
+    else if (s !== 'X' && s !== 'Y' && s !== 'Z') n += 1;
+  }
+  return n;
 }
 
 export function nameOf(g: GameState, o: GameObject): string {
@@ -184,8 +225,13 @@ export function moveObject(
   }
   delete o.copyRevert;
   delete o.untapLocks;
+  delete o.mustBlock;
+  delete o.cantBlockThis;
+  delete o.unlocked;
   // CR 702.103b: bestowed only on the stack and the battlefield it resolves onto.
   if (!(from === 'stack' && to === 'battlefield')) delete o.bestowed;
+  // CR 718.4: prototyped only on the stack and the battlefield it resolves onto.
+  if (!(from === 'stack' && to === 'battlefield')) delete o.prototyped;
   delete o.exerted;
   delete o.activations;
   delete o.activatedOnce;
@@ -227,6 +273,13 @@ export function moveObject(
     for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     // CR 702.145b: if it's night, a daybound double-faced permanent enters transformed.
     const def = g.cards[o.card];
+    // CR 709.5d: a Room enters with the door that was cast unlocked (neither, if it wasn't cast).
+    if (isRoom(def) && !o.faceDown) {
+      const half = castInfo && !castInfo.copy ? faceBefore : -1;
+      o.unlocked = [half === 0, half === 1];
+      o.face = 0;
+      if (half === 0 || half === 1) events.push({ type: 'unlocked', object: id, half, player: o.controller, full: false });
+    }
     if (g.dayNight === 'night' && !o.faceDown && def?.faces.length === 2 && def.faces[0]!.keywords.some((k) => k.id === 'daybound') && o.face === 0) o.face = 1;
     const face = faceOf(g, o);
     // CR 702.44a: sunburst — a +1/+1 counter (a charge counter if it isn't a creature) for each color spent to cast it.
@@ -252,7 +305,7 @@ export function moveObject(
     ...(countersBefore ? { counters: countersBefore } : {}),
   });
   // CR 714.3a: a Saga enters with a lore counter on it.
-  if (to === 'battlefield') addLore(g, o, events);
+  if (to === 'battlefield') addLore(g, o, events, true);
   if (shuffleInstead) {
     events.push({ type: 'revealed', player: o.owner, objects: [o.id] });
     shuffleInPlace(g, zoneList(g, 'library', o.owner));

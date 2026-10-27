@@ -167,8 +167,14 @@ export interface GameObject {
   triggeredTurn?: Record<number, number>;
   /** CR 107.3m: the X paid for the spell it was, for its enters abilities. */
   x?: number;
+  /** CR 709.5c: a Room's unlocked designations — [left half, right half]. */
+  unlocked?: [boolean, boolean];
   /** "It doesn't untap during its controller's untap step for as long as ~ remains tapped." */
   untapLocks?: ObjectRef[];
+  /** CR 509.1c: "blocks ~ this turn if able" (an attacker) or "blocks this turn if able" (none) — for that turn. */
+  mustBlock?: { attacker?: ObjectRef; turn: number }[];
+  /** "Target creature can't block ~ this turn": the attackers it can't block, for that turn. */
+  cantBlockThis?: { attacker: ObjectRef; turn: number }[];
   /** CR 702.26: phased out (treated as though it doesn't exist), directly or along with what it's attached to. */
   phasedOut?: 'directly' | 'indirectly';
   /** CR 701.54a: this is that player's Ring-bearer (until another creature is, or another player controls it). */
@@ -190,6 +196,8 @@ export interface GameObject {
   prepared?: true;
   /** CR 702.103b: cast bestowed — an Aura with enchant creature, not a creature, until it ceases to be bestowed. */
   bestowed?: true;
+  /** CR 718.3b: cast prototyped — it has the inset mana cost, power and toughness (and that cost's colors). */
+  prototyped?: true;
   /** CR 701.43a: exerted — it won't untap during its controller's next untap step. */
   exerted?: true;
   /** Encore: "attacks that opponent this turn if able" (CR 702.141a). */
@@ -263,6 +271,8 @@ export interface DamageChoice {
   blockers: ObjectId[];
   /** With trample: the attacked player or planeswalker, which can take damage past lethal. */
   trampleTarget: DamageRecipient | null;
+  /** "as though it weren't blocked" (CR 510.1c): all of it may go to what it's attacking instead. */
+  unblockedTarget?: DamageRecipient;
   suggested: DamageAssignment[];
 }
 
@@ -343,6 +353,12 @@ export interface ContinuousEffect {
   retainTypes?: boolean;
   /** Layer 5: the colors it becomes. */
   colors?: Color[];
+  /** Layer 4: its creature types become these ("becomes a Bird"). */
+  creatureTypes?: string[];
+  /** Layer 4 (CR 305.7): its land types become these; it loses its rules-text abilities. */
+  landTypes?: string[];
+  /** Layer 6: "loses all abilities". */
+  loseAbilities?: true;
   /** Layer 7b: power and toughness set to these values. */
   setPower?: number;
   setToughness?: number;
@@ -388,6 +404,8 @@ export interface PreventionShield {
   /** "all", or how much is left of "the next N damage" (CR 615.7). */
   amount: number | 'all';
   combat?: true;
+  /** "The next time … would deal damage": used up by the first damage it prevents (CR 615.7). */
+  once?: true;
 }
 
 /** A triggered ability waiting to be put on the stack (CR 603.3). */
@@ -419,6 +437,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
+  chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
   lifeLost?: number;
   /** CR 705: the result of this resolution's coin flip. */
@@ -434,6 +454,8 @@ export interface TargetPrompt {
   upTo: boolean;
   /** With `upTo`: the fewest that may be chosen. */
   min?: number;
+  /** "from a single graveyard": every chosen object has the same owner. */
+  sameOwner?: true;
   candidates: Target[];
 }
 
@@ -445,6 +467,8 @@ export type PendingChoice =
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
   /** CR 502.3: permanents its controller may choose not to untap ("You may choose not to untap ~ during your untap step"). */
   | { kind: 'keep_tapped'; player: PlayerId; candidates: ObjectId[] }
+  /** CR 702.52a: the active player may dredge instead of drawing in their draw step. */
+  | { kind: 'dredge'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
   | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
   /** `exertable`: attackers that may be exerted as they attack (CR 701.43d). */
@@ -460,7 +484,7 @@ export type PendingChoice =
       sourceName: string;
       text: string;
       prompts: TargetPrompt[];
-      modes?: { min: number; max: number; options: { text: string; prompts: TargetPrompt[] }[] };
+      modes?: { min: number; max: number; repeat?: true; options: { text: string; prompts: TargetPrompt[] }[] };
     }
   /** reorder: "put them back in any order" — nothing goes to the bottom. */
   | { kind: 'scry'; player: PlayerId; objects: ObjectId[]; reorder?: true }
@@ -520,6 +544,7 @@ export type ChoiceAnswer =
   | { kind: 'opening_battlefield'; objects: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
   | { kind: 'keep_tapped'; objects: ObjectId[] }
+  | { kind: 'dredge'; object: ObjectId | null }
   | { kind: 'legend_rule'; keep: ObjectId }
   | { kind: 'manual_resolution'; done: true }
   | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[]; exert?: ObjectId[]; enlist?: { attacker: ObjectId; tap: ObjectId }[] }
@@ -568,6 +593,8 @@ export interface CostChoices {
   giftTo?: PlayerId;
   /** Ninjutsu, sneak: the unblocked attacking creature returned to its owner's hand (CR 702.49a, 702.190a). */
   returned?: ObjectId[];
+  /** "Remove any number of storage counters from ~": how many (it's X for the ability). */
+  counters?: number;
 }
 
 export type Action =
@@ -576,6 +603,8 @@ export type Action =
   | { type: 'play_land'; player: PlayerId; object: ObjectId; face?: number }
   /** CR 702.37e / 116.2b: turn a face-down permanent you control face up by paying its cost (a special action). */
   | { type: 'turn_face_up'; player: PlayerId; object: ObjectId; autoTap?: boolean }
+  /** CR 709.5e: pay a locked door's mana cost to unlock it (a special action). */
+  | { type: 'unlock'; player: PlayerId; object: ObjectId; half: 0 | 1; autoTap?: boolean }
   /** Special actions that exile a card from hand to cast later: foretell (CR 702.143a), plot (CR 702.170a), suspend (CR 702.62a). */
   | { type: 'foretell' | 'plot' | 'suspend'; player: PlayerId; object: ObjectId; autoTap?: boolean }
   | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor; costs?: CostChoices }
@@ -707,6 +736,10 @@ export type GameEvent =
   | { type: 'initiative'; player: PlayerId }
   /** CR 702.26: a permanent phased out or in. */
   | { type: 'phased'; object: ObjectId; out: boolean }
+  /** CR 701.59: a player collected evidence. */
+  | { type: 'evidence_collected'; player: PlayerId }
+  /** CR 709.5h–i: a Room half was unlocked (`full`: now both are). */
+  | { type: 'unlocked'; object: ObjectId; half: 0 | 1; player: PlayerId; full: boolean }
   /** CR 509.1: every defending player has declared blockers (or had none to declare). */
   | { type: 'blockers_done' }
   /** `entry`: the ability on the stack; `loyalty`: a loyalty ability (CR 606). Mana abilities don't use the stack and aren't reported. */
@@ -773,6 +806,8 @@ export interface GameState {
   delayed: DelayedTrigger[];
   /** Prevention shields (CR 615). */
   prevention: PreventionShield[];
+  /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
+  unpreventableTurn?: number;
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
