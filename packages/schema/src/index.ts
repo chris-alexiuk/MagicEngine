@@ -256,6 +256,11 @@ export interface TargetSpec {
   min?: number;
   /** "up to two target cards from a single graveyard": all of them with the same owner. */
   sameOwner?: true;
+  /**
+   * "For each opponent, exile up to one target creature that player controls": one target for each such player,
+   * each controlled by (or, off the battlefield, owned by) a different one of them. `count` is ignored.
+   */
+  perPlayer?: 'opponents' | 'each';
   /** The printed phrase, for prompts ("target creature you control"). */
   text: string;
 }
@@ -327,6 +332,8 @@ export interface ObjectFilter {
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
   chosenType?: true;
   chosenColor?: true;
+  /** "with the chosen name": the name chosen as the source entered (CR 201.3). */
+  chosenName?: true;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
 }
@@ -363,7 +370,9 @@ export type Ref =
   /** CR 303.4: "enchanted player" — the player an Aura is attached to. */
   | { ref: 'enchanted_player' }
   /** "the token", "those tokens": what the effect just created. */
-  | { ref: 'created' };
+  | { ref: 'created' }
+  /** CR 701.38: "each permanent with the most votes or tied for most votes". */
+  | { ref: 'voted' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -404,6 +413,12 @@ export type AmountExpr = (
   | { kind: 'domain' }
   /** Delirium: the number of card types among cards in your graveyard. */
   | { kind: 'card_types' }
+  /** CR 706.2: "equal to the result" — the result of the die roll this resolution made. */
+  | { kind: 'die_result' }
+  /** CR 701.38: "for each death vote" — votes for that option as this resolves. */
+  | { kind: 'votes'; option: string }
+  /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
+  | { kind: 'greatest'; stat: 'power' | 'toughness' | 'mana_value'; filter: ObjectFilter }
   /** CR 702.23a (rampage): "for each creature blocking it beyond the first" — creatures blocking it, less `beyond`. */
   | { kind: 'blockers'; of: Ref; beyond?: number }
   /** "the total life lost this way" (extort, CR 702.101a). */
@@ -438,6 +453,8 @@ export const RULE_FLAGS = [
   'can_attack_with_defender',
   /** "its activated abilities can't be activated" (CR 602.5). */
   'cant_activate',
+  /** "… can't be activated unless they're mana abilities" (CR 602.5). */
+  'cant_activate_nonmana',
   /** CR 502.3: "You may choose not to untap ~ during your untap step." */
   'may_not_untap',
 ] as const;
@@ -456,6 +473,10 @@ export interface AddManaEffect extends EffectNode {
   anyColor?: number;
   /** CR 903.4: "any color in your commander's color identity" — only those colors. */
   identity?: true;
+  /** CR 106.7: "any color that a land an opponent controls could produce" / "any type that a land you control could produce". */
+  couldProduce?: 'opponents' | 'you';
+  /** With couldProduce: "any type" — colorless too. */
+  anyType?: true;
   /** CR 106.6: "Spend this mana only to …" — what the mana can pay for. */
   spend?: ManaSpend;
   /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
@@ -615,7 +636,8 @@ export interface AsEntersNode extends EffectNode {
   /** copy: "You may have ~ enter as a copy of any creature on the battlefield" (CR 707.5, CR 614.1c). */
   /** counter: "You may have ~ enter with an additional +1/+1 counter on it" (riot, unleash; `elseHaste` for riot). */
   /** read_ahead: "As this Saga enters, choose a number between one and this Saga's final chapter number" (CR 702.155b). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead';
+  /** card_name: "As ~ enters, choose a nonland card name" (CR 201.3; `filter` says what kind of card). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name';
   elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
@@ -632,6 +654,39 @@ export interface AsEntersNode extends EffectNode {
  * CR 601.2f: cost increases and reductions. On a permanent: "Creature spells you cast cost {1} less
  * to cast." On the spell itself (`self`): "This spell costs {1} less to cast for each artifact you control."
  */
+/**
+ * CR 101.2: "Your opponents can't cast spells during your turn", "You can't cast creature spells", "Each player
+ * can't cast more than one spell each turn", "Players can't cast spells from graveyards or libraries".
+ * who: from the source's controller's point of view; enchanted_player: the player the Aura enchants;
+ * enchanted_controller: the controller of what it enchants.
+ */
+export interface CastProhibitionNode extends EffectNode {
+  type: 'cast_prohibition';
+  who: 'you' | 'opponents' | 'each' | 'enchanted_player' | 'enchanted_controller';
+  /** Only spells like this ("noncreature spells", "spells with mana value 3 or less"). */
+  filter?: ObjectFilter;
+  during?: 'your_turn' | 'combat';
+  /** Only spells cast from these zones. */
+  fromZones?: ('graveyard' | 'library' | 'exile')[];
+  /** "can't cast more than one spell each turn" */
+  maxPerTurn?: number;
+  condition?: ConditionNode;
+}
+
+/**
+ * CR 508.1g–h: a cost to attack — "Creatures can't attack you unless their controller pays {2} for each creature
+ * they control that's attacking you" (Ghostly Prison, Propaganda). `cost` is paid for each such attacker.
+ */
+export interface AttackTaxNode extends EffectNode {
+  type: 'attack_tax';
+  cost: string;
+  /** "you or planeswalkers you control" */
+  planeswalkers?: true;
+  /** Only attackers like this ("Nonblack creatures"). */
+  filter?: ObjectFilter;
+  condition?: ConditionNode;
+}
+
 export interface CostModifierNode extends EffectNode {
   type: 'cost_modifier';
   /** The spell's own cost (works wherever it's cast from, CR 113.6e). */
@@ -687,11 +742,12 @@ export interface QuantityReplacementNode extends EffectNode {
 /**
  * look_at_top: the player may look at their library's top card any time; top_revealed: everyone sees it;
  * hexproof / shroud: CR 702.11c / 702.18; cant_gain_life; no_lose_for_life: "You don't lose the game for
- * having 0 or less life"; cant_lose: "You can't lose the game"; flash: "You may cast spells as though they had flash".
+ * having 0 or less life"; cant_lose: "You can't lose the game"; flash: "You may cast spells as though they had flash";
+ * extra_vote / may_extra_vote: "While voting, you get an additional vote" / "you may vote an additional time" (CR 701.38d).
  */
 export const PLAYER_RULES = [
   'no_max_hand_size', 'extra_lands', 'lands_from_graveyard', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
-  'no_lose_for_life', 'cant_lose', 'flash',
+  'no_lose_for_life', 'cant_lose', 'flash', 'extra_vote', 'may_extra_vote',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -724,27 +780,27 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -770,6 +826,8 @@ export const CORE_NODES = {
     'read_ahead', 'dredge',
     // CR 702.180: harmonize, in the engine's casting rules (castOptions); CR 702.120: escalate, in its costs.
     'harmonize', 'escalate',
+    // CR 702.47: splice, in the engine's casting rules.
+    'splice',
   ],
 } as const;
 
@@ -782,7 +840,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge', 'harmonize', 'escalate'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge', 'harmonize', 'escalate', 'splice'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]
   if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;

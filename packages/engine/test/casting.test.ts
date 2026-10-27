@@ -84,12 +84,12 @@ describe('casting spells', () => {
   });
 
   it('CR 608.2n: an instant the engine can’t run is resolved by hand, then goes to the graveyard', () => {
-    const text = 'Draw three cards, then put two cards from your hand on top of your library in any order.';
-    const storm = makeCard({ name: 'Brainstorm', type_line: 'Instant', mana_cost: '{G}{G}', oracle_text: text });
-    let g = toStep(start({ extra: [storm] }), 'main1');
+    const text = 'Exchange life totals with target player.';
+    const swap = makeCard({ name: 'Life Swap', type_line: 'Instant', mana_cost: '{G}{G}', oracle_text: text });
+    let g = toStep(start({ extra: [swap] }), 'main1');
     give(g, 'alice', 'Forest', 'battlefield');
     give(g, 'alice', 'Forest', 'battlefield');
-    const spell = give(g, 'alice', 'Brainstorm', 'hand');
+    const spell = give(g, 'alice', 'Life Swap', 'hand');
     g = act(g, { type: 'cast', player: 'alice', object: spell, autoTap: true });
     g = passRound(g);
     expect(g.pending).toMatchObject({ kind: 'manual_resolution', player: 'alice', text });

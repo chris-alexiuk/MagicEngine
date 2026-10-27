@@ -57,6 +57,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
   if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };
+  // CR 701.38: "for each death vote"
+  const vote = /^(.+) vote$/.exec(t);
+  if (vote && b.votes.includes(vote[1]!)) return { kind: 'votes', option: vote[1]! };
   // CR 702.23a (rampage): "for each creature blocking it beyond the first"
   const blocking = /^creature blocking (it|~)( beyond the first)?$/.exec(t);
   if (blocking) return { kind: 'blockers', of: blocking[1] === '~' ? { ref: 'self' } : (b.it ?? { ref: 'self' }), ...(blocking[2] ? { beyond: 1 } : {}) };
@@ -92,6 +95,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const inner = typeof n === 'number' ? parseCount(plus[2]!, b) : null;
     return inner && typeof n === 'number' ? { ...inner, plus: (inner.plus ?? 0) + n } : null;
   }
+  // CR 701.38: "the number of profit votes"
+  const votes = /^the number of (.+) votes$/.exec(t);
+  if (votes && b.votes.includes(votes[1]!)) return { kind: 'votes', option: votes[1]! };
+  if (/^the number of colors of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
+  if (t === 'the number of creatures in your party') return { kind: 'party' };
+  if (t === 'the number of basic land types among lands you control') return { kind: 'domain' };
+  if (t === 'the number of card types among cards in your graveyard') return { kind: 'card_types' };
   const number = /^the number of (.+)$/.exec(t);
   if (number) {
     const what = number[1]!;
@@ -115,12 +125,17 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     return of && !of.plural ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
+  // CR 706.2: "equal to the result", "where X is the result"
+  if (t === 'the result') return { kind: 'die_result' };
+  // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
+  const greatest = /^the greatest (power|toughness|mana value) among (.+)$/.exec(t);
+  if (greatest) {
+    const pf = parseFilter(greatest[2]!.replace(/ or an? /g, ' or '), b);
+    if (!pf || !pf.plural) return null;
+    return { kind: 'greatest', stat: greatest[1] === 'mana value' ? 'mana_value' : (greatest[1] as 'power' | 'toughness'), filter: pf.filter };
+  }
   // CR 702.101a (extort): "the total life lost this way"
   if (t === 'the total life lost this way' || t === 'the life lost this way') return { kind: 'life_lost' };
-  if (/^the number of colors of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
-  if (t === 'the number of creatures in your party') return { kind: 'party' };
-  if (t === 'the number of basic land types among lands you control') return { kind: 'domain' };
-  if (t === 'the number of card types among cards in your graveyard') return { kind: 'card_types' };
   // CR 700.5: "your devotion to black", "your devotion to white and black".
   const devotion = /^your devotion to (\w+)(?: and (\w+))?$/.exec(t);
   if (devotion) {

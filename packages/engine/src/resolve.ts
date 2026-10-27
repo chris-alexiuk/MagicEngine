@@ -1,5 +1,5 @@
 import type { Amount, AmountExpr, EffectNode, Ref } from '@mtg/schema';
-import { chars, matchesFilter } from './characteristics.js';
+import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -108,6 +108,13 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         return o && o.zcc === r.zcc ? [o] : [];
       });
     }
+    case 'voted': {
+      // CR 701.38: "each permanent with the most votes or tied for most votes"
+      return (ctx.resolution?.voted ?? []).flatMap((r) => {
+        const o = g.objects[r.id];
+        return o && o.zcc === r.zcc ? [o] : [];
+      });
+    }
     case 'exiled_with': {
       // CR 607.2a: cards in exile that this object's linked ability put there.
       const s = ctx.source;
@@ -187,7 +194,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -266,6 +273,32 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       }
       return types.size;
     }
+    case 'greatest': {
+      // "the greatest power among creatures you control" — 0 when there are none.
+      const zone = e.filter.zone ?? 'battlefield';
+      const ids =
+        zone === 'battlefield'
+          ? g.zones.battlefield
+          : zone === 'exile'
+            ? g.zones.exile
+            : zone === 'stack'
+              ? []
+              : (e.filter.owner === 'you' ? [ctx.controller] : g.order).flatMap((p) => g.zones[zone][p] ?? []);
+      let best = 0;
+      for (const id of ids) {
+        const o = g.objects[id]!;
+        if (!matchesFilter(g, o, e.filter, { controller: ctx.controller, source, anyZone: zone !== 'battlefield' })) continue;
+        const v = e.stat === 'power' ? power(g, o) : e.stat === 'toughness' ? toughness(g, o) : manaValueOf(g, o);
+        if (v > best) best = v;
+      }
+      return best;
+    }
+    case 'votes':
+      // CR 701.38: "for each death vote"
+      return ctx.resolution?.votes?.[e.option] ?? 0;
+    case 'die_result':
+      // CR 706.2: the result of the roll this resolution made.
+      return ctx.resolution?.dieResult ?? 0;
     case 'blockers': {
       // CR 702.23a: "for each creature blocking it beyond the first"
       const [o] = refObjects(ctx, e.of);

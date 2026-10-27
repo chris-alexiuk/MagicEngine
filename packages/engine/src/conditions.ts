@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -20,6 +20,8 @@ export interface TurnLog {
   gainedLife: PlayerId[];
   lostLife: PlayerId[];
   spellsCast: Record<PlayerId, number>;
+  /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
+  castSpells?: { player: PlayerId; id: ObjectId }[];
   noncreatureCast: PlayerId[];
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
   damagedPlayers: PlayerId[];
@@ -117,6 +119,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       }
       case 'cast': {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
+        (log.castSpells ??= []).push({ player: e.player, id: e.object });
         const o = g.objects[e.object];
         const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
         if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);
@@ -183,6 +186,14 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
     case 'city_blessing':
       return Boolean(g.players[controller]?.cityBlessing);
+    case 'votes': {
+      // CR 701.38: "If sickness gets more votes", "If psychosis gets more votes or the vote is tied"
+      const tally = ctx.resolution?.votes ?? {};
+      const mine = tally[String(cond.option)] ?? 0;
+      const others = Object.entries(tally).filter(([k]) => k !== cond.option).map(([, v]) => v);
+      const best = Math.max(0, ...others);
+      return cond.orTied ? mine >= best : mine > best;
+    }
     case 'discarded_this_turn':
       // CR 702.187b (mayhem): "As long as you discarded this card this turn" — it's still the card that was discarded.
       return Boolean(source && (g.turnLog.discarded ?? []).some((d) => d.id === source.id && d.zcc === source.zcc));
@@ -232,8 +243,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'your_turn':
       return (g.active === controller) === Boolean(cond.value);
     case 'count': {
+      // "three or more creatures are attacking": everyone's (who 'all').
       const players =
-        cond.who === 'you' ? [controller] : livePlayers(g).filter((p) => p !== controller);
+        cond.who === 'you' ? [controller] : cond.who === 'all' ? livePlayers(g) : livePlayers(g).filter((p) => p !== controller);
       const counts = players.map(
         (p) =>
           g.zones.battlefield.filter((id) => {
@@ -242,7 +254,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           }).length,
       );
       // "your opponents control" — all of theirs together.
-      if (cond.who === 'opponents_total') return cmp(counts.reduce((a, b) => a + b, 0), cond);
+      if (cond.who === 'opponents_total' || cond.who === 'all') return cmp(counts.reduce((a, b) => a + b, 0), cond);
       // "an opponent controls" — any of them; "each opponent controls" — all of them.
       return cond.who === 'any_opponent' ? counts.some((n) => cmp(n, cond)) : counts.length > 0 && counts.every((n) => cmp(n, cond));
     }
@@ -303,6 +315,17 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return log.attacked.includes(controller);
         case 'you_gained_life':
           return log.gainedLife.includes(controller);
+        case 'opponent_gained_life':
+          return log.gainedLife.some((p) => p !== controller);
+        case 'opponent_cast':
+          // "If an opponent cast a blue spell this turn" — any one opponent.
+          return livePlayers(g).some(
+            (p) =>
+              p !== controller &&
+              (log.castSpells ?? []).filter((c) => c.player === p && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1),
+          );
+        case 'opponent_drew':
+          return Object.entries(log.drawn ?? {}).some(([p, n]) => p !== controller && n >= Number(cond.min ?? 1));
         case 'opponent_lost_life':
           return log.lostLife.some((p) => p !== controller);
         case 'you_cast_noncreature':

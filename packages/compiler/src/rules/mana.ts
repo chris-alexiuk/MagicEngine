@@ -37,6 +37,9 @@ export function parseManaProduction(text: string): AddManaEffect | null {
   if (text === 'one mana of any color') return { type: 'add_mana', anyColor: 1 };
   // CR 903.4: Command Tower, Arcane Signet.
   if (text === "one mana of any color in your commander's color identity") return { type: 'add_mana', anyColor: 1, identity: true };
+  // CR 106.7: Exotic Orchard, Fellwar Stone, Reflecting Pool
+  const could = /^one mana of any (color|type) that a land (an opponent controls|you control) could produce$/.exec(text);
+  if (could) return { type: 'add_mana', anyColor: 1, couldProduce: could[2] === 'you control' ? 'you' : 'opponents', ...(could[1] === 'type' ? { anyType: true } : {}) };
   const anyOne = /^(two|three|four|five) mana of any one color$/.exec(text);
   if (anyOne) return { type: 'add_mana', anyColor: ['two', 'three', 'four', 'five'].indexOf(anyOne[1]!) + 2 };
   if (PRODUCED_RUN.test(text)) return { type: 'add_mana', options: [symbols(text)] };

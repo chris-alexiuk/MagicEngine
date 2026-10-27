@@ -1,3 +1,5 @@
+import type { AddManaEffect } from '@mtg/schema';
+import { hasType, manaAbilities } from './characteristics.js';
 import type { GameObject, GameState, ManaColor, ManaPool, PlayerId } from './types.js';
 
 export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
@@ -26,8 +28,31 @@ export function commanderIdentity(g: GameState, player: PlayerId): ManaColor[] {
   return [...out];
 }
 
+/**
+ * CR 106.7: the types of mana the lands of those players could produce, ignoring abilities that themselves depend on
+ * what other lands could produce (so two Exotic Orchards don't look at each other).
+ */
+function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', anyType: boolean): ManaColor[] {
+  const out = new Set<ManaColor>();
+  for (const id of g.zones.battlefield) {
+    const land = g.objects[id]!;
+    if ((who === 'you') !== (land.controller === player) || !hasType(g, land, 'Land')) continue;
+    for (const a of manaAbilities(g, land)) {
+      for (const e of a.effects) {
+        if (e.type !== 'add_mana') continue;
+        const m = e as AddManaEffect;
+        if (m.couldProduce) continue;
+        for (const option of m.options ?? []) for (const c of manaOption(option, land) ?? []) out.add(c);
+        if (m.anyColor) for (const c of anyColorChoices(g, land.controller, m.identity)) out.add(c);
+      }
+    }
+  }
+  return MANA_COLORS.filter((c) => out.has(c) && (anyType || c !== 'C'));
+}
+
 /** The colors an "any color" mana ability can make for this player. */
-export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined): ManaColor[] {
+export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined, effect?: AddManaEffect): ManaColor[] {
+  if (effect?.couldProduce) return producible(g, player, effect.couldProduce, Boolean(effect.anyType));
   const all: ManaColor[] = ['W', 'U', 'B', 'R', 'G'];
   if (!identity) return all;
   const allowed = commanderIdentity(g, player);

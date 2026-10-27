@@ -36,6 +36,8 @@ export class Binder {
   eventAmount = false;
   /** What the last "deals N damage to …" dealt damage to ("a creature dealt damage this way"). */
   damaged: Ref | null = null;
+  /** CR 701.38: the options of the vote this ability holds ("If sickness gets more votes"). */
+  votes: string[] = [];
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -49,6 +51,7 @@ export class Binder {
     b.itIsSource = this.itIsSource;
     b.eventAmount = this.eventAmount;
     b.damaged = this.damaged;
+    b.votes = this.votes;
     return b;
   }
 
@@ -61,6 +64,7 @@ export class Binder {
     this.itIsSource = other.itIsSource;
     this.eventAmount = other.eventAmount;
     this.damaged = other.damaged;
+    this.votes = other.votes;
   }
 
   addTarget(spec: TargetSpec): Ref {

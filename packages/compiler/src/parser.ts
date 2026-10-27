@@ -167,6 +167,12 @@ export class ParserRegistry {
         } else result.unparsed.push(line);
         continue;
       }
+      // CR 702.47a: "Splice onto Arcane {1}{R}" (a keyword with a quality and a cost).
+      const splice = /^Splice onto (Arcane|instant or sorcery) ((?:\{[^}]+\})+)$/.exec(line);
+      if (splice) {
+        result.keywords.push({ id: 'splice', text: splice[1]!, cost: splice[2]! });
+        continue;
+      }
       // CR 702.177a: "Exhaust — [Cost]: [Effect]" means "[Cost]: [Effect]. Activate only once."
       // CR 702.193a: "Power-up — [Cost]: [Effect]" also costs less by its mana cost the turn it entered.
       const exhaust = /^(Exhaust|Power-up) — (.+)$/.exec(line);
@@ -277,6 +283,10 @@ export class ParserRegistry {
         /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line)
       ) {
         while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
+      }
+      // CR 706.3b: a die roll and its results table are one ability.
+      if (/\b[Rr]oll (?:a|two) d\d+(?: and ignore the lower roll)?\.$/.test(line)) {
+        while (i + 1 < lines.length && /^\d+(?:—\d+|\+)? \| /.test(lines[i + 1]!)) block.push(lines[++i]!);
       }
 
       const node = this.parseBlock(block, env);

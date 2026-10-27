@@ -24,7 +24,7 @@ export { chars, hasKeyword, hasProtectionFrom, hasRule, hasType, manaAbilities, 
 export type { Characteristics, FilterContext } from './characteristics.js';
 export { activatedAbilities, flatten, spellPrograms } from './program.js';
 export { canChooseTargets, defaultTargets, isLegalTarget, targetCandidates, targetPrompts } from './targets.js';
-export { attackRestriction, attackTargets, mustAttack, blockDeclarationProblem, defendingPlayers, evasionProblem as blockProblem } from './combat.js';
+export { attackRestriction, attackTax, attackTargets, mustAttack, blockDeclarationProblem, defendingPlayers, evasionProblem as blockProblem } from './combat.js';
 export { parseManaCost, payFromPool } from './mana.js';
 export { hasEffectHandler, hasStaticHandler, hasTriggerMatcher, installPlugin, installedPlugins } from './registry.js';
 export type { EffectContext, EffectHandler, EffectResult, EnterReplacement, MechanicPlugin, TriggerCheck, TriggerMatcher } from './registry.js';

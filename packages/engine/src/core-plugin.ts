@@ -77,7 +77,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const many = effect.anyColor || (effect.options?.length ?? 0) > 1;
     if (many && choice === undefined) {
       const labels = effect.anyColor
-        ? anyColorChoices(ctx.g, ctx.controller, effect.identity)
+        ? anyColorChoices(ctx.g, ctx.controller, effect.identity, effect)
         : effect.options!.map((opt) => opt.map((s) => `{${s === 'chosen' ? ctx.source?.chosen?.color ?? '?' : s}}`).join(''));
       if (!labels.length) return true;
       const answer = answerOf(ctx, 'choose_option');
@@ -88,7 +88,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     if (effect.anyColor) {
       const color = typeof choice === 'string' ? choice : undefined;
-      if (!color || color === 'C' || !MANA_COLORS.includes(color)) return false;
+      if (!color || (color === 'C' && !effect.anyType) || !MANA_COLORS.includes(color)) return false;
+      // CR 106.7: only a type those lands could produce.
+      if (effect.couldProduce && !anyColorChoices(ctx.g, ctx.controller, undefined, effect).includes(color)) return false;
       // CR 903.4f: only a color in the commander's color identity.
       if (effect.identity && !anyColorChoices(ctx.g, ctx.controller, true).includes(color)) return false;
       mana = Array.from({ length: effect.anyColor }, () => color);
@@ -288,6 +290,112 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 701.38a: "Starting with you, each player votes for sickness or psychosis." — in turn order from you;
+  // CR 701.38b: or for objects ("votes for a nonland permanent you don't control"). Secret council: each
+  // player votes without seeing the others' votes, then they're revealed.
+  vote(node, ctx) {
+    const g = ctx.g;
+    const NO_VOTE = "Don't vote";
+    const memo = ctx.memo as { ballots?: { player: PlayerId; optional: boolean }[]; next?: number; candidates?: ObjectId[]; hidden?: GameEvent[] };
+    const among = node.among as ObjectFilter | undefined;
+    const options = (node.options as string[] | undefined) ?? [];
+    if (!memo.ballots) {
+      const live = livePlayers(g);
+      memo.ballots = [];
+      for (let p: PlayerId | undefined = ctx.controller, i = 0; p && i < g.order.length; p = nextPlayer(g, p), i++) {
+        if (!live.includes(p)) continue;
+        // CR 701.38d: a player's additional votes happen when that player would otherwise vote.
+        memo.ballots.push({ player: p, optional: false });
+        for (let n = playerRule(g, p, 'extra_vote'); n > 0; n--) memo.ballots.push({ player: p, optional: false });
+        for (let n = playerRule(g, p, 'may_extra_vote'); n > 0; n--) memo.ballots.push({ player: p, optional: true });
+      }
+      memo.next = 0;
+      memo.hidden = [];
+      if (among) {
+        memo.candidates = refObjects(ctx, { ref: 'all', filter: among }).map((o) => o.id);
+        if (!memo.candidates.length) memo.ballots = [];
+      }
+      if (ctx.resolution) {
+        ctx.resolution.votes = Object.fromEntries(options.map((o) => [o, 0]));
+        ctx.resolution.voted = [];
+      }
+    }
+    const ballot = memo.ballots[memo.next!];
+    const tally = (choice: string) => {
+      if (ctx.resolution) ctx.resolution.votes![choice] = (ctx.resolution.votes![choice] ?? 0) + 1;
+      const event: GameEvent = { type: 'voted', player: ballot!.player, choice: among ? nameOf(g, g.objects[choice]!) : choice, ...(among ? { object: choice } : {}) };
+      (node.secret ? memo.hidden! : ctx.events).push(event);
+    };
+    if (ballot && among) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (answer) {
+        const picked = answer.objects;
+        if (picked.length > 1 || (!picked.length && !ballot.optional) || picked.some((id) => !memo.candidates!.includes(id))) throw new RulesError('Vote for one of them.');
+        if (picked.length) tally(picked[0]!);
+        memo.next!++;
+      }
+    } else if (ballot) {
+      const answer = answerOf(ctx, 'choose_option');
+      if (answer) {
+        if (!options.includes(answer.choice) && !(ballot.optional && answer.choice === NO_VOTE)) throw new RulesError('Vote for one of the options.');
+        if (answer.choice !== NO_VOTE) tally(answer.choice);
+        memo.next!++;
+      }
+    }
+    const now = memo.ballots[memo.next!];
+    if (now) {
+      const extra = memo.next! > 0 && memo.ballots[memo.next! - 1]!.player === now.player ? ' (an additional vote)' : '';
+      if (among) {
+        return { ask: { kind: 'choose_objects', player: now.player, candidates: memo.candidates!, min: now.optional ? 0 : 1, max: 1, text: `Vote for one${extra}.` } };
+      }
+      return { ask: { kind: 'choose_option', player: now.player, options: now.optional ? [...options, NO_VOTE] : options, text: `Vote for ${options.join(' or ')}${extra}.`, sourceName: sourceName(ctx) } };
+    }
+    ctx.events.push(...memo.hidden!);
+    memo.hidden = [];
+    if (among && ctx.resolution) {
+      const counts = ctx.resolution.votes!;
+      const most = Math.max(0, ...Object.values(counts));
+      ctx.resolution.voted = most > 0 ? Object.keys(counts).filter((id) => counts[id] === most && g.objects[id]).map((id) => ({ id, zcc: g.objects[id]!.zcc })) : [];
+    }
+    return true;
+  },
+
+  // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast
+  // noncreature spells" — the players are fixed as it resolves (CR 611.2c).
+  prohibit_casting(node, ctx) {
+    const g = ctx.g;
+    const players = refPlayers(ctx, ref(node, 'who'));
+    if (!players.length) return true;
+    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : g.turn;
+    g.castBans = [...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn), { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}) }];
+    return true;
+  },
+
+  // "For each time vote, take an extra turn after this one." — the effects, that many times.
+  repeat(node, ctx) {
+    const n = Math.max(0, amountOf(ctx, node.times));
+    const effects = node.effects as EffectNode[];
+    return n ? { expand: Array.from({ length: n }, () => effects).flat() } : true;
+  },
+
+  // CR 706: "Roll a d20." — with a results table (CR 706.3a), or for "equal to the result" afterward (CR 706.4).
+  // "Roll two d20 and ignore the lower roll" (CR 706.6: the ignored roll never happened).
+  roll_die(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { result?: number };
+    if (memo.result === undefined) {
+      const sides = Number(node.sides);
+      const rolls = Array.from({ length: Number(node.count ?? 1) }, () => 1 + Math.floor(nextRandom(g) * sides));
+      const kept = node.ignoreLower ? [Math.max(...rolls)] : rolls;
+      for (const r of kept) ctx.events.push({ type: 'die_rolled', player: ctx.controller, sides, result: r });
+      memo.result = kept.reduce((a, b) => a + b, 0);
+      if (ctx.resolution) ctx.resolution.dieResult = memo.result;
+    }
+    const result = memo.result;
+    const row = ((node.table ?? []) as { min: number; max: number; effects: EffectNode[] }[]).find((r) => result >= r.min && result <= r.max);
+    return row ? { expand: row.effects } : true;
+  },
+
   // CR 615.12: "Damage can't be prevented this turn."
   damage_unpreventable(_node, ctx) {
     ctx.g.unpreventableTurn = ctx.g.turn;
@@ -309,6 +417,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   add_counters(node, ctx) {
     // CR 122.6: counters are put on permanents (CR 122.1a for +1/+1 counters).
+    if (node.divided) {
+      // CR 601.2d: "Distribute three +1/+1 counters among one, two, or three target creatures" — as divided
+      // when it was put on the stack; a target that's no longer legal doesn't get its share.
+      const index = (node.what as { index?: number }).index ?? 0;
+      const original = ctx.resolution?.entry.targets[index] ?? [];
+      const division = ctx.resolution?.entry.division ?? [];
+      const legal = ctx.targets[index] ?? [];
+      original.forEach((t, i) => {
+        if (t.kind !== 'object' || !legal.some((l) => l.kind === 'object' && l.id === t.id && l.zcc === t.zcc)) return;
+        const o = ctx.g.objects[t.id];
+        if (o?.zone === 'battlefield') addCounters(ctx, o, String(node.counter), division[i] ?? 0);
+      });
+      return true;
+    }
     const n = amountOf(ctx, node.amount);
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') addCounters(ctx, o, String(node.counter), n);
     return true;
@@ -526,9 +648,25 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
       if (!candidates.length) return true;
       if (candidates.length > n || node.optional) {
-        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: node.optional ? 0 : n, max: n, text: `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`, ...(node.revealHand ? { revealed: [...hand] } : {}) } };
+        return {
+          ask: {
+            kind: 'choose_objects',
+            player: ctx.controller,
+            candidates,
+            min: node.optional ? 0 : n,
+            max: n,
+            text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
+            ...(node.then === 'library_top' ? { ordered: true as const } : {}),
+            ...(node.revealHand ? { revealed: [...hand] } : {}),
+          },
+        };
       }
       chosen = candidates;
+    }
+    // "put two cards from your hand on top of your library in any order": the first chosen ends up on top.
+    if (node.then === 'library_top') {
+      for (const id of [...chosen].reverse()) moveObject(g, id, 'library', ctx.events, { position: 'top' });
+      return true;
     }
     for (const id of chosen) {
       if (node.then === 'exile') moveObject(g, id, 'exile', ctx.events);
@@ -1375,15 +1513,39 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');
     const mustFind = !quality && !node.upTo;
-    const answer = answerOf(ctx, 'search');
-    if (!answer) {
-      if (library.length === 0 && zones.length === 1) return true;
-      return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node) } };
+    const memo = ctx.memo as { found?: ObjectId[] };
+    const split = node.split as { to: 'battlefield'; tapped?: true } | undefined;
+    let chosen: ObjectId[];
+    if (memo.found) chosen = memo.found;
+    else {
+      const answer = answerOf(ctx, 'search');
+      if (!answer) {
+        if (library.length === 0 && zones.length === 1) return true;
+        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node) } };
+      }
+      chosen = answer.objects;
+      const need = mustFind ? Math.min(count, candidates.length) : 0;
+      if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
+        throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
+      }
+      // Cultivate: revealed, then the player picks which one goes onto the battlefield.
+      if (split && chosen.length) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
+      if (split && chosen.length > 1) {
+        memo.found = chosen;
+        return { ask: { kind: 'choose_objects', player, candidates: chosen, min: 1, max: 1, text: `Choose the card to put onto the battlefield${split.tapped ? ' tapped' : ''} (the other goes into your hand).` } };
+      }
     }
-    const chosen = answer.objects;
-    const need = mustFind ? Math.min(count, candidates.length) : 0;
-    if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
-      throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
+    if (split) {
+      const pickAnswer = memo.found ? answerOf(ctx, 'choose_objects') : null;
+      if (memo.found && (!pickAnswer || pickAnswer.objects.length !== 1 || !chosen.includes(pickAnswer.objects[0]!))) throw new RulesError('Choose one of the revealed cards.');
+      const first = pickAnswer?.objects[0] ?? chosen[0];
+      for (const id of chosen) {
+        if (id === first) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(split.tapped ? { tapped: true } : {}) });
+        else moveObject(g, id, 'hand', ctx.events);
+      }
+      shuffleInPlace(g, zoneList(g, 'library', owner));
+      ctx.events.push({ type: 'shuffled', player });
+      return true;
     }
     const to = node.to as 'hand' | 'battlefield' | 'graveyard' | 'library' | 'exile';
     if (to !== 'library') {
@@ -1493,6 +1655,32 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (entry) announceTargets(entry, ctx.events);
     }
     return true;
+  },
+
+  // CR 115.7d: "You may choose new targets for target spell or ability" — legal targets for it, chosen by this
+  // ability's controller; keeping a target is allowed.
+  retarget(node, ctx) {
+    const g = ctx.g;
+    const entry = refEntries(ctx, ref(node, 'what'))[0];
+    if (!entry?.program?.specs.length) return true;
+    const id = entry.kind === 'spell' ? entry.object : entry.id;
+    const source = (entry.kind === 'spell' ? g.objects[entry.object] : g.objects[entry.source.id]) ?? null;
+    const answer = answerOf(ctx, 'copy_targets');
+    if (answer) {
+      if (answer.targets) {
+        if (answer.targets.some((list) => list.some((t) => (t.kind === 'ability' && t.entry === id) || (t.kind === 'object' && t.object === id)))) throw new RulesError('A spell or ability can’t target itself.');
+        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, answer.targets, source);
+        announceTargets(entry, ctx.events);
+      }
+      return true;
+    }
+    const current = entry.targets.map((list) => list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })));
+    const prompts = targetPrompts(g, entry.controller, entry.program.specs, source).map((p) => ({
+      ...p,
+      candidates: p.candidates.filter((t) => !(t.kind === 'ability' && t.entry === id) && !(t.kind === 'object' && t.object === id)),
+    }));
+    const text = entry.kind === 'spell' ? nameOf(g, g.objects[entry.object]!) : `${entry.sourceName}: ${entry.text}`;
+    return { ask: { kind: 'copy_targets', player: ctx.controller, object: id, ...(entry.kind === 'ability' ? { ability: true as const } : {}), sourceName: sourceName(ctx), text, prompts, current } };
   },
 
   // CR 701.40a / 701.58a: manifest or cloak the top card(s) of your library.
@@ -1956,7 +2144,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       });
       return first === e ? [{}] : [];
     }
-    return [{ object: refTo(o) }];
+    return [{ object: refTo(o), player: o.controller }];
   },
   // CR 700.4: "dies" means put into a graveyard from the battlefield. CR 603.10a: these look back in time.
   dies(t, check) {
@@ -1965,7 +2153,18 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki }] : [];
+    if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller })) return [];
+    // "Whenever one or more other creatures die": once for the creatures that died at the same time.
+    if (t.batch) {
+      const first = (check.batch ?? [e]).find((x) => {
+        if (x.type !== 'moved' || x.from !== 'battlefield' || x.to !== 'graveyard') return false;
+        const xo = check.g.objects[x.object];
+        return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller }));
+      });
+      return first === e ? [{}] : [];
+    }
+    // "Whenever a creature an opponent controls dies, that player loses 2 life": who controlled it (CR 603.10a).
+    return [{ object: refTo(o), lki, player: e.controller }];
   },
   // CR 603.6c: leaves-the-battlefield abilities.
   leaves(t, check) {
@@ -1974,7 +2173,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki }] : [];
+    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki, player: e.controller }] : [];
   },
   attacks(t, check) {
     const e = check.event;
@@ -2302,6 +2501,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
   },
+  // CR 706: "Whenever you roll one or more dice", "Whenever you roll a die"
+  die_rolled(t, check) {
+    const e = check.event;
+    if (e.type !== 'die_rolled' || check.sourceLeft || (t.who === 'you' && e.player !== check.controller)) return [];
+    return [{ player: e.player }];
+  },
   // CR 709.5h: "When you unlock this door" — the door the ability is printed on (rooms.ts tags it).
   unlock_door(t, check) {
     const e = check.event;
@@ -2489,7 +2694,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

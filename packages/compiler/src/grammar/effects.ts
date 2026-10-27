@@ -198,6 +198,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "That player may discard a card. If they do, they draw a card." — another player chooses.
       const theyMay = /^(.+?) may (.+)$/.exec(s);
       const theyDo = sentences[i + 1] ? /^If (?:they do|the player does|that player does|they don't|the player doesn't|that player doesn't), (.+)$/.exec(sentences[i + 1]!) : null;
+      // Smothering Tithe: "that player may pay {2}. If the player doesn't, you create a Treasure token." (CR 118.12)
+      const theyPay = theyMay && theyDo && /n't, /.test(sentences[i + 1]!) ? /^pay ((?:\{(?:\d+|[WUBRGC])\})+)$/.exec(theyMay[2]!) : null;
+      if (theyPay) {
+        const payer = singlePlayer(theyMay![1]!, b) ?? parsePlayerRef(theyMay![1]!, b);
+        const rest = payer ? parseSentence(capitalise(theyDo![1]!), b) : null;
+        if (!payer || !rest) return null;
+        out.push({ type: 'unless_pays', payer, cost: theyPay[1]!, effects: rest });
+        i++;
+        continue;
+      }
       if (theyMay && theyDo && !/^You$/.test(theyMay[1]!)) {
         const who = singlePlayer(theyMay[1]!, b);
         const first = who ? attempt(b, (b) => parseClause(theyMay[2]!, b, who)) : null;
@@ -569,7 +579,48 @@ const EQUAL_TO: [RegExp, (m: RegExpExecArray) => [string, string]][] = [
 ];
 
 /** Numbers the game counts: "for each …", "equal to …" (CR 608.2h: counted as the effect happens). */
-function parseCounted(s: string, b: Binder): EffectNode[] | null {
+type InnerParse = (s: string, b: Binder) => EffectNode[] | null;
+
+/** What "can't cast" covers (CR 101.2): "noncreature spells", "spells during combat", "more than one spell each turn". */
+export interface CastBan {
+  filter?: ObjectFilter;
+  during?: 'your_turn' | 'combat';
+  fromZones?: ('graveyard' | 'library' | 'exile')[];
+  maxPerTurn?: number;
+}
+
+export function parseCastBan(text: string, b: Binder): CastBan | null {
+  let t = text.trim();
+  const ban: CastBan = {};
+  const during = / during (your turn|combat)$/.exec(t);
+  if (during) {
+    ban.during = during[1] === 'combat' ? 'combat' : 'your_turn';
+    t = t.slice(0, during.index);
+  }
+  const from = / from (?:graveyards|a graveyard)(?: or (libraries|exile))?$/.exec(t);
+  if (from) {
+    ban.fromZones = ['graveyard', ...(from[1] === 'libraries' ? (['library'] as const) : from[1] === 'exile' ? (['exile'] as const) : [])];
+    t = t.slice(0, from.index);
+  }
+  const more = /^more than one (.*?)spell each turn$/.exec(t);
+  if (more) {
+    ban.maxPerTurn = 1;
+    t = `${more[1]}spells`;
+  }
+  if (t === 'spells') return ban;
+  const head = /^(.+?) spells(.*)$/.exec(t) ?? /^spells( .+)$/.exec(t);
+  if (!head) return null;
+  const words = t.startsWith('spells') ? '' : head[1]!;
+  // "creature or planeswalker spells", "instant or sorcery spells", "blue creature spells", "spells with mana value 3 or less"
+  const pf = parseFilter(`${words ? `${words.replace(/ and /g, ' or ')} ` : ''}spells${t.startsWith('spells') ? head[1]! : head[2]!}`, b);
+  if (!pf || !pf.plural) return null;
+  const { zone: _z, ...filter } = pf.filter;
+  if (!Object.keys(filter).length) return null;
+  ban.filter = filter;
+  return ban;
+}
+
+function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSentence): EffectNode[] | null {
   const at = s.indexOf(' for each ');
   if (at > 0) {
     const tail = s.slice(at + ' for each '.length);
@@ -578,11 +629,20 @@ function parseCounted(s: string, b: Binder): EffectNode[] | null {
     const options: [string, string][] = [[tail, '']];
     if (suffix) options.unshift([tail.slice(0, suffix.index), suffix[0]]);
     for (const [what, rest] of options) {
-      const r = attempt(b, (b) => {
-        const expr = parseForEach(what, b);
-        const inner = expr && parseSentence(s.slice(0, at) + rest, b);
-        return inner && expr ? scaleBy(inner, expr) : null;
-      });
+      const r =
+        attempt(b, (b) => {
+          const expr = parseForEach(what, b);
+          const inner = expr && parseInner(s.slice(0, at) + rest, b);
+          return inner && expr ? scaleBy(inner, expr) : null;
+        }) ??
+        // "Target player loses 1 life for each artifact that player controls": the count refers back to the subject.
+        (/\b(?:that player|they|their)\b/.test(what)
+          ? attempt(b, (b) => {
+              const inner = parseInner(s.slice(0, at) + rest, b);
+              const expr = inner && parseForEach(what, b);
+              return inner && expr ? scaleBy(inner, expr) : null;
+            })
+          : null);
       if (r) return r;
     }
   }
@@ -590,7 +650,7 @@ function parseCounted(s: string, b: Binder): EffectNode[] | null {
   if (b.eventAmount && /\bthat (?:much|many)\b/.test(s)) {
     const text = s.replace(/\bthat (?:much|many)\b/g, 'X');
     const r = attempt(b, (b) => {
-      const inner = parseSentence(text, b);
+      const inner = parseInner(text, b);
       return inner ? bindX(inner, { kind: 'event' }) : null;
     });
     if (r) return r;
@@ -602,7 +662,7 @@ function parseCounted(s: string, b: Binder): EffectNode[] | null {
       const [text, what] = rewrite(m);
       const r = attempt(b, (b) => {
         const expr = parseCount(what, b);
-        const inner = expr && parseSentence(text, b);
+        const inner = expr && parseInner(text, b);
         return inner && expr ? bindX(inner, expr) : null;
       });
       if (r) return r;
@@ -989,6 +1049,91 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
+  // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
+  const cantCast = /^(?:(Until your next turn|Until end of turn|This turn), )?(.+?) can't cast (.+?)(?: (this turn|until your next turn))?$/.exec(s);
+  if (cantCast && (cantCast[1] ? !cantCast[4] : cantCast[4])) {
+    const r = attempt(b, (b) => {
+      const who = /^players$/i.test(cantCast[2]!) ? ({ ref: 'players', who: 'each' } as Ref) : parsePlayerRef(cantCast[2]!, b);
+      const ban = who ? parseCastBan(cantCast[3]!, b) : null;
+      if (!who || !ban || ban.during || ban.fromZones || ban.maxPerTurn) return null;
+      const until = /next turn/i.test(cantCast[1] ?? cantCast[4]!) ? 'your_next_turn' : 'eot';
+      return [{ type: 'prohibit_casting', who, until, ...(ban.filter ? { filter: ban.filter } : {}) }];
+    });
+    if (r) return r;
+  }
+  // Brainstorm: "Draw three cards, then put two cards from your hand on top of your library in any order."
+  const putBack = /^[Dd]raw (\w+) cards?, then put (\w+) cards? from your hand on top of your library in any order$/.exec(s);
+  if (putBack) {
+    const draw = parseAmount(putBack[1]!);
+    const back = parseAmount(putBack[2]!.replace(/^a$/, 'one'));
+    if (typeof draw === 'number' && typeof back === 'number') {
+      return [
+        { type: 'draw', amount: draw, who: { ref: 'you' } },
+        { type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount: back, then: 'library_top' },
+      ];
+    }
+  }
+  // CR 701.38: "Starting with you, each player votes for sickness or psychosis." Secret council: "Each player
+  // secretly votes for truth or consequences, then those votes are revealed."
+  const VOTE_WORD = String.raw`[A-Za-z]+(?: (?:of )?[A-Z][a-z]+)*`;
+  const vote =
+    new RegExp(String.raw`^[Ss]tarting with you, each player votes for (${VOTE_WORD}(?:, ${VOTE_WORD})*,? or ${VOTE_WORD})$`).exec(s) ??
+    new RegExp(String.raw`^[Ee]ach player (secretly) votes for (${VOTE_WORD}(?:, ${VOTE_WORD})*,? or ${VOTE_WORD}), then those votes are revealed$`).exec(s);
+  // "votes for a nonland permanent you don't control" (CR 701.38b: the choices may be objects)
+  const objectVote = /^(?:[Ss]tarting with you, each player|[Ee]ach player (secretly)) votes for (?:a|an) (.+?)(, then those votes are revealed)?$/.exec(s);
+  if (objectVote && Boolean(objectVote[1]) === Boolean(objectVote[3])) {
+    const object = parseFilter(objectVote[2]!, b);
+    if (!object || object.plural || /^(?:player|opponent)/.test(objectVote[2]!)) return null;
+    for (const noun of ['permanent', 'card', 'creature', 'artifact', 'enchantment', 'land', 'planeswalker']) b.named[`each ${noun} with the most votes or tied for most votes`] = { ref: 'voted' };
+    return [{ type: 'vote', among: object.filter, ...(objectVote[1] ? { secret: true } : {}) }];
+  }
+  if (vote) {
+    const secret = vote.length > 2;
+    const options = vote[secret ? 2 : 1]!.split(/,? or |, /);
+    b.votes = options;
+    return [{ type: 'vote', options, ...(secret ? { secret: true } : {}) }];
+  }
+  // "For each opponent, exile up to one target creature that player controls": a target for each of them (CR 601.2c).
+  const perPlayer = /^[Ff]or each (opponent|player), (.+)$/.exec(s);
+  if (perPlayer && /\bthat (?:player|opponent)(?: controls|'s graveyard)|\bthey control\b/.test(perPlayer[2]!)) {
+    const inner = perPlayer[2]!
+      .replace(/ (?:that (?:player|opponent) controls|they control)\b/g, '')
+      .replace(/ (from|in) that (?:player|opponent)'s graveyard/g, ' $1 a graveyard');
+    if (!/\b(?:that player|that opponent|they|their)\b/.test(inner)) {
+      const r = attempt(b, (b) => {
+        const before = b.targets.length;
+        const effects = parseSentence(inner, b);
+        if (!effects || b.targets.length !== before + 1) return null;
+        const spec = b.targets[before]!;
+        if (spec.what !== 'object' || (spec.count ?? 1) !== 1 || spec.filter?.controller || spec.filter?.owner) return null;
+        spec.perPlayer = perPlayer[1] === 'opponent' ? 'opponents' : 'each';
+        return effects;
+      });
+      if (r) return r;
+    }
+  }
+  // "For each time vote, take an extra turn after this one." (CR 701.38)
+  const eachVote = /^For each (.+?) vote, (.+)$/.exec(s);
+  if (eachVote && b.votes.includes(eachVote[1]!)) {
+    const option = eachVote[1]!;
+    return attempt(b, (b) => {
+      const inner = parseSentence(eachVote[2]!, b);
+      if (!inner) return null;
+      return scaleBy(inner, { kind: 'votes', option }) ?? [{ type: 'repeat', times: { kind: 'votes', option }, effects: inner }];
+    });
+  }
+  // "Choose target creature." — the target, for what follows ("that creature").
+  const chooseTarget = /^[Cc]hoose (target .+|up to one target .+)$/.exec(s);
+  if (chooseTarget) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(chooseTarget[1]!, b);
+      return what?.targeted ? [] : null;
+    });
+    if (r) return r;
+  }
+  // CR 706: "Roll a d20", "Roll two d20 and ignore the lower roll"
+  const roll = /^[Rr]oll (a|two) d(\d+)( and ignore the lower roll)?$/.exec(s);
+  if (roll && (roll[1] === 'a' || roll[3])) return [{ type: 'roll_die', sides: Number(roll[2]), ...(roll[1] === 'two' ? { count: 2, ignoreLower: true } : {}) }];
   // Circle of Protection: "The next time a red source of your choice would deal damage to you this turn, prevent that damage."
   const nextSource = /^The next time (?:a|an) (?:(white|blue|black|red|green|artifact|creature) )?source of your choice would deal damage to you this turn, prevent that damage$/.exec(s);
   if (nextSource) {
@@ -1039,7 +1184,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       // "Target creature becomes black and gains fear until end of turn": the duration is both parts'.
       const shared = j[0] === ' and ' && / until end of turn$/.test(s) && !/ until end of turn$/.test(left);
-      const l = (shared ? attempt(b, (b) => parseClause(`${left} until end of turn`, b, null)) : null) ?? parseClause(left, b, null);
+      const l = (shared ? attempt(b, (b) => parseClause(`${left} until end of turn`, b, null)) : null) ?? countedClause(left, b, null);
       if (!l) return null;
       // "Target creature gets +3/+3 until end of turn and must be blocked this turn if able": the object goes on.
       const rest = parseSentenceWithSubject(right, b, l.subject) ?? (!l.subject && b.it ? attempt(b, (b) => parseClause(`it ${right}`, b, null))?.effects ?? null : null);
@@ -1050,13 +1195,31 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   return null;
 }
 
-function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
+/**
+ * A clause of a longer sentence that counts on its own: "… sacrifices a creature for each death vote and
+ * discards a card for each taxes vote" (CR 608.2h).
+ */
+function countedClause(s: string, b: Binder, subject: Ref | null): Clause | null {
   const whole = attempt(b, (b) => parseClause(s, b, subject));
+  if (whole || !/ for each | equal to |\bthat (?:much|many)\b/.test(s)) return whole;
+  let found: Ref | null = null;
+  const effects = attempt(b, (b) =>
+    parseCounted(s, b, (t, b) => {
+      const c = parseClause(t, b, subject);
+      if (c) found = c.subject;
+      return c?.effects ?? null;
+    }),
+  );
+  return effects ? { effects, subject: found ?? subject } : null;
+}
+
+function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
+  const whole = countedClause(s, b, subject);
   if (whole) return whole.effects;
   const joints = [...s.matchAll(/, then | and then | and |, /g)];
   for (const j of joints) {
     const r = attempt(b, (b) => {
-      const l = parseClause(s.slice(0, j.index), b, subject);
+      const l = countedClause(s.slice(0, j.index), b, subject);
       if (!l) return null;
       const rest = parseSentenceWithSubject(s.slice(j.index! + j[0].length), b, l.subject);
       return rest ? [...l.effects, ...rest] : null;
@@ -1139,6 +1302,15 @@ const VERBS: Record<string, VerbHandler> = {
     const attackingSuffix = / (?:that are|that's|that is) tapped and attacking$|,? tapped and attacking$/;
     const attacking = attackingSuffix.test(args);
     if (attacking) args = args.replace(attackingSuffix, '');
+    // "a number of Treasure tokens equal to the result", "a number of 1/1 … tokens with flying equal to …"
+    const numberOf = /^a number of (.+?) equal to (.+)$/.exec(args);
+    if (numberOf) {
+      const amount = parseCount(numberOf[2]!, b);
+      const many = amount ? parseTokenPhrase(`two ${numberOf[1]}`, b) : null;
+      if (!amount || !many) return null;
+      createdTokens(b);
+      return [{ type: 'create_token', amount, token: many.face, who, ...(many.tapped ? { tapped: true } : {}) }];
+    }
     const attached = /^(.+?) attached to (.+)$/.exec(args);
     const token = parseTokenPhrase(attached ? attached[1]! : args, b);
     if (!token) return null;
@@ -1237,7 +1409,13 @@ const VERBS: Record<string, VerbHandler> = {
     return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: 'source_leaves' } : {}) }];
   },
   return(args, who, b, imperative) {
-    if (!imperative) return null;
+    // "Each player returns all creature cards from their graveyard to the battlefield": each returns their own,
+    // so every such card in every graveyard (under its owner's control, to its owner's hand).
+    if (!imperative) {
+      const each = who.ref === 'players' && who.who === 'each' && !who.attacking ? /^((?:all|each) .+?) from their graveyards? to (the battlefield|their hands?)$/.exec(args) : null;
+      const what = each ? parseObjectRef(`${each[1]} from all graveyards`, b) : null;
+      return what && what.ref.ref === 'all' ? [{ type: 'move', what: what.ref, to: each![2] === 'the battlefield' ? 'battlefield' : 'hand' }] : null;
+    }
     const hand = /^(.+?) to (?:its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {
       const what = parseObjectRef(hand[1]!, b);
@@ -1301,9 +1479,16 @@ const VERBS: Record<string, VerbHandler> = {
       // The shuffle comes in its own sentence ("If you search your library this way, shuffle.").
       if (!/, then shuffle$/.test(args)) args += ', then shuffle';
     }
+    // Cultivate: "…, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
+    const split = /^your library for (up to two .+?), reveal (?:them|those cards), put one onto the battlefield( tapped)? and the other into your hand, then shuffle$/.exec(args);
+    if (split) {
+      const pf = parseFilter(`${split[1]!.replace(/^up to two /, '')} in your library`, b);
+      if (!pf || !pf.plural) return null;
+      return [{ type: 'search', filter: pf.filter, amount: 2, upTo: true, to: 'hand', split: { to: 'battlefield', ...(split[2] ? { tapped: true } : {}) } }];
+    }
     const m =
       /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
-      /^your library for (.+?), then shuffle and put (?:that card|it) (on top)$/.exec(args);
+      /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
     if (!m) return null;
     const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(m[1]!);
     if (!q) return null;
@@ -1324,6 +1509,35 @@ const VERBS: Record<string, VerbHandler> = {
     if (args !== 'dread' || who.ref !== 'you') return null;
     b.it = { ref: 'created' };
     return [{ type: 'manifest', amount: 1, dread: true }];
+  },
+  // "choose target instant or sorcery card in your graveyard, then roll a d20" — the target, for what follows.
+  choose(args, who, b, imperative) {
+    // CR 115.7d: "You may choose new targets for target spell or ability" (Deflecting Swat).
+    const fresh = imperative ? /^new targets for (target .+)$/.exec(args) : null;
+    if (fresh) {
+      const what = parseObjectRef(fresh[1]!, b);
+      return what?.targeted && !what.plural ? [{ type: 'retarget', what: what.ref }] : null;
+    }
+    if (!imperative || !/^(?:up to one )?target /.test(args)) return null;
+    const what = parseObjectRef(args, b);
+    return what?.targeted ? [] : null;
+  },
+  // CR 601.2d: "Distribute three +1/+1 counters among one, two, or three target creatures (you control)."
+  distribute(args, who, b, imperative) {
+    const m = imperative ? /^(\w+) (\S+) counters among (any number of|one or two|one, two, or three|up to (\w+)) (target .+)$/.exec(args) : null;
+    if (!m) return null;
+    const amount = parseAmount(m[1]!);
+    const most = m[3] === 'any number of' ? 100 : m[3] === 'one or two' ? 2 : m[3] === 'one, two, or three' ? 3 : parseAmount(m[4]!);
+    if (typeof amount !== 'number' || typeof most !== 'number') return null;
+    const pf = parseFilter(m[5]!.replace(/^target /, ''), b);
+    if (!pf || !pf.plural || pf.filter.zone) return null;
+    const what = b.addTarget({ what: 'object', filter: pf.filter, text: m[5]!, count: Math.min(most, amount), upTo: true, min: 1 });
+    return [{ type: 'add_counters', what, counter: m[2]!.replace(/−/g, '-'), amount, divided: true }];
+  },
+  // CR 706: "roll a d4 and create a number of Treasure tokens equal to the result"
+  roll(args, who, b, imperative) {
+    const m = imperative ? /^a d(\d+)$/.exec(args) : null;
+    return m ? [{ type: 'roll_die', sides: Number(m[1]) }] : null;
   },
   // CR 506.4: "Remove target attacking creature from combat", "remove it from combat".
   remove(args, who, b, imperative) {

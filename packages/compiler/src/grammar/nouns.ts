@@ -25,7 +25,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
   [/ defending player controls$/, (f) => !f.controller && ((f.controller = 'defending'), true)],
   // "all creatures target player controls", "each creature that player controls"
-  [/ (target player|target opponent|that player|the chosen player|chosen player) controls$/, (f, m, b) => {
+  [/ (target player|target opponent|that player|the chosen player|chosen player|they) controls?$/, (f, m, b) => {
+    if (/control$/.test(m[0]) !== (m[1] === 'they')) return false;
     if (f.controller || f.controlledBy) return false;
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.controlledBy = who), true));
@@ -38,14 +39,18 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
+  [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Transmute (CR 702.53a), transfigure (CR 702.71a)
   [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
+  [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
   [/ (?:from|in) an opponent's graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
   [/ (?:from|in) (?:a|any|target player's) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  [/ (?:from|in) all graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
@@ -327,7 +332,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     const t = text.trim();
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
-    if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$/i.test(t), targeted: false });
+    if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$|most votes$/i.test(t), targeted: false });
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
     const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
     if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });

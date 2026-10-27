@@ -100,29 +100,71 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
           : zone === 'exile'
             ? g.zones.exile
             : g.order.flatMap((p) => g.zones[zone][p] ?? []);
+    // "For each opponent, … target creature that player controls": only those players' objects.
+    const players = spec.perPlayer ? perPlayerSet(g, controller, spec) : null;
     for (const id of ids) {
       const o = g.objects[id];
-      if (o && canTargetObject(g, controller, spec, o, source)) out.push({ kind: 'object', object: id });
+      if (!o || (players && !players.includes(o.zone === 'battlefield' ? o.controller : o.owner))) continue;
+      if (canTargetObject(g, controller, spec, o, source)) out.push({ kind: 'object', object: id });
     }
   }
   return out;
 }
 
+/** The players a "for each opponent, … target … that player controls" spec has a target for. */
+export function perPlayerSet(g: GameState, controller: PlayerId, spec: TargetSpec): PlayerId[] {
+  if (!spec.perPlayer) return [];
+  return livePlayers(g).filter((p) => spec.perPlayer === 'each' || p !== controller);
+}
+
+/** Whose a target of a per-player spec is: a permanent's controller, otherwise the card's owner. */
+function whoseTarget(g: GameState, t: Target): PlayerId | undefined {
+  if (t.kind !== 'object') return undefined;
+  const o = g.objects[t.object];
+  return o ? (o.zone === 'battlefield' ? o.controller : o.owner) : undefined;
+}
+
+/** How many targets a spec takes at most (CR 601.2c). */
+export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec): number {
+  return spec.perPlayer ? perPlayerSet(g, controller, spec).length : (spec.count ?? 1);
+}
+
+/**
+ * How many targets a spec needs at least: "up to" any minimum; per-player specs one for each player who has a
+ * legal one (at least one); otherwise all of them.
+ */
+export function targetsRequired(g: GameState, controller: PlayerId, spec: TargetSpec, candidates: readonly Target[]): number {
+  if (spec.upTo) return spec.min ?? 0;
+  if (spec.perPlayer) {
+    const players = new Set(candidates.map((t) => whoseTarget(g, t)));
+    return Math.max(1, perPlayerSet(g, controller, spec).filter((p) => players.has(p)).length);
+  }
+  return spec.count ?? 1;
+}
+
 export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): TargetPrompt[] {
-  return specs.map((spec) => ({
-    text: spec.text,
-    count: spec.count ?? 1,
-    upTo: Boolean(spec.upTo),
-    // "one, two, or three targets": at least this many (CR 601.2c).
-    ...(spec.upTo && spec.min ? { min: spec.min } : {}),
-    ...(spec.sameOwner ? { sameOwner: true as const } : {}),
-    candidates: targetCandidates(g, controller, spec, source),
-  }));
+  return specs.map((spec) => {
+    const candidates = targetCandidates(g, controller, spec, source);
+    const min = spec.perPlayer ? targetsRequired(g, controller, spec, candidates) : spec.upTo ? spec.min : undefined;
+    return {
+      text: spec.text,
+      count: targetCount(g, controller, spec),
+      upTo: Boolean(spec.upTo || spec.perPlayer),
+      // "one, two, or three targets": at least this many (CR 601.2c).
+      ...(min ? { min } : {}),
+      ...(spec.sameOwner ? { sameOwner: true as const } : {}),
+      ...(spec.perPlayer ? { perPlayer: true as const } : {}),
+      candidates,
+    };
+  });
 }
 
 /** CR 601.2c / CR 115.6: whether enough legal targets exist for every spec. */
 export function canChooseTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): boolean {
-  return specs.every((spec) => targetCandidates(g, controller, spec, source).length >= (spec.upTo ? (spec.min ?? 0) : (spec.count ?? 1)));
+  return specs.every((spec) => {
+    const candidates = targetCandidates(g, controller, spec, source);
+    return candidates.length >= targetsRequired(g, controller, spec, candidates);
+  });
 }
 
 /**
@@ -133,13 +175,14 @@ export function divisionFor(effects: EffectNode[], targets: readonly (readonly u
   const node = findDivided(effects);
   if (!node) return undefined;
   const total = node.amount === 'X' ? x : typeof node.amount === 'number' ? node.amount : 0;
-  const index = (node.to as { index?: number }).index ?? 0;
+  const index = ((node.to ?? node.what) as { index?: number }).index ?? 0;
   const k = targets[index]?.length ?? 0;
+  const what = node.type === 'add_counters' ? 'counters' : 'damage';
   if (k === 0) return [];
-  if (k > total) throw new RulesError(`Each target needs at least 1 of the ${total} damage.`);
+  if (k > total) throw new RulesError(`Each target needs at least 1 of the ${total} ${what}.`);
   if (given) {
     if (given.length !== k || given.some((n) => !Number.isInteger(n) || n < 1) || given.reduce((a, b) => a + b, 0) !== total) {
-      throw new RulesError(`Divide ${total} damage among the ${k} target(s), at least 1 each.`);
+      throw new RulesError(`Divide ${total} ${what} among the ${k} target(s), at least 1 each.`);
     }
     return [...given];
   }
@@ -148,7 +191,7 @@ export function divisionFor(effects: EffectNode[], targets: readonly (readonly u
 
 function findDivided(effects: EffectNode[]): EffectNode | undefined {
   for (const e of effects) {
-    if (e.type === 'deal_damage' && e.divided) return e;
+    if ((e.type === 'deal_damage' || e.type === 'add_counters') && e.divided) return e;
     for (const k of ['effects', 'then', 'else']) {
       const inner = Array.isArray(e[k]) ? findDivided(e[k] as EffectNode[]) : undefined;
       if (inner) return inner;
@@ -162,8 +205,18 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
   const out: Target[][] = [];
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source);
-    const n = spec.count ?? 1;
-    if (candidates.length < (spec.upTo ? (spec.min ?? 0) : n)) return null;
+    const n = targetCount(g, controller, spec);
+    if (candidates.length < targetsRequired(g, controller, spec, candidates)) return null;
+    if (spec.perPlayer) {
+      // One for each player who has a legal one.
+      const picks: Target[] = [];
+      for (const p of perPlayerSet(g, controller, spec)) {
+        const t = candidates.find((c) => whoseTarget(g, c) === p);
+        if (t) picks.push(t);
+      }
+      out.push(picks);
+      continue;
+    }
     // "from a single graveyard": the first candidate's owner's cards.
     const first = candidates[0];
     const owner = spec.sameOwner && first?.kind === 'object' ? g.objects[first.object]?.owner : undefined;
@@ -193,8 +246,15 @@ export function chooseTargets(
   }
   return specs.map((spec, i) => {
     const list = given[i]!;
-    const n = spec.count ?? 1;
-    if (list.length > n || (!spec.upTo && list.length < n) || list.length < (spec.min ?? 0)) {
+    const n = targetCount(g, controller, spec);
+    if (spec.perPlayer) {
+      // CR 601.2c: each target for a different one of those players.
+      const need = targetsRequired(g, controller, spec, targetCandidates(g, controller, spec, source));
+      if (list.length > n || list.length < need) throw new RulesError(`Choose ${spec.upTo ? 'up to ' : ''}one for each player for “${spec.text}”.`);
+      const owners = list.map((t) => whoseTarget(g, t));
+      const players = perPlayerSet(g, controller, spec);
+      if (new Set(owners).size !== owners.length || owners.some((p) => !p || !players.includes(p))) throw new RulesError(`Each target for “${spec.text}” must belong to a different player.`);
+    } else if (list.length > n || (!spec.upTo && list.length < n) || list.length < (spec.min ?? 0)) {
       throw new RulesError(`Choose ${spec.upTo ? `${spec.min ? `${spec.min} to ` : 'up to '}` : ''}${n} for “${spec.text}”.`);
     }
     // "from a single graveyard"

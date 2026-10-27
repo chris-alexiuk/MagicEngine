@@ -1172,3 +1172,104 @@ describe('repeatable modes, unpreventable damage, "target player controls", X co
     expect(parse('As an additional cost to cast this spell, you may collect evidence 6.', 'Instant', 'Study').abilities[0]).toMatchObject({ effect: { type: 'cast_option', id: 'collect_evidence', cost: { other: [{ type: 'collect_evidence', amount: 6 }] } } });
   });
 });
+
+describe('dice, splice, votes, counted clauses (slices 69–78)', () => {
+  it('reads them', () => {
+    const d20 = parse('Roll a d20.\n1—9 | You gain 1 life.\n10—20 | Draw a card.', 'Sorcery', 'Gamble');
+    expect(d20.unparsed).toEqual([]);
+    expect(d20.abilities[0]).toMatchObject({ effects: [{ type: 'roll_die', sides: 20, table: [{ min: 1, max: 9 }, { min: 10, max: 20 }] }] });
+    expect(parse('Roll two d20 and ignore the lower roll.\n1—20 | Draw a card.', 'Sorcery', 'Twice').abilities[0]).toMatchObject({ effects: [{ type: 'roll_die', count: 2, ignoreLower: true }] });
+    expect(parse('Whenever you roll one or more dice, you gain 1 life.', 'Creature — Dwarf', 'Fan').abilities[0]).toMatchObject({ trigger: { type: 'die_rolled', who: 'you' } });
+    expect(parse('Splice onto Arcane {1}{R}', 'Instant — Arcane', 'Glacial').keywords[0]).toMatchObject({ id: 'splice', cost: '{1}{R}' });
+    const bite = parse('Will of the council — Starting with you, each player votes for sickness or psychosis. If sickness gets more votes, you gain 2 life. If psychosis gets more votes or the vote is tied, each opponent discards two cards.', 'Sorcery', 'Bite');
+    expect(bite.abilities[0]).toMatchObject({
+      effects: [{ type: 'vote', options: ['sickness', 'psychosis'] }, { type: 'if', cond: { type: 'votes', option: 'sickness' } }, { type: 'if', cond: { type: 'votes', option: 'psychosis', orTied: true } }],
+    });
+    const dilemma = parse('Starting with you, each player votes for death or taxes. Each opponent sacrifices a creature of their choice for each death vote and discards a card for each taxes vote.', 'Sorcery', 'Capital');
+    expect(dilemma.abilities[0]).toMatchObject({ effects: [{ type: 'vote' }, { amount: { kind: 'votes', option: 'death' } }, { amount: { kind: 'votes', option: 'taxes' } }] });
+    expect(parse("Starting with you, each player votes for a nonland permanent you don't control. Exile each permanent with the most votes or tied for most votes.", 'Sorcery', 'Judgment').abilities[0]).toMatchObject({
+      effects: [{ type: 'vote', among: { controller: 'not_you' } }, { type: 'move', what: { ref: 'voted' }, to: 'exile' }],
+    });
+    expect(parse('Each player secretly votes for truth or consequences, then those votes are revealed. You draw cards equal to the number of truth votes.', 'Sorcery', 'Truth').abilities[0]).toMatchObject({ effects: [{ type: 'vote', secret: true }, { type: 'draw' }] });
+    expect(parse('Starting with you, each player votes for time or money. For each time vote, take an extra turn after this one.', 'Sorcery', 'Time').abilities[0]).toMatchObject({ effects: [{ type: 'vote' }, { type: 'repeat', times: { kind: 'votes', option: 'time' } }] });
+    expect(parse('While voting, you may vote an additional time.', 'Creature — Human', 'Broker').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'may_extra_vote' } });
+    expect(parse('You gain life equal to the number of creatures in your party.', 'Sorcery', 'Party').abilities[0]).toMatchObject({ effects: [{ amount: { kind: 'party' } }] });
+    expect(parse('When this creature enters, destroy all creatures other than this creature.', 'Creature — Angel', 'Angel').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { filter: { other: true } } }] });
+    expect(parse('Each player returns all creature cards from their graveyard to the battlefield.', 'Sorcery', 'Rise').abilities[0]).toMatchObject({ effects: [{ type: 'move', what: { ref: 'all', filter: { zone: 'graveyard' } }, to: 'battlefield' }] });
+  });
+});
+
+describe("can't cast, \"that player\" after an opponent's creature dies (slices 79–83)", () => {
+  it('reads them', () => {
+    expect(parse("Your opponents can't cast spells during your turn.", 'Enchantment', 'Silence').abilities[0]).toMatchObject({ effect: { type: 'cast_prohibition', who: 'opponents', during: 'your_turn' } });
+    expect(parse("Each player can't cast more than one noncreature spell each turn.", 'Enchantment', 'Rule').abilities[0]).toMatchObject({ effect: { type: 'cast_prohibition', who: 'each', maxPerTurn: 1, filter: { notTypes: ['Creature'] } } });
+    expect(parse("Players can't cast spells from graveyards or libraries.", 'Enchantment', 'Ban').abilities[0]).toMatchObject({ effect: { type: 'cast_prohibition', fromZones: ['graveyard', 'library'] } });
+    expect(parse("Target player can't cast spells this turn.", 'Instant', 'Hush').abilities[0]).toMatchObject({ effects: [{ type: 'prohibit_casting', who: { ref: 'target', index: 0 }, until: 'eot' }] });
+    expect(parse("Until your next turn, your opponents can't cast noncreature spells.", 'Sorcery', 'Wait').abilities[0]).toMatchObject({ effects: [{ type: 'prohibit_casting', who: { ref: 'players', who: 'opponents' }, until: 'your_next_turn', filter: { notTypes: ['Creature'] } }] });
+    expect(parse('Whenever a creature an opponent controls dies, that player loses 2 life.', 'Creature — Wurm', 'Wurm').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', who: { ref: 'trigger_player' } }] });
+    expect(parse('Target player loses 1 life for each tapped artifact they control.', 'Sorcery', 'Greed').abilities[0]).toMatchObject({ effects: [{ amount: { kind: 'count', filter: { controlledBy: { ref: 'target', index: 0 }, tapped: true } } }] });
+  });
+});
+
+describe('alternative costs, trap conditions, distributing counters, activation locks (slices 84–88)', () => {
+  it('reads them', () => {
+    expect(parse("You may pay 1 life and exile a blue card from your hand rather than pay this spell's mana cost.", 'Instant', 'Force').abilities[0]).toMatchObject({
+      effect: { type: 'cast_option', kind: 'alternative', cost: { other: [{ type: 'pay_life', amount: 1 }, { type: 'exile_cards', from: 'hand', filter: { colors: ['U'] } }] } },
+    });
+    expect(parse("You may return an Island you control to its owner's hand rather than pay this spell's mana cost.", 'Instant', 'Daze').abilities[0]).toMatchObject({ effect: { cost: { other: [{ type: 'return_permanents', amount: 1, filter: { subtypes: ['Island'] } }] } } });
+    expect(parse("If three or more creatures are attacking, you may pay {U} rather than pay this spell's mana cost.", 'Instant', 'Trap').abilities[0]).toMatchObject({
+      effect: { condition: { type: 'count', who: 'all', min: 3, filter: { combat: 'attacking' } }, cost: { mana: '{U}' } },
+    });
+    expect(parse("If an opponent cast three or more spells this turn, you may pay {0} rather than pay this spell's mana cost.", 'Instant', 'Mind').abilities[0]).toMatchObject({ effect: { condition: { type: 'this_turn', event: 'opponent_cast', min: 3 } } });
+    expect(parse('Distribute two -1/-1 counters among one or two target creatures.', 'Instant', 'Agony').abilities[0]).toMatchObject({ targets: [{ count: 2, upTo: true, min: 1 }], effects: [{ type: 'add_counters', counter: '-1/-1', amount: 2, divided: true }] });
+    expect(parse("Activated abilities of artifacts can't be activated.", 'Enchantment', 'Silence').abilities[0]).toMatchObject({ effect: { affected: { ref: 'all', filter: { types: ['Artifact'] } }, rules: ['cant_activate'] } });
+    expect(parse("Enchant permanent\nEnchanted permanent can't attack or block, and its activated abilities can't be activated unless they're mana abilities.", 'Enchantment — Aura', 'Fetters').abilities[0]).toMatchObject({
+      effect: { affected: { ref: 'attached' }, rules: ['cant_attack', 'cant_block', 'cant_activate_nonmana'] },
+    });
+  });
+});
+
+describe('card names, targets for each opponent (slices 89–92)', () => {
+  it('reads them', () => {
+    const needle = parse("As this artifact enters, choose a card name.\nActivated abilities of sources with the chosen name can't be activated unless they're mana abilities.", 'Artifact', 'Needle');
+    expect(needle.abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'card_name' } });
+    expect(needle.abilities[1]).toMatchObject({ effect: { affected: { ref: 'all', filter: { chosenName: true } }, rules: ['cant_activate_nonmana'] } });
+    const mage = parse("As this creature enters, choose a nonland card name.\nSpells with the chosen name can't be cast.", 'Creature — Human Wizard', 'Mage');
+    expect(mage.abilities[0]).toMatchObject({ effect: { choice: 'card_name', filter: { notTypes: ['Land'] } } });
+    expect(mage.abilities[1]).toMatchObject({ effect: { type: 'cast_prohibition', who: 'each', filter: { chosenName: true } } });
+    expect(parse('For each opponent, exile up to one target creature that player controls.', 'Sorcery', 'Scatter').abilities[0]).toMatchObject({
+      targets: [{ perPlayer: 'opponents', upTo: true, filter: { types: ['Creature'] } }],
+      effects: [{ type: 'move', what: { ref: 'target', index: 0 }, to: 'exile' }],
+    });
+    expect(parse("When this creature enters, for each opponent, you may put up to one target creature card from that player's graveyard onto the battlefield under your control.", 'Creature — Avatar', 'Primordial').abilities[0]).toMatchObject({
+      targets: [{ perPlayer: 'opponents', filter: { zone: 'graveyard' } }],
+    });
+  });
+});
+
+describe('staples (slices 93–96)', () => {
+  it('reads them', () => {
+    expect(parse('Search your library for an instant or sorcery card, reveal it, then shuffle and put that card on top.', 'Instant', 'Mystical').abilities[0]).toMatchObject({ effects: [{ type: 'search', to: 'library' }] });
+    expect(parse('Draw three cards, then put two cards from your hand on top of your library in any order.', 'Instant', 'Storm').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: 3 }, { type: 'choose_from_hand', amount: 2, then: 'library_top' }] });
+    expect(parse('Search your library for up to two basic land cards, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle.', 'Sorcery', 'Cultivate').abilities[0]).toMatchObject({
+      effects: [{ type: 'search', amount: 2, upTo: true, to: 'hand', split: { to: 'battlefield', tapped: true } }],
+    });
+    expect(parse('{T}: Add one mana of any color that a land an opponent controls could produce.', 'Land', 'Orchard').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', anyColor: 1, couldProduce: 'opponents' }] });
+    expect(parse('Each land is a Swamp in addition to its other land types.', 'Legendary Land', 'Urborg').abilities[0]).toMatchObject({ effect: { affected: { ref: 'all', filter: { types: ['Land'] } }, addTypes: { subtypes: ['Swamp'] } } });
+    expect(parse('Whenever one or more other creatures die, draw a card.', 'Creature — Human', 'Opportunist').abilities[0]).toMatchObject({ trigger: { type: 'dies', batch: true, subject: { filter: { other: true } } } });
+    expect(parse("Whenever an opponent draws a card, that player may pay {2}. If the player doesn't, you create a Treasure token.", 'Enchantment', 'Tithe').abilities[0]).toMatchObject({
+      effects: [{ type: 'unless_pays', payer: { ref: 'trigger_player' }, cost: '{2}' }],
+    });
+  });
+});
+
+describe('costs to attack (slice 97)', () => {
+  it('reads them', () => {
+    expect(parse("Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you.", 'Enchantment', 'Prison').abilities[0]).toMatchObject({ effect: { type: 'attack_tax', cost: '{2}' } });
+    expect(parse('Draw cards equal to the greatest power among creatures you control.', 'Sorcery', 'Expertise').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: { kind: 'greatest', stat: 'power', filter: { types: ['Creature'], controller: 'you' } } }] });
+    expect(parse('You may choose new targets for target spell or ability.', 'Instant', 'Swat').abilities[0]).toMatchObject({ targets: [{ what: 'ability' }], effects: [{ type: 'may', effects: [{ type: 'retarget', what: { ref: 'target', index: 0 } }] }] });
+    expect(parse("Nonblack creatures can't attack you or planeswalkers you control unless their controller pays {1} for each of those creatures.", 'Enchantment', 'Tax').abilities[0]).toMatchObject({
+      effect: { type: 'attack_tax', cost: '{1}', planeswalkers: true, filter: { notColors: ['B'] } },
+    });
+  });
+});

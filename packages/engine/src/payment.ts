@@ -11,7 +11,7 @@ import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -78,8 +78,15 @@ export function craftCandidates(g: GameState, player: PlayerId, o: GameObject, c
 
 export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject, c?: EffectNode): ObjectId[] {
   const filter = c?.filter as ObjectFilter | undefined;
-  // "Exile a creature card from your graveyard"
-  return zoneList(g, 'graveyard', player).filter((id) => id !== o.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone: 'graveyard' }, { controller: player, source: o })));
+  // "Exile a creature card from your graveyard"; "exile a blue card from your hand" (Force of Will).
+  const zone = c?.from === 'hand' ? 'hand' : 'graveyard';
+  return zoneList(g, zone, player).filter((id) => id !== o.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone }, { controller: player, source: o })));
+}
+
+/** "Return an Island you control to its owner's hand" as a cost: permanents you control like that. */
+export function returnCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
+  const filter = (c.filter ?? {}) as ObjectFilter;
+  return g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === player && matchesFilter(g, g.objects[id]!, filter, { controller: player, source: o }));
 }
 
 export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, cost: Cost, choices: CostChoices = {}): void {
@@ -135,7 +142,12 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const n = Number(c.amount ?? 1);
       const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
-      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your graveyard to exile.`);
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your ${c.from === 'hand' ? 'hand' : 'graveyard'} to exile.`);
+    } else if (c.type === 'return_permanents') {
+      const n = Number(c.amount ?? 1);
+      const ok = returnCostCandidates(g, player, o, c);
+      const chosen = choices.returned ?? [];
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} permanent(s) you control to return to your hand.`);
     } else if (c.type === 'tap_creatures') {
       const n = Number(c.amount ?? 1);
       const chosen = choices.crew ?? [];
@@ -230,7 +242,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       events.push({ type: 'counters', object: o.id, counter, delta: -n });
     } else if (c.type === 'crew' || c.type === 'station' || c.type === 'tap_creatures') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
-    } else if (c.type === 'return_unblocked') {
+    } else if (c.type === 'return_unblocked' || c.type === 'return_permanents') {
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);

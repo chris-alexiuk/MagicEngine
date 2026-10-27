@@ -20,6 +20,7 @@ import type { CardDB, CardDef, Color } from '@mtg/schema';
 import {
   activatedAbilities,
   attackRestriction,
+  attackTax,
   mustAttack,
   apply,
   blockDeclarationProblem,
@@ -37,8 +38,11 @@ import {
   type GameState,
   type PlayerId,
   type Target,
+  type TargetPrompt,
 } from '../src/index.js';
 import { defaultCastChoice } from '../src/legal.js';
+import { planAutoTap } from '../src/autotap.js';
+import { parseManaCost } from '../src/mana.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -122,6 +126,16 @@ function sample(all: Target[], count: number, upTo: boolean, min = 0, sameOwner?
   return shuffle([...candidates]).slice(0, n);
 }
 
+/** A prompt's targets: per-player prompts get one for each player who has a candidate (sometimes fewer, if allowed). */
+function samplePrompt(pr: TargetPrompt): Target[] {
+  if (!pr.perPlayer) return sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner);
+  const whose = (t: Target) => (t.kind === 'object' ? (current?.objects[t.object]?.zone === 'battlefield' ? current.objects[t.object]!.controller : current?.objects[t.object]?.owner) : undefined);
+  const groups = new Map<string | undefined, Target[]>();
+  for (const t of pr.candidates) groups.set(whose(t), [...(groups.get(whose(t)) ?? []), t]);
+  const picks = [...groups.values()].map((ts) => pick(ts));
+  return picks.filter((_, i) => i < (pr.min ?? 0) || rnd() < 0.8);
+}
+
 /** Re-picks targets at random for a cast/activate action that came with defaults. */
 function randomiseTargets(g: GameState, a: Action): Action {
   current = g;
@@ -140,6 +154,8 @@ function randomiseTargets(g: GameState, a: Action): Action {
   } catch {
     return a;
   }
+  // Per-player specs ("for each opponent, … target … that player controls") keep the offered choice.
+  if (specs.some((s) => s.perPlayer)) return a;
   return { ...a, targets: specs.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)) };
 }
 
@@ -229,6 +245,20 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         if (friend) attacks.push({ attacker: friend, target: pick(p.targets.filter((t) => !attackRestriction(g, g.objects[friend]!, t))) });
         else attacks.length = 0;
       }
+      // CR 508.1g: costs to attack (Ghostly Prison) — sometimes pay, otherwise keep those creatures home.
+      const tax = attackTax(g, attacks);
+      if (tax && (rnd() < 0.3 || !planAutoTap(g, me, parseManaCost(tax), 0, attacks.map((a) => a.attacker)))) {
+        // A creature that must attack goes after an untaxed target instead, if it has one (CR 508.1d).
+        const free = attacks.flatMap((a) => {
+          if (!attackTax(g, [a])) return [a];
+          const o = g.objects[a.attacker]!;
+          const alt = mustAttack(g, o) ? p.targets.find((t) => !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: a.attacker, target: t }])) : undefined;
+          return alt ? [{ attacker: a.attacker, target: alt }] : [];
+        });
+        attacks.length = 0;
+        attacks.push(...free);
+        if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) attacks.length = 0;
+      }
       // CR 701.43d: exert some of those that can be.
       const exert = attacks.map((a) => a.attacker).filter((id) => p.exertable?.includes(id) && rnd() < 0.6);
       // CR 702.154a: enlist a creature that stays home, sometimes.
@@ -295,10 +325,10 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         // CR 700.2d: the same mode again, if it may be chosen more than once.
         while (p.modes.repeat && picked.length < n && legal.length) picked.push(pick(legal));
         const chosen = picked.sort((a, b) => a.i - b.i);
-        const targets = chosen.flatMap(({ o }) => o.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner)));
-        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner))] } };
+        const targets = chosen.flatMap(({ o }) => o.prompts.map(samplePrompt));
+        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map(samplePrompt)] } };
       }
-      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map((pr) => sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner)) } };
+      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map(samplePrompt) } };
     }
   }
   return null;
@@ -405,6 +435,12 @@ for (let game = 0; game < GAMES; game++) {
       // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
       // (Multikicker: sometimes more than once — CR 702.33c.)
       if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: rnd() < 0.5 ? true : 1 + Math.floor(rnd() * 3) };
+      // CR 702.47: sometimes splice the Arcane cards in hand onto it (refused if it isn't Arcane or there's no mana).
+      if (action.type === 'cast' && rnd() < 0.5) {
+        const cast = action;
+        const splice = (g.zones.hand[cast.player] ?? []).filter((id) => id !== cast.object && g.cards[g.objects[id]!.card]?.faces.some((f) => f.keywords.some((k) => k.id === 'splice')));
+        if (splice.length) action = { ...cast, costs: { ...cast.costs, splice } };
+      }
       // Replicate or squad: sometimes pay it once more.
       if (action.type === 'cast' && action.extras?.length === 1 && rnd() < 0.3) action = { ...action, extras: [...action.extras, action.extras[0]!] };
       if (action !== chosen) offered = false;

@@ -1,5 +1,7 @@
 import { isRingBearer } from './ring.js';
-import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
+import type { AttackTaxNode, StaticAbility } from '@mtg/schema';
+import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
+import { payDuringResolution } from './payment.js';
 import {
   RulesError,
   type AttackTarget,
@@ -15,7 +17,7 @@ import {
 } from './types.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
+import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // Who and what is in combat
@@ -165,6 +167,29 @@ function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): st
 const sameTarget = (a: AttackTarget, b: AttackTarget) =>
   a.kind === b.kind && (a.kind === 'player' ? a.player === (b as typeof a).player : a.object === (b as typeof a).object);
 
+/**
+ * CR 508.1g: the total cost to attack with these creatures — "Creatures can't attack you unless their controller pays
+ * {2} for each creature they control that's attacking you". The mana symbols, concatenated ("" if none).
+ */
+export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; target: AttackTarget }[]): string {
+  let out = '';
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
+      const e = (a as StaticAbility).effect as AttackTaxNode;
+      if (!staticConditionHolds(g, e, src)) continue;
+      for (const { attacker, target } of attacks) {
+        const at = target.kind === 'player' ? target.player === src.controller : Boolean(e.planeswalkers) && g.objects[target.object]?.controller === src.controller;
+        const o = g.objects[attacker];
+        if (!at || !o || (e.filter && !matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) continue;
+        out += e.cost;
+      }
+    }
+  }
+  return out;
+}
+
 export function declareAttackers(
   g: GameState,
   attacks: { attacker: ObjectId; target: AttackTarget }[],
@@ -206,7 +231,8 @@ export function declareAttackers(
   // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => !attackRestriction(g, o, t))) {
+    // CR 508.1d: a cost to attack is never required, so a creature that would have to pay one isn't required to attack.
+    if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: id, target: t }]))) {
       throw new RulesError(`${nameOf(g, o)} ${o.goadedBy?.length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
     }
   }
@@ -217,6 +243,15 @@ export function declareAttackers(
     if (!hasKeyword(g, o, 'vigilance')) setTapped(g, attacker, true, events);
     // CR 508.1k: it becomes an attacking creature.
     g.combat!.attackers[attacker] = { zcc: o.zcc, target, blocked: false, blockers: [] };
+  }
+  // CR 508.1h: the costs to attack are paid (mana abilities may be activated, CR 508.1i).
+  const tax = attackTax(g, attacks);
+  if (tax) {
+    try {
+      payDuringResolution(g, g.active, tax, events);
+    } catch {
+      throw new RulesError(`Attacking with those creatures costs ${tax}, which can’t be paid.`);
+    }
   }
   g.combat!.attackersDeclared = true;
   // CR 702.154a: "When you do, this creature gets +X/+0 until end of turn, where X is the tapped creature's power."

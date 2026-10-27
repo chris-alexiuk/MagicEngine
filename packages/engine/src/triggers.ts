@@ -6,7 +6,7 @@ import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
 import { matchTrigger } from './registry.js';
 import { apnap } from './resolve.js';
-import { chooseTargets, divisionFor, targetCandidates, targetPrompts } from './targets.js';
+import { chooseTargets, divisionFor, targetCandidates, targetPrompts, targetsRequired } from './targets.js';
 import {
   RulesError,
   type GameEvent,
@@ -35,7 +35,7 @@ const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
   'sacrificed', 'blockers_done', 'scried', 'surveilled', 'copied', 'became_monstrous', 'ring_tempted',
-  'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked',
+  'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked', 'die_rolled',
 ]);
 /** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
 const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
@@ -251,11 +251,11 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     const modal = Boolean(ability.modes);
     const candidates = specs.map((s) => targetCandidates(g, t.controller, s, source));
     // CR 603.3d (via CR 601.2c): with too few legal targets the ability is removed from the stack.
-    if (!modal && specs.some((s, i) => !s.upTo && candidates[i]!.length < (s.count ?? 1))) {
+    if (!modal && specs.some((s, i) => candidates[i]!.length < targetsRequired(g, t.controller, s, candidates[i]!))) {
       g.triggers = g.triggers.filter((x) => x !== t);
       return;
     }
-    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : candidates[i]!.length === (s.count ?? 1)));
+    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && candidates[i]!.length === (s.count ?? 1)));
     if (!forced) {
       g.pending = {
         kind: 'trigger_targets',
@@ -313,7 +313,10 @@ export function answerTriggerTargets(g: GameState, player: PlayerId, modes: numb
     // CR 700.2b: a mode with no legal targets can't be chosen; if no mode can be, the ability is removed.
     if (!modes?.length && ability.modes.min > 0) {
       const anyLegal = ability.modes.options.some((m) =>
-        (m.targets ?? []).every((s) => s.upTo || targetCandidates(g, t.controller, s, g.objects[t.source.id] ?? null).length >= (s.count ?? 1)),
+        (m.targets ?? []).every((s) => {
+          const c = targetCandidates(g, t.controller, s, g.objects[t.source.id] ?? null);
+          return c.length >= targetsRequired(g, t.controller, s, c);
+        }),
       );
       if (!anyLegal) {
         g.pending = null;

@@ -1,3 +1,4 @@
+import { castProhibition } from './cast-bans.js';
 import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
@@ -26,7 +27,7 @@ import { OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
-import { activatedAbilities, flatten, spellPrograms } from './program.js';
+import { appendProgram, activatedAbilities, flatten, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets, divisionFor } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
@@ -551,7 +552,8 @@ function cast(
   if (alt?.id === 'sneak' && !(g.active === player && g.step === 'declare_blockers')) throw new RulesError(`${face.name} can be cast for its sneak cost only during your declare blockers step.`);
   const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash') || alt?.id === 'sneak';
   // CR 601.3: "Cast this spell only during combat" (and the like).
-  const restricted = during ? null : castRestrictionProblem(g, player, castFace, o);
+  // CR 101.2: a "can't cast" effect applies even when an effect lets it be cast as something resolves.
+  const restricted = during ? castProhibition(g, player, castFace, o) : castRestrictionProblem(g, player, castFace, o);
   if (restricted) throw new RulesError(restricted);
   // CR 608.2g: casting as an effect resolves ignores timing.
   if (!instantSpeed && !during) {
@@ -565,7 +567,13 @@ function cast(
   // A bonus that depends on a cost ("if this spell was cast using teamwork") looks at the costs being chosen now.
   const holds = (c: ConditionNode) =>
     c.type === 'paid' ? extras.includes(String(c.cost)) || altId === c.cost : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
-  const program = spellProgram(castFace, modes, holds, added.some((a) => a.allModes));
+  // CR 702.47: cards spliced onto it add their rules text (and their splice costs, below).
+  const splices = spliceCards(g, player, o, castFace, costChoices.splice);
+  let program = spellProgram(castFace, modes, holds, added.some((a) => a.allModes));
+  for (const s of splices) {
+    if (!program) throw new RulesError(`${face.name} is resolved by hand; nothing can be spliced onto it here.`);
+    program = appendProgram(program, s.program);
+  }
   const targets = program
     ? chooseTargets(g, player, program.specs, chosenTargets, o)
     : chosenTargets?.some((t) => t.length)
@@ -591,6 +599,7 @@ function cast(
   // Strive: "costs {2}{W} more to cast for each target beyond the first" (CR 601.2f).
   addPerTargetCost(castFace, targets, cost);
   addModeCosts(castFace, modes, cost);
+  for (const s of splices) addCost(cost, parseManaCost(s.cost));
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
   if (alt?.reduceBySacrificed) {
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
@@ -635,6 +644,7 @@ function cast(
   // CR 702.103b: it becomes an Aura spell as it's put on the stack.
   if (alt?.id === 'bestow') o.bestowed = true;
   if (alt?.prototype) o.prototyped = true;
+  if (splices.length) events.push({ type: 'revealed', player, objects: splices.map((s) => s.id) });
   // CR 722.3c: the permanent loses the prepared designation as the spell becomes cast; the copy is a spell copy now.
   if (prepared) {
     delete o.prepareOf;
@@ -689,6 +699,8 @@ export function activationsThisTurn(g: GameState, o: GameObject, index: number):
  * attacked this step", "… only if you've cast another spell this turn". Why it can't be cast now, or null.
  */
 export function castRestrictionProblem(g: GameState, player: PlayerId, face: FaceDef, spell: GameObject): string | null {
+  const banned = castProhibition(g, player, face, spell);
+  if (banned) return banned;
   for (const a of face.abilities) {
     if (a.kind !== 'static' || a.effect.type !== 'cast_restriction') continue;
     const r = a.effect;
@@ -715,6 +727,28 @@ export function castRestrictionProblem(g: GameState, player: PlayerId, face: Fac
     if (r.condition && !evalCondition(r.condition as ConditionNode, { g, controller: player, source: spell, events: [], targets: [], x: 0, memo: {} })) return `${face.name} can't be cast now.`;
   }
   return null;
+}
+
+/**
+ * CR 702.47a–b: "Splice onto Arcane [cost]" — cards in your hand revealed as you cast an Arcane spell, each at most
+ * once; the spell gains their rules text, and their splice costs are additional costs.
+ */
+function spliceCards(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef, ids: ObjectId[] | undefined): { id: ObjectId; cost: string; program: CompiledProgram }[] {
+  if (!ids?.length) return [];
+  if (new Set(ids).size !== ids.length) throw new RulesError('Each card can be spliced onto a spell only once.');
+  return ids.map((id) => {
+    const card = g.objects[id];
+    if (!card || card.zone !== 'hand' || card.owner !== player || id === spell.id) throw new RulesError('Splice cards come from your hand.');
+    const cardFace = g.cards[card.card]!.faces[0]!;
+    const kw = cardFace.keywords.find((k) => k.id === 'splice' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+    if (!kw) throw new RulesError(`${cardFace.name} has no splice cost the engine can pay.`);
+    const quality = (kw.text ?? 'Arcane').toLowerCase();
+    const fits = quality === 'arcane' ? face.subtypes.includes('Arcane') : face.types.includes('Instant') || face.types.includes('Sorcery');
+    if (!fits) throw new RulesError(`${cardFace.name} splices only onto ${quality === 'arcane' ? 'Arcane' : 'instant or sorcery'} spells.`);
+    const programs = spellPrograms(cardFace);
+    if (!programs) throw new RulesError(`${cardFace.name}'s text is resolved by hand; it can't be spliced here.`);
+    return { id, cost: kw.cost!, program: flatten(programs, undefined) };
+  });
 }
 
 /** CR 702.193a: "If this permanent entered this turn, this ability's cost is reduced by this permanent's mana cost." */

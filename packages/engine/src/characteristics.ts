@@ -615,6 +615,7 @@ export function matchesFilter(
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
+  if (f.chosenName && !(ctx.source?.chosen?.cardName && g.cards[o.card]?.faces.some((x) => x.name === ctx.source!.chosen!.cardName) && !o.faceDown)) return false;
   return true;
 }
 
@@ -649,7 +650,9 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
   const gone = lost.ids.has(o.id);
   const retyped = lost.retyped.has(o.id);
   if (retyped || (!gone && face.types.includes('Land'))) {
-    for (const sub of retyped ? chars(g, o).subtypes : face.subtypes) {
+    // CR 305.6: a land has the mana ability of each basic land type it has — including ones an effect gave it
+    // ("Each land is a Swamp in addition to its other land types").
+    for (const sub of retyped || (o.zone === 'battlefield' && anyAddsLandTypes(g)) ? chars(g, o).subtypes : face.subtypes) {
       const color = BASIC_LAND_MANA[sub];
       if (color) out.push(intrinsicManaAbility(color));
     }
@@ -662,6 +665,26 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
 
 const grantsMana = (kws: KeywordInstance[] | undefined): boolean => Boolean(kws?.some((k) => k.abilities?.some((a) => a.kind === 'activated' && a.mana)));
 let grantedManaMemo: { g: GameState; v: boolean } | null = null;
+
+let addsLandTypesMemo: { g: GameState; v: boolean } | null = null;
+const BASIC_TYPES = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
+/** Whether any effect gives permanents a basic land type in addition to their others (rare: Urborg, Yavimaya). */
+function anyAddsLandTypes(g: GameState): boolean {
+  if (addsLandTypesMemo?.g === g) return addsLandTypesMemo.v;
+  const adds = (subs: string[] | undefined) => Boolean(subs?.some((s) => BASIC_TYPES.includes(s)));
+  let v = g.effects.some((e) => {
+    const t = e as { subtypes?: string[]; retainTypes?: boolean };
+    return Boolean(t.retainTypes) && adds(t.subtypes);
+  });
+  for (const id of abilitySources(g)) {
+    if (v) break;
+    const o = g.objects[id];
+    if (!o) continue;
+    v = printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && adds((a.effect as ContinuousEffectNode).addTypes?.subtypes));
+  }
+  if (charsDepth > 0) addsLandTypesMemo = { g, v };
+  return v;
+}
 
 let cantActivateMemo: { g: GameState; v: boolean } | null = null;
 /** Whether any effect stops activated abilities right now — rare, so mana abilities usually skip the check. */

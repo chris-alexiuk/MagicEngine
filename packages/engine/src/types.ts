@@ -219,7 +219,7 @@ export interface GameObject {
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
-  chosen?: { color?: Color; creatureType?: string };
+  chosen?: { color?: Color; creatureType?: string; cardName?: string };
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -437,6 +437,12 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** CR 706.2: the result of the latest die roll this resolution made ("equal to the result"). */
+  dieResult?: number;
+  /** CR 701.38: the votes cast as this resolves, by option (or by object id, for a vote for objects). */
+  votes?: Record<string, number>;
+  /** CR 701.38: the objects with the most votes or tied for most votes. */
+  voted?: ObjectRef[];
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
   chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
@@ -456,6 +462,8 @@ export interface TargetPrompt {
   min?: number;
   /** "from a single graveyard": every chosen object has the same owner. */
   sameOwner?: true;
+  /** "For each opponent, … target … that player controls": each chosen object belongs to a different player. */
+  perPlayer?: true;
   candidates: Target[];
 }
 
@@ -595,6 +603,8 @@ export interface CostChoices {
   returned?: ObjectId[];
   /** "Remove any number of storage counters from ~": how many (it's X for the ability). */
   counters?: number;
+  /** CR 702.47a: cards revealed from your hand to splice onto the spell, in the order their text happens. */
+  splice?: ObjectId[];
 }
 
 export type Action =
@@ -736,6 +746,10 @@ export type GameEvent =
   | { type: 'initiative'; player: PlayerId }
   /** CR 702.26: a permanent phased out or in. */
   | { type: 'phased'; object: ObjectId; out: boolean }
+  /** CR 701.38: a player voted. */
+  | { type: 'voted'; player: PlayerId; choice: string; object?: ObjectId }
+  /** CR 706: a player rolled a die (its result after modifiers). */
+  | { type: 'die_rolled'; player: PlayerId; sides: number; result: number }
   /** CR 701.59: a player collected evidence. */
   | { type: 'evidence_collected'; player: PlayerId }
   /** CR 709.5h–i: a Room half was unlocked (`full`: now both are). */
@@ -808,6 +822,8 @@ export interface GameState {
   prevention: PreventionShield[];
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
+  /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
+  castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */

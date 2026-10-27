@@ -6,7 +6,7 @@ import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
-import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
+import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -227,7 +227,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color").
       const effect = ab.effects[0] as AddManaEffect | undefined;
       if (effect?.anyColor) {
-        for (const choice of anyColorChoices(g, player, effect.identity)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
+        for (const choice of anyColorChoices(g, player, effect.identity, effect)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
         effect.options.forEach((opt, choice) => {
           if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
@@ -382,7 +382,15 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
-    else if (c.type === 'return_unblocked') {
+    else if (c.type === 'return_permanents') {
+      // Tapped ones first (their mana is already spent).
+      const pick = returnCostCandidates(g, player, source, c)
+        .filter((id) => !returned.includes(id))
+        .sort((a, b) => Number(g.objects[b]!.tapped) - Number(g.objects[a]!.tapped))
+        .slice(0, n);
+      if (pick.length < n) return null;
+      returned.push(...pick);
+    } else if (c.type === 'return_unblocked') {
       const first = unblockedAttackers(g, player)[0];
       if (!first) return null;
       returned.push(first);

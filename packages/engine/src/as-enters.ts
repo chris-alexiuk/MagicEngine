@@ -51,6 +51,19 @@ export function promptAsEnters(g: GameState): boolean {
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
         break;
+      case 'card_name': {
+        // CR 201.3: any card name may be chosen; only the names of cards in this game can matter here.
+        const kinds = node.filter ?? {};
+        const names = new Set<string>();
+        for (const def of Object.values(g.cards)) {
+          const face = def.faces[0];
+          if (!face || def.layout === 'token') continue;
+          if (kinds.notTypes?.some((t) => face.types.includes(t)) || (kinds.types && !kinds.types.some((t) => face.types.includes(t)))) continue;
+          names.add(def.faces.length > 1 && (def.layout === 'split' || def.layout === 'adventure') ? def.name : face.name);
+        }
+        g.pending = { ...base, text: 'Choose a card name.', options: [...names].sort() };
+        break;
+      }
       case 'devour': {
         // CR 702.82a: "As this object enters, you may sacrifice any number of creatures."
         const candidates = g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === o.controller && hasType(g, g.objects[id]!, 'Creature'));
@@ -147,10 +160,11 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       break;
     }
     case 'color':
-    case 'creature_type': {
+    case 'creature_type':
+    case 'card_name': {
       const choice = answer.choice;
       if (!choice || !p.options?.includes(choice)) throw new RulesError(`Choose one of: ${p.options?.slice(0, 6).join(', ')}…`);
-      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : { creatureType: choice }) };
+      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : { creatureType: choice }) };
       events.push({ type: 'chosen', object: o.id, choice });
       break;
     }

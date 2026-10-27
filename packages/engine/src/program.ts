@@ -1,5 +1,5 @@
 import type { ActivatedAbility, ConditionNode, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
-import { abilitiesOf, hasRule } from './characteristics.js';
+import { abilitiesOf, chars } from './characteristics.js';
 import { canAutomate } from './registry.js';
 import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
 
@@ -42,6 +42,16 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
   }
   if (modes?.length && !usedModes) throw new RulesError('That isn’t modal.');
   return { specs, effects, ...(manual ? { manual: true as const } : {}) };
+}
+
+/** CR 702.47c: a spell with more text after its own (spliced cards' rules text): its targets come after the spell's. */
+export function appendProgram(base: CompiledProgram, extra: CompiledProgram): CompiledProgram {
+  const offset = base.specs.length;
+  return {
+    specs: [...base.specs, ...extra.specs],
+    effects: [...base.effects, ...extra.effects.map((e) => shiftTargets(e, offset))],
+    ...(base.manual || extra.manual ? { manual: true as const } : {}),
+  };
 }
 
 function shiftTargets<T>(node: T, offset: number): T {
@@ -92,7 +102,10 @@ export function spellPrograms(face: FaceDef): Program[] | null {
  */
 export function activatedAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
   // CR 602.5: "its activated abilities can't be activated" (Arrest).
-  if (o.zone === 'battlefield' && hasRule(g, o, 'cant_activate')) return [];
+  if (o.zone === 'battlefield') {
+    const rules = chars(g, o).rules;
+    if (rules.has('cant_activate') || rules.has('cant_activate_nonmana')) return [];
+  }
   return abilitiesOf(g, o).filter(
     (a): a is ActivatedAbility => a.kind === 'activated' && !a.mana && (a.zone ?? 'battlefield') === o.zone && programRuns(a),
   );

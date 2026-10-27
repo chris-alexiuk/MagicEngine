@@ -207,6 +207,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(hand[1]!);
     return c ? { type: 'hand', ...c } : null;
   }
+  // CR 701.38: "if sickness gets more votes", "if psychosis gets more votes or the vote is tied"
+  const votes = /^(.+?) gets more votes( or the vote is tied)?$/.exec(t);
+  if (votes && b.votes.includes(votes[1]!)) return { type: 'votes', option: votes[1]!, ...(votes[2] ? { orTied: true } : {}) };
   // CR 701.59c: "if evidence was collected"
   if (t === 'evidence was collected') return { type: 'paid', cost: 'collect_evidence' };
   // CR 702.187b (mayhem): "you discarded this card this turn"
@@ -263,6 +266,32 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'you committed a crime this turn': 'you_committed_crime',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
+  if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
+  // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
+  const oppCast = /^an opponent cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
+  if (oppCast) {
+    const c = count(oppCast[1]!);
+    const words = oppCast[2]!.trim();
+    const pf = words ? parseFilter(`${words} spell`, b) : null;
+    if (!c?.min || (words && (!pf || pf.plural))) return null;
+    return { type: 'this_turn', event: 'opponent_cast', min: c.min, ...(pf ? { filter: (({ zone: _z, ...f }) => f)(pf.filter) } : {}) };
+  }
+  // "If an opponent drew three or more cards this turn"
+  const oppDrew = /^an opponent drew (\w+ or more) cards this turn$/.exec(t);
+  if (oppDrew) {
+    const c = count(oppDrew[1]!);
+    return c?.min ? { type: 'this_turn', event: 'opponent_drew', min: c.min } : null;
+  }
+  // "If three or more creatures are attacking", "If exactly one creature is attacking", "If a white creature is attacking"
+  const attacking = /^(a|an|exactly \w+|\w+ or more|\w+ or fewer) (.+?) (?:is|are) attacking$/.exec(t);
+  if (attacking) {
+    const exact = /^exactly (\w+)$/.exec(attacking[1]!);
+    const n = exact ? parseAmount(exact[1]!) : null;
+    const c = exact ? (typeof n === 'number' ? { min: n, max: n } : null) : count(attacking[1]!);
+    const pf = parseFilter(attacking[2]!, b);
+    if (!c || !pf || pf.filter.zone || pf.filter.controller || pf.filter.combat) return null;
+    return { type: 'count', who: 'all', filter: { ...pf.filter, combat: 'attacking' }, ...c };
+  }
   // Werewolves (and others) look at the previous turn.
   if (t === 'no spells were cast last turn') return { type: 'spells_last_turn', max: 0 };
   const lastTurn = /^a player cast (\w+) or more spells last turn$/.exec(t);
