@@ -116,6 +116,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const ps = ctx.g.players[p]!;
       ps.life -= n;
       ctx.events.push({ type: 'life', player: p, delta: -n, life: ps.life });
+      if (ctx.resolution && n > 0) ctx.resolution.lifeLost = (ctx.resolution.lifeLost ?? 0) + n;
     }
     return true;
   },
@@ -241,6 +242,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const opts = { tapped: Boolean(node.tapped) };
         const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, face!, p, ctx.events, opts);
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
+        if (node.attacking) enterAttacking(ctx.g, t, ctx.source);
         created.push({ id: t.id, zcc: t.zcc });
       }
     }
@@ -488,6 +490,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       chosen = list;
     }
     for (const id of chosen) moveObject(g, id, 'hand', ctx.events);
+    return true;
+  },
+
+  // CR 702.179d: "your speed increases by 1" (to at most 4).
+  increase_speed(_node, ctx) {
+    const ps = ctx.g.players[ctx.controller]!;
+    const speed = Math.min(4, (ps.speed ?? 0) + 1);
+    if (speed !== ps.speed) {
+      ps.speed = speed;
+      ctx.events.push({ type: 'speed', player: ctx.controller, speed });
+    }
     return true;
   },
 
@@ -1143,6 +1156,24 @@ function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
   ctx.events.push({ type: 'life', player: p, delta: n, life: ps.life });
 }
 
+/**
+ * CR 508.4: a creature put onto the battlefield attacking — it attacks what its source is attacking,
+ * or else the next defending player (the controller's choice in the rules; the engine picks for now).
+ * CR 506.3b: only under an attacking player's control, and only once attackers have been declared.
+ */
+function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefined): void {
+  const c = g.combat;
+  if (!c || !c.attackersDeclared || o.controller !== g.active || !chars(g, o).types.includes('Creature')) return;
+  const fromSource = source ? c.attackers[source.id] : undefined;
+  const target = fromSource?.target ?? (() => {
+    const p = livePlayers(g).find((x) => x !== o.controller);
+    return p ? { kind: 'player' as const, player: p } : undefined;
+  })();
+  if (!target) return;
+  // CR 508.4d: during or after the declare blockers step, it's unblocked.
+  c.attackers[o.id] = { zcc: o.zcc, target, blocked: false, blockers: [] };
+}
+
 function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false): EffectResult {
   const library = zoneList(ctx.g, 'library', ctx.controller);
   const looked = library.slice(0, n);
@@ -1241,6 +1272,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return e.attacks.flatMap(({ attacker, target }) => {
       const o = check.g.objects[attacker];
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+      // CR 702.105a (dethrone): attacking the player with the most life or tied for most life.
+      if (t.defender === 'most_life') {
+        if (target.kind !== 'player') return [];
+        const most = Math.max(...livePlayers(check.g).map((p) => check.g.players[p]!.life));
+        if (check.g.players[target.player]!.life < most) return [];
+      }
+      // CR 702.149a (training): with at least one other attacker with greater power.
+      if (t.withGreaterPower && !e.attacks.some((x) => x.attacker !== o.id && check.g.objects[x.attacker] && power(check.g, check.g.objects[x.attacker]!) > power(check.g, o))) return [];
       // CR 702.171b: "attacks while saddled" — saddled this turn, before it attacked.
       if (t.saddled && o.saddledTurn !== check.g.turn) return [];
       // "Whenever a creature attacks enchanted player"
@@ -1480,6 +1519,12 @@ export const corePlugin: MechanicPlugin = {
       if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       // CR 107.3m: X is the X paid for the spell that became this permanent.
       const per = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      // Converge: "… for each color of mana spent to cast it"
+      if (node.perColor) {
+        const n = replaceQuantity(g, 'counters', per * (o.cast?.colors ?? 0), { player: o.controller, object: o, counter: String(node.counter) });
+        if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;
+        return;
+      }
       // CR 702.33c: "… a +1/+1 counter on it for each time it was kicked"
       const base = node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per;
       // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.

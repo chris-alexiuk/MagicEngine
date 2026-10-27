@@ -160,7 +160,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -242,6 +242,20 @@ function count(ctx: EffectContext, e: AmountExpr): number {
         i >= creatures.length ? 0 : Math.max(best(i + 1, used), ...creatures[i]!.filter((r) => !used.has(r)).map((r) => 1 + best(i + 1, new Set([...used, r]))));
       return Math.min(4, best(0, new Set()));
     }
+    case 'life_lost':
+      // CR 702.101a: the life lost so far as this resolves.
+      return ctx.resolution?.lifeLost ?? 0;
+    case 'opponents_attacked': {
+      // CR 702.121a: opponents (not planeswalkers or battles) you attacked with a creature this combat.
+      const attacked = new Set<string>();
+      for (const [id, a] of Object.entries(g.combat?.attackers ?? {})) {
+        if (g.objects[id]?.controller === ctx.controller && a.target.kind === 'player' && a.target.player !== ctx.controller) attacked.add(a.target.player);
+      }
+      return attacked.size;
+    }
+    case 'colors_spent':
+      // CR 702.44a: colors of mana spent to cast it.
+      return ctx.source?.cast?.colors ?? 0;
     case 'kicks':
       // CR 702.33c: how many times the spell (or the permanent it became) was kicked.
       return ctx.source?.cast?.kicks ?? (ctx.source?.cast?.kicked ? 1 : 0);

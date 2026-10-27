@@ -190,6 +190,11 @@ export function moveObject(
     const def = g.cards[o.card];
     if (g.dayNight === 'night' && !o.faceDown && def?.faces.length === 2 && def.faces[0]!.keywords.some((k) => k.id === 'daybound') && o.face === 0) o.face = 1;
     const face = faceOf(g, o);
+    // CR 702.44a: sunburst — a +1/+1 counter (a charge counter if it isn't a creature) for each color spent to cast it.
+    if (face.keywords.some((k) => k.id === 'sunburst') && o.cast?.colors) {
+      const kind = face.types.includes('Creature') ? '+1/+1' : 'charge';
+      o.counters[kind] = (o.counters[kind] ?? 0) + o.cast.colors;
+    }
     // CR 306.5b: a planeswalker enters with loyalty counters equal to its printed loyalty.
     if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = Number(face.loyalty);
     // CR 310.4b: a battle enters with defense counters equal to its printed defense.

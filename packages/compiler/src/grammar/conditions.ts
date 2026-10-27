@@ -104,6 +104,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const filter = stateFilter(itIs[1]!, b);
     if (filter) return { type: 'is', of: b.it, filter };
   }
+  // CR 702.179e: "you have max speed"; CR 702.131c: "you have the city's blessing"
+  if (/^you have max speed$/.test(t)) return { type: 'max_speed' };
+  if (/^you don't have max speed$/.test(t)) return { type: 'max_speed', not: true };
+  if (/^you have the city's blessing$/.test(t)) return { type: 'city_blessing' };
+  // CR 702.100a (evolve): "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness"
+  if (t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" && b.it) {
+    return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power', 'toughness'] };
+  }
   // CR 725: "you're the monarch"
   if (/^you're the monarch$|^you are the monarch$/.test(t)) return { type: 'monarch' };
   if (/^there is no monarch$/.test(t)) return { type: 'monarch', none: true };

@@ -75,6 +75,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 118.12: "You may sacrifice a creature. If you do, …" — the first part is done only if possible.
       const mayDo = /^You may (.+)$/.exec(s);
+      // "You may put two +1/+1 counters on it. If you don't, create two 1/1 … Servo … tokens." (CR 702.123a)
+      const youDont = sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (mayDo && youDont && !/^pay /.test(mayDo[1]!)) {
+        const first = parseSentence(capitalise(mayDo[1]!), b);
+        const otherwise = first ? parseSentence(capitalise(youDont[1]!), b) : null;
+        if (!first || !otherwise) return null;
+        out.push({ type: 'may_do', effects: first, then: [], else: otherwise });
+        i++;
+        continue;
+      }
       if (mayDo && then) {
         const first = parseSentence(capitalise(mayDo[1]!), b);
         const rest = first ? parseSentence(capitalise(then[1]!), b) : null;
@@ -210,6 +220,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const last = copyIn(out.slice(-1));
         if (!last) return null;
         last.newTargets = true;
+        continue;
+      }
+      // CR 508.4: "Those tokens enter tapped and attacking." — the tokens just created.
+      const entersAttacking = /^(?:It|They|That token|Those tokens|The tokens?) enters? tapped and attacking$/.exec(s);
+      const madeNow = out[out.length - 1];
+      if (entersAttacking && madeNow?.type === 'create_token') {
+        madeNow.tapped = true;
+        madeNow.attacking = true;
         continue;
       }
       // "Create a 1/1 Eldrazi Scion creature token. It has "Sacrifice this token: Add {C}."" — the token's own text.
@@ -678,11 +696,19 @@ const VERBS: Record<string, VerbHandler> = {
       createdTokens(b);
       return [node];
     }
+    // CR 508.4: "… tokens that are tapped and attacking"
+    const attackingSuffix = / (?:that are|that's|that is) tapped and attacking$|,? tapped and attacking$/;
+    const attacking = attackingSuffix.test(args);
+    if (attacking) args = args.replace(attackingSuffix, '');
     const attached = /^(.+?) attached to (.+)$/.exec(args);
     const token = parseTokenPhrase(attached ? attached[1]! : args, b);
     if (!token) return null;
     const node: EffectNode = { type: 'create_token', amount: token.amount, token: token.face, who };
     if (token.tapped) node.tapped = true;
+    if (attacking) {
+      node.tapped = true;
+      node.attacking = true;
+    }
     createdTokens(b);
     if (attached) {
       const to = parseObjectRef(attached[2]!, b);

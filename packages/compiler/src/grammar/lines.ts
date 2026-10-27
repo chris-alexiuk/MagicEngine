@@ -383,6 +383,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
 
+  // CR 702.105a (dethrone): "Whenever ~ attacks the player with the most life or tied for most life"
+  if (t === '~ attacks the player with the most life or tied for most life') {
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, defender: 'most_life' }, it: { ref: 'self' }, player: null };
+  }
+  // CR 702.149a (training): "Whenever ~ and at least one other creature with power greater than ~'s power attack"
+  if (t === "~ and at least one other creature with power greater than ~'s power attack") {
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, withGreaterPower: true }, it: { ref: 'self' }, player: null };
+  }
   // CR 702.171b: "Whenever ~ attacks while saddled" — it's saddled as it attacks.
   if (t === '~ attacks while saddled') {
     b.named['defending player'] = { ref: 'trigger_player' };
@@ -1043,7 +1052,7 @@ export const entersWithCountersRule: GrammarRule = {
       const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: escapes[2]!.replace(/−/g, '-'), amount: n, condition: { type: 'paid', cost: 'escape' } } };
       return node;
     }
-    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)? with (\S+) (\S+) counters? on it( for each time it was kicked)?(?: if (.+?))?\.$/.exec(line);
+    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)? with (\S+) (\S+) counters? on it( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const amount = m && parseAmount(m[2]!);
     // X is the value paid as it was cast (CR 107.3m).
     if (!m || amount === null || amount === undefined) return null;
@@ -1062,8 +1071,8 @@ export const entersWithCountersRule: GrammarRule = {
         counter: m[3]!.replace(/−/g, '-'),
         amount,
         ...(condition ? { condition } : {}),
-        // CR 702.33c (multikicker)
-        ...(m[4] ? { perKick: true } : {}),
+        // CR 702.33c (multikicker); converge
+        ...(m[4] === ' for each time it was kicked' ? { perKick: true } : m[4] ? { perColor: true } : {}),
       },
     };
     return node;
@@ -1165,6 +1174,20 @@ export const reboundRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 702.136a (riot): "You may have this permanent enter with an additional +1/+1 counter on it. If you
+ * don't, it gains haste." CR 702.98a (unleash): the first sentence alone.
+ */
+export const enterWithCounterRule: GrammarRule = {
+  id: 'enter_with_counter',
+  parse(line, original) {
+    const m = /^You may have ~ enter with an additional \+1\/\+1 counter on it\.( If you don't, it gains haste\.)?$/.exec(line);
+    if (!m) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'as_enters', choice: 'counter', ...(m[1] ? { elseHaste: true } : {}) } };
+    return node;
+  },
+};
+
 /** CR 731: "If it's neither day nor night, it becomes day as ~ enters." */
 export const entersDayRule: GrammarRule = {
   id: 'enters_day',
@@ -1202,6 +1225,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   castOptionRule,
   reboundRule,
   entersDayRule,
+  enterWithCounterRule,
   resolveToHandRule,
   returnIfPaidRule,
   additionalCostRule,

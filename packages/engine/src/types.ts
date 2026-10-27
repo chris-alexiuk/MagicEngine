@@ -68,6 +68,11 @@ export interface PlayerState {
   keptHand: boolean;
   /** Clock values at the beginning of this player's last two upkeeps (CR 702.30a echo). */
   upkeeps?: number[];
+  /** CR 702.179: speed, once a player has any (start your engines!); the turn it last increased. */
+  speed?: number;
+  speedTurn?: number;
+  /** CR 702.131c: the city's blessing (ascend), for the rest of the game. */
+  cityBlessing?: true;
 }
 
 export interface GameObject {
@@ -136,7 +141,7 @@ export interface GameObject {
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; before?: number; copy?: true; paid?: string[]; suspended?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
@@ -343,6 +348,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
+  lifeLost?: number;
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
@@ -549,6 +556,9 @@ export type GameEvent =
   | { type: 'turned_face_up'; object: ObjectId }
   /** CR 731.1a: day became night or night became day (or it first became one). */
   | { type: 'day_night'; to: 'day' | 'night'; from?: 'day' | 'night' }
+  /** CR 702.179: a player's speed changed; CR 702.131: a player got the city's blessing. */
+  | { type: 'speed'; player: PlayerId; speed: number }
+  | { type: 'city_blessing'; player: PlayerId }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }

@@ -354,6 +354,12 @@ export type AmountExpr = (
   | { kind: 'kicks' }
   /** CR 700.8: the creatures in your party (up to one each of Cleric, Rogue, Warrior and Wizard). */
   | { kind: 'party' }
+  /** "the total life lost this way" (extort, CR 702.101a). */
+  | { kind: 'life_lost' }
+  /** "for each opponent you attacked with a creature this combat" (melee, CR 702.121a). */
+  | { kind: 'opponents_attacked' }
+  /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
+  | { kind: 'colors_spent' }
 ) & { times?: number; plus?: number };
 
 /**
@@ -489,7 +495,9 @@ export interface ContinuousEffectNode extends EffectNode {
 export interface AsEntersNode extends EffectNode {
   type: 'as_enters';
   /** copy: "You may have ~ enter as a copy of any creature on the battlefield" (CR 707.5, CR 614.1c). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy';
+  /** counter: "You may have ~ enter with an additional +1/+1 counter on it" (riot, unleash; `elseHaste` for riot). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter';
+  elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
   amount?: number;
@@ -593,15 +601,15 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig',
+    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
@@ -610,13 +618,13 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
-    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound',
+    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'ascend', 'sunburst',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker', 'multikicker',

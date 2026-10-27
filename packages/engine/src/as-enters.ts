@@ -3,7 +3,7 @@ import { matchesFilter } from './characteristics.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
-import { nameOf, setTapped, zoneList } from './zones.js';
+import { nameOf, zoneList } from './zones.js';
 
 /**
  * Choices made as a permanent enters (CR 614.12): "As ~ enters, you may pay 2 life. If you
@@ -50,6 +50,10 @@ export function promptAsEnters(g: GameState): boolean {
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
         break;
+      case 'counter':
+        // CR 702.136a / CR 702.98a: riot and unleash.
+        g.pending = { ...base, text: node.elseHaste ? `Have ${nameOf(g, o)} enter with an additional +1/+1 counter? If not, it gains haste.` : `Have ${nameOf(g, o)} enter with an additional +1/+1 counter?` };
+        break;
       case 'copy': {
         // CR 707.5: "You may have ~ enter as a copy of any creature on the battlefield."
         // Or "any creature card in a graveyard" (Body Double).
@@ -81,14 +85,22 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         if (ps.life < amount) throw new RulesError(`You don’t have ${amount} life to pay.`);
         ps.life -= amount;
         events.push({ type: 'life', player, delta: -amount, life: ps.life });
-      } else setTapped(g, o.id, true, events);
+      } else o.tapped = true;
+      break;
+    }
+    case 'counter': {
+      if (answer.pay) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+      else if (next.node.elseHaste) {
+        // "If you don't, it gains haste" — for as long as it's on the battlefield.
+        g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: o.id, zcc: o.zcc }, controller: o.controller, objects: [{ id: o.id, zcc: o.zcc }], keywords: [{ id: 'haste' }], until: 'game' });
+      }
       break;
     }
     case 'reveal': {
       if (answer.reveal) {
         if (!p.candidates?.includes(answer.reveal)) throw new RulesError('Reveal one of the cards that qualify.');
         events.push({ type: 'revealed', player, objects: [answer.reveal] });
-      } else setTapped(g, o.id, true, events);
+      } else o.tapped = true;
       break;
     }
     case 'copy': {

@@ -48,6 +48,10 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (t === 'player') return { kind: 'players', who: 'each' };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"
   if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
+  // CR 702.121a (melee): "for each opponent you attacked with a creature this combat"
+  if (t === 'opponent you attacked with a creature this combat') return { kind: 'opponents_attacked' };
+  // CR 702.44a / converge: "for each color of mana spent to cast it"
+  if (/^color of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   // "for each instant and sorcery card in your graveyard": a card of either type.
@@ -99,6 +103,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     return of && !of.plural ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
+  // CR 702.101a (extort): "the total life lost this way"
+  if (t === 'the total life lost this way' || t === 'the life lost this way') return { kind: 'life_lost' };
+  if (/^the number of colors of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
+  if (t === 'the number of creatures in your party') return { kind: 'party' };
   // CR 700.5: "your devotion to black", "your devotion to white and black".
   const devotion = /^your devotion to (\w+)(?: and (\w+))?$/.exec(t);
   if (devotion) {

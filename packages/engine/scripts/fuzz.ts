@@ -178,6 +178,7 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     case 'as_enters':
       if (p.choice === 'pay_life') return { player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life >= (p.amount ?? 0) && rnd() < 0.6 } };
       if (p.choice === 'reveal') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };
+      if (p.choice === 'counter') return { player: me, answer: { kind: 'as_enters', pay: rnd() < 0.5 } };
       if (p.choice === 'copy') return { player: me, answer: { kind: 'as_enters', copy: p.candidates?.length && rnd() < 0.9 ? pick(p.candidates) : null } };
       return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };
     case 'declare_attackers': {

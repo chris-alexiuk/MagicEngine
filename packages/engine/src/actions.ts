@@ -508,9 +508,12 @@ function cast(
   if (wantsAutoTap) autoTap(g, player, cost, x, events);
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
-  const left = payFromPool(g.players[player]!.pool, cost, x);
+  const poolBefore = g.players[player]!.pool;
+  const left = payFromPool(poolBefore, cost, x);
   if (!left) throw new RulesError(`Not enough mana to cast ${face.name}.`);
   g.players[player]!.pool = left;
+  // CR 702.44a / converge: the colors of mana spent to cast it.
+  const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => poolBefore[m] > left[m]).length;
   payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
@@ -529,6 +532,7 @@ function cast(
     before,
     ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),
+    ...(colorsSpent ? { colors: colorsSpent } : {}),
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
   };

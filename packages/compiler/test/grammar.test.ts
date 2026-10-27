@@ -669,3 +669,16 @@ describe('looking at the top of the library, counter costs (slice 20)', () => {
     expect(one("Enchanted creature can't attack or block, and its activated abilities can't be activated.", 'Enchantment — Aura')).toMatchObject({ effect: { rules: ['cant_attack', 'cant_block', 'cant_activate'] } });
   });
 });
+
+describe('speed, ascend and more keywords (slice 21)', () => {
+  it('"Max speed — [ability]" is gated on max speed (CR 702.178a)', () => {
+    expect(one('Max speed — This creature gets +1/+1.', 'Creature — Human')).toMatchObject({ gate: { type: 'max_speed' }, effect: { type: 'continuous' } });
+    expect(parse('Start your engines!', 'Creature — Human', 'Racer').manualKeywords ?? []).toEqual([]);
+  });
+  it('keywords compiled from their definitions', () => {
+    for (const k of ['Fabricate 2', 'Extort', 'Riot', 'Unleash', 'Evolve', 'Dethrone', 'Mobilize 2', 'Melee', 'Training', 'Ascend', 'Sunburst']) {
+      expect(parse(k, 'Creature — Human', 'Card').manualKeywords ?? []).toEqual([]);
+    }
+    expect(one("Whenever this creature attacks, create a 1/1 white Soldier creature token that's tapped and attacking.", 'Creature — Human')).toMatchObject({ effects: [{ type: 'create_token', tapped: true, attacking: true }] });
+  });
+});

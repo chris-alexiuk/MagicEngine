@@ -67,6 +67,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   if (!batch.length) return;
   collectDelayed(g, batch);
   collectMonarch(g, batch);
+  collectSpeed(g, batch);
   collectExileKeywords(g, batch);
 
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
@@ -163,6 +164,22 @@ const MONARCH_STEAL: TriggeredAbility = {
   trigger: { type: 'deals_combat_damage', subject: { ref: 'all', filter: { types: ['Creature'] } }, to: 'player' },
   effects: [{ type: 'become_monarch', who: { ref: 'you' } }],
 };
+
+/** CR 702.179d: the inherent triggered ability of a player with speed. It has no source. */
+const SPEED_UP: TriggeredAbility = {
+  kind: 'triggered',
+  text: 'Whenever one or more opponents lose life during your turn, if your speed is less than 4, your speed increases by 1. This ability triggers only once each turn.',
+  trigger: { type: 'lose_life', who: 'opponent' },
+  effects: [{ type: 'increase_speed' }],
+};
+
+function collectSpeed(g: GameState, batch: GameEvent[]): void {
+  const ps = g.players[g.active];
+  if (!ps || ps.speed === undefined || ps.speed >= 4 || ps.speedTurn === g.turn) return;
+  if (!batch.some((e) => e.type === 'life' && e.delta < 0 && e.player !== g.active)) return;
+  ps.speedTurn = g.turn;
+  g.triggers.push({ id: `t${g.nextId++}`, controller: g.active, source: { id: 'speed', zcc: 0 }, sourceName: 'Speed', ability: SPEED_UP, info: {} });
+}
 
 function collectMonarch(g: GameState, batch: GameEvent[]): void {
   if (!g.monarch) return;

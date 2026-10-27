@@ -1,5 +1,5 @@
 import type { ConditionNode, ObjectFilter } from '@mtg/schema';
-import { matchesFilter } from './characteristics.js';
+import { matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { refObjects } from './resolve.js';
 import type { GameEvent, GameState, PlayerId } from './types.js';
@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -76,6 +76,18 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const upkeeps = g.players[controller]?.upkeeps ?? [];
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
+    }
+    case 'max_speed':
+      // CR 702.179e: speed 4.
+      return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
+    case 'city_blessing':
+      return Boolean(g.players[controller]?.cityBlessing);
+    case 'compare_stats': {
+      // CR 702.100a (evolve): either stat greater.
+      const [a] = refObjects(ctx, cond.of as never);
+      const [b] = refObjects(ctx, cond.than as never);
+      if (!a || !b) return false;
+      return (cond.stats as string[]).some((s) => (s === 'power' ? power(g, a) > power(g, b) : toughness(g, a) > toughness(g, b)));
     }
     case 'day_night':
       // CR 731: "if it's night"

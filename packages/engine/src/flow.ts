@@ -9,6 +9,7 @@ import { applyControlEffects } from './control.js';
 import { playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
+import { ascendOnResolve, checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
 import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
@@ -48,6 +49,8 @@ export function settle(g: GameState, events: GameEvent[]): void {
     applyControlEffects(g, events);
     // CR 702.145c/d/f/g: day and night follow daybound and nightbound permanents.
     syncDayNight(g, events);
+    // CR 702.179a: speed; CR 702.131b: the city's blessing.
+    checkDesignations(g, events);
     checkStateBasedActions(g, events);
     if (g.over || g.pending) return;
     if (returnExiledUntil(g, events)) continue;
@@ -152,6 +155,8 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
     finishResolution(g, entry, events);
     return;
   }
+  // CR 702.131a: ascend on an instant or sorcery is a spell ability (printed first).
+  if (entry.kind === 'spell' && faceOf(g, obj(g, entry.object)).keywords.some((k) => k.id === 'ascend')) ascendOnResolve(g, entry.controller, events);
   startResolution(g, entry, targets);
   continueResolution(g, events);
 }

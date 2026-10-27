@@ -113,6 +113,27 @@ export class ParserRegistry {
         continue;
       }
 
+      // CR 702.178a: "Max speed — [Ability]" means "As long as your speed is 4, this object has '[Ability].'"
+      const maxSpeed = /^Max speed — (.+)$/.exec(line);
+      if (maxSpeed) {
+        const speedGate: ConditionNode = { type: 'max_speed' };
+        const inner = this.keywords.parseLine(maxSpeed[1]!);
+        if (inner) {
+          for (const kw of inner) {
+            const abilities = this.expandKeyword(kw, env);
+            if (abilities) kw.abilities = abilities;
+          }
+          if (!inner.every(keywordSupported)) result.manualKeywords.push(line);
+          else result.abilities.push({ kind: 'static', text: line, gate: speedGate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: inner } });
+          continue;
+        }
+        const node = this.parseBlock([maxSpeed[1]!], env, line);
+        if (node) {
+          node.gate = speedGate;
+          result.abilities.push(node);
+        } else result.unparsed.push(line);
+        continue;
+      }
       // CR 702.177a: "Exhaust — [Cost]: [Effect]" means "[Cost]: [Effect]. Activate only once."
       const exhaust = /^Exhaust — (.+)$/.exec(line);
       if (exhaust) {
