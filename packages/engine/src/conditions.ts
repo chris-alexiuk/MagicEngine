@@ -369,7 +369,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'is': {
       // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human".
       const [o] = refObjects(ctx, cond.of as never);
-      return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
+      // "Counter target spell if it's blue": the object wherever it is.
+      return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: o.zone !== 'battlefield' }));
     }
     case 'has_attached': {
       // "~ is equipped" (CR 301.5) / "~ is enchanted" (CR 303.4): an Equipment or Aura is attached to it.

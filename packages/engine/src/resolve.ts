@@ -1,5 +1,5 @@
 import type { Amount, AmountExpr, EffectNode, Ref } from '@mtg/schema';
-import { chars, matchesFilter, power, toughness } from './characteristics.js';
+import { chars, colorsAmong, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -194,7 +194,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -273,6 +273,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       }
       return types.size;
     }
+    case 'colors_among':
+      // Faeburrow Elder: "for each color among permanents you control"
+      return colorsAmong(g, ctx.controller, e.filter, source).length;
+    case 'spells_cast_this_turn':
+      // Aetherflux Reservoir: including the one that triggered it.
+      return g.turnLog.spellsCast[ctx.controller] ?? 0;
     case 'discarded_this_way': {
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});

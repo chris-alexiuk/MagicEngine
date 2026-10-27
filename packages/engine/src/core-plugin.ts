@@ -8,7 +8,7 @@ import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities } from './characteristics.js';
+import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -73,6 +73,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const effect = node as AddManaEffect;
     let mana: ManaColor[] | undefined;
     let choice = ctx.choice;
+    // Bloom Tender: "For each color among permanents you control, add one mana of that color."
+    if (effect.eachColor && effect.colorsAmong) {
+      const colors = colorsAmong(ctx.g, ctx.controller, effect.colorsAmong, ctx.source ?? null) as ManaColor[];
+      if (!colors.length) return true;
+      const ps = ctx.g.players[ctx.controller]!;
+      for (const c of colors) ps.pool[c]++;
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: colors });
+      return true;
+    }
     // As a spell or a non-mana ability resolves, its controller chooses which mana (a mana ability is told up front).
     const many = effect.anyColor || (effect.options?.length ?? 0) > 1;
     if (many && choice === undefined) {
@@ -90,7 +99,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const color = typeof choice === 'string' ? choice : undefined;
       if (!color || (color === 'C' && !effect.anyType) || !MANA_COLORS.includes(color)) return false;
       // CR 106.7: only a type those lands could produce.
-      if (effect.couldProduce && !anyColorChoices(ctx.g, ctx.controller, undefined, effect).includes(color)) return false;
+      if ((effect.couldProduce || effect.colorsAmong) && !anyColorChoices(ctx.g, ctx.controller, undefined, effect).includes(color)) return false;
       // CR 903.4f: only a color in the commander's color identity.
       if (effect.identity && !anyColorChoices(ctx.g, ctx.controller, true).includes(color)) return false;
       mana = Array.from({ length: effect.anyColor }, () => color);
@@ -486,6 +495,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // CR 608.2h: a counted amount ("+1/+1 for each creature you control") is counted once, now.
       ...(node.power !== undefined ? { power: amountOf(ctx, node.power), toughness: amountOf(ctx, node.toughness ?? 0) } : {}),
       ...(Array.isArray(node.keywords) ? { keywords: node.keywords as KeywordInstance[] } : {}),
+      ...(Array.isArray(node.loseKeywords) ? { loseKeywords: node.loseKeywords as string[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).

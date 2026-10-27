@@ -36,7 +36,7 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       // CR 602.5b: "Activate only if you control a Swamp."
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       const effect = ab.effects[0] as AddManaEffect;
-      if (effect.type !== 'add_mana' || effect.times !== undefined) return;
+      if (effect.type !== 'add_mana' || effect.times !== undefined || effect.eachColor) return;
       // CR 106.6: restricted mana only helps when it can be spent on this.
       if (effect.spend && !canSpend(g, player, effect.spend, purpose)) return;
       if (effect.anyColor) {

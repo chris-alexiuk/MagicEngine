@@ -345,6 +345,20 @@ export const activatedRule: GrammarRule = {
       }
     }
     // CR 605.1a: mana abilities produce mana and have no targets; loyalty abilities never are.
+    // Bloom Tender: "For each color among permanents you control, add one mana of that color."
+    const eachColor = cost.loyalty === undefined ? /^For each color among (.+?), add one mana of that color\.$/.exec(effectText) : null;
+    if (eachColor) {
+      const pf = parseFilter(eachColor[1]!, new Binder(env));
+      if (!pf || !pf.plural || pf.filter.zone || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+      return { ...node, effects: [{ type: 'add_mana', colorsAmong: pf.filter, eachColor: true }], mana: true };
+    }
+    // Mox Amber: "Add one mana of any color among legendary creatures and planeswalkers you control."
+    const among = cost.loyalty === undefined ? /^Add one mana of any color among (.+?)\.$/.exec(effectText) : null;
+    if (among) {
+      const pf = parseFilter(among[1]!.replace(/, and /, ', or ').replace(/ and /, ' or '), new Binder(env));
+      if (!pf || !pf.plural || pf.filter.zone || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+      return { ...node, effects: [{ type: 'add_mana', anyColor: 1, colorsAmong: pf.filter }], mana: true };
+    }
     if (cost.loyalty === undefined) {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
@@ -1327,7 +1341,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1354,6 +1368,14 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     // CR 613.1f: "loses all abilities" (layer 6).
     if (/^loses? all abilities$/.test(part)) {
       effect.loseAbilities = true;
+      continue;
+    }
+    // Layer 6: "Creatures your opponents control lose trample" (keywords only).
+    const loseKw = /^loses? ([a-z ,]+)$/.exec(part);
+    if (loseKw && !effect.loseKeywords) {
+      const kws = parseKeywordList(loseKw[1]!, b);
+      if (!kws || kws.some((k) => k.text || k.cost || k.n !== undefined)) return null;
+      effect.loseKeywords = kws.map((k) => k.id);
       continue;
     }
     // Layer 7b: "has base power and toughness 1/1"

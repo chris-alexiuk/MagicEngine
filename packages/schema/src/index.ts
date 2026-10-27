@@ -422,6 +422,10 @@ export type AmountExpr = (
   | { kind: 'die_result' }
   /** CR 701.38: "for each death vote" — votes for that option as this resolves. */
   | { kind: 'votes'; option: string }
+  /** Faeburrow Elder: "for each color among permanents you control". */
+  | { kind: 'colors_among'; filter: ObjectFilter }
+  /** Aetherflux Reservoir: "for each spell you've cast this turn". */
+  | { kind: 'spells_cast_this_turn' }
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
   | { kind: 'discarded_this_way'; max?: true }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
@@ -484,6 +488,9 @@ export interface AddManaEffect extends EffectNode {
   couldProduce?: 'opponents' | 'you';
   /** With couldProduce: "any type" — colorless too. */
   anyType?: true;
+  /** Mox Amber: "any color among legendary creatures and planeswalkers you control"; with `eachColor`, Bloom Tender's "For each color among permanents you control, add one mana of that color". */
+  colorsAmong?: ObjectFilter;
+  eachColor?: true;
   /** CR 106.6: "Spend this mana only to …" — what the mana can pay for. */
   spend?: ManaSpend;
   /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
@@ -617,6 +624,8 @@ export interface ContinuousEffectNode extends EffectNode {
   combat?: CombatRules;
   /** Layer 2: the source's controller controls the affected permanents. */
   control?: 'you';
+  /** Layer 6: "Creatures your opponents control lose trample" — these keywords go (CR 613.1f). */
+  loseKeywords?: string[];
   /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */
   addTypes?: { types: string[]; subtypes: string[] };
   /** Layer 4: "is a Frog creature" — types and subtypes it becomes, replacing its own (CR 205.1b). */
@@ -811,7 +820,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

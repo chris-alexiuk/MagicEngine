@@ -1319,3 +1319,16 @@ describe('staples (slices 113–117)', () => {
     expect(parse('Create a Food token or a Treasure token.', 'Sorcery', 'Provisions').abilities[0]).toMatchObject({ effects: [{ type: 'choose_one', labels: ['Food', 'Treasure'] }] });
   });
 });
+
+describe('slices 120–122', () => {
+  it('reads them', () => {
+    expect(parse('Target creature loses flying until end of turn.', 'Instant', 'Ground').abilities[0]).toMatchObject({ effects: [{ type: 'modify', loseKeywords: ['flying'], until: 'eot' }] });
+    expect(parse('Creatures your opponents control lose flying.', 'Enchantment', 'Clip').abilities[0]).toMatchObject({ effect: { type: 'continuous', loseKeywords: ['flying'] } });
+    expect(parse('Target creature attacks this turn if able.', 'Instant', 'Taunt').abilities[0]).toMatchObject({ effects: [{ type: 'modify', rules: ['attacks_each_combat'], until: 'eot' }] });
+    expect(parse("Counter target spell if it's blue.", 'Instant', 'Blast').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'is', filter: { colors: ['U'] } }, effects: [{ type: 'counter' }] }] });
+    expect(parse('{T}: Add one mana of any color among legendary creatures and planeswalkers you control.', 'Artifact', 'Amber').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', anyColor: 1, colorsAmong: { supertypes: ['Legendary'] } }] });
+    expect(parse('{T}: For each color among permanents you control, add one mana of that color.', 'Creature — Elf', 'Tender').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', eachColor: true }] });
+    expect(parse("Whenever you cast a spell, you gain 1 life for each spell you've cast this turn.", 'Artifact', 'Reservoir').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life', amount: { kind: 'spells_cast_this_turn' } }] });
+    expect(parse('Exile all graveyards.', 'Sorcery', 'Wake').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile', what: { ref: 'all', filter: { zone: 'graveyard' } } }] });
+  });
+});

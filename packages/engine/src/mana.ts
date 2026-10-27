@@ -1,5 +1,5 @@
 import type { AddManaEffect } from '@mtg/schema';
-import { hasType, manaAbilities } from './characteristics.js';
+import { colorsAmong, hasType, manaAbilities } from './characteristics.js';
 import type { GameObject, GameState, ManaColor, ManaPool, PlayerId } from './types.js';
 
 export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
@@ -53,6 +53,7 @@ function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', an
 /** The colors an "any color" mana ability can make for this player. */
 export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined, effect?: AddManaEffect): ManaColor[] {
   if (effect?.couldProduce) return producible(g, player, effect.couldProduce, Boolean(effect.anyType));
+  if (effect?.colorsAmong) return colorsAmong(g, player, effect.colorsAmong, null) as ManaColor[];
   const all: ManaColor[] = ['W', 'U', 'B', 'R', 'G'];
   if (!identity) return all;
   const allowed = commanderIdentity(g, player);

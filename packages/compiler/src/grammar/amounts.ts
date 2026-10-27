@@ -54,6 +54,13 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^color of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
+  if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Faeburrow Elder: "for each color among permanents you control"
+  const colorAmong = /^color among (.+)$/.exec(t);
+  if (colorAmong) {
+    const pf = parseFilter(colorAmong[1]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'colors_among', filter: pf.filter } : null;
+  }
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
   if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };

@@ -56,6 +56,8 @@ interface ActiveEffect {
   landTypes?: string[];
   /** Layer 6: "loses all abilities". */
   loseAbilities?: true;
+  /** Layer 6: "loses flying" — those keywords. */
+  loseKeywords?: string[];
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
@@ -283,6 +285,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.landTypes ? { landTypes: e.landTypes } : {}),
         ...(e.colors ? { colors: e.colors } : {}),
         ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
+        ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
       });
@@ -314,6 +317,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
     ...(e.landTypes ? { landTypes: e.landTypes } : {}),
     ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
+    ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
@@ -414,11 +418,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
   // CR 613.1e: layer 5 — color-changing effects.
   for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
-  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat || e.loseAbilities) && e.applies(o, c));
+  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
   for (const e of inLayer6) {
     // "loses all abilities": what it has so far goes (its own static abilities aren't applying, see lostAbilities);
     // later effects can still grant it more (CR 613.7).
     if (e.loseAbilities) c.keywords = [];
+    // "loses flying": in timestamp order, so a later grant gives it back.
+    if (e.loseKeywords) c.keywords = c.keywords.filter((k) => !e.loseKeywords!.includes(k.id));
     if (e.keywords) c.keywords.push(...e.keywords);
     for (const r of e.rules ?? []) c.rules.add(r);
     if (e.combat) c.combat.push(e.combat);
@@ -503,6 +509,17 @@ export function hasType(g: GameState, o: GameObject, type: string): boolean {
 
 export function hasKeyword(g: GameState, o: GameObject, id: string): boolean {
   return chars(g, o).keywords.some((k) => k.id === id);
+}
+
+/** The colors among the permanents a filter describes ("among legendary creatures you control"), in WUBRG order. */
+export function colorsAmong(g: GameState, controller: PlayerId, filter: ObjectFilter, source: GameObject | null): Color[] {
+  const out = new Set<Color>();
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (!matchesFilter(g, o, filter, { controller, source })) continue;
+    for (const c of chars(g, o).colors) out.add(c);
+  }
+  return (['W', 'U', 'B', 'R', 'G'] as Color[]).filter((c) => out.has(c));
 }
 
 export function hasRule(g: GameState, o: GameObject, rule: RuleFlag): boolean {

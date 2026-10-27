@@ -493,7 +493,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         last.retainTypes = true;
         continue;
       }
-      if (/^(?:It|They) can't be regenerated$/.test(s)) {
+      if (/^(?:It|They|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
         // The destroy effects of the sentence before ("Destroy target creature and all others with the same name").
         const destroys: EffectNode[] = [];
         const find = (list: EffectNode[]) => {
@@ -1092,6 +1092,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const rule = (t: string) => (/protection/.test(t) ? 'protection_everything' : 'life_cant_change');
     return [lasting[1]!, lasting[2]].filter(Boolean).map((t) => ({ type: 'player_effect', who: { ref: 'you' }, rule: rule(t!), until: 'your_next_turn' }));
   }
+  // Pyroblast: "Counter target spell if it's blue.", "Destroy target permanent if it's blue." (CR 608.2c)
+  const ifIts = /^(.+) if it's (white|blue|black|red|green|(?:a|an) [a-z]+)$/.exec(s);
+  if (ifIts) {
+    const r = attempt(b, (b) => {
+      const inner = parseSentence(ifIts[1]!, b);
+      const it = b.it;
+      const word = ifIts[2]!.replace(/^(?:a|an) /, '');
+      const pf = inner && it ? parseFilter(`${word} ${COLOR_WORDS[word] ? 'permanent' : ''}`.trim(), b) : null;
+      if (!inner || !it || !pf || pf.plural) return null;
+      return [{ type: 'if', cond: { type: 'is', of: it, filter: pf.filter }, effects: inner }];
+    });
+    if (r) return r;
+  }
+  // "Exile all graveyards." — every card in them.
+  if (/^[Ee]xile all graveyards$/.test(s)) return parseSentence('Exile all cards from all graveyards', b);
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
   // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
@@ -2028,6 +2043,17 @@ const RESTRICTIONS: Record<string, RuleFlag[]> = {
 
 /** "Target creature can't block this turn." */
 function parseRestriction(c: string, b: Binder): EffectNode[] | null {
+  // Layer 6: "Target creature loses flying until end of turn", "Permanents your opponents control lose hexproof and
+  // indestructible until end of turn".
+  const lose = /^(.+?) loses? ([a-z ,]+?) until end of turn$/.exec(c);
+  if (lose && !/^all abilities$/.test(lose[2]!)) {
+    const r = attempt(b, (b) => {
+      const kws = parseKeywordList(lose[2]!, b);
+      const what = kws && !kws.some((k) => k.text || k.cost || k.n !== undefined) ? parseObjectRef(lose[1]!, b) : null;
+      return what && kws ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), until: 'eot' }] : null;
+    });
+    if (r) return r;
+  }
   // "Target creature must be blocked this turn if able." / "~ can't be blocked by more than one creature this turn."
   const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can block only .+? this turn)$/.exec(c);
   if (combat) {
@@ -2040,11 +2066,12 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 509.1c: "Target creature blocks this turn if able", "Target creature attacks or blocks this turn if able",
   // "Target creature blocks ~ this turn if able", "you may have target creature block it this turn if able".
-  const anyBlock = /^(?:[Hh]ave )?(.+?) (blocks?|attacks? or blocks?|attack or block) (?:this turn|this combat|each combat this turn) if able$/.exec(c);
+  const anyBlock = /^(?:[Hh]ave )?(.+?) (blocks?|attacks? or blocks?|attack or block|attacks?) (?:this turn|this combat|each combat this turn) if able$/.exec(c);
   if (anyBlock) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(anyBlock[1]!, b);
-      const rules = /attack/.test(anyBlock[2]!) ? ['attacks_each_combat', 'blocks_each_combat'] : ['blocks_each_combat'];
+      // "Target creature attacks this turn if able" (CR 508.1d)
+      const rules = /block/.test(anyBlock[2]!) ? (/attack/.test(anyBlock[2]!) ? ['attacks_each_combat', 'blocks_each_combat'] : ['blocks_each_combat']) : ['attacks_each_combat'];
       return what ? [{ type: 'modify', what: what.ref, rules, until: 'eot' }] : null;
     });
     if (r) return r;

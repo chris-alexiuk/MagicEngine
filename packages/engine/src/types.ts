@@ -348,6 +348,8 @@ export interface ContinuousEffect {
   keywords?: KeywordInstance[];
   rules?: RuleFlag[];
   combat?: CombatRules;
+  /** Layer 6: keywords it loses ("loses flying until end of turn"). */
+  loseKeywords?: string[];
   /** Layer 4: card types and subtypes it becomes; added to its own if `retainTypes` (CR 205.1b). */
   types?: string[];
   subtypes?: string[];
