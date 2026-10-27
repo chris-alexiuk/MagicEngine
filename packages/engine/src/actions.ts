@@ -405,6 +405,13 @@ export function additionalCosts(face: FaceDef): EffectNode[] {
   return face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'additional_cost' ? [a.effect.cost as EffectNode] : []));
 }
 
+/** castOptions, plus what the player has from elsewhere: Omniscience's "without paying their mana costs" from the hand. */
+export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): CastOptionNode[] {
+  const base = castOptions(face);
+  if (o.zone === 'hand' && !face.types.includes('Land') && playerRule(g, player, 'free_from_hand')) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
+  return base;
+}
+
 /** CR 118.9 / 601.2f: the alternative and optional additional costs a face offers as it's cast. */
 export function castOptions(face: FaceDef): CastOptionNode[] {
   const out = printedAbilities(face).flatMap((a) => (a.kind === 'static' && a.effect.type === 'cast_option' ? [a.effect as CastOptionNode] : []));
@@ -502,7 +509,7 @@ function cast(
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
   // CR 118.9 / 601.2b: an alternative cost and optional additional costs, announced as it's cast.
-  const options = castOptions(face);
+  const options = castOptionsFor(g, player, o, face);
   const alt = altId ? options.find((x) => x.kind === 'alternative' && x.id === altId) : undefined;
   if (altId && !alt) throw new RulesError(`${face.name} has no “${altId}” cost.`);
   const added = extras.map((x) => {

@@ -73,6 +73,15 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // Jace, Wielder of Mysteries: "if your library has no cards in it"
+  if (/^your library has no cards in it$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'library', who: 'you' }, op: 'eq', n: 0 };
+  // Field of the Dead: "you control seven or more lands with different names"
+  const names = /^you control (\w+ or more) (.+?) with different names$/.exec(t);
+  if (names) {
+    const c = count(names[1]!);
+    const pf = parseFilter(names[2]!, b);
+    if (c && pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'distinct_names', filter: pf.filter, ...c };
+  }
   // CR 731: "if it's night", "if it's day", "if it's neither day nor night"
   const dayNight = /^it(?:'s| is) (day|night|neither day nor night)$/.exec(t);
   if (dayNight) return { type: 'day_night', is: dayNight[1] === 'neither day nor night' ? 'neither' : dayNight[1] };
@@ -134,6 +143,16 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'is', of: subject.ref, filter };
   }
   if (/^it's your turn$/.test(t)) return { type: 'your_turn', value: true };
+  // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
+  const statIs = /^(its|~'s|that creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t);
+  if (statIs) {
+    const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : b.it;
+    const n = parseAmount(statIs[3]!);
+    if (of && typeof n === 'number') {
+      const key = statIs[2] === 'mana value' ? 'manaValue' : (statIs[2] as 'power' | 'toughness');
+      return { type: 'is', of, filter: { [key]: { op: /greater|more/.test(statIs[4]!) ? 'ge' : 'le', n } } };
+    }
+  }
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
   if (itIs && b.it) {

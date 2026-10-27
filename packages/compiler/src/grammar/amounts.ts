@@ -93,6 +93,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
   const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
   if (moved) return moved;
+  // Syphon Mind: "for each card discarded this way"
+  if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"

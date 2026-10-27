@@ -6,7 +6,7 @@ import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, tough
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
-import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
+import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -241,8 +241,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         costs = picked;
       }
       const extra = withCosts(costs);
-      // One entry per way to make the mana ("{R} or {G}", "one mana of any color").
-      const effect = ab.effects[0] as AddManaEffect | undefined;
+      // One entry per way to make the mana ("{R} or {G}", "one mana of any color"); with "If …, add … instead" (Urza's
+      // Tower, Incubation Druid), the ways the usual mana can be made.
+      const first = ab.effects[0];
+      const effect = (first?.type === 'if' ? ((first.else as AddManaEffect[] | undefined)?.[0] ?? (first.effects as AddManaEffect[] | undefined)?.[0]) : first) as AddManaEffect | undefined;
       if (effect?.anyColor) {
         for (const choice of anyColorChoices(g, player, effect.identity, effect, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
@@ -286,7 +288,7 @@ type Choice = { targets?: Target[][]; modes?: number[]; costs?: CostChoices };
 /** Cast actions using an alternative cost or adding one optional cost (from the hand; escape from the graveyard). */
 function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed: boolean, fromGraveyard: boolean): Action[] {
   const face = g.cards[o.card]!.faces[0]!;
-  const options = castOptions(face);
+  const options = castOptionsFor(g, player, o, face);
   if (!options.length || face.types.includes('Land')) return [];
   const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o);
   const out: Action[] = [];

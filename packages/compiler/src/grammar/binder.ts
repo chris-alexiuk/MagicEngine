@@ -32,6 +32,8 @@ export class Binder {
   selfZone: 'graveyard' | 'hand' | null = null;
   /** "it" is this object even though it has left the battlefield ("When ~ dies, it deals damage …"). */
   itIsSource = false;
+  /** "Whenever a Dragon you control enters, it deals …": "it" is a permanent on the battlefield that can be a source. */
+  itOnField = false;
   /** The trigger event has an amount, so "that much" / "that many" means it. */
   eventAmount = false;
   /** What the last "deals N damage to …" dealt damage to ("a creature dealt damage this way"). */
@@ -51,6 +53,7 @@ export class Binder {
     b.named = this.named;
     b.selfZone = this.selfZone;
     b.itIsSource = this.itIsSource;
+    b.itOnField = this.itOnField;
     b.eventAmount = this.eventAmount;
     b.damaged = this.damaged;
     b.votes = this.votes;
@@ -65,6 +68,7 @@ export class Binder {
     this.named = other.named;
     this.selfZone = other.selfZone;
     this.itIsSource = other.itIsSource;
+    this.itOnField = other.itOnField;
     this.eventAmount = other.eventAmount;
     this.damaged = other.damaged;
     this.votes = other.votes;

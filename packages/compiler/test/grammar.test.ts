@@ -1654,3 +1654,26 @@ describe('slice 152', () => {
     expect(parse('When this creature enters, look at the top X cards of your library, where X is your devotion to blue. Put up to one of them on top of your library and the rest on the bottom of your library in a random order. If X is greater than or equal to the number of cards in your library, you win the game.', 'Creature — Merfolk Wizard', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'dig', to: 'top', rest: 'bottom' }, { type: 'if', effects: [{ type: 'game_result', result: 'win' }] }] });
   });
 });
+
+describe('slice 153', () => {
+  it('reads trailing ifs with Otherwise, distinct names, Maze of Ith and Syr Konrad', () => {
+    expect(parse('Whenever a creature you control enters, draw a card if its power is 3 or greater. Otherwise, put two +1/+1 counters on it.', 'Enchantment', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'is', of: { ref: 'trigger_object' }, filter: { power: { op: 'ge', n: 3 } } }, effects: [{ type: 'draw' }], else: [{ type: 'add_counters' }] }] });
+    expect(parse('Whenever this land or another land you control enters, if you control seven or more lands with different names, create a 2/2 black Zombie creature token.', 'Land', 'F').abilities[0]).toMatchObject({ condition: { type: 'distinct_names', filter: { types: ['Land'] }, min: 7 } });
+    expect(parse('{T}: Untap target attacking creature. Prevent all combat damage that would be dealt to and dealt by that creature this turn.', 'Land', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'untap' }, { type: 'prevent', combat: true, to: { ref: 'target' } }, { type: 'prevent', combat: true, by: { ref: 'target' } }] });
+    expect(parse('Whenever another creature dies, or a creature card is put into a graveyard from anywhere other than the battlefield, or a creature card leaves your graveyard, Konrad deals 1 damage to each opponent.', 'Legendary Creature — Human Knight', 'Konrad').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'dies' }, { type: 'put_into_graveyard', notFromBattlefield: true }, { type: 'leave_graveyard', each: true }] } });
+  });
+  it('reads Ghalta, Syphon Mind, All Is Dust, Burgeoning and Dragon Tempest', () => {
+    expect(parse('When Ghalta enters, put any number of creature cards from your hand onto the battlefield.', 'Legendary Creature — Dinosaur', 'Ghalta').abilities[0]).toMatchObject({ effects: [{ type: 'choose_from_hand', amount: 99, then: 'battlefield', optional: true }] });
+    expect(parse('Each other player discards a card. You draw a card for each card discarded this way.', 'Sorcery', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'discard' }, { type: 'draw', amount: { kind: 'discarded_this_way' } }] });
+    expect(parse('Each player sacrifices all permanents they control that are one or more colors.', 'Sorcery', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice', what: { ref: 'all' }, byController: true }] });
+    expect(parse('Whenever an opponent plays a land, you may put a land card from your hand onto the battlefield.', 'Enchantment', 'B').abilities[0]).toMatchObject({ trigger: { type: 'land_played', who: 'opponent' } });
+    expect(parse('Whenever a Dragon you control enters, it deals X damage to any target, where X is the number of Dragons you control.', 'Enchantment', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', from: { ref: 'trigger_object' } }] });
+  });
+  it('reads counter costs, Omniscience, Narset, target lists and two-mana instead', () => {
+    expect(parse('Put a -1/-1 counter on this creature: Untap this creature.', 'Creature — Human Druid', 'D').abilities[0]).toMatchObject({ cost: { other: [{ type: 'put_counters_self', counter: '-1/-1', amount: 1 }] } });
+    expect(parse('You may cast spells from your hand without paying their mana costs.', 'Enchantment', 'O').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'free_from_hand' } });
+    expect(parse("Each opponent can't draw more than one card each turn.", 'Enchantment', 'N').abilities[0]).toMatchObject({ effect: { type: 'player_rule', who: 'opponents', rule: 'max_one_draw' } });
+    expect(parse('Destroy target artifact and target creature.', 'Sorcery', 'D').abilities[0]).toMatchObject({ targets: [{ filter: { types: ['Artifact'] } }, { filter: { types: ['Creature'] } }], effects: [{ type: 'destroy' }, { type: 'destroy' }] });
+    expect(parse('{T}: Add one mana of any type that a land you control could produce. If this creature has a +1/+1 counter on it, add three mana of that type instead.', 'Creature — Elf Druid', 'I').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'if', effects: [{ type: 'add_mana', anyColor: 3 }], else: [{ type: 'add_mana', anyColor: 1 }] }] });
+  });
+});

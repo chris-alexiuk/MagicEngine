@@ -763,8 +763,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             player: ctx.controller,
             candidates,
             min: node.optional ? 0 : n,
-            max: n,
-            text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : `${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
+            max: Math.min(n, candidates.length),
+            text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
             ...(node.then === 'library_top' ? { ordered: true as const } : {}),
             ...(node.revealHand ? { revealed: [...hand] } : {}),
           },
@@ -2976,6 +2976,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const o = check.g.objects[x.object];
       return Boolean(o && o.owner === check.controller && (!t.filter || matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true })));
     };
+    // "Whenever a creature card leaves your graveyard": each card.
+    if (t.each) return mine(e) ? [{ object: { id: e.object, zcc: check.g.objects[e.object]!.zcc } }] : [];
     const batch = (check.batch ?? [e]).filter(mine);
     return batch[0] === e ? [{}] : [];
   },
@@ -3110,8 +3112,24 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o), player: e.player }] : [];
   },
   // "When ~ is put into a graveyard from anywhere, shuffle it into its owner's library." (works in the graveyard)
-  put_into_graveyard(_t, check) {
+  // CR 305.1: "Whenever you play a land", "Whenever an opponent plays a land" (Burgeoning) — playing it, not putting it
+  // onto the battlefield.
+  land_played(t, check) {
     const e = check.event;
+    if (e.type !== 'land_played' || check.sourceLeft) return [];
+    if (t.who === 'you' ? e.player !== check.controller : t.who === 'opponent' ? e.player === check.controller : false) return [];
+    const o = check.g.objects[e.object];
+    return [{ ...(o ? { object: refTo(o) } : {}), player: e.player }];
+  },
+  put_into_graveyard(t, check) {
+    const e = check.event;
+    // Syr Konrad: "Whenever a creature card is put into a graveyard from anywhere [other than the battlefield]"
+    if ((t.subject as Ref | undefined)?.ref === 'all') {
+      if (e.type !== 'moved' || e.to !== 'graveyard' || check.sourceLeft || (t.notFromBattlefield && e.from === 'battlefield')) return [];
+      const o = check.g.objects[e.object];
+      if (!o || o.zone !== 'graveyard' || !matchesFilter(check.g, o, (t.subject as { filter: ObjectFilter }).filter, { controller: check.controller, anyZone: true })) return [];
+      return [{ object: refTo(o) }];
+    }
     if (e.type !== 'moved' || e.to !== 'graveyard' || e.object !== check.source.id || check.source.zone !== 'graveyard') return [];
     return [{ object: refTo(check.source) }];
   },

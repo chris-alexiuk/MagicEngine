@@ -64,6 +64,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
+  // All Is Dust: "permanents … that are one or more colors" — not colorless.
+  [/ that (?:are|is) one or more colors$/, (f) => !f.colors && ((f.colors = ['W', 'U', 'B', 'R', 'G']), true)],
   // Oran-Rief: "each green creature that entered this turn"
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
   // "creature that was dealt damage this turn"

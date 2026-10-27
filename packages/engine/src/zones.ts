@@ -381,6 +381,19 @@ function drawReplacements(g: GameState, player: PlayerId): number {
   return n;
 }
 
+/** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." */
+function drawLimited(g: GameState, player: PlayerId): boolean {
+  if (!(g.turnLog.drawn?.[player] ?? 0)) return false;
+  return abilitySources(g).some((id) => {
+    const source = g.objects[id]!;
+    return objectAbilities(g, source).some((a) => {
+      if (a.kind !== 'static' || a.effect.type !== 'player_rule' || a.effect.rule !== 'max_one_draw') return false;
+      const who = a.effect.who;
+      return who === 'each' || (who === 'you' ? player === source.controller : player !== source.controller);
+    });
+  });
+}
+
 function emptyDrawWins(g: GameState, player: PlayerId): boolean {
   return abilitySources(g).some((id) => {
     const source = g.objects[id]!;
@@ -390,6 +403,8 @@ function emptyDrawWins(g: GameState, player: PlayerId): boolean {
 
 /** Draws one card. CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions. */
 export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], replaced = false): void {
+  // CR 121.2: a draw that can't happen doesn't (Narset) — it isn't a draw from an empty library either.
+  if (drawLimited(g, player)) return;
   if (g.step === 'draw' && g.active === player) {
     const replacements = replaced ? 0 : drawReplacements(g, player);
     const drew = (g.turnLog.drawStepDrew ??= []);

@@ -3,14 +3,14 @@ import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects } from './resolve.js';
 import type { GameEvent, GameState, ObjectId, PlayerId } from './types.js';
-import { faceOf, livePlayers, zoneList } from './zones.js';
+import { faceOf, livePlayers, nameOf, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -340,6 +340,16 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'or':
       return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
+    // Field of the Dead: "you control seven or more lands with different names" (CR 201.2)
+    case 'distinct_names': {
+      const names = new Set(
+        g.zones.battlefield
+          .map((id) => g.objects[id]!)
+          .filter((o) => o.controller === controller && !o.faceDown && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }))
+          .map((o) => nameOf(g, o)),
+      );
+      return cmp(names.size, cond);
+    }
     // Starting Town: "it's your first, second, or third turn of the game"
     case 'early_turn':
       return g.active === ctx.controller && (g.players[ctx.controller]!.turnsBegun ?? 0) <= Number(cond.max);

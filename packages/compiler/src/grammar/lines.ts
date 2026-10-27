@@ -165,12 +165,13 @@ const MANA_RUN = /^(?:\{(?:\d+|[WUBRGCSX]|[WUBRG2]\/[WUBRGP])\})+$/;
 
 /** "Sacrifice a creature", "Sacrifice another artifact", "Discard a card" — costs where the player picks what. */
 export function choiceCost(item: string, b: Binder | null): EffectNode | null {
-  const sac = /^[Ss]acrifice (a|an|one|two|three|another) (.+)$/.exec(item);
+  const sac = /^[Ss]acrifice (a|an|one|two|three|another) (other )?(.+)$/.exec(item);
   if (sac && b) {
-    const pf = parseFilter(sac[2]!, b);
+    // Mondrak: "Sacrifice two other artifacts and/or creatures"
+    const pf = parseFilter(sac[3]!.replace(/ and\/or /g, ' or '), b);
     const amount = sac[1] === 'another' ? 1 : parseAmount(sac[1]!);
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
-    if (sac[1] === 'another') pf.filter.other = true;
+    if (sac[1] === 'another' || sac[2]) pf.filter.other = true;
     return { type: 'sacrifice', filter: pf.filter, amount };
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
@@ -278,6 +279,11 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
     // Simian Spirit Guide: "Exile this card from your hand: Add {R}." (CR 605.1a: from the hand)
     else if (/^[Ee]xile ~ from your hand$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_hand' });
+    // Devoted Druid: "Put a -1/-1 counter on this creature"; Mazemind Tome: "Put a page counter on this artifact".
+    else if (/^[Pp]ut (a|an|one|two) (\S+) counters? on ~$/.test(item)) {
+      const m = /^[Pp]ut (\S+) (\S+) counters? on ~$/.exec(item)!;
+      (cost.other ??= []).push({ type: 'put_counters_self', counter: m[2]!.replace(/−/g, '-'), amount: parseAmount(m[1]!.replace(/^an$/, 'a')) ?? 1 });
+    }
     // Relic of Progenitus, Plaza of Heroes: "Exile this artifact", "Exile this land" (CR 118.3).
     else if (/^[Ee]xile ~$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_battlefield' });
     // Lion's Eye Diamond: "Discard your hand" (CR 701.9b).
@@ -456,10 +462,12 @@ export const activatedRule: GrammarRule = {
         mana[2] = keep[1]!;
       }
       // Urza's Tower: "{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead."
-      const insteadMana = mana && effect && mana[2] ? /^If (.+?), add ((?:\{[WUBRGC]\})+) instead\.$/.exec(mana[2]) : null;
+      // Incubation Druid: "If this creature has a +1/+1 counter on it, add three mana of that type instead."
+      const insteadMana = mana && effect && mana[2] ? /^If (.+?), add ((?:\{[WUBRGC]\})+|(?:two|three) mana of that (?:type|color)) instead\.$/.exec(mana[2]) : null;
       if (mana && effect && insteadMana) {
         const cond = parseCondition(insteadMana[1]!, new Binder(env));
-        const alt = cond ? parseManaProduction(insteadMana[2]!) : null;
+        const many = /^(two|three) mana of that/.exec(insteadMana[2]!);
+        const alt = cond ? (many ? (effect.anyColor === 1 ? { ...effect, anyColor: parseAmount(many[1]!) as number } : null) : parseManaProduction(insteadMana[2]!)) : null;
         if (!cond || !alt || node.timing || node.maxPerTurn || node.oncePerGame) return null;
         return { ...node, effects: [{ type: 'if', cond, effects: [alt], else: [effect] }], mana: true };
       }
@@ -746,6 +754,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
+  // Burgeoning: "Whenever an opponent plays a land", Fastbond-style "Whenever you play a land"
+  const plays = /^(you|an opponent|a player) plays? a land$/.exec(t);
+  if (plays && word === 'Whenever') {
+    const who = plays[1] === 'you' ? 'you' : plays[1] === 'an opponent' ? 'opponent' : 'any';
+    return { trigger: { type: 'land_played', who }, it: { ref: 'trigger_object' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
+  }
   // Mirkwood Bats: "Whenever you create or sacrifice a token"; "Whenever you create a token", "… one or more creature
   // tokens" — tokens are created on the battlefield (CR 111.1), so as they enter under your control.
   const createOrSac = /^you create or sacrifice a token$/.test(t);
@@ -892,6 +906,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
     const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, '').replace(/ you$/, '').replace(/ to (?:an opponent|one of your opponents)$/, ' to a player'));
     if (type === 'attacks' && / you$/.test(other[2]!)) b.named['that creature'] = { ref: 'trigger_object' };
+    // Old Gnawbone: "Whenever a creature you control deals combat damage to a player, create that many Treasure tokens."
+    if (type === 'deals_combat_damage') b.eventAmount = true;
     return {
       trigger: {
         type,
@@ -915,6 +931,34 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
+  // Syr Konrad: "Whenever another creature dies, or a creature card is put into a graveyard from anywhere other than the
+  // battlefield, or a creature card leaves your graveyard" — any of the events (CR 603.2).
+  if (word === 'Whenever' && / or (?:a|an|another|one) /.test(t) && t.includes(', or ')) {
+    const parts = t.split(/,? or (?=(?:a|an|another|one or more) )/);
+    if (parts.length >= 3) {
+      const parsed = parts.map((p) => parseTrigger('Whenever', p.replace(/,$/, ''), b.clone()));
+      if (parsed.every(Boolean)) return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: { ref: 'trigger_object' }, player: null };
+    }
+  }
+  // "Whenever a creature card is put into a graveyard from anywhere other than the battlefield" (Syr Konrad)
+  const intoYard = /^(a|an) (.+? card) is put into (a|your|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
+  if (intoYard) {
+    const pf = parseFilter(`${intoYard[2]} in a graveyard`, b);
+    if (pf && !pf.plural && pf.filter.zone === 'graveyard') {
+      const { zone: _z, ...filter } = pf.filter;
+      if (intoYard[3] !== 'a') filter.owner = intoYard[3] === 'your' ? 'you' : 'opponent';
+      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, ...(intoYard[4] ? { notFromBattlefield: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+    }
+  }
+  // "Whenever a creature card leaves your graveyard" — once for each card.
+  const leavesOne = /^(a|an) (.+? card) leaves your graveyard$/.exec(t);
+  if (leavesOne) {
+    const pf = parseFilter(`${leavesOne[2]} in your graveyard`, b);
+    if (pf && !pf.plural && pf.filter.zone === 'graveyard') {
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return { trigger: { type: 'leave_graveyard', filter, each: true }, it: { ref: 'trigger_object' }, player: null };
+    }
+  }
   // "Whenever one or more cards leave your graveyard", "… creature cards …"
   const leaveGy = /^one or more (cards|.+? cards) leave your graveyard$/.exec(t);
   if (leaveGy) {
@@ -1177,6 +1221,8 @@ export const triggeredRule: GrammarRule = {
         if (!trig) return null;
         b.it = trig.it;
         b.player = trig.player;
+        // Dragon Tempest: "Whenever a Dragon you control enters, it deals X damage to any target" — that Dragon deals it.
+        if (['enters', 'attacks', 'blocks'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
         // CR 113.6m: "When ~ dies, return ~ from your graveyard…" — the trigger put it there; it's the card that died.
         const selfLeaves = (trig.trigger.type === 'dies' || trig.trigger.type === 'leaves') && (trig.trigger.subject as Ref).ref === 'self';
         if (selfLeaves) {
@@ -1276,6 +1322,9 @@ export const continuousRule: GrammarRule = {
     const cantBlockIt = /^(Creatures .+?) can't block (?:it|~)$/.exec(rest);
     if (cantBlockIt) rest = `~ can't be blocked by ${cantBlockIt[1]!.replace(/^C/, 'c')}`;
     rest = rest.replace(/^(~ doesn't untap during (?:your|its controller's) untap step) if (.+)$/, '$1 as long as $2');
+    // Razorkin Needlehead: "This creature has first strike during your turn." — the same as "During your turn, …".
+    // (Cast prohibitions keep their own "during your turn" reading.)
+    if (!/can't (?:cast|activate)/.test(rest)) rest = rest.replace(/^(.+?) during (your turn|turns other than yours)$/, 'During $2, $1');
     // Topiary Stomper: "This creature can't attack or block unless you control seven or more lands." (CR 611.3a)
     // ("… unless defending player controls an Island" is checked per attack, elsewhere.)
     const unless = /^(~ can't (?:attack|block|attack or block)) unless (?!defending player)(.+)$/.exec(rest);
@@ -1447,8 +1496,12 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
     "don't lose the game for having 0 or less life": 'no_lose_for_life',
     "can't lose the game": 'cant_lose',
     'may cast spells as though they had flash': 'flash',
+    'may cast spells from your hand without paying their mana costs': 'free_from_hand',
   };
   if (subject && simple[subject[2]!] && who(subject[1]!)) return { type: 'player_rule', who: who(subject[1]!)!, rule: simple[subject[2]!]! };
+  // Narset, Parter of Veils
+  const oneDraw = /^(Each opponent|Each player|You) can't draw more than one card each turn$/.exec(body);
+  if (oneDraw) return { type: 'player_rule', who: who(oneDraw[1]!)!, rule: 'max_one_draw' };
   const hand = /^(You|Players|Each player|Each opponent|Your opponents) ha(?:s|ve) no maximum hand size$/.exec(body);
   if (hand) return { type: 'player_rule', who: who(hand[1]!)!, rule: 'no_max_hand_size' };
   const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);

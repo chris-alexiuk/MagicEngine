@@ -432,6 +432,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "Add {B}{B}{B}{B}{B} instead if there are seven or more cards in your graveyard." — the same as "If …, … instead".
       const insteadIf = i > 0 ? /^(.+) instead if (.+)$/.exec(s) : null;
       if (insteadIf) s = `If ${insteadIf[2]}, ${insteadIf[1]!.replace(/^\w/, (c) => c.toLowerCase())} instead`;
+      // Tribute to the World Tree: "draw a card if its power is 3 or greater. Otherwise, put two +1/+1 counters on it."
+      const trailingIf = sentences[i + 1] && /^Otherwise, /.test(sentences[i + 1]!) && !/^If /.test(s) ? /^(.+?) if ([^,]+)$/.exec(s) : null;
+      if (trailingIf && parseCondition(trailingIf[2]!, b.clone())) s = `If ${trailingIf[2]}, ${trailingIf[1]!.replace(/^\w/, (c) => c.toLowerCase())}`;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -1565,7 +1568,7 @@ function countedClause(s: string, b: Binder, subject: Ref | null): Clause | null
 function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
   const whole = countedClause(s, b, subject);
   if (whole) return whole.effects;
-  const joints = [...s.matchAll(/, then | and then | and |, /g)];
+  const joints = [...s.matchAll(/, then | and then |, and | and |, /g)];
   for (const j of joints) {
     const r = attempt(b, (b) => {
       const l = countedClause(s.slice(0, j.index), b, subject);
@@ -1683,7 +1686,23 @@ const VERBS: Record<string, VerbHandler> = {
     }
     const attached = /^(.+?) attached to (.+)$/.exec(args);
     const token = parseTokenPhrase(attached ? attached[1]! : args, b);
-    if (!token) return null;
+    if (!token) {
+      // Wurmcoil Engine: "a 3/3 … token with deathtouch and a 3/3 … token with lifelink" — two kinds of tokens.
+      if (attached || attacking) return null;
+      for (const m of args.matchAll(/ and (?=(?:a|an|one|two|three) )/g)) {
+        const r = attempt(b, (b) => {
+          const one = parseTokenPhrase(args.slice(0, m.index), b);
+          const two = one ? parseTokenPhrase(args.slice(m.index! + m[0].length), b) : null;
+          if (!one || !two) return null;
+          return [one, two].map((t): EffectNode => ({ type: 'create_token', amount: t.amount, token: t.face, who, ...(t.tapped ? { tapped: true } : {}) }));
+        });
+        if (r) {
+          createdTokens(b);
+          return r;
+        }
+      }
+      return null;
+    }
     const node: EffectNode = { type: 'create_token', amount: token.amount, token: token.face, who };
     if (token.tapped) node.tapped = true;
     if (attacking) {
@@ -1699,6 +1718,14 @@ const VERBS: Record<string, VerbHandler> = {
     return [node];
   },
   sacrifice(args, who, b) {
+    // All Is Dust: "Each player sacrifices all permanents they control that are one or more colors." — their own.
+    const all = /^all (.+?) (?:they|you) control( that .+)?$/.exec(args);
+    if (all && (who.ref === 'you' || (who.ref === 'players' && !who.attacking))) {
+      const pf = parseFilter(`${all[1]}${all[2] ?? ''}`, b);
+      if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
+      const filter: ObjectFilter = { ...pf.filter, ...(who.ref === 'you' ? { controller: 'you' as const } : who.who === 'opponents' ? { controller: 'opponent' as const } : {}) };
+      return [{ type: 'sacrifice', what: { ref: 'all', filter }, byController: true }];
+    }
     // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
     // "sacrifices a creature of their choice" (the 2024 wording; CR 701.21a: the player chooses either way).
     const choice = /^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|thirteen|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
@@ -1721,13 +1748,14 @@ const VERBS: Record<string, VerbHandler> = {
   put(args, who, b, imperative) {
     if (!imperative) return null;
     // "Put a land card from your hand onto the battlefield (tapped)." — chosen as it resolves.
-    const fromHand = /^(a|an|up to one|up to two) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
+    // Ghalta, Last March of the Ents: "put any number of creature cards from your hand onto the battlefield".
+    const fromHand = /^(a|an|up to one|up to two|any number of) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
     if (fromHand) {
-      const n = fromHand[1] === 'up to two' ? 2 : 1;
+      const n = fromHand[1] === 'up to two' ? 2 : fromHand[1] === 'any number of' ? 99 : 1;
       const pf = parseFilter(`${fromHand[2]} in your hand`, b);
       if (!pf || pf.plural !== n > 1) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;
-      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(fromHand[1]!.startsWith('up to') ? { optional: true } : {}) }];
+      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(/^(?:up to|any number)/.test(fromHand[1]!) ? { optional: true } : {}) }];
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) \S+ counters? on it)?$/.exec(args);
@@ -1783,7 +1811,11 @@ const VERBS: Record<string, VerbHandler> = {
     // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
     const until = / until ~ leaves the battlefield$/.exec(args);
     const what = parseObjectRef(until ? args.slice(0, until.index) : args, b);
-    if (!what) return null;
+    if (!what) {
+      // "Exile target creature and target artifact."
+      const list = until ? null : targetList(args, b);
+      return list ? list.map((r) => ({ type: 'move', what: r, to: 'exile' })) : null;
+    }
     return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: 'source_leaves' } : {}) }];
   },
   return(args, who, b, imperative) {
@@ -1967,8 +1999,26 @@ function objectVerb(type: string): VerbHandler {
   return (args, _who, b, imperative) => {
     if (!imperative) return null;
     const what = parseObjectRef(args, b);
-    return what ? [{ type, what: what.ref }] : null;
+    if (what) return [{ type, what: what.ref }];
+    // Decimate: "Destroy target artifact, target creature, target enchantment, and target land." — each its own target.
+    const list = targetList(args, b);
+    return list ? list.map((r) => ({ type, what: r })) : null;
   };
+}
+
+/** "target artifact and target enchantment", "target artifact, target creature, and target land": two or more targets. */
+function targetList(args: string, b: Binder): Ref[] | null {
+  const parts = args.split(/,? and (?=target )|, (?=target )/);
+  if (parts.length < 2 || !parts.every((p) => /^target /.test(p))) return null;
+  return attempt(b, (b) => {
+    const refs: Ref[] = [];
+    for (const p of parts) {
+      const r = parseObjectRef(p, b);
+      if (!r || r.plural || !r.targeted) return null;
+      refs.push(r.ref);
+    }
+    return refs;
+  });
 }
 
 for (const lemma of Object.keys(VERBS)) {
@@ -2009,6 +2059,12 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     const amount = parseAmount(next[1]!);
     const to = parseRecipients(next[2]!, b);
     return amount !== null && to?.length === 1 ? [{ type: 'prevent', amount, to: to[0] }] : null;
+  }
+  // Maze of Ith: "Prevent all combat damage that would be dealt to and dealt by that creature this turn." — two shields.
+  const both = /^Prevent all (combat )?damage that would be dealt to and dealt by (.+?) this turn$/.exec(c);
+  if (both) {
+    const to = parseRecipients(both[2]!, b);
+    return to?.length === 1 ? [{ type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), to: to[0] }, { type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), by: to[0] }] : null;
   }
   const all = /^Prevent all (combat )?damage that would be dealt (?:to|by) (.+?) this turn$/.exec(c);
   if (all) {
@@ -2326,21 +2382,22 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   const m = /^(~|[Ii]t) deals (\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
-    if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object')) return null;
+    const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
+    if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object') && !fromIt) return null;
     const amount = parseAmount(m[2]!);
     if (amount === null) return null;
     const out: EffectNode[] = [];
     const second = /^(.+?) and (\S+) damage to (.+)$/.exec(m[3]!);
     const first = parseRecipients(second ? second[1]! : m[3]!, b);
     if (!first) return null;
-    for (const to of first) out.push({ type: 'deal_damage', amount, to });
+    for (const to of first) out.push({ type: 'deal_damage', amount, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : {}) });
     // "If a creature dealt damage this way would die this turn, …"
     if (first.length === 1) b.damaged = first[0]!;
     if (second) {
       const amount2 = parseAmount(second[2]!);
       const rest = amount2 !== null ? parseRecipients(second[3]!, b) : null;
       if (!rest || amount2 === null) return null;
-      for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to });
+      for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : {}) });
     }
     return out;
   });
