@@ -176,6 +176,8 @@ export interface GameObject {
   activatedTurn?: Record<number, number>;
   /** "This ability triggers only once each turn": ability index → turn it last triggered. */
   triggeredTurn?: Record<number, number>;
+  /** CR 603.2h: "Do this only once each turn." — the turn its controller took that action, by "zcc:ability text" (a new object, CR 400.7, starts over). */
+  doneOnce?: Record<string, number>;
   /** CR 107.3m: the X paid for the spell it was, for its enters abilities. */
   x?: number;
   /** CR 709.5c: a Room's unlocked designations — [left half, right half]. */

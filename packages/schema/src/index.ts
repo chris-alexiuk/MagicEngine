@@ -183,6 +183,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
 }
 
 export interface TriggeredAbility extends AbilityBase, Program {
+  /** CR 603.2h: "Do this only once each turn." — it triggers only if its optional action wasn't taken this turn. */
+  doOnce?: true;
   kind: 'triggered';
   trigger: TriggerNode;
   /** "This ability triggers only once each turn." */
@@ -262,6 +264,8 @@ export interface TargetSpec {
   player?: 'opponent' | 'you';
   /** How many; 1 unless stated. */
   count?: number;
+  /** "Exile X target creatures": as many as the X announced (CR 601.2b–c). `count` is then ignored. */
+  countX?: true;
   /** CR 115.6: "up to N" allows fewer, including zero. */
   upTo?: true;
   /** "one, two, or three targets": at least this many. */

@@ -1763,3 +1763,18 @@ describe('slice 158', () => {
     expect(parse("Whenever an artifact or creature an opponent controls enters untapped, they may tap that permanent. If they don't, you create a 1/1 white Vampire creature token with lifelink.", 'Creature — Vampire', 'C').abilities[0]).toMatchObject({ trigger: { type: 'enters', untapped: true }, effects: [{ type: 'may_do', who: { ref: 'trigger_player' }, effects: [{ type: 'tap', what: { ref: 'trigger_object' } }] }] });
   });
 });
+
+describe('slice 159', () => {
+  it('reads "X target …" with the announced X, and "Do this only once each turn"', () => {
+    expect(parse('Exile X target creatures. For each creature exiled this way, its controller creates a 2/2 green Boar creature token.', 'Sorcery', 'C').abilities[0]).toMatchObject({ targets: [{ countX: true, filter: { types: ['Creature'] } }] });
+    expect(parse('{X}, {T}: Untap X target lands.', 'Artifact', 'C').abilities[0]).toMatchObject({ targets: [{ countX: true }] });
+    expect(parse('{U}, Sacrifice this enchantment: Return up to X target permanents to their owners\' hands, where X is the number of verse counters on this enchantment.', 'Enchantment', 'R').unparsed).toHaveLength(1);
+    expect(parse('When this creature enters, return up to X target Zombie cards from your graveyard to the battlefield, where X is the number of opponents you have.', 'Creature — Zombie', 'R').unparsed).toHaveLength(1);
+    expect(parse('Whenever you put one or more +1/+1 counters on a creature you control, you may draw that many cards. Do this only once each turn.', 'Enchantment', 'T').abilities[0]).toMatchObject({ doOnce: true, effects: [{ type: 'may', doOnce: true }] });
+  });
+  it('reads punishers: "unless they sacrifice … or discard a card", each opponent on their own', () => {
+    expect(parse('{T}: Target player loses 3 life unless they sacrifice a nonland permanent of their choice or discard a card.', 'Artifact', 'L').abilities[0]).toMatchObject({ effects: [{ type: 'unless_does', payer: { ref: 'target' }, actions: [[{ type: 'sacrifice_choice' }], [{ type: 'discard' }]], effects: [{ type: 'lose_life', amount: 3 }] }] });
+    expect(parse('Each opponent loses 3 life unless that player sacrifices a nonland permanent of their choice or discards a card.', 'Sorcery', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'unless_does', perPlayer: { ref: 'players', who: 'opponents' }, effects: [{ type: 'lose_life', who: { ref: 'you' } }] }] });
+    expect(parse("At the beginning of each opponent's upkeep, ~ deals 2 damage to that player unless they sacrifice a creature of their choice.", 'Legendary Enchantment Creature — God', 'Mogis').abilities[0]).toMatchObject({ effects: [{ type: 'unless_does', payer: { ref: 'trigger_player' }, action: [{ type: 'sacrifice_choice' }] }] });
+  });
+});

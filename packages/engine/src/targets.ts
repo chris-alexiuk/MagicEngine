@@ -151,7 +151,8 @@ function whoseTarget(g: GameState, t: Target): PlayerId | undefined {
 }
 
 /** How many targets a spec takes at most (CR 601.2c). */
-export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec): number {
+export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec, x = 0): number {
+  if (spec.countX) return Math.max(0, x);
   return spec.perPlayer ? perPlayerSet(g, controller, spec).length : (spec.count ?? 1);
 }
 
@@ -159,8 +160,9 @@ export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec
  * How many targets a spec needs at least: "up to" any minimum; per-player specs one for each player who has a
  * legal one (at least one); otherwise all of them.
  */
-export function targetsRequired(g: GameState, controller: PlayerId, spec: TargetSpec, candidates: readonly Target[]): number {
+export function targetsRequired(g: GameState, controller: PlayerId, spec: TargetSpec, candidates: readonly Target[], x = 0): number {
   if (spec.upTo) return spec.min ?? 0;
+  if (spec.countX) return Math.max(0, x);
   if (spec.perPlayer) {
     const players = new Set(candidates.map((t) => whoseTarget(g, t)));
     return Math.max(1, perPlayerSet(g, controller, spec).filter((p) => players.has(p)).length);
@@ -168,13 +170,13 @@ export function targetsRequired(g: GameState, controller: PlayerId, spec: Target
   return spec.count ?? 1;
 }
 
-export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): TargetPrompt[] {
+export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): TargetPrompt[] {
   return specs.map((spec) => {
     const candidates = targetCandidates(g, controller, spec, source);
     const min = spec.perPlayer ? targetsRequired(g, controller, spec, candidates) : spec.upTo ? spec.min : undefined;
     return {
       text: spec.text,
-      count: targetCount(g, controller, spec),
+      count: targetCount(g, controller, spec, x),
       upTo: Boolean(spec.upTo || spec.perPlayer),
       // "one, two, or three targets": at least this many (CR 601.2c).
       ...(min ? { min } : {}),
@@ -186,10 +188,10 @@ export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetS
 }
 
 /** CR 601.2c / CR 115.6: whether enough legal targets exist for every spec. */
-export function canChooseTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): boolean {
+export function canChooseTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): boolean {
   return specs.every((spec) => {
     const candidates = targetCandidates(g, controller, spec, source);
-    return candidates.length >= targetsRequired(g, controller, spec, candidates);
+    return candidates.length >= targetsRequired(g, controller, spec, candidates, x);
   });
 }
 
@@ -239,12 +241,12 @@ function findDivided(effects: EffectNode[]): EffectNode | undefined {
 }
 
 /** A default legal choice: the first candidates for each spec (UIs let the player change them). */
-export function defaultTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null): Target[][] | null {
+export function defaultTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): Target[][] | null {
   const out: Target[][] = [];
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source);
-    const n = targetCount(g, controller, spec);
-    if (candidates.length < targetsRequired(g, controller, spec, candidates)) return null;
+    const n = targetCount(g, controller, spec, x);
+    if (candidates.length < targetsRequired(g, controller, spec, candidates, x)) return null;
     if (spec.perPlayer) {
       // One for each player who has a legal one.
       const picks: Target[] = [];
@@ -283,6 +285,7 @@ export function chooseTargets(
   specs: TargetSpec[],
   chosen: Target[][] | undefined,
   source: GameObject | null,
+  x = 0,
 ): TargetRef[][] {
   const given = chosen ?? [];
   if (given.length !== specs.length) {
@@ -290,7 +293,7 @@ export function chooseTargets(
   }
   return specs.map((spec, i) => {
     const list = given[i]!;
-    const n = targetCount(g, controller, spec);
+    const n = targetCount(g, controller, spec, x);
     if (spec.perPlayer) {
       // CR 601.2c: each target for a different one of those players.
       const need = targetsRequired(g, controller, spec, targetCandidates(g, controller, spec, source));

@@ -134,6 +134,8 @@ function collect(g: GameState, events: GameEvent[]): void {
         if (c.left && !looksBack(ability.trigger)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
+        // CR 603.2h: "Do this only once each turn." — not once its controller took that action this turn.
+        if (ability.doOnce && c.o.doneOnce?.[`${c.o.zcc}:${ability.text}`] === g.turn) return;
         const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch });
         if (ability.oncePerTurn && infos.length) {
           // "This ability triggers only once each turn."

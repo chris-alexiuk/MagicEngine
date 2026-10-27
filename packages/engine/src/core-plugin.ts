@@ -1910,6 +1910,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   unless_does(node, ctx) {
     // "… unless that player discards a card": they choose whether to (only if they can).
+    // Tergrid's Lantern: "… unless they sacrifice a nonland permanent of their choice or discard a card" — one of them.
+    // Torment of Scarabs-style "each opponent loses 3 life unless that player …" (`perPlayer`): each of them, in APNAP
+    // order (CR 101.4), the actions and the punishment being theirs (`asPlayer`).
+    if (node.perPlayer || node.actions) {
+      const players = node.perPlayer ? apnap(ctx.g).filter((p) => refPlayers(ctx, ref(node, 'perPlayer')).includes(p)) : refPlayers(ctx, ref(node, 'payer')).slice(0, 1);
+      const actions = (node.actions as EffectNode[][] | undefined) ?? [node.action as EffectNode[]];
+      const memo = ctx.memo as { i?: number; picks?: number[] };
+      memo.i ??= 0;
+      memo.picks ??= [];
+      const as = (p: PlayerId, list: EffectNode[]) => (node.perPlayer ? list.map((e) => ({ ...structuredClone(e), asPlayer: p })) : list);
+      let answer = answerOf(ctx, 'choose_option');
+      for (; memo.i < players.length; memo.i++) {
+        const p = players[memo.i]!;
+        const able = actions.map((a, k) => (a.every((e) => feasible(e, { ...ctx, controller: node.perPlayer ? p : ctx.controller }, p)) ? k : -1)).filter((k) => k >= 0);
+        if (!able.length) {
+          memo.picks.push(-1);
+          continue;
+        }
+        const labels = [...able.map((k) => describeEffects(actions[k]!)), `Neither: ${describeEffects(node.effects as EffectNode[])}`];
+        if (answer && memo.picks.length === memo.i) {
+          const at = labels.indexOf(answer.choice);
+          if (at < 0) throw new RulesError('Choose one of the options.');
+          memo.picks.push(at < able.length ? able[at]! : -1);
+          // That answer was this player's.
+          answer = null;
+          continue;
+        }
+        return { ask: { kind: 'choose_option', player: p, options: labels, text: `${describeEffects(node.effects as EffectNode[])} unless you do one of these.`, sourceName: sourceName(ctx) } };
+      }
+      return { expand: players.flatMap((p, i) => (memo.picks![i]! >= 0 ? as(p, actions[memo.picks![i]!]!) : as(p, node.effects as EffectNode[]))) };
+    }
     const payer = refPlayers(ctx, ref(node, 'payer'))[0];
     const action = node.action as EffectNode[];
     if (!payer || !action.every((e) => feasible(e, { ...ctx, controller: payer }))) return { expand: node.effects as EffectNode[] };
@@ -2077,7 +2108,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (entry?.program && answer.targets) {
         // CR 115.5: an ability on the stack can't target itself.
         if (answer.targets.some((list) => list.some((t) => t.kind === 'ability' && t.entry === id))) throw new RulesError('A copy can’t target itself.');
-        entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, sourceObj(entry));
+        entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, sourceObj(entry), entry.x ?? 0);
       }
       ctx.memo.index = (ctx.memo.index as number) + 1;
     }
@@ -2122,7 +2153,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (node.change && answer.targets && sameAs(answer.targets.flat()[0])) throw new RulesError('Choose a different target.');
       if (answer.targets) {
         if (answer.targets.some((list) => list.some((t) => (t.kind === 'ability' && t.entry === id) || (t.kind === 'object' && t.object === id)))) throw new RulesError('A spell or ability can’t target itself.');
-        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, answer.targets, source);
+        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, answer.targets, source, entry.x ?? 0);
         announceTargets(entry, ctx.events);
       }
       return true;
@@ -2516,6 +2547,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const text = describeEffects(node.effects as EffectNode[]);
       return { ask: { kind: 'may', player: chooser, text, sourceName: sourceName(ctx) } };
     }
+    // CR 603.2h: "Do this only once each turn." — taken now, so it won't trigger again this turn.
+    if (answer.yes && node.doOnce && ctx.source && ctx.resolution?.entry.kind === 'ability') (ctx.source.doneOnce ??= {})[`${ctx.source.zcc}:${ctx.resolution.entry.text}`] = ctx.g.turn;
     return { expand: answer.yes ? (node.effects as EffectNode[]) : [] };
   },
 };

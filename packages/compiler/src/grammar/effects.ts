@@ -952,15 +952,33 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unlessLife[3] ?? '', life: Number(unlessLife[4]), effects: inner }] : null;
     });
   }
-  // "… unless that player discards a card" / "sacrifices a creature".
-  const unlessDoes = /^(.+) unless (.+?) (discards|sacrifices) (.+)$/.exec(s);
+  // "… unless that player discards a card" / "sacrifices a creature"; Tergrid's Lantern: "… unless they sacrifice a
+  // nonland permanent of their choice or discard a card" (either); "Each opponent loses 3 life unless that player …"
+  // (each of them on their own).
+  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?) (.+)$/.exec(s);
   if (unlessDoes) {
     const r = attempt(b, (b) => {
+      const third = (v: string) => (v.endsWith('s') ? v : `${v}s`);
+      const strip = (o: string) => o.replace(/ of their choice$/, '');
+      const alt = /^(.+?) or (discards?|sacrifices?) (.+)$/.exec(unlessDoes[4]!);
+      const parts: [string, string][] = alt ? [[unlessDoes[3]!, alt[1]!], [alt[2]!, alt[3]!]] : [[unlessDoes[3]!, unlessDoes[4]!]];
+      // Unnatural Hunger: "unless they sacrifice another creature" means other than the enchanted one, not the Aura.
+      if (parts.some(([, o]) => /^another /.test(o)) && /\b(?:Aura|Equipment)\b/.test(b.env.typeLine)) return null;
+      // "Each opponent loses 3 life unless that player …": the same thing for each of them.
+      const each = /^(each opponent|each player|each other player) (\w+?)s? (.+)$/i.exec(unlessDoes[1]!);
+      if (each && /^(?:that player|they|he or she)$/.test(unlessDoes[2]!)) {
+        const players = parsePlayerRef(each[1]!.toLowerCase(), b);
+        const inner = players ? parseSentence(`You ${each[2]} ${each[3]}`.replace(/^You lose(?:s)? /, 'You lose '), b) : null;
+        const actions = inner ? parts.map(([v, o]) => attempt(b, (b) => parseClause(`${v.replace(/s$/, '')} ${strip(o)}`, b, { ref: 'you' }))) : [];
+        if (!players || !inner || actions.some((a) => !a)) return null;
+        return [{ type: 'unless_does', perPlayer: players, actions: actions.map((a) => a!.effects), effects: inner }];
+      }
       const inner = parseSentence(unlessDoes[1]!, b);
       const payer = inner ? parsePlayerRef(unlessDoes[2]!, b) : null;
-      if (!inner || !payer) return null;
-      const action = attempt(b, (b) => parseClause(`${unlessDoes[3]} ${unlessDoes[4]}`, b, payer));
-      return action ? [{ type: 'unless_does', payer, action: action.effects, effects: inner }] : null;
+      if (!inner || !payer || payer.ref === 'players') return null;
+      const actions = parts.map(([v, o]) => attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)));
+      if (actions.some((a) => !a)) return null;
+      return actions.length === 1 ? [{ type: 'unless_does', payer, action: actions[0]!.effects, effects: inner }] : [{ type: 'unless_does', payer, actions: actions.map((a) => a!.effects), effects: inner }];
     });
     if (r) return r;
   }

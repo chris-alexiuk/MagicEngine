@@ -153,10 +153,15 @@ export const spellRule: GrammarRule = {
     b.it = { ref: 'self' };
     const program = parseProgram(line, b);
     if (!program) return null;
+    // "X target creatures" with X the announced X only (CR 601.2b), not an X the text works out.
+    if (hasCountX(program) && /\bX is\b|\bthat many target/.test(line)) return null;
     const node: SpellAbility = { kind: 'spell', text: original, ...program };
     return node;
   },
 };
+
+/** Whether a program has a target count that is "X" (TargetSpec.countX). */
+const hasCountX = (program: object): boolean => JSON.stringify(program).includes('"countX":true');
 
 // ---------------------------------------------------------------------------
 // Activated abilities
@@ -508,6 +513,8 @@ export const activatedRule: GrammarRule = {
       if (node.zone && node.zone !== b.selfZone) return null;
       node.zone = b.selfZone;
     }
+    // "{X}, {T}: Tap X target creatures." — X paid in the cost; not "up to X target …, where X is …".
+    if (hasCountX(program) && !(node.cost.mana?.includes('{X}') || node.cost.other?.some((c) => c.amount === 'X'))) return null;
     return { ...node, ...program };
   },
 };
@@ -1269,15 +1276,30 @@ export const triggeredRule: GrammarRule = {
           effectText = effectText.replace(/ This ability triggers only once each turn\.$/, '');
           oncePerTurn = true;
         }
+        // CR 603.2h: "you may draw that many cards. Do this only once each turn." — it triggers only if you haven't taken
+        // that action this turn (here, after an optional action).
+        let doOnce = false;
+        if (/^you may [^.]+\. Do this only once each turn\.$/.test(effectText)) {
+          effectText = effectText.replace(/ Do this only once each turn\.$/, '');
+          doOnce = true;
+        }
         effectText = effectText.replace(/^\w/, (c) => c.toUpperCase());
         const program = parseProgram(effectText, b);
         // A triggered ability doesn't work from the hand ("put ~ from your hand onto the battlefield" is unread).
         if (b.selfZone === 'hand') return null;
-        return program ? { trig, program, oncePerTurn, condition, zone: b.selfZone as 'graveyard' | null } : null;
+        if (program && doOnce) {
+          const first = program.effects?.[0];
+          if (program.effects?.length !== 1 || first?.type !== 'may') return null;
+          first.doOnce = true;
+        }
+        return program ? { trig, program, oncePerTurn, doOnce, condition, zone: b.selfZone as 'graveyard' | null } : null;
       });
       if (r) {
+        // A triggered ability has no X announced for "X target …" (CR 601.2b).
+        if (hasCountX(r.program)) return null;
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
         if (r.oncePerTurn) node.oncePerTurn = true;
+        if (r.doOnce) node.doOnce = true;
         if (r.zone) node.zone = r.zone;
         if (node.trigger.type === 'cast' && node.trigger.self) {
           if (node.zone) return null;

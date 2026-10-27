@@ -450,6 +450,14 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
       const tm = /^(?:(up to )?((?!another\b|other\b)\w+) )?(another |other )?target (.+)$/i.exec(t);
+      // Curse of the Swine: "Exile X target creatures." — as many targets as the X announced (CR 601.2b–c).
+      if (tm && tm[2] === 'X') {
+        const pf = parseFilter(tm[4]!, b);
+        if (!pf || !pf.plural || pf.filter.ownedBy || / from a single graveyard$/.test(tm[4]!)) return null;
+        if (tm[3]) pf.filter.other = true;
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(tm[1] ? { upTo: true } : {}) };
+        return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
+      }
       if (tm) {
         const count = tm[2] ? parseAmount(tm[2]) : 1;
         if (typeof count !== 'number' || count < 1) return null;
