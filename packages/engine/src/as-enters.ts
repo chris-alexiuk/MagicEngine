@@ -1,5 +1,6 @@
 import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
-import { matchesFilter } from './characteristics.js';
+import { hasType, matchesFilter } from './characteristics.js';
+import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
@@ -50,6 +51,16 @@ export function promptAsEnters(g: GameState): boolean {
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
         break;
+      case 'devour': {
+        // CR 702.82a: "As this object enters, you may sacrifice any number of creatures."
+        const candidates = g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === o.controller && hasType(g, g.objects[id]!, 'Creature'));
+        if (!candidates.length) {
+          g.asEnters.shift();
+          continue;
+        }
+        g.pending = { ...base, text: `Sacrifice any number of creatures as ${nameOf(g, o)} enters (devour ${node.amount}).`, candidates };
+        break;
+      }
       case 'counter':
         // CR 702.136a / CR 702.98a: riot and unleash.
         g.pending = { ...base, text: node.elseHaste ? `Have ${nameOf(g, o)} enter with an additional +1/+1 counter? If not, it gains haste.` : `Have ${nameOf(g, o)} enter with an additional +1/+1 counter?` };
@@ -86,6 +97,15 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         ps.life -= amount;
         events.push({ type: 'life', player, delta: -amount, life: ps.life });
       } else o.tapped = true;
+      break;
+    }
+    case 'devour': {
+      const chosen = answer.sacrifice ?? [];
+      if (new Set(chosen).size !== chosen.length || !chosen.every((id) => p.candidates?.includes(id))) throw new RulesError('Choose creatures you control to sacrifice.');
+      for (const id of chosen) sacrifice(g, g.objects[id]!, player, events);
+      // "This permanent enters with N +1/+1 counters on it for each creature sacrificed this way."
+      const n = Number(next.node.amount ?? 1) * chosen.length;
+      if (n > 0) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + n;
       break;
     }
     case 'counter': {

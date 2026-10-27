@@ -155,6 +155,13 @@ function bottomCount(g: GameState, player: PlayerId): number {
   return Math.max(0, taken - (g.config.freeMulligan ? 1 : 0));
 }
 
+/** CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield." */
+function openingBattlefieldCards(g: GameState, player: PlayerId): ObjectId[] {
+  return zoneList(g, 'hand', player).filter((id) =>
+    (g.cards[g.objects[id]!.card]?.faces[0]?.abilities ?? []).some((a) => a.kind === 'static' && a.effect.type === 'begin_on_battlefield'),
+  );
+}
+
 function promptOpening(g: GameState): void {
   const o = g.opening!;
   if (o.bottoms.length) {
@@ -165,6 +172,19 @@ function promptOpening(g: GameState): void {
   if (o.undecided.length) {
     g.pending = { kind: 'mulligan', player: o.undecided[0]! };
     return;
+  }
+  // CR 103.6: once mulligans are done, the starting player and then each other player in turn order may
+  // take actions with cards in their opening hands.
+  if (!o.mulligans.length) {
+    o.actions ??= turnOrderFrom(g, g.firstPlayer);
+    while (o.actions.length) {
+      const candidates = openingBattlefieldCards(g, o.actions[0]!);
+      if (candidates.length) {
+        g.pending = { kind: 'opening_battlefield', player: o.actions[0]!, candidates };
+        return;
+      }
+      o.actions.shift();
+    }
   }
   g.pending = null;
 }
@@ -215,6 +235,15 @@ export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnsw
     // CR 103.5: put that many cards on the bottom of the library in any order.
     for (const id of ids) moveObject(g, id, 'library', events, { position: 'bottom' });
     o.bottoms.shift();
+  } else if (answer.kind === 'opening_battlefield') {
+    if (o.actions?.[0] !== player) throw new RulesError('It isn’t your turn to act with your opening hand.');
+    const candidates = openingBattlefieldCards(g, player);
+    if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+      throw new RulesError('Choose cards from your opening hand that can begin the game on the battlefield.');
+    }
+    // CR 103.6a: the player puts those cards onto the battlefield.
+    for (const id of answer.objects) moveObject(g, id, 'battlefield', events, { controller: player });
+    o.actions.shift();
   } else {
     throw new RulesError('Unexpected answer during the opening hand.');
   }

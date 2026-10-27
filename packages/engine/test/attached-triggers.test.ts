@@ -11,7 +11,7 @@ const CARDS = [
   card('Rally Blade', 'Artifact — Equipment', 'Whenever equipped creature attacks, it gets +2/+0 until end of turn.\nEquip {1}'),
   card('Second Chance', 'Enchantment — Aura', 'Enchant creature\nWhen enchanted creature dies, return that card to the battlefield under your control.'),
   card('Murder Lite', 'Instant', 'Destroy target creature.'),
-  card('Wrath Lite', 'Sorcery', 'Destroy all creatures and all enchantments.'),
+  card('Wrath Lite', 'Sorcery', 'Destroy all creatures. Destroy all enchantments.'),
   card('Titan Lite', 'Creature — Eldrazi', "If this creature would be put into a graveyard from anywhere, reveal this creature and shuffle it into its owner's library instead.", { power: '10', toughness: '10' }),
   card('Henge Lite', 'Sorcery', 'Return target historic card from your graveyard to your hand.'),
   card('Relic', 'Artifact', ''),
@@ -31,6 +31,12 @@ function settle(g: GameState): GameState {
 const cast = (g: GameState, name: string, targets?: unknown[][]) =>
   act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', name, 'hand'), ...(targets ? { targets } : {}) } as never);
 const obj = (object: string) => ({ kind: 'object' as const, object });
+/** On to the declare attackers step, where the active player is asked for attackers. */
+function toAttack(g: GameState): GameState {
+  g = toStep(g, 'beginning_of_combat');
+  while (!g.pending && g.priority) g = act(g, { type: 'pass', player: g.priority });
+  return g;
+}
 
 describe('triggers on the enchanted or equipped creature', () => {
   it('“Whenever equipped creature attacks, it gets +2/+0”', () => {
@@ -38,7 +44,7 @@ describe('triggers on the enchanted or equipped creature', () => {
     const bear = give(g, 'alice', 'Grizzly', 'battlefield');
     const blade = give(g, 'alice', 'Rally Blade', 'battlefield');
     g.objects[blade]!.attachedTo = { id: bear, zcc: g.objects[bear]!.zcc };
-    g = toStep(g, 'declare_attackers');
+    g = toAttack(g);
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } });
     g = settle(g);
     while (g.step !== 'end_of_combat' && g.step !== 'main2') {
@@ -56,6 +62,7 @@ describe('triggers on the enchanted or equipped creature', () => {
       g.objects[aura]!.attachedTo = { id: bear, zcc: g.objects[bear]!.zcc };
       g = how === 'murder' ? cast(g, 'Murder Lite', [[obj(bear)]]) : cast(g, 'Wrath Lite');
       g = settle(g);
+      expect([how, g.objects[bear]!.zone, g.objects[aura]!.zone, g.stack.length, g.pending?.kind]).toEqual([how, 'battlefield', 'graveyard', 0, undefined]);
       expect(g.objects[bear]!.zone).toBe('battlefield');
       expect(g.objects[aura]!.zone).toBe('graveyard');
     }
@@ -67,7 +74,7 @@ describe('CR 506.5, CR 614.1a, CR 700.6, digs', () => {
     let g = setup();
     const lonely = give(g, 'alice', 'Lonely Bear', 'battlefield');
     const bear = give(g, 'alice', 'Grizzly', 'battlefield');
-    g = toStep(g, 'declare_attackers');
+    g = toAttack(g);
     const bob = { kind: 'player' as const, player: 'bob' };
     expect(() => act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: lonely, target: bob }] } })).toThrow(/alone/);
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: lonely, target: bob }, { attacker: bear, target: bob }] } });

@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -77,6 +77,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const previous = upkeeps.length >= 2 ? upkeeps[upkeeps.length - 2]! : -1;
       return Boolean(source && source.zone === 'battlefield' && (source.arrived ?? source.timestamp) > previous);
     }
+    case 'won_clash':
+      // CR 701.30d: "If you win" — the clash this spell or ability just made.
+      return Boolean(ctx.resolution?.clashWon) !== Boolean(cond.not);
     case 'won_flip':
       // CR 705.2
       return Boolean(ctx.resolution?.flipWon) !== Boolean(cond.not);
@@ -171,6 +174,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return log.lostLife.some((p) => p !== controller);
         case 'you_cast_noncreature':
           return log.noncreatureCast.includes(controller);
+        case 'you_cast_spell':
+          // Surge (CR 702.117a): "if you … have cast another spell this turn".
+          return (log.spellsCast[controller] ?? 0) > 0;
         default:
           return false;
       }

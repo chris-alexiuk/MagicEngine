@@ -192,21 +192,28 @@ function resolvePermanentSpell(g: GameState, entry: StackEntry & { kind: 'spell'
       finishResolution(g, entry, events);
       return;
     }
-    if (!enchanted) {
+    if (!enchanted && o.bestowed) {
+      // CR 702.103e: a bestowed spell whose target is illegal resolves as an enchantment creature spell.
+      delete o.bestowed;
+    } else if (!enchanted) {
       moveObject(g, o.id, 'graveyard', events);
       events.push({ type: 'fizzled', entry });
       finishResolution(g, entry, events);
       return;
+    } else {
+      // CR 608.3c: an Aura spell enters attached to the object it targeted.
+      moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
+      o.attachedTo = { id: enchanted.id, zcc: enchanted.zcc };
+      events.push({ type: 'attached', object: o.id, to: enchanted.id });
+      finishResolution(g, entry, events);
+      return;
     }
-    // CR 608.3c: an Aura spell enters attached to the object it targeted.
-    moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
-    o.attachedTo = { id: enchanted.id, zcc: enchanted.zcc };
-    events.push({ type: 'attached', object: o.id, to: enchanted.id });
-    finishResolution(g, entry, events);
-    return;
   }
   // CR 608.3a: a permanent spell with no targets enters the battlefield under its controller's control.
-  moveObject(g, o.id, 'battlefield', events, { controller: entry.controller, x: entry.x });
+  // CR 702.190b: one whose sneak cost was paid enters tapped and attacking what the returned creature attacked.
+  const sneak = o.cast?.paid?.includes('sneak') ? entry.costLKI?.attackTarget : undefined;
+  moveObject(g, o.id, 'battlefield', events, { controller: entry.controller, x: entry.x, ...(sneak ? { tapped: true } : {}) });
+  if (sneak && g.combat && g.combat.attackersDeclared && hasType(g, o, 'Creature')) g.combat.attackers[o.id] = { zcc: o.zcc, target: { ...sneak }, blocked: false, blockers: [] };
   finishResolution(g, entry, events);
 }
 
@@ -354,12 +361,16 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
         // CR 302.6: permanents the active player controls have now been controlled since this turn began.
         o.sick = false;
         // CR 502.3: the active player untaps their permanents, unless an effect says otherwise.
+        // CR 701.43b: exerting it any number of times wears off in this one untap step.
+        const exerted = o.exerted;
+        delete o.exerted;
         if (o.skipUntap) {
           // "It doesn't untap during its controller's next untap step."
           o.skipUntap--;
           if (!o.skipUntap) delete o.skipUntap;
           continue;
         }
+        if (exerted) continue;
         if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
       }
       // CR 502.4: no priority in the untap step.
@@ -461,6 +472,7 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     const toGraveyard = new Set<string>();
     const toDestroy = new Set<string>();
     const unattach: string[] = [];
+    const unbestow = new Set<string>();
     const vanish: string[] = [];
     let changed = false;
 
@@ -527,7 +539,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         } else if (face.subtypes.includes('Aura') && face.keywords.some((k) => k.id === 'enchant' && k.filter)) {
           // CR 704.5m: an Aura attached illegally, or to nothing, goes to its owner's graveyard.
           const to = o.attachedTo && g.objects[o.attachedTo.id];
-          if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);
+          // CR 702.103f: a bestowed Aura that's unattached or attached illegally stops being bestowed instead.
+          if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) (o.bestowed ? unbestow : toGraveyard).add(id);
         } else if (o.attachedTo && face.subtypes.includes('Equipment')) {
           // CR 704.5n: an Equipment attached illegally becomes unattached and stays on the battlefield.
           const to = g.objects[o.attachedTo.id];
@@ -539,10 +552,15 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     // CR 704.5j: the legend rule — needs the controller's choice, handled one group at a time.
     const legendGroup = findLegendRuleGroup(g, toGraveyard);
 
-    if (!losers.length && !toGraveyard.size && !toDestroy.size && !unattach.length && !vanish.length && !changed && !legendGroup) {
+    if (!losers.length && !toGraveyard.size && !toDestroy.size && !unattach.length && !unbestow.size && !vanish.length && !changed && !legendGroup) {
       return any;
     }
     any = true;
+    for (const id of unbestow) {
+      const o = g.objects[id]!;
+      delete o.attachedTo;
+      delete o.bestowed;
+    }
 
     for (const id of vanish) removeObjectEntirely(g, id);
     for (const id of unattach) delete g.objects[id]!.attachedTo;

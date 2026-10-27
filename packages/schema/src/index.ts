@@ -160,6 +160,10 @@ export interface ActivatedAbility extends AbilityBase, Program {
   oncePerTurn?: true;
   /** CR 702.177a (exhaust): "Activate only once." */
   oncePerGame?: true;
+  /** "Activate no more than twice each turn." */
+  maxPerTurn?: number;
+  /** CR 602.2: "Any player may activate this ability." */
+  anyPlayer?: true;
   /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a). */
   zone?: 'hand' | 'graveyard';
 }
@@ -252,6 +256,10 @@ export type ZoneWord = 'battlefield' | 'stack' | 'graveyard' | 'hand' | 'library
 export interface ObjectFilter {
   /** CR 115.2: permanents unless the text says otherwise. */
   zone?: ZoneWord;
+  /** CR 700.6: historic — legendary, an artifact, or a Saga. */
+  historic?: true;
+  /** "a card with the same mana value as this card" (transmute, CR 702.53a). */
+  sameManaValueAs?: 'self';
   /** Any one of these card types ("artifact or enchantment"); omitted = any. */
   types?: string[];
   /** All of these card types too ("artifact creature"). */
@@ -367,6 +375,8 @@ export type AmountExpr = (
   | { kind: 'commander_casts' }
   /** CR 702.33c (multikicker): how many times the spell was kicked. */
   | { kind: 'kicks' }
+  /** "for each time its replicate cost was paid" (CR 702.56a, 702.157a). */
+  | { kind: 'paid_times'; cost: string }
   /** CR 700.8: the creatures in your party (up to one each of Cleric, Rogue, Warrior and Wizard). */
   | { kind: 'party' }
   /** "the total life lost this way" (extort, CR 702.101a). */
@@ -386,6 +396,9 @@ export type AmountExpr = (
 export const RULE_FLAGS = [
   'cant_attack',
   'cant_block',
+  /** CR 506.5: "can't attack alone", "can't block alone". */
+  'cant_attack_alone',
+  'cant_block_alone',
   'cant_be_blocked',
   'attacks_each_combat',
   'cant_be_countered',
@@ -454,6 +467,20 @@ export interface CastOptionNode extends EffectNode {
   condition?: ConditionNode;
   /** Entwine: all modes are chosen (CR 702.42a). */
   allModes?: true;
+  /** Retrace (CR 702.81a): a permission to cast from the graveyard; the mana cost is still paid. */
+  withManaCost?: true;
+  /** Disturb (CR 702.146a): cast transformed — its back face is the spell. */
+  transformed?: true;
+  /** Overload (CR 702.96a): the spell as it reads with "target" changed to "each". */
+  spell?: SpellAbility;
+  /** Replicate, squad: "you may pay [cost] any number of times" (CR 702.56a, 702.157a). */
+  repeatable?: true;
+  /** Jump-start, flashback: exiled instead of going anywhere else as it leaves the stack (CR 702.133a, 702.34a). */
+  exileOnLeave?: true;
+  /** Miracle: only as a triggered ability resolves (CR 702.94a), never from the hand on its own. */
+  duringResolution?: true;
+  /** Emerge: the total cost is reduced by the sacrificed creature's mana value (CR 702.119a). */
+  reduceBySacrificed?: true;
 }
 
 /**
@@ -517,7 +544,7 @@ export interface AsEntersNode extends EffectNode {
   type: 'as_enters';
   /** copy: "You may have ~ enter as a copy of any creature on the battlefield" (CR 707.5, CR 614.1c). */
   /** counter: "You may have ~ enter with an additional +1/+1 counter on it" (riot, unleash; `elseHaste` for riot). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter';
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour';
   elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
@@ -623,24 +650,24 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
-    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land',
+    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate',
+    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
@@ -650,6 +677,18 @@ export const CORE_NODES = {
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker', 'multikicker', 'partner_with',
+    // CR 702.132a: assist lets another player help pay — never required, so casting without it is always legal.
+    'assist',
+    // CR 702.127a: aftermath halves are cast from the graveyard (in the engine's casting rules).
+    'aftermath',
+    // CR 702.103: cast bestowed as an Aura (in the engine's casting and state-based rules).
+    'bestow',
+    // CR 702.190: cast during your declare blockers step by returning an unblocked attacker.
+    'sneak',
+    // CR 702.89a (umbra armor, formerly totem armor): a destruction replacement, in the engine's destroy.
+    'umbra_armor', 'totem_armor',
+    // CR 702.94a (miracle), 702.119a (emerge), 702.154a (enlist): in the engine's drawing, casting and attacking rules.
+    'miracle', 'emerge', 'enlist',
   ],
 } as const;
 
@@ -662,7 +701,7 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
-  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
+  if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]
   if (kw.id === 'suspend') return Boolean(kw.n && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   return true;
@@ -684,7 +723,10 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
   // Counted amounts sit in an effect's own fields ("amount", "power"…).
   const amounts = (e: EffectNode) => {
     for (const v of Object.values(e)) {
-      if (v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { kind?: unknown }).kind === 'string') out.amounts.push((v as { kind: string }).kind);
+      if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+      const kind = (v as { kind?: unknown }).kind;
+      // An ability in a field (overload's spell) isn't an amount; its nodes are walked by nested().
+      if (typeof kind === 'string' && !['spell', 'activated', 'triggered', 'static'].includes(kind)) out.amounts.push(kind);
     }
   };
   const cond = (c: ConditionNode) => {
@@ -695,7 +737,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
   const nested = (e: EffectNode) => {
     const token = e.token as FaceDef | undefined;
     const kws = [...((e.keywords as KeywordInstance[] | undefined) ?? []), ...(token?.keywords ?? []), ...(((e.except ?? e.copyExcept) as CopyExcept | undefined)?.keywords ?? [])];
-    const inner = [...((e.abilities as AbilityNode[] | undefined) ?? []), ...(token?.abilities ?? []), ...kws.flatMap((k) => k.abilities ?? [])];
+    const inner = [...((e.abilities as AbilityNode[] | undefined) ?? []), ...(token?.abilities ?? []), ...kws.flatMap((k) => k.abilities ?? []), ...(e.spell ? [e.spell as AbilityNode] : [])];
     for (const n of inner) {
       const t = nodeTags(n);
       for (const k of Object.keys(out) as (keyof typeof out)[]) out[k].push(...t[k]);

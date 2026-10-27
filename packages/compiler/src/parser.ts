@@ -1,7 +1,8 @@
-import type { AbilityNode, ConditionNode, KeywordInstance } from '@mtg/schema';
+import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
+import { parseCost } from './grammar/lines.js';
 import { capitalise, subtypeOf, TYPE_NOUNS } from './grammar/words.js';
 import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
 import { KeywordRegistry } from './keywords.js';
@@ -114,10 +115,13 @@ export class ParserRegistry {
       }
 
       // CR 702.178a: "Max speed — [Ability]" means "As long as your speed is 4, this object has '[Ability].'"
+      // CR 721.2a: "{N+} | [abilities]" means "As long as this permanent has N or more charge counters on it, it has [abilities]."
       const maxSpeed = /^Max speed — (.+)$/.exec(line);
-      if (maxSpeed) {
-        const speedGate: ConditionNode = { type: 'max_speed' };
-        const inner = this.keywords.parseLine(maxSpeed[1]!);
+      const stationSymbol = /^(\d+)\+ \| (.+)$/.exec(line);
+      if (maxSpeed || stationSymbol) {
+        const speedGate: ConditionNode = maxSpeed ? { type: 'max_speed' } : { type: 'counters', of: { ref: 'self' }, counter: 'charge', min: Number(stationSymbol![1]) };
+        const rest = maxSpeed ? maxSpeed[1]! : stationSymbol![2]!;
+        const inner = this.keywords.parseLine(rest);
         if (inner) {
           for (const kw of inner) {
             const abilities = this.expandKeyword(kw, env);
@@ -127,7 +131,7 @@ export class ParserRegistry {
           else result.abilities.push({ kind: 'static', text: line, gate: speedGate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: inner } });
           continue;
         }
-        const node = this.parseBlock([maxSpeed[1]!], env, line);
+        const node = this.parseBlock([rest], env, line);
         if (node) {
           node.gate = speedGate;
           result.abilities.push(node);
@@ -187,6 +191,133 @@ export class ParserRegistry {
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
     }
+    for (const kw of result.keywords) {
+      if (kw.abilities?.length) continue;
+      // CR 702.82a: "Devour N" — "As this object enters, you may sacrifice any number of creatures. This permanent
+      // enters with N +1/+1 counters on it for each creature sacrificed this way."
+      if (kw.id === 'devour' && kw.n !== undefined) {
+        kw.abilities = [{ kind: 'static', text: `Devour ${kw.n}`, effect: { type: 'as_enters', choice: 'devour', amount: kw.n } }];
+      }
+      // CR 702.133a: "Jump-start" — cast from the graveyard by discarding a card as well; exiled as it leaves the stack.
+      if (kw.id === 'jump_start') {
+        kw.abilities = [{
+          kind: 'static',
+          text: 'Jump-start',
+          effect: { type: 'cast_option', id: 'jump_start', kind: 'alternative', cost: { other: [{ type: 'discard', amount: 1 }] }, zone: 'graveyard', withManaCost: true, exileOnLeave: true } as CastOptionNode,
+        }];
+      }
+      // CR 702.6a with a quality: "Equip legendary creature {1}", "Equip Knight {1}" — "Attach to target [quality] you control."
+      const qualified = kw.id === 'equip' && kw.cost ? /^([a-z][a-z ]*?|[A-Z][a-z]+) ((?:\{[^}]+\})+)$/.exec(kw.cost) : null;
+      if (qualified) {
+        const quality = /creature$/.test(qualified[1]!) ? qualified[1]! : `${qualified[1]} creature`;
+        const node = this.parseBlock([`${qualified[2]}: Attach ~ to target ${quality} you control. Activate only as a sorcery.`], env, `Equip ${kw.cost}`);
+        if (node?.kind === 'activated') kw.abilities = [node];
+      }
+      // CR 702.34a with other costs: "Flashback—{1}{G}, Pay 3 life."
+      if (kw.id === 'flashback' && kw.cost && !/^(\{[^}]+\})+$/.test(kw.cost)) {
+        const cost = parseCost(kw.cost.replace(/\.$/, ''), false, new Binder(env as GrammarEnv));
+        if (cost && !cost.tap && !cost.untap && cost.loyalty === undefined) {
+          kw.abilities = [{ kind: 'static', text: `Flashback—${kw.cost}`, effect: { type: 'cast_option', id: 'flashback', kind: 'alternative', cost, zone: 'graveyard', exileOnLeave: true } as CastOptionNode }];
+        }
+      }
+      if (kw.abilities?.length) result.manualKeywords = result.manualKeywords.filter((l) => !l.toLowerCase().startsWith(kw.id.replace(/_/g, '-')) && !l.toLowerCase().startsWith(kw.id.replace(/_/g, ' ')));
+    }
+    // CR 702.113a: "Awaken N—[cost]" — cast for [cost], the spell also puts N +1/+1 counters on target land you control,
+    // which becomes a 0/0 Elemental creature with haste that's still a land.
+    for (const kw of result.keywords) {
+      if (kw.id !== 'awaken' || kw.n === undefined || !kw.cost || !/^(\{[^}]+\})+$/.test(kw.cost) || kw.abilities?.length) continue;
+      const spells = result.abilities.filter((a) => a.kind === 'spell');
+      if (spells.length !== 1 || result.unparsed.length) continue;
+      const counters = kw.n === 1 ? 'a +1/+1 counter' : `${kw.n} +1/+1 counters`;
+      const awakened = this.parse(`${spells[0]!.text} Put ${counters} on target land you control. That land becomes a 0/0 Elemental creature with haste. It's still a land.`, ctx);
+      const spell = awakened.abilities.find((a): a is SpellAbility => a.kind === 'spell');
+      if (!spell || awakened.unparsed.length || awakened.abilities.length !== 1) continue;
+      kw.abilities = [{ kind: 'static', text: `Awaken ${kw.n}—${kw.cost}`, effect: { type: 'cast_option', id: 'awaken', kind: 'alternative', cost: { mana: kw.cost }, spell } as CastOptionNode }];
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Awaken\b/.test(l));
+    }
+    for (const kw of result.keywords) {
+      if (kw.abilities?.length) continue;
+      // CR 702.116a: "Myriad" — whenever this creature attacks, token copies attacking each other opponent.
+      if (kw.id === 'myriad') {
+        kw.abilities = [{ kind: 'triggered', text: 'Myriad', trigger: { type: 'attacks', subject: { ref: 'self' } }, effects: [{ type: 'myriad' }] }];
+        result.manualKeywords = result.manualKeywords.filter((l) => l !== 'Myriad');
+      }
+      // CR 702.141a: "Encore [cost]" — "[Cost], Exile this card from your graveyard: For each opponent, create a token
+      // that's a copy of this card that attacks that opponent this turn if able. The tokens gain haste. Sacrifice them at
+      // the beginning of the next end step. Activate only as a sorcery."
+      if (kw.id === 'encore' && kw.cost && /^(\{[^}]+\})+$/.test(kw.cost)) {
+        kw.abilities = [{ kind: 'activated', text: `Encore ${kw.cost}`, zone: 'graveyard', timing: 'sorcery', cost: { mana: kw.cost, other: [{ type: 'exile_self' }] }, effects: [{ type: 'encore' }] }];
+        result.manualKeywords = result.manualKeywords.filter((l) => !/^Encore\b/.test(l));
+      }
+    }
+    // CR 702.49a: "Ninjutsu [cost]" — "[Cost], Reveal this card from your hand, Return an unblocked attacking creature you
+    // control to its owner's hand: Put this card onto the battlefield from your hand tapped and attacking."
+    for (const kw of result.keywords) {
+      if (kw.id !== 'ninjutsu' || !kw.cost || !/^(\{[^}]+\})+$/.test(kw.cost) || kw.abilities?.length) continue;
+      kw.abilities = [{ kind: 'activated', text: `Ninjutsu ${kw.cost}`, zone: 'hand', cost: { mana: kw.cost, other: [{ type: 'return_unblocked' }] }, effects: [{ type: 'ninjutsu' }] }];
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Ninjutsu\b/.test(l));
+    }
+    // CR 702.184a: "Station" — "Tap another untapped creature you control: Put a number of charge counters on this
+    // permanent equal to the tapped creature's power. Activate only as a sorcery."
+    for (const kw of result.keywords) {
+      if (kw.id !== 'station' || kw.abilities?.length) continue;
+      kw.abilities = [{
+        kind: 'activated',
+        text: 'Station',
+        cost: { other: [{ type: 'station' }] },
+        timing: 'sorcery',
+        effects: [{ type: 'add_counters', what: { ref: 'self' }, counter: 'charge', amount: { kind: 'cost_lki', cost: 'tapped', stat: 'power' } }],
+      }];
+      result.manualKeywords = result.manualKeywords.filter((l) => l !== 'Station');
+      // CR 721.2b: a power/toughness box in a striation — "It's an artifact creature at 8+." (in the reminder text).
+      const at = /It's an artifact creature at (\d+)\+/.exec(text);
+      if (at) {
+        result.abilities.push({
+          kind: 'static',
+          text: `${at[1]}+ | (artifact creature)`,
+          gate: { type: 'counters', of: { ref: 'self' }, counter: 'charge', min: Number(at[1]) },
+          effect: { type: 'continuous', affected: { ref: 'self' }, addTypes: { types: ['Creature'], subtypes: [] } },
+        });
+      }
+    }
+    // CR 702.165a: "Backup N" — "When this creature enters, put N +1/+1 counters on target creature. If that's
+    // another creature, it also gains the non-backup abilities of this creature printed below this one until end of turn."
+    for (const kw of result.keywords) {
+      if (kw.id !== 'backup' || kw.n === undefined || kw.abilities?.length) continue;
+      const at = lines.findIndex((l) => /^Backup \d+$/i.test(l.trim()) && Number(/\d+/.exec(l)![0]) === kw.n);
+      if (at < 0) continue;
+      const below = lines.slice(at + 1).filter((l) => l !== '' && !/^Backup \d+$/i.test(l.trim()));
+      const granted = below.length ? this.parse(below.join('\n'), ctx) : { keywords: [], abilities: [], unparsed: [], manualKeywords: [] };
+      if (granted.unparsed.length || granted.manualKeywords.length) continue;
+      const target = { ref: 'target' as const, index: 0 };
+      const gain = granted.keywords.length || granted.abilities.length
+        ? [{
+            type: 'if',
+            cond: { type: 'is', of: target, filter: { other: true } },
+            effects: [{ type: 'modify', what: target, keywords: [...granted.keywords, ...(granted.abilities.length ? [{ id: 'ability', text: 'backup', abilities: granted.abilities }] : [])], until: 'eot' }],
+          }]
+        : [];
+      kw.abilities = [{
+        kind: 'triggered',
+        text: `Backup ${kw.n}`,
+        trigger: { type: 'enters', subject: { ref: 'self' } },
+        targets: [{ what: 'object', filter: { types: ['Creature'] }, text: 'target creature' }],
+        effects: [{ type: 'add_counters', what: target, counter: '+1/+1', amount: kw.n }, ...gain],
+      }];
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Backup \d+$/i.test(l.trim()));
+    }
+    // CR 702.96a–b: "Overload [cost]" — cast for that cost, the spell's "target"s read "each".
+    for (const kw of result.keywords) {
+      if (kw.id !== 'overload' || !kw.cost || !/^(\{[^}]+\})+$/.test(kw.cost) || kw.abilities?.length) continue;
+      const spells = result.abilities.filter((a) => a.kind === 'spell');
+      if (spells.length !== 1 || result.unparsed.length) continue;
+      const text = spells[0]!.text.replace(/\btarget\b/g, 'each').replace(/\bTarget\b/g, 'Each');
+      const overloaded = this.parse(text, ctx);
+      const spell = overloaded.abilities.find((a): a is SpellAbility => a.kind === 'spell');
+      if (!spell || overloaded.unparsed.length || overloaded.abilities.length !== 1 || spell.targets?.length) continue;
+      kw.abilities = [{ kind: 'static', text: `Overload ${kw.cost}`, effect: { type: 'cast_option', id: 'overload', kind: 'alternative', cost: { mana: kw.cost }, spell } as CastOptionNode }];
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Overload\b/.test(l));
+    }
     return result;
   }
 
@@ -224,13 +355,16 @@ export class ParserRegistry {
    */
   expandKeyword(kw: KeywordInstance, env: ParseContext): AbilityNode[] | null {
     // The CR names some keywords with their connecting word ("Affinity for [text]", CR 702.41a).
-    const def = KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`] ?? EXTRA_DEFINITIONS[kw.id];
+    // Awaken's second sentence is conditional as a whole; it's compiled with the spell instead (see parse()).
+    if (kw.id === 'awaken') return null;
+    const def = EXTRA_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
     if (!def) return null;
     const printed = keywordText(def.pattern, kw);
     if (printed === null) return null;
     const out: AbilityNode[] = [];
     for (const sentence of def.meaning) {
-      const text = keywordText(sentence, kw);
+      // The CR quotes granted abilities with ‘…’; card text uses "…".
+      const text = keywordText(sentence, kw)?.replace(/‘([^’']*)['’]/g, '"$1"') ?? null;
       const node = text === null ? null : this.parseBlock([text], env, printed);
       if (!node) return null;
       if (def.zone && node.kind === 'activated') node.zone = def.zone;
@@ -247,6 +381,14 @@ export class ParserRegistry {
  * rule does nothing in a game; the other ability is this trigger.
  */
 const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+  casualty: {
+    rule: '702.153a',
+    pattern: 'Casualty N',
+    meaning: [
+      'As an additional cost to cast this spell, you may sacrifice a creature with power N or greater.',
+      'When you cast this spell, if a casualty cost was paid for it, copy it. If the spell has any targets, you may choose new targets for the copy.',
+    ],
+  },
   partner_with: {
     rule: '702.124j',
     pattern: 'Partner with [text]',
@@ -272,6 +414,11 @@ function keywordText(template: string, kw: KeywordInstance): string | null {
   let ok = true;
   const out = template
     .replace(/pays \[cost\]/g, () => (kw.cost ? (paysCost(kw.cost) ?? ((ok = false), '')) : ((ok = false), '')))
+    // "you may pay [cost] for each age counter" with "Pay 1 life" (cumulative upkeep).
+    .replace(/\bpay \[cost\]/g, (m) => {
+      const life = kw.cost ? /^[Pp]ay (\d+) life$/.exec(kw.cost) : null;
+      return life ? `pay ${life[1]} life` : m;
+    })
     .replace(/\[(cost|Cost)\]/g, () => kw.cost ?? ((ok = false), ''))
     .replace(/\[(type|Type)\]/g, (_m, t: string) => {
       if (!kw.text) return ((ok = false), '');
@@ -309,7 +456,7 @@ export function stripAbilityWord(line: string): string {
 }
 
 const SELF_NOUNS =
-  'creature|land|artifact|enchantment|planeswalker|battle|spell|card|permanent|aura|equipment|vehicle|token|saga|class|case|room|siege';
+  'creature|land|artifact|enchantment|planeswalker|battle|spell|card|permanent|aura|equipment|vehicle|token|saga|class|case|room|siege|spacecraft|planet';
 
 export function normaliseSelf(line: string, ctx: ParseContext): string {
   let out = line;

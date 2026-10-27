@@ -1,4 +1,4 @@
-import { canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
+import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import {
   RulesError,
   type AttackTarget,
@@ -98,14 +98,40 @@ export function promptAttackers(g: GameState): boolean {
     g.combat!.attackersDeclared = true;
     return false;
   }
-  g.pending = { kind: 'declare_attackers', player: g.active, attackers, targets: attackTargets(g) };
+  const exertable = attackers.filter((id) => canExert(g, g.objects[id]!));
+  // CR 702.154a: enlist — tap a non-attacking creature that could attack (haste or here since the turn began).
+  const enlisters = attackers.filter((id) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'enlist'));
+  const enlistable = enlisters.length ? enlistCandidates(g) : [];
+  g.pending = {
+    kind: 'declare_attackers',
+    player: g.active,
+    attackers,
+    targets: attackTargets(g),
+    ...(exertable.length ? { exertable } : {}),
+    ...(enlisters.length && enlistable.length ? { enlisters, enlistable } : {}),
+  };
   return true;
+}
+
+/** CR 702.154a: untapped creatures the active player controls that could be tapped to enlist. */
+function enlistCandidates(g: GameState): ObjectId[] {
+  return g.zones.battlefield.filter((id) => {
+    const o = g.objects[id]!;
+    return o.controller === g.active && !o.tapped && hasType(g, o, 'Creature') && canUseTapAbilities(g, o);
+  });
+}
+
+/** CR 701.43d: "You may exert this creature as it attacks" (with or without a linked "When you do" trigger). */
+export function canExert(g: GameState, o: GameObject): boolean {
+  return abilitiesOf(g, o).some(
+    (a) => (a.kind === 'static' && a.effect.type === 'exert_option') || (a.kind === 'triggered' && a.trigger.type === 'exerted' && Boolean(a.trigger.option)),
+  );
 }
 
 /** CR 508.1c: restrictions on what a creature may attack ("can't attack unless defending player controls an Island"). */
 /** CR 508.1d / 701.15b: it attacks each combat if able (or is goaded). */
 export function mustAttack(g: GameState, o: GameObject): boolean {
-  return hasRule(g, o, 'attacks_each_combat') || Boolean(o.goadedBy?.length);
+  return hasRule(g, o, 'attacks_each_combat') || Boolean(o.goadedBy?.length) || o.attacksPlayer?.turn === g.turn;
 }
 
 export function attackRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
@@ -115,6 +141,11 @@ export function attackRestriction(g: GameState, o: GameObject, target: AttackTar
     if (defender && o.goadedBy.includes(defender) && attackTargets(g).some((t) => !o.goadedBy!.includes(defenderOf(g, t) ?? '') && !otherRestriction(g, o, t))) {
       return `${nameOf(g, o)} is goaded: it attacks a player other than the one who goaded it, if able.`;
     }
+  }
+  // CR 702.141a (encore): "attacks that opponent this turn if able".
+  const must = o.attacksPlayer?.turn === g.turn ? o.attacksPlayer.player : undefined;
+  if (must && defenderOf(g, target) !== must && attackTargets(g).some((t) => defenderOf(g, t) === must && !otherRestriction(g, o, t))) {
+    return `${nameOf(g, o)} attacks ${g.players[must]?.name ?? must} this turn if able.`;
   }
   return otherRestriction(g, o, target);
 }
@@ -137,7 +168,23 @@ export function declareAttackers(
   g: GameState,
   attacks: { attacker: ObjectId; target: AttackTarget }[],
   events: GameEvent[],
+  exert: ObjectId[] = [],
+  enlist: { attacker: ObjectId; tap: ObjectId }[] = [],
 ): void {
+  // CR 702.154a: each enlisting attacker taps one creature that isn't attacking (an optional cost to attack).
+  for (const { attacker, tap } of enlist) {
+    const a = g.objects[attacker];
+    if (!a || !attacks.some((x) => x.attacker === attacker) || !chars(g, a).keywords.some((k) => k.id === 'enlist')) throw new RulesError('Only an attacking creature with enlist can enlist.');
+    if (attacks.some((x) => x.attacker === tap) || !enlistCandidates(g).includes(tap)) throw new RulesError('Enlist taps an untapped creature that isn’t attacking.');
+  }
+  if (new Set(enlist.map((x) => x.tap)).size !== enlist.length || new Set(enlist.map((x) => x.attacker)).size !== enlist.length) throw new RulesError('Each creature enlists once.');
+  // CR 701.43d / 508.1g: exerting is an optional cost to attack, chosen with the attackers.
+  for (const id of exert) {
+    const o = g.objects[id];
+    if (!o || !attacks.some((a) => a.attacker === id)) throw new RulesError('Only an attacking creature can be exerted as it attacks.');
+    if (!canExert(g, o)) throw new RulesError(`${nameOf(g, o)} can’t be exerted.`);
+  }
+  if (new Set(exert).size !== exert.length) throw new RulesError('Each creature can be exerted once as it attacks.');
   const legalTargets = attackTargets(g);
   const seen = new Set<ObjectId>();
   for (const { attacker, target } of attacks) {
@@ -151,6 +198,10 @@ export function declareAttackers(
     if (problem) throw new RulesError(problem);
   }
 
+  // CR 506.5: "can't attack alone" — not as the only creature declared as an attacker.
+  if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) {
+    throw new RulesError(`${nameOf(g, g.objects[attacks[0]!.attacker]!)} can’t attack alone.`);
+  }
   // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
@@ -167,6 +218,25 @@ export function declareAttackers(
     g.combat!.attackers[attacker] = { zcc: o.zcc, target, blocked: false, blockers: [] };
   }
   g.combat!.attackersDeclared = true;
+  // CR 702.154a: "When you do, this creature gets +X/+0 until end of turn, where X is the tapped creature's power."
+  for (const { attacker, tap } of enlist) {
+    const x = power(g, g.objects[tap]!);
+    setTapped(g, tap, true, events);
+    const a = g.objects[attacker]!;
+    g.triggers.push({
+      id: `t${g.nextId++}`,
+      controller: g.active,
+      source: { id: a.id, zcc: a.zcc },
+      sourceName: nameOf(g, a),
+      ability: { kind: 'triggered', text: 'Enlist', trigger: { type: 'enlisted' }, effects: [{ type: 'modify', what: { ref: 'self' }, power: x, toughness: 0, until: 'eot' }] },
+      info: {},
+    });
+  }
+  // CR 701.43a: an exerted creature won't untap during its controller's next untap step.
+  for (const id of exert) {
+    g.objects[id]!.exerted = true;
+    events.push({ type: 'exerted', object: id, player: g.active });
+  }
   events.push({ type: 'attacks_declared', attacks });
 }
 
@@ -310,6 +380,8 @@ export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: 
     if (problem) return `${nameOf(g, b)} can’t block ${nameOf(g, a)}: ${problem}`;
     perAttacker.set(attacker, [...(perAttacker.get(attacker) ?? []), blocker]);
   }
+  // CR 506.5: "can't block alone" — not as the only creature declared as a blocker.
+  if (blocks.length === 1 && hasRule(g, g.objects[blocks[0]!.blocker]!, 'cant_block_alone')) return `${nameOf(g, g.objects[blocks[0]!.blocker]!)} can’t block alone.`;
   for (const [attacker, list] of perAttacker) {
     const a = g.objects[attacker]!;
     const { min, max } = blockerLimits(g, a);

@@ -59,6 +59,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (both) return objects(`${both[1]} or ${both[2]} card ${both[3]}`, b, false);
   // CR 702.33c (multikicker): "for each time it was kicked"
   if (/^time (?:~|it) was kicked$/.test(t)) return { kind: 'kicks' };
+  // "for each time its replicate cost was paid", "… its squad cost was paid"
+  const paidTimes = /^time (?:its|~'s) (\w+) cost was paid$/.exec(t);
+  if (paidTimes) return { kind: 'paid_times', cost: paidTimes[1]!.toLowerCase() };
   // CR 702.40a: "for each other spell that was cast before it this turn"
   if (/^other spell that was cast before (?:it|~) this turn$/.test(t)) return { kind: 'cast_before', of: b.it ?? { ref: 'self' } };
   const counter = /^(\S+) counter on (.+)$/.exec(t);

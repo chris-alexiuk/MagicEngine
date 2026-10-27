@@ -9,7 +9,7 @@ import { preparedSource } from './prepare.js';
 
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
   return (g.mayPlay ?? []).some(
-    (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (what === 'spell' || p.mode === 'play'),
+    (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn && (what === 'spell' || p.mode === 'play'),
   );
 }
 

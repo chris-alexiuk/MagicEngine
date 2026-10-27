@@ -40,6 +40,7 @@ import {
 } from './types.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { preparedSource, unprepare } from './prepare.js';
+import { bestowedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { mayPlayFrom } from './permissions.js';
@@ -120,6 +121,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
   switch (answer.kind) {
     case 'mulligan':
     case 'bottom_cards':
+    case 'opening_battlefield':
       answerOpening(g, player, answer, events);
       return;
     case 'discard_to_hand_size': {
@@ -155,7 +157,7 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       return;
     case 'declare_attackers':
       g.pending = null;
-      declareAttackers(g, answer.attacks, events);
+      declareAttackers(g, answer.attacks, events, answer.exert ?? [], answer.enlist ?? []);
       // CR 508.2: then the active player gets priority.
       givePriority(g, g.active);
       return;
@@ -367,6 +369,14 @@ export function castOptions(face: FaceDef): CastOptionNode[] {
     if (kw.id === 'foretell') out.push({ type: 'cast_option', id: 'foretell', kind: 'alternative', cost: { mana }, zone: 'exile' });
     if (kw.id === 'plot') out.push({ type: 'cast_option', id: 'plot', kind: 'alternative', cost: {}, zone: 'exile' });
     if (kw.id === 'madness') out.push({ type: 'cast_option', id: 'madness', kind: 'alternative', cost: { mana }, zone: 'exile' });
+    // CR 702.103a: "As you cast this spell, you may choose to cast it bestowed. If you do, you pay [cost] rather than its mana cost."
+    if (kw.id === 'bestow') out.push({ type: 'cast_option', id: 'bestow', kind: 'alternative', cost: { mana } });
+    // CR 702.94a: miracle — only as its triggered ability resolves.
+    if (kw.id === 'miracle') out.push({ type: 'cast_option', id: 'miracle', kind: 'alternative', cost: { mana }, duringResolution: true });
+    // CR 702.119a: emerge — pay [cost] and sacrifice a creature; its mana value comes off the generic part.
+    if (kw.id === 'emerge') out.push({ type: 'cast_option', id: 'emerge', kind: 'alternative', cost: { mana, other: [{ type: 'sacrifice', filter: { types: ['Creature'] }, amount: 1 }] }, reduceBySacrificed: true });
+    // CR 702.190a: sneak — pay [cost] and return an unblocked creature you control rather than the mana cost.
+    if (kw.id === 'sneak') out.push({ type: 'cast_option', id: 'sneak', kind: 'alternative', cost: { mana, other: [{ type: 'return_unblocked' }] } });
   }
   // CR 702.37a / 702.168a: morph, megamorph and disguise cast it face down for {3}.
   for (const kw of face.keywords) {
@@ -432,13 +442,29 @@ function cast(
     if (!opt) throw new RulesError(`${face.name} has no optional “${x}” cost.`);
     return opt;
   });
-  if (new Set(extras).size !== extras.length) throw new RulesError('Each optional cost can be paid once.');
+  // Replicate and squad may be paid any number of times (CR 702.56a, 702.157a); others once.
+  if (extras.some((x, i) => extras.indexOf(x) !== i && !options.find((y) => y.id === x)?.repeatable)) throw new RulesError('Each optional cost can be paid once.');
+  if (alt?.duringResolution && !during) throw new RulesError(`${face.name}'s ${alt.id} cost can be paid only as its ability resolves.`);
   if (alt?.condition && !evalCondition(alt.condition, { g, controller: player, source: o, events: [], targets: [], x, memo: {} })) {
     throw new RulesError(`${face.name} can’t be cast for that cost now.`);
   }
   // CR 702.37c / 702.168b: cast face down, it's a 2/2 creature spell with no text (CR 708.4).
   const faceDown = alt && (FACE_DOWN_KEYWORDS as readonly string[]).includes(alt.id) ? (alt.id === 'disguise' ? 'disguise' : 'morph') : undefined;
-  const castFace = faceDown ? faceDownFace({ ...o, faceDown }) : face;
+  // CR 702.146a (disturb): cast transformed — the back face is the spell (CR 712.11a).
+  if (alt?.transformed) {
+    if (def.faces.length < 2) throw new RulesError(`${face.name} has no back face.`);
+    faceIndex = 1;
+  }
+  const castFace = faceDown
+    ? faceDownFace({ ...o, faceDown })
+    : alt?.id === 'bestow'
+      ? bestowedFace(face)
+      : alt?.transformed
+      ? def.faces[1]!
+      : alt?.spell
+        ? // CR 702.96b (overload): "target" becomes "each".
+          { ...face, abilities: [...face.abilities.filter((a) => a.kind !== 'spell'), alt.spell] }
+        : face;
   // CR 702.42a: entwine chooses every mode.
   if (added.some((a) => a.allModes)) {
     const modal = face.abilities.find((a): a is SpellAbility => a.kind === 'spell' && Boolean(a.modes));
@@ -457,21 +483,27 @@ function cast(
     ((alt?.id === 'foretell' && o.foretold !== undefined && o.foretold < g.turn) ||
       (alt?.id === 'plot' && o.plotted !== undefined && o.plotted < g.turn && g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0));
   const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCost(face) : null;
+  // CR 702.127a: "You may cast this half of this split card from your graveyard."
+  const aftermath = face.keywords.some((k) => k.id === 'aftermath');
   // "Until the end of your next turn, you may play that card."
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
-  if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout) && !prepared) throw new RulesError(`${face.name} can’t be cast.`);
+  if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout) && !prepared && !alt?.transformed) throw new RulesError(`${face.name} can’t be cast.`);
+  // CR 702.127a: an aftermath half is cast only from its owner's graveyard; the other half not from there.
+  if (aftermath && !(o.zone === 'graveyard' && o.owner === player)) throw new RulesError(`${face.name} can be cast only from your graveyard.`);
   // CR 305.9: a land can't be cast as a spell.
   if (face.types.includes('Land')) throw new RulesError(`${face.name} is a land. Play it instead.`);
   if (!Number.isInteger(x) || x < 0) throw new RulesError('X must be a whole number, 0 or more.');
 
   // CR 117.1a: instants any time you have priority; anything else during your main phase with an empty stack.
   // CR 702.8a: flash lets a card be cast any time you could cast an instant.
-  const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
+  // CR 702.190a: sneak — "any time you could cast an instant during your declare blockers step".
+  if (alt?.id === 'sneak' && !(g.active === player && g.step === 'declare_blockers')) throw new RulesError(`${face.name} can be cast for its sneak cost only during your declare blockers step.`);
+  const instantSpeed = castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash') || alt?.id === 'sneak';
   // CR 608.2g: casting as an effect resolves ignores timing.
   if (!instantSpeed && !during) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
@@ -492,7 +524,7 @@ function cast(
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
-  const cost = parseManaCost(during?.free || alt?.id === 'plot' ? '' : (flashback ?? (alt ? (alt.cost.mana ?? '') : face.manaCost)));
+  const cost = parseManaCost(during?.free || alt?.id === 'plot' ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : face.manaCost)));
   if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
@@ -506,6 +538,11 @@ function cast(
   }
   // Strive: "costs {2}{W} more to cast for each target beyond the first" (CR 601.2f).
   addPerTargetCost(castFace, targets, cost);
+  // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
+  if (alt?.reduceBySacrificed) {
+    const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
+    if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, sac));
+  }
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, castFace, cost);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
@@ -535,6 +572,8 @@ function cast(
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
   if (faceDown) ensureFaceDownDefs(g);
+  // CR 702.103b: it becomes an Aura spell as it's put on the stack.
+  if (alt?.id === 'bestow') o.bestowed = true;
   // CR 722.3c: the permanent loses the prepared designation as the spell becomes cast; the copy is a spell copy now.
   if (prepared) {
     delete o.prepareOf;
@@ -542,13 +581,14 @@ function cast(
     unprepare(g, prepared, events);
   }
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
-  if (flashback) o.exileOnLeave = true;
+  // CR 702.127a: so is an aftermath half cast from a graveyard; jump-start too (CR 702.133a).
+  if (flashback || aftermath || alt?.exileOnLeave) o.exileOnLeave = true;
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
   o.cast = {
     by: player,
-    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile || prepared ? 'exile' : 'hand',
+    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? 'exile' : 'hand',
     before,
     ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),
@@ -563,6 +603,12 @@ function cast(
   announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 601.2i: a player who had priority when casting gets priority afterward (not mid-resolution).
   if (!during) givePriority(g, player);
+}
+
+/** How many times this turn an ability with a per-turn limit has been activated. */
+export function activationsThisTurn(g: GameState, o: GameObject, index: number): number {
+  const a = o.activations?.[index];
+  return a && a.turn === g.turn ? a.n : 0;
 }
 
 /** Strive: "This spell costs {2}{W} more to cast for each target beyond the first." (CR 601.2f) */
@@ -611,9 +657,11 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   const o = obj(g, id);
   // CR 602.2: only an object's controller (or owner, outside the battlefield) can activate its abilities.
   const yours = o.zone === 'battlefield' ? o.controller === player : (o.zone === 'hand' || o.zone === 'graveyard') && o.owner === player;
-  if (!yours) throw new RulesError('You can’t activate abilities of that object.');
   const ability: ActivatedAbility | undefined = activatedAbilities(g, o)[index];
+  // "Any player may activate this ability." (CR 602.2)
+  if (!yours && !(o.zone === 'battlefield' && ability?.anyPlayer)) throw new RulesError('You can’t activate abilities of that object.');
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such ability.`);
+  if (ability.maxPerTurn && activationsThisTurn(g, o, index) >= ability.maxPerTurn) throw new RulesError(`That ability can be activated only ${ability.maxPerTurn} times each turn.`);
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
   const { cost } = ability;
@@ -668,6 +716,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
+  if (ability.maxPerTurn) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };
   if (ability.oncePerGame) (o.activatedOnce ??= {})[index] = true;
   const lki = costLKI(g, cost, choices.costs);
   payOtherCosts(g, player, o, cost, events, choices.costs);

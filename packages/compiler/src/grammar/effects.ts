@@ -50,7 +50,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
       // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
-        s = `${s.replace(/, and put /, ', put ')}, then shuffle`;
+        s = `${s.replace(/, reveal that card, and put it /, ', reveal it, put it ').replace(/, and put /, ', put ')}, then shuffle`;
         i++;
       }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
@@ -61,6 +61,27 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const inner = parseSentence(capitalise(then[1]!), b);
         if (!inner) return null;
         out.push({ type: 'may_pay', cost: pay[1]!, effects: inner });
+        i++;
+        continue;
+      }
+      // CR 702.32a (fading): "Remove a fade counter from it. If you can't, sacrifice it."
+      const cant = /^If you can't, (.+)$/.exec(s);
+      if (cant) {
+        const last = out[out.length - 1];
+        if (last?.type !== 'remove_counters') return null;
+        const inner = parseSentence(capitalise(cant[1]!.replace(/\bthe permanent\b/, '~')), b);
+        if (!inner) return null;
+        last.ifCant = inner;
+        continue;
+      }
+      // "Cumulative upkeep—Pay 1 life": "You may pay 1 life for each age counter on it. If you don't, sacrifice it."
+      const lifeEach = /^(?:Then )?[Yy]ou may pay (\d+) life for each (.+)$/.exec(s);
+      const dontLife = sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (lifeEach && dontLife) {
+        const times = parseForEach(lifeEach[2]!, b);
+        const otherwise = times ? parseSentence(capitalise(dontLife[1]!), b) : null;
+        if (!times || !otherwise) return null;
+        out.push({ type: 'may_pay', cost: '', life: Number(lifeEach[1]), times, effects: [], else: otherwise });
         i++;
         continue;
       }
@@ -121,6 +142,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // "Look at the top five cards of your library. You may reveal a creature card from among them and put it
       // into your hand. Put the rest on the bottom of your library in a random order." — and its relatives.
+      // "Look at the top three cards of your library, then put one of those cards into your hand and the rest …"
+      const lookThen = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library, then (put (?!them back).+)$/.exec(s);
+      if (lookThen) {
+        const dig = parseDig(lookThen[2]!, capitalise(lookThen[3]!), sentences[i + 1], b);
+        if (!dig) return null;
+        if (/^[Rr]eveal/.test(lookThen[1]!)) dig.node.reveal = true;
+        out.push(dig.node);
+        i += dig.used - 1;
+        continue;
+      }
       const look = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library$/.exec(s);
       if (look && sentences[i + 1]) {
         const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b);
@@ -213,11 +244,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Impulse draw: "Exile the top card of your library. Until the end of your next turn, you may play that card."
       const top = /^[Ee]xile the top (card|(\w+) cards) of your library$/.exec(s);
       const next = sentences[i + 1] ?? '';
-      const untilPlay = /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next);
+      const duringNext = /^During your next turn, you may (play|cast) (?:that card|those cards|them|it)$/.exec(next);
+      if (top && duringNext) {
+        const amount = top[2] ? parseAmount(top[2]) : 1;
+        if (amount === null) return null;
+        out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode: duringNext[1], until: 'during_next_turn' } });
+        i++;
+        continue;
+      }
+      const untilPlay =
+        /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next) ??
+        /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards)$/.exec(next) ??
+        /^Until (end of turn|the end of your next turn), you may (play) lands and cast spells from among (?:them|those cards)$/.exec(next);
       const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn)$/.exec(next);
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
-        if (typeof amount !== 'number') return null;
+        if (amount === null) return null;
         const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode, until } });
@@ -374,7 +416,7 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
   const amount = parseAmount(count);
   if (typeof amount !== 'number' || amount < 1) return null;
   const restOf = (text: string | undefined) => {
-    const m = text ? /^Put the (?:rest|others?) (.+)$/.exec(text) : null;
+    const m = text ? /^(?:Then )?[Pp]ut the (?:rest|others?)(?: of (?:the cards revealed this way|those cards|the cards))? (.+)$/.exec(text) : null;
     return m ? REST[m[1]!] ?? null : null;
   };
   // "Put two of them into your hand and the rest into your graveyard."
@@ -384,6 +426,30 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
     const rest = REST[put[4]!];
     if (typeof take !== 'number' || !rest) return null;
     return { node: { type: 'dig', amount, take, to: put[3], ...rest, ...(put[1] ? { upTo: true } : {}) }, used: 1 };
+  }
+  // "Put one of them into your graveyard." — the other stays on top.
+  const putSome = /^Put (\w+) of (?:them|those cards) into your (hand|graveyard)$/.exec(next);
+  if (putSome) {
+    const take = parseAmount(putSome[1]!);
+    if (typeof take !== 'number' || take >= amount) return null;
+    const rest = restOf(after);
+    return { node: { type: 'dig', amount, take, to: putSome[2], ...(rest ?? { rest: 'top', order: 'same' }) }, used: rest ? 2 : 1 };
+  }
+  // "Put a land card from among them onto the battlefield and the rest into your graveyard.",
+  // "Put up to two creature cards with mana value 3 or less from among them onto the battlefield." + "Put the rest …"
+  const putFrom = /^Put (a|an|up to \w+) (.+?) from among (?:them|those cards|the revealed cards) (into your hand|onto the battlefield( tapped)?|into your graveyard)(?: and the (?:rest|others?) (.+))?$/.exec(next);
+  if (putFrom) {
+    const rest = putFrom[5] ? REST[putFrom[5]] : restOf(after);
+    const n = putFrom[1]!.startsWith('up to ') ? parseAmount(putFrom[1]!.slice(6)) : 1;
+    const pf = parseFilter(`${putFrom[2]} in your library`, b);
+    if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    const to = putFrom[3]!.startsWith('into your hand') ? 'hand' : putFrom[3]!.startsWith('onto') ? 'battlefield' : 'graveyard';
+    // "up to N": any number of them; "a land card": one if there is one.
+    return {
+      node: { type: 'dig', amount, take: n, to, filter, ...(putFrom[1]!.startsWith('up to ') ? { optional: true } : {}), ...rest, ...(putFrom[4] ? { tapped: true } : {}) },
+      used: putFrom[5] ? 1 : 2,
+    };
   }
   // "You may reveal a creature card from among them and put it into your hand." + "Put the rest …"
   const reveal = /^You may (reveal|put) (a|an|up to \w+) (.+?) from among (?:them|those cards)(?: and put (?:it|them))? (into your hand|onto the battlefield( tapped)?|into your graveyard)$/.exec(next);
@@ -426,6 +492,7 @@ function capitalise(s: string): string {
 /** "draws cards equal to …" → "draws X cards" plus what X is (then bound with bindX). */
 const EQUAL_TO: [RegExp, (m: RegExpExecArray) => [string, string]][] = [
   [/^(.*?\bdeals?) damage equal to (.+?) to (.+)$/i, (m) => [`${m[1]} X damage to ${m[3]}`, m[2]!]],
+  [/^(.*?\bdeals?) damage to (.+?) equal to (.+)$/i, (m) => [`${m[1]} X damage to ${m[2]}`, m[3]!]],
   [/^(.*?\b(?:gains?|loses?)) life equal to (.+)$/i, (m) => [`${m[1]} X life`, m[2]!]],
   [/^(.*?\b(?:draws?|mills?|discards?)) cards equal to (.+)$/i, (m) => [`${m[1]} X cards`, m[2]!]],
   [/^(.*?\bputs?) a number of (\S+) counters on (.+?) equal to (.+)$/i, (m) => [`${m[1]} X ${m[2]} counters on ${m[3]}`, m[4]!]],
@@ -631,6 +698,28 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^[Pp]opulate$/.test(s)) return [{ type: 'populate' }];
   // CR 705.1: "Flip a coin."
   if (/^[Ff]lip a coin$/.test(s)) return [{ type: 'flip_coin' }];
+  // "When this creature dies, put its counters on target creature you control." (its counters as it died)
+  const itsCounters = /^[Pp]ut (?:its|~'s) counters on (.+)$/.exec(s);
+  if (itsCounters && b.itIsSource) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(itsCounters[1]!, b);
+      return what ? [{ type: 'put_counters', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 702.58a (graft): "move a +1/+1 counter from ~ onto that creature"
+  const moveCounter = /^[Mm]ove (a|an|one) (\S+) counter from (.+?) onto (.+)$/.exec(s);
+  if (moveCounter) {
+    const r = attempt(b, (b) => {
+      // "onto that creature" refers back past "from ~", so it's read first.
+      const to = parseObjectRef(moveCounter[4]!, b);
+      const from = to ? parseObjectRef(moveCounter[3]!, b) : null;
+      return from && to ? [{ type: 'move_counters', from: from.ref, to: to.ref, counter: moveCounter[2]!.replace(/−/g, '-'), amount: 1 }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 701.30b: "Clash with an opponent."
+  if (/^[Cc]lash with an opponent$/.test(s)) return [{ type: 'clash' }];
   // "Look at target opponent's hand." / "Target opponent reveals their hand." (CR 701.20a)
   const lookHand = /^[Ll]ook at (.+?)'s? hand$/.exec(s);
   const revealHand = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
@@ -749,6 +838,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(prep[1]!, b);
       return what ? [{ type: prep[2] === 'prepared' ? 'become_prepared' : 'become_unprepared', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // "Target creature's owner puts it on their choice of the top or bottom of their library."
+  const topOrBottom = /^(.+?)'s owner puts it on their choice of the top or bottom of their library$/.exec(s);
+  if (topOrBottom) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(topOrBottom[1]!, b);
+      return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: 'choice' }] : null;
     });
     if (r) return r;
   }
@@ -1377,7 +1475,8 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
       const pm = /^(gets?|gains?|has|have) (.+)$/.exec(part);
       if (!pm) return null;
       if (/^get/.test(pm[1]!)) {
-        const pt = parsePT(pm[2]!);
+        // "that creature gets an additional +2/+2" — another pump on top of the first.
+        const pt = parsePT(pm[2]!.replace(/^an additional /, ''));
         if (!pt || node.power !== undefined) return null;
         node.power = pt.power;
         node.toughness = pt.toughness;

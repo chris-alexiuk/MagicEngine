@@ -81,6 +81,10 @@ export interface PlayerState {
 export interface CostLKI {
   sacrificed?: { power: number; toughness: number; mana_value: number }[];
   discarded?: { power: number; toughness: number; mana_value: number }[];
+  /** The creature tapped for a station ability. */
+  tapped?: { power: number; toughness: number; mana_value: number }[];
+  /** What the creature returned for ninjutsu or sneak was attacking (CR 702.49c, 702.190b). */
+  attackTarget?: AttackTarget;
 }
 
 export interface GameObject {
@@ -158,6 +162,14 @@ export interface GameObject {
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
   prepared?: true;
+  /** CR 702.103b: cast bestowed — an Aura with enchant creature, not a creature, until it ceases to be bestowed. */
+  bestowed?: true;
+  /** CR 701.43a: exerted — it won't untap during its controller's next untap step. */
+  exerted?: true;
+  /** Encore: "attacks that opponent this turn if able" (CR 702.141a). */
+  attacksPlayer?: { player: PlayerId; turn: number };
+  /** Activations this turn of abilities with a per-turn limit, by ability index. */
+  activations?: Record<number, { turn: number; n: number }>;
   /** CR 722.3c: the copy of a prepare spell in exile, castable while this permanent stays prepared. */
   prepareOf?: ObjectRef;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
@@ -378,6 +390,8 @@ export interface Resolution {
   lifeLost?: number;
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
+  /** CR 701.30d: "If you win" after "Clash with an opponent". */
+  clashWon?: boolean;
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
@@ -391,10 +405,14 @@ export interface TargetPrompt {
 export type PendingChoice =
   | { kind: 'mulligan'; player: PlayerId }
   | { kind: 'bottom_cards'; player: PlayerId; count: number }
+  /** CR 103.6a: cards in the opening hand that may begin the game on the battlefield (leylines). */
+  | { kind: 'opening_battlefield'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
   | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
-  | { kind: 'declare_attackers'; player: PlayerId; attackers: ObjectId[]; targets: AttackTarget[] }
+  /** `exertable`: attackers that may be exerted as they attack (CR 701.43d). */
+  /** `enlisters`: attackers that may enlist, and `enlistable` the creatures they could tap (CR 702.154a). */
+  | { kind: 'declare_attackers'; player: PlayerId; attackers: ObjectId[]; targets: AttackTarget[]; exertable?: ObjectId[]; enlisters?: ObjectId[]; enlistable?: ObjectId[] }
   | { kind: 'declare_blockers'; player: PlayerId; blockers: ObjectId[]; attackers: ObjectId[] }
   | { kind: 'assign_combat_damage'; player: PlayerId; choices: DamageChoice[] }
   /** CR 603.3c / 603.3d: modes and targets for a triggered ability as it goes on the stack. */
@@ -462,10 +480,11 @@ export type PendingChoice =
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
   | { kind: 'bottom_cards'; objects: ObjectId[] }
+  | { kind: 'opening_battlefield'; objects: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
   | { kind: 'legend_rule'; keep: ObjectId }
   | { kind: 'manual_resolution'; done: true }
-  | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
+  | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[]; exert?: ObjectId[]; enlist?: { attacker: ObjectId; tap: ObjectId }[] }
   | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
   | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
   | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][]; divide?: number[] }
@@ -484,7 +503,7 @@ export type ChoiceAnswer =
   | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
   | { kind: 'choose_objects'; objects: ObjectId[] }
   /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
-  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null };
+  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null; sacrifice?: ObjectId[] };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -507,6 +526,8 @@ export interface CostChoices {
   delve?: ObjectId[];
   /** CR 702.126a: artifacts tapped for a spell with improvise. */
   improvise?: ObjectId[];
+  /** Ninjutsu, sneak: the unblocked attacking creature returned to its owner's hand (CR 702.49a, 702.190a). */
+  returned?: ObjectId[];
 }
 
 export type Action =
@@ -562,7 +583,7 @@ export type GameEvent =
   | { type: 'game_started'; order: PlayerId[] }
   | { type: 'shuffled'; player: PlayerId }
   /** nth: which card this is that the player drew this turn. */
-  | { type: 'drew'; player: PlayerId; object: ObjectId; nth?: number }
+  | { type: 'drew'; player: PlayerId; object: ObjectId; nth?: number; revealed?: true }
   | { type: 'mulligan'; player: PlayerId; count: number }
   | { type: 'kept'; player: PlayerId; bottomed: number }
   | { type: 'turn_began'; turn: number; player: PlayerId }
@@ -596,6 +617,10 @@ export type GameEvent =
   /** CR 702.179: a player's speed changed; CR 702.131: a player got the city's blessing. */
   | { type: 'speed'; player: PlayerId; speed: number }
   | { type: 'coin_flip'; player: PlayerId; won: boolean }
+  /** CR 701.43: a creature was exerted as it attacked. */
+  | { type: 'exerted'; object: ObjectId; player: PlayerId }
+  /** CR 701.30: a player clashed (and whether they won). */
+  | { type: 'clashed'; player: PlayerId; won: boolean }
   | { type: 'goaded'; object: ObjectId; by: PlayerId }
   | { type: 'city_blessing'; player: PlayerId }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
@@ -665,7 +690,8 @@ export interface GameState {
   /** True once the opening-hand process has finished. */
   started: boolean;
   /** Progress of the London mulligan (CR 103.5) while hands are being decided. */
-  opening: { undecided: PlayerId[]; mulligans: PlayerId[]; bottoms: { player: PlayerId; count: number }[] } | null;
+  /** `actions`: players still to take opening-hand actions (CR 103.6), in turn order. */
+  opening: { undecided: PlayerId[]; mulligans: PlayerId[]; bottoms: { player: PlayerId; count: number }[]; actions?: PlayerId[] } | null;
   /** A cleanup step in which SBAs happened gets another cleanup step. */
   extraCleanup: boolean;
   /** Present during the combat phase. */
@@ -689,9 +715,10 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number }[];
+  /** `firstTurn`: "During your next turn, you may play that card" starts later. */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

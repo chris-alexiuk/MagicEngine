@@ -784,3 +784,141 @@ describe('preparation cards, shuffling into libraries (slice 28)', () => {
     expect(one('Target creature has base power and toughness 1/1 until end of turn.', 'Instant')).toMatchObject({ effects: [{ type: 'modify', setPower: 1, setToughness: 1, until: 'eot' }] });
   });
 });
+
+describe('attached-creature triggers, historic, more digs (slice 29)', () => {
+  it('reads them', () => {
+    expect(one('Whenever equipped creature attacks, it gets +2/+0 until end of turn.', 'Artifact — Equipment')).toMatchObject({
+      trigger: { type: 'attacks', subject: { ref: 'attached' } }, effects: [{ type: 'modify', what: { ref: 'attached' } }],
+    });
+    expect(one('When enchanted creature dies, return that card to the battlefield under your control.', 'Enchantment — Aura')).toMatchObject({
+      trigger: { type: 'dies', subject: { ref: 'attached' } }, effects: [{ what: { ref: 'trigger_object' } }],
+    });
+    expect(one('Return target historic card from your graveyard to your hand.', 'Sorcery')).toMatchObject({ targets: [{ filter: { historic: true } }] });
+    expect(one("This creature can't attack or block alone.", 'Creature — Human')).toMatchObject({ effect: { rules: ['cant_attack_alone', 'cant_block_alone'] } });
+    expect(one("If this creature would be put into a graveyard from anywhere, reveal this creature and shuffle it into its owner's library instead.", 'Creature — Eldrazi')).toMatchObject({
+      effect: { type: 'graveyard_to_library' },
+    });
+    expect(one('Look at the top seven cards of your library. Put up to two land cards from among them onto the battlefield tapped. Put the rest on the bottom of your library in a random order.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'dig', amount: 7, take: 2, to: 'battlefield', tapped: true, optional: true, rest: 'bottom' }],
+    });
+    expect(one('Look at the top two cards of your library. Put one of them into your graveyard.', 'Sorcery')).toMatchObject({ effects: [{ type: 'dig', take: 1, to: 'graveyard', rest: 'top' }] });
+    expect(one('Look at the top three cards of your library, then put one of those cards into your hand and the rest into your graveyard.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'dig', amount: 3, take: 1, to: 'hand', rest: 'graveyard' }],
+    });
+  });
+});
+
+describe('exert and clash (slice 30)', () => {
+  it('reads them', () => {
+    expect(one('You may exert this creature as it attacks. When you do, it gets +1/+1 until end of turn.', 'Creature — Human Warrior')).toMatchObject({
+      kind: 'triggered', trigger: { type: 'exerted', subject: { ref: 'self' }, option: true }, effects: [{ type: 'modify', what: { ref: 'self' } }],
+    });
+    expect(one('You may exert this creature as it attacks.', 'Creature — Human Warrior')).toMatchObject({ effect: { type: 'exert_option' } });
+    expect(one('When this creature enters, clash with an opponent. If you win, put a +1/+1 counter on this creature.', 'Creature — Goblin')).toMatchObject({
+      effects: [{ type: 'clash' }, { type: 'if', cond: { type: 'won_clash' } }],
+    });
+    expect(one('Whenever you win a clash, draw a card.', 'Creature — Goblin')).toMatchObject({ trigger: { type: 'clashed', won: true } });
+  });
+});
+
+describe('leylines, any-player abilities, activation limits (slice 31)', () => {
+  it('reads them', () => {
+    expect(one('If this card is in your opening hand, you may begin the game with it on the battlefield.', 'Enchantment')).toMatchObject({ effect: { type: 'begin_on_battlefield' } });
+    expect(one('{T}: Draw a card. Any player may activate this ability.', 'Artifact')).toMatchObject({ anyPlayer: true });
+    expect(one('{R}: This creature gets +1/+0 until end of turn. Activate no more than twice each turn.', 'Creature — Shapeshifter')).toMatchObject({ maxPerTurn: 2 });
+    expect(one('When this creature dies, put its counters on target creature you control.', 'Artifact Creature — Drone')).toMatchObject({ effects: [{ type: 'put_counters' }] });
+    expect(one('This spell deals damage to target creature equal to the number of lands you control.', 'Sorcery')).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'count' } }] });
+    expect(one('Exile the top card of your library. During your next turn, you may play that card.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'exile_top', play: { mode: 'play', until: 'during_next_turn' } }],
+    });
+    expect(one("This land doesn't untap during your untap step if it has a depletion counter on it.", 'Land')).toMatchObject({ effect: { rules: ['doesnt_untap'], condition: { type: 'counters', counter: 'depletion' } } });
+  });
+});
+
+describe('fading, retrace, transmute, filtered discard costs (slice 32)', () => {
+  it('reads them', () => {
+    expect(parse('Fading 3', 'Creature — Beast', 'Fader').manualKeywords).toEqual([]);
+    expect(parse('Destroy target creature.\nRetrace', 'Instant', 'Ret').manualKeywords).toEqual([]);
+    expect(parse('Transmute {1}{B}{B}', 'Creature — Human', 'Tm').manualKeywords).toEqual([]);
+    expect(parse('Cumulative upkeep—Pay 1 life.', 'Creature — Spirit', 'Cu').manualKeywords).toEqual([]);
+    expect(one('{T}, Discard a land card: Draw a card.', 'Artifact')).toMatchObject({ cost: { other: [{ type: 'discard', filter: { types: ['Land'] } }] } });
+    expect(one("Target creature's owner puts it on their choice of the top or bottom of their library.", 'Instant')).toMatchObject({ effects: [{ type: 'move', position: 'choice' }] });
+    expect(one("When this creature is put into a graveyard from anywhere, shuffle it into its owner's library.", 'Creature — Horror')).toMatchObject({
+      trigger: { type: 'put_into_graveyard' }, zone: 'graveyard',
+    });
+    expect(one('Exile the top three cards of your library. Until end of turn, you may cast spells from among them.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'exile_top', play: { mode: 'cast', until: 'eot' } }],
+    });
+  });
+});
+
+describe('blitz, warp, disturb, overload, aftermath (slice 33)', () => {
+  it('reads them', () => {
+    for (const line of ['Blitz {2}{R}', 'Warp {1}{R}', 'Disturb {1}{W}']) expect(parse(line, 'Creature — Human', 'Kw').manualKeywords).toEqual([]);
+    const over = parse('Destroy target artifact you don\'t control.\nOverload {5}{R}', 'Instant', 'Storm');
+    expect(over.manualKeywords).toEqual([]);
+    expect(over.keywords[0]!.abilities![0]).toMatchObject({ effect: { type: 'cast_option', id: 'overload', spell: { effects: [{ type: 'destroy', what: { ref: 'all' } }] } } });
+  });
+});
+
+describe('bestow, backup, replicate, squad (slice 34)', () => {
+  it('reads them', () => {
+    expect(parse('Bestow {4}{U}\nFlying\nEnchanted creature gets +1/+1 and has flying.', 'Enchantment Creature — Siren', 'Siren').manualKeywords).toEqual([]);
+    const backup = parse('Backup 1\nFlying\nWhenever this creature attacks, draw a card.', 'Creature — Human', 'Backer');
+    expect(backup.manualKeywords).toEqual([]);
+    expect(backup.keywords[0]!.abilities![0]).toMatchObject({
+      trigger: { type: 'enters' },
+      effects: [{ type: 'add_counters', amount: 1 }, { type: 'if', effects: [{ type: 'modify', keywords: [{ id: 'flying' }, { id: 'ability' }], until: 'eot' }] }],
+    });
+    expect(parse('This spell deals 1 damage to any target.\nReplicate {1}', 'Instant', 'Ping').manualKeywords).toEqual([]);
+    expect(parse('Squad {2}', 'Creature — Soldier', 'Sq').manualKeywords).toEqual([]);
+  });
+});
+
+describe('station (slice 35)', () => {
+  it('reads station cards', () => {
+    const ship = parse("When this Spacecraft enters, put a +1/+1 counter on each creature you control.\nStation (Tap another creature you control: Put charge counters equal to its power on this Spacecraft. Station only as a sorcery. It's an artifact creature at 8+.)\n8+ | Flying, trample", 'Artifact — Spacecraft', 'Ship');
+    expect(ship.unparsed).toEqual([]);
+    expect(ship.manualKeywords).toEqual([]);
+    expect(ship.abilities.filter((a) => a.gate)).toHaveLength(2);
+  });
+});
+
+describe('ninjutsu and sneak (slice 36)', () => {
+  it('reads them', () => {
+    const ninja = parse('Ninjutsu {1}{U}', 'Creature — Human Ninja', 'Ninja');
+    expect(ninja.manualKeywords).toEqual([]);
+    expect(ninja.keywords[0]!.abilities![0]).toMatchObject({ kind: 'activated', zone: 'hand', cost: { other: [{ type: 'return_unblocked' }] }, effects: [{ type: 'ninjutsu' }] });
+    expect(parse('Sneak {2}{G}', 'Creature — Turtle', 'Turtle').manualKeywords).toEqual([]);
+  });
+});
+
+describe('keyword batch: casualty, graft, devour, umbra armor, jump-start, surge, awaken, equip qualities (slice 37)', () => {
+  it('reads them', () => {
+    const lines: [string, string][] = [
+      ['Draw a card.\nCasualty 2', 'Instant'],
+      ['Graft 2', 'Creature — Plant'],
+      ['Devour 1', 'Creature — Dragon'],
+      ['Enchant creature\nUmbra armor', 'Enchantment — Aura'],
+      ['Destroy target creature.\nJump-start', 'Sorcery'],
+      ['Draw a card.\nSurge {1}{R}', 'Sorcery'],
+      ['Draw a card.\nAwaken 2—{4}{U}', 'Sorcery'],
+      ['Equip legendary creature {1}', 'Artifact — Equipment'],
+      ['Destroy target creature.\nFlashback—{1}{B}, Pay 3 life.', 'Sorcery'],
+    ];
+    for (const [text, type] of lines) expect(parse(text, type, 'Kw').manualKeywords).toEqual([]);
+    // Awaken's land is targeted only when the awaken cost is paid (CR 702.113a): the plain spell has no target.
+    const awaken = parse('Draw a card.\nAwaken 2—{4}{U}', 'Sorcery', 'Kw');
+    expect(awaken.abilities[0]).toMatchObject({ kind: 'spell' });
+    expect((awaken.abilities[0] as { targets?: unknown[] }).targets).toBeUndefined();
+    expect(awaken.keywords[0]!.abilities![0]).toMatchObject({ effect: { id: 'awaken', spell: { targets: [{ filter: { types: ['Land'] } }] } } });
+  });
+});
+
+describe('myriad, encore, miracle, emerge, enlist (slice 38)', () => {
+  it('reads them', () => {
+    for (const [text, type] of [['Myriad', 'Creature — Elemental'], ['Encore {4}{U}{U}', 'Creature — Pirate'], ['Draw a card.\nMiracle {W}', 'Sorcery'], ['Emerge {5}{G}', 'Creature — Eldrazi'], ['Enlist', 'Creature — Soldier']] as const) {
+      expect(parse(text, type, 'Kw').manualKeywords).toEqual([]);
+    }
+  });
+});

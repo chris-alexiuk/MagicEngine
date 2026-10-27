@@ -31,7 +31,7 @@ import { faceDownFace } from './face-down.js';
 
 const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'moved', 'created', 'attacks_declared', 'blocks_declared', 'damage', 'step', 'cast', 'life', 'drew', 'became_target', 'counters',
-  'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated',
+  'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
 ]);
 const LOOK_BACK = new Set(['dies', 'leaves']);
 /** CR 603.10a: leaves-the-battlefield abilities "look back in time" ("When ~ enters or dies" too). */
@@ -86,8 +86,8 @@ function collect(g: GameState, events: GameEvent[]): void {
   for (const p of Object.keys(g.zones.graveyard)) {
     for (const id of g.zones.graveyard[p]!) {
       const o = g.objects[id]!;
-      if (left.has(id)) continue;
       const face = g.cards[o.card]?.faces[o.face];
+      if (left.has(id) && !face?.abilities.some((a) => a.kind === 'triggered' && a.trigger.type === 'put_into_graveyard')) continue;
       if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'graveyard')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
     }
   }
@@ -358,6 +358,23 @@ function collectExileKeywords(g: GameState, batch: GameEvent[]): void {
           ability: { kind: 'triggered', text: 'Suspend — remove a time counter', trigger: { type: 'phase', step: 'upkeep', whose: 'you' }, effects: [{ type: 'suspend_tick' }] },
           info: {},
         });
+      }
+    }
+    // CR 702.94a: "You may reveal this card from your hand as you draw it if it's the first card you've drawn this turn.
+    // When you reveal this card this way, you may cast it by paying [cost] rather than its mana cost."
+    if (e.type === 'drew' && e.nth === 1) {
+      const o = g.objects[e.object];
+      const face = o ? g.cards[o.card]?.faces[0] : undefined;
+      if (o && o.zone === 'hand' && face?.keywords.some((k) => k.id === 'miracle' && k.cost && /^(\{[^}]+\})+$/.test(k.cost))) {
+        g.triggers.push({
+          id: `t${g.nextId++}`,
+          controller: o.owner,
+          source: { id: o.id, zcc: o.zcc },
+          sourceName: face.name,
+          ability: { kind: 'triggered', text: 'Miracle', trigger: { type: 'drew' }, effects: [{ type: 'miracle_cast' }] },
+          info: {},
+        });
+        e.revealed = true;
       }
     }
     if (e.type === 'discarded' && e.madness) {

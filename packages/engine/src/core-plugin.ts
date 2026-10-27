@@ -18,7 +18,7 @@ import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, apnap, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
@@ -146,6 +146,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   move(node, ctx) {
     const to = node.to as 'hand' | 'library' | 'battlefield' | 'exile' | 'graveyard';
+    // "Target creature's owner puts it on their choice of the top or bottom of their library."
+    if (to === 'library' && node.position === 'choice') {
+      const [o] = refObjects(ctx, ref(node, 'what'));
+      if (!o || o.zone === 'stack') return true;
+      const answer = answerOf(ctx, 'choose_option');
+      if (!answer) return { ask: { kind: 'choose_option', player: o.owner, options: ['top', 'bottom'], text: `Put ${nameOf(ctx.g, o)} on the top or the bottom of your library?`, sourceName: sourceName(ctx) } };
+      if (answer.choice !== 'top' && answer.choice !== 'bottom') throw new RulesError('Choose top or bottom.');
+      moveObject(ctx.g, o.id, 'library', ctx.events, { position: answer.choice });
+      return true;
+    }
     // "Shuffle ~ into its owner's library" (CR 701.24a): put there, then the library is shuffled.
     if (to === 'library' && node.position === 'shuffle') {
       const owners = new Set<PlayerId>();
@@ -183,6 +193,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // CR 701.13a: exile moves it to the exile zone from wherever it is.
         if (o.zone === 'stack' && o.id !== ctx.source?.id) continue;
         moveObject(ctx.g, o.id, to, ctx.events);
+        // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
+        if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
         // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
         const src = ctx.source;
         if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
@@ -594,6 +606,92 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // "When this creature dies, put its counters on target creature you control." — the counters it had as it
+  // left the battlefield (CR 603.10a).
+  put_counters(node, ctx) {
+    const counters = ctx.trigger?.lki?.counters ?? {};
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      for (const [k, n] of Object.entries(counters)) if (n > 0) addCounters(ctx, o, k, n);
+    }
+    return true;
+  },
+
+  // CR 702.49a/c: "Put this card onto the battlefield from your hand tapped and attacking" — attacking what the
+  // returned creature was attacking.
+  ninjutsu(_node, ctx) {
+    const g = ctx.g;
+    const o = ctx.source;
+    if (!o || o.zone !== 'hand' || (ctx.sourceZcc !== undefined && o.zcc !== ctx.sourceZcc)) return true;
+    moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller, tapped: true });
+    const target = ctx.resolution?.entry.costLKI?.attackTarget;
+    if (g.combat && target && chars(g, o).types.includes('Creature')) g.combat.attackers[o.id] = { zcc: o.zcc, target: { ...target }, blocked: false, blockers: [] };
+    return true;
+  },
+
+  // CR 702.58a (graft): "move a +1/+1 counter from this permanent onto that creature" (CR 122.5).
+  move_counters(node, ctx) {
+    const [from] = refObjects(ctx, ref(node, 'from'));
+    const counter = String(node.counter);
+    if (!from || from.zone !== 'battlefield' || !(from.counters[counter] ?? 0)) return true;
+    const to = refObjects(ctx, ref(node, 'to')).filter((o) => o.zone === 'battlefield' && o.id !== from.id);
+    if (!to.length) return true;
+    const n = Math.min(from.counters[counter]!, amountOf(ctx, node.amount ?? 1));
+    from.counters[counter] = from.counters[counter]! - n;
+    if (!from.counters[counter]) delete from.counters[counter];
+    ctx.events.push({ type: 'counters', object: from.id, counter, delta: -n });
+    addCounters(ctx, to[0]!, counter, n);
+    return true;
+  },
+
+  // CR 702.116a: myriad — for each opponent other than defending player, a token copy tapped and attacking that
+  // player; the tokens are exiled at end of combat. (The bots and the engine always create them.)
+  myriad(_node, ctx) {
+    const g = ctx.g;
+    const src = ctx.source;
+    const defending = ctx.trigger?.player;
+    if (!src || !g.combat) return true;
+    const made: ObjectRef[] = [];
+    for (const p of livePlayers(g)) {
+      if (p === ctx.controller || p === defending) continue;
+      const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, { tapped: true });
+      g.combat.attackers[t.id] = { zcc: t.zcc, target: { kind: 'player', player: p }, blocked: false, blockers: [] };
+      made.push({ id: t.id, zcc: t.zcc });
+    }
+    if (!made.length || !ctx.resolution) return true;
+    ctx.resolution.created = made;
+    return { expand: [{ type: 'delayed', step: 'end_of_combat', effects: [{ type: 'move', what: { ref: 'created' }, to: 'exile' }] }] };
+  },
+
+  // CR 702.141a: encore — for each opponent, a token copy that attacks that opponent this turn if able. The tokens
+  // gain haste. Sacrifice them at the beginning of the next end step.
+  encore(_node, ctx) {
+    const g = ctx.g;
+    const src = ctx.source;
+    if (!src) return true;
+    const made: ObjectRef[] = [];
+    for (const p of livePlayers(g)) {
+      if (p === ctx.controller) continue;
+      const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, {});
+      t.attacksPlayer = { player: p, turn: g.turn };
+      g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: t.id, zcc: t.zcc }, controller: ctx.controller, objects: [{ id: t.id, zcc: t.zcc }], keywords: [{ id: 'haste' }], until: 'eot' });
+      made.push({ id: t.id, zcc: t.zcc });
+    }
+    if (!made.length || !ctx.resolution) return true;
+    ctx.resolution.created = made;
+    return { expand: [{ type: 'delayed', step: 'end', effects: [{ type: 'sacrifice', what: { ref: 'created' } }] }] };
+  },
+
+  // CR 702.94a: miracle — "When you reveal this card this way, you may cast it by paying [cost]."
+  miracle_cast(_node, ctx) {
+    const o = refObjects(ctx, { ref: 'self' })[0];
+    if (!o || o.zone !== 'hand') return true;
+    const answer = answerOf(ctx, 'cast_free');
+    if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} for its miracle cost?` } };
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { alt: 'miracle' });
+    return true;
+  },
+
   // CR 305.2: "You may play an additional land this turn."
   extra_land(node, ctx) {
     for (const p of node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]) {
@@ -622,6 +720,53 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     const t = createTokenCopy(g, copiable(g.objects[pick]!), ctx.controller, ctx.events, {});
     if (ctx.resolution) ctx.resolution.created = [{ id: t.id, zcc: t.zcc }];
+    return true;
+  },
+
+  // CR 701.30b: "Clash with an opponent" — choose an opponent; you and that opponent each clash: reveal the top
+  // card (CR 701.30a), then in APNAP order each decides whether it goes to the bottom (CR 701.30c).
+  clash(_node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { opponent?: PlayerId; cards?: Record<PlayerId, string | null>; order?: PlayerId[]; asked?: number; bottom?: PlayerId[] };
+    if (!memo.opponent) {
+      const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
+      if (!opponents.length) return true;
+      const answer = answerOf(ctx, 'choose_option');
+      if (answer) {
+        const p = opponents.find((x) => x === answer.choice || g.players[x]!.name === answer.choice);
+        if (!p) throw new RulesError('Choose an opponent to clash with.');
+        memo.opponent = p;
+      } else if (opponents.length === 1) memo.opponent = opponents[0]!;
+      else return { ask: { kind: 'choose_option', player: ctx.controller, options: opponents.map((p) => g.players[p]!.name), text: 'Choose an opponent to clash with.', sourceName: sourceName(ctx) } };
+    }
+    if (!memo.cards) {
+      const clashers = apnap(g).filter((p) => p === ctx.controller || p === memo.opponent);
+      memo.order = clashers;
+      memo.cards = Object.fromEntries(clashers.map((p) => [p, zoneList(g, 'library', p)[0] ?? null]));
+      for (const p of clashers) if (memo.cards[p]) ctx.events.push({ type: 'revealed', player: p, objects: [memo.cards[p]!] });
+      memo.asked = 0;
+      memo.bottom = [];
+    } else {
+      // The answer to the last "put it on the bottom?" question.
+      const answer = answerOf(ctx, 'may');
+      const p = memo.order![memo.asked!]!;
+      if (answer?.yes) memo.bottom!.push(p);
+      memo.asked!++;
+    }
+    for (; memo.asked! < memo.order!.length; memo.asked!++) {
+      const p = memo.order![memo.asked!]!;
+      const card = memo.cards[p];
+      if (!card) continue;
+      return { ask: { kind: 'may', player: p, text: `Put ${nameOf(g, g.objects[card]!)} on the bottom of your library? (Otherwise it stays on top.)`, sourceName: sourceName(ctx) } };
+    }
+    // CR 701.30c: the cards move at the same time; CR 701.30d: the higher mana value wins.
+    const mv = (p: PlayerId) => (memo.cards![p] ? manaValueOf(g, g.objects[memo.cards![p]!]!) : -1);
+    for (const p of memo.bottom!) moveObject(g, memo.cards[p]!, 'library', ctx.events, { position: 'bottom' });
+    for (const p of memo.order!) {
+      const won = memo.cards[p] !== null && memo.order!.every((q) => q === p || mv(p) > mv(q));
+      if (p === ctx.controller && ctx.resolution) ctx.resolution.clashWon = won;
+      ctx.events.push({ type: 'clashed', player: p, won });
+    }
     return true;
   },
 
@@ -682,6 +827,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const counter = String(node.counter);
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       const have = o.counters[counter] ?? 0;
+      // "Remove a fade counter from it. If you can't, sacrifice it." (CR 702.32a)
+      if (node.ifCant && have < amountOf(ctx, node.amount)) return { expand: node.ifCant as EffectNode[] };
       const n = Math.min(have, amountOf(ctx, node.amount));
       if (n <= 0) continue;
       o.counters[counter] = have - n;
@@ -755,12 +902,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Exile the top card of your library. Until the end of your next turn, you may play that card."
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' } | undefined;
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' } | undefined;
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
         moveObject(g, id, 'exile', ctx.events);
         const o = g.objects[id]!;
-        if (play) (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn: lastTurnOf(g, ctx.controller, play.until) });
+        if (play) {
+          // "During your next turn, you may play that card." — that turn only.
+          const lastTurn = lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}) });
+        }
       }
     }
     return true;
@@ -889,15 +1040,24 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'pay');
     const n = node.times ? (ctx.memo.times as number | undefined) ?? amountOf(ctx, node.times) : 1;
     ctx.memo.times = n;
-    const cost = String(node.cost).repeat(Math.max(0, n));
+    const cost = String(node.cost ?? '').repeat(Math.max(0, n));
+    // "Cumulative upkeep—Pay 1 life": life for each age counter (CR 119.4).
+    const life = Number(node.life ?? 0) * Math.max(0, n);
     const otherwise = (node.else as EffectNode[] | undefined) ?? [];
-    if (!cost) return { expand: node.effects as EffectNode[] };
+    if (!cost && !life) return { expand: node.effects as EffectNode[] };
     if (!answer) {
-      const text = `pay ${cost}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
+      const price = [cost, life ? `${life} life` : ''].filter(Boolean).join(' and ');
+      const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
       return { ask: { kind: 'pay', player: ctx.controller, cost, text, sourceName: sourceName(ctx) } };
     }
     if (!answer.pay) return { expand: otherwise };
-    payDuringResolution(ctx.g, ctx.controller, cost, ctx.events);
+    const ps = ctx.g.players[ctx.controller]!;
+    if (life && ps.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
+    if (cost) payDuringResolution(ctx.g, ctx.controller, cost, ctx.events);
+    if (life) {
+      ps.life -= life;
+      ctx.events.push({ type: 'life', player: ctx.controller, delta: -life, life: ps.life });
+    }
     return { expand: node.effects as EffectNode[] };
   },
 
@@ -950,7 +1110,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
     // "Search your library and/or graveyard": cards in those zones too.
     const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
-    const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player })));
+    const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
     const count = amountOf(ctx, node.amount);
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');
@@ -1400,8 +1560,13 @@ function describeSearch(node: EffectNode): string {
 /** Does `o` satisfy a trigger's subject ("~" or "a creature you control")? */
 function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: { lastController?: PlayerId; anyZone?: boolean } = {}): boolean {
   if (subject.ref === 'self') return o.id === check.source.id;
-  // "enchanted creature", "equipped creature"
-  if (subject.ref === 'attached') return check.source.attachedTo?.id === o.id && check.source.attachedTo.zcc === o.zcc;
+  // "enchanted creature", "equipped creature" — as it was attached when the event happened: "When enchanted
+  // creature dies" looks back at the creature that left (CR 603.10a), even if the Aura left with it.
+  if (subject.ref === 'attached') {
+    const last = check.g.lastKnown?.[check.source.id];
+    const at = check.source.attachedTo ?? (check.sourceLeft && last && last.zcc === check.source.zcc - 1 ? last.attachedTo : undefined);
+    return Boolean(at && at.id === o.id && (at.zcc === o.zcc || at.zcc === battlefieldZcc(check.g, o)));
+  }
   if (subject.ref !== 'all') return false;
   const filter: ObjectFilter = { ...subject.filter };
   return matchesFilter(check.g, o, filter, {
@@ -1648,6 +1813,26 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.nth && e.nth !== t.nth) return [];
     return [{ player: e.player }];
   },
+  // CR 701.43d: "When you do" (linked to "You may exert ~ as it attacks"), "Whenever you exert a creature".
+  exerted(t, check) {
+    const e = check.event;
+    if (e.type !== 'exerted' || check.sourceLeft) return [];
+    const o = check.g.objects[e.object];
+    return o && subjectMatches(check, t.subject as Ref, o) ? [{ object: refTo(o), player: e.player }] : [];
+  },
+  // "When ~ is put into a graveyard from anywhere, shuffle it into its owner's library." (works in the graveyard)
+  put_into_graveyard(_t, check) {
+    const e = check.event;
+    if (e.type !== 'moved' || e.to !== 'graveyard' || e.object !== check.source.id || check.source.zone !== 'graveyard') return [];
+    return [{ object: refTo(check.source) }];
+  },
+  // CR 701.30: "Whenever you clash", "Whenever you win a clash".
+  clashed(t, check) {
+    const e = check.event;
+    if (e.type !== 'clashed' || check.sourceLeft || e.player !== check.controller) return [];
+    if (t.won && !e.won) return [];
+    return [{ player: e.player }];
+  },
   // CR 602.2: "Whenever you activate an ability that isn't a mana ability", "Whenever an opponent activates a
   // loyalty ability", "Whenever an ability of equipped creature is activated". The ability is what it's about.
   activate(t, check) {
@@ -1692,7 +1877,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

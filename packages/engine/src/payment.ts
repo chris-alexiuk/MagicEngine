@@ -9,7 +9,7 @@ import { discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -21,6 +21,16 @@ export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNod
 }
 
 /** CR 702.122a: creatures that could crew a Vehicle. */
+/** CR 509.1h: attacking creatures you control that weren't blocked, once blockers have been declared. */
+export function unblockedAttackers(g: GameState, player: PlayerId): ObjectId[] {
+  const c = g.combat;
+  if (!c || !c.attackersDeclared || c.toDeclareBlockers.length || !['declare_blockers', 'combat_damage', 'end_of_combat'].includes(g.step)) return [];
+  return Object.entries(c.attackers).flatMap(([id, a]) => {
+    const o = g.objects[id];
+    return o && o.zone === 'battlefield' && o.zcc === a.zcc && o.controller === player && !a.blocked ? [id] : [];
+  });
+}
+
 export function crewCandidates(g: GameState, player: PlayerId, vehicle: GameObject): ObjectId[] {
   return g.zones.battlefield.filter((id) => {
     const o = g.objects[id]!;
@@ -29,8 +39,11 @@ export function crewCandidates(g: GameState, player: PlayerId, vehicle: GameObje
 }
 
 /** Cards a player could discard for a "Discard a card" cost (not the spell being cast). */
-export function discardCandidates(g: GameState, player: PlayerId, source: GameObject): ObjectId[] {
-  return zoneList(g, 'hand', player).filter((id) => id !== source.id);
+/** Cards in hand a discard cost could use ("Discard a land card": those matching its filter). */
+export function discardCandidates(g: GameState, player: PlayerId, source: GameObject, filter?: ObjectFilter): ObjectId[] {
+  return zoneList(g, 'hand', player).filter(
+    (id) => id !== source.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone: 'hand' }, { controller: player, source })),
+  );
 }
 
 function checkChosen(chosen: ObjectId[] | undefined, candidates: ObjectId[], n: number, what: string): ObjectId[] {
@@ -62,7 +75,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     }
     if (c.type === 'discard') {
       const n = Number(c.amount ?? 1);
-      checkChosen(choices.discard?.slice(discardUsed, discardUsed + n), discardCandidates(g, player, o), n, 'card(s) to discard');
+      checkChosen(choices.discard?.slice(discardUsed, discardUsed + n), discardCandidates(g, player, o, c.filter as ObjectFilter | undefined), n, 'card(s) to discard');
       discardUsed += n;
       continue;
     }
@@ -93,6 +106,13 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError('Choose untapped creatures you control to crew it.');
       const total = chosen.reduce((n, id) => n + power(g, g.objects[id]!), 0);
       if (total < Number(c.power)) throw new RulesError(`Crewing needs total power ${c.power} or greater.`);
+    } else if (c.type === 'return_unblocked') {
+      const chosen = choices.returned ?? [];
+      if (chosen.length !== 1 || !unblockedAttackers(g, player).includes(chosen[0]!)) throw new RulesError('Choose an unblocked attacking creature you control to return.');
+    } else if (c.type === 'station') {
+      // CR 702.184a: "Tap another untapped creature you control".
+      const chosen = choices.crew ?? [];
+      if (chosen.length !== 1 || !crewCandidates(g, player, o).includes(chosen[0]!)) throw new RulesError('Choose another untapped creature you control to tap.');
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -105,8 +125,18 @@ export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}): Co
   };
   const sacrificed = (cost.other ?? []).some((c) => c.type === 'sacrifice') ? (choices.sacrifice ?? []).map(stats) : [];
   const discarded = (cost.other ?? []).some((c) => c.type === 'discard') ? (choices.discard ?? []).map(stats) : [];
-  if (!sacrificed.length && !discarded.length) return undefined;
-  return { ...(sacrificed.length ? { sacrificed } : {}), ...(discarded.length ? { discarded } : {}) };
+  // Station: "equal to the tapped creature's power" (CR 702.184a).
+  const tapped = (cost.other ?? []).some((c) => c.type === 'station') ? (choices.crew ?? []).map(stats) : [];
+  // Ninjutsu, sneak: what the returned creature was attacking.
+  const returned = (cost.other ?? []).some((c) => c.type === 'return_unblocked') ? choices.returned?.[0] : undefined;
+  const attackTarget = returned ? g.combat?.attackers[returned]?.target : undefined;
+  if (!sacrificed.length && !discarded.length && !tapped.length && !attackTarget) return undefined;
+  return {
+    ...(sacrificed.length ? { sacrificed } : {}),
+    ...(discarded.length ? { discarded } : {}),
+    ...(tapped.length ? { tapped } : {}),
+    ...(attackTarget ? { attackTarget: { ...attackTarget } } : {}),
+  };
 }
 
 export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cost: Cost, events: GameEvent[], choices: CostChoices = {}): void {
@@ -145,8 +175,10 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       o.counters[counter] = (o.counters[counter] ?? 0) - n;
       if (o.counters[counter]! <= 0) delete o.counters[counter];
       events.push({ type: 'counters', object: o.id, counter, delta: -n });
-    } else if (c.type === 'crew') {
+    } else if (c.type === 'crew' || c.type === 'station') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
+    } else if (c.type === 'return_unblocked') {
+      for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
     } else if (c.type === 'discard_self') {

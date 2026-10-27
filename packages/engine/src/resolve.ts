@@ -185,7 +185,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -286,6 +286,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'colors_spent':
       // CR 702.44a: colors of mana spent to cast it.
       return ctx.source?.cast?.colors ?? 0;
+    case 'paid_times':
+      // "for each time its replicate cost was paid" (CR 702.56a), "… its squad cost was paid" (CR 702.157a)
+      return (ctx.source?.cast?.paid ?? []).filter((p) => p === e.cost).length;
     case 'kicks':
       // CR 702.33c: how many times the spell (or the permanent it became) was kicked.
       return ctx.source?.cast?.kicks ?? (ctx.source?.cast?.kicked ? 1 : 0);

@@ -26,6 +26,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  // Transmute (CR 702.53a), transfigure (CR 702.71a)
+  [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
   [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
@@ -227,6 +229,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     if (COLOR_WORDS[w]) (f.colors ??= []).push(COLOR_WORDS[w]!);
     else if (w === 'colorless') f.colorless = true;
     else if (w === 'multicolored') f.multicolored = true;
+    // CR 700.6
+    else if (w === 'historic') f.historic = true;
     else if (w === 'tapped') f.tapped = true;
     else if (w === 'untapped') f.tapped = false;
     else if (w === 'attacking') f.combat = 'attacking';

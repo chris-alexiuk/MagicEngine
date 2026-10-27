@@ -135,6 +135,14 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
   if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  const discardSome = /^[Dd]iscard (a|an|one|two|three) (.+? cards?)$/.exec(item);
+  if (discardSome && b) {
+    const amount = parseAmount(discardSome[1]!.replace(/^an$/, 'a'));
+    const pf = parseFilter(`${discardSome[2]} in your hand`, b);
+    if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'discard', amount, filter };
+  }
   // "As an additional cost to cast this spell, pay 3 life." (CR 119.4)
   const life = /^[Pp]ay (\d+) life$/.exec(item);
   if (life) return { type: 'pay_life', amount: Number(life[1]) };
@@ -209,8 +217,12 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only during your turn\.$/, (a) => andIf(a, { type: 'your_turn', value: true })],
   [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
   [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
-  [/ Activate only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
+  [/ (?:Activate|Transmute|Transfigure) only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
+  [/ Activate no more than twice each turn\.$/, (a) => (a.maxPerTurn = 2)],
+  [/ Activate no more than three times each turn\.$/, (a) => (a.maxPerTurn = 3)],
+  // CR 602.2
+  [/ Any player may activate this ability\.$/, (a) => (a.anyPlayer = true)],
   // CR 702.177a (exhaust)
   [/ Activate only once\.$/, (a) => (a.oncePerGame = true)],
 ];
@@ -419,6 +431,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['defending player'] = { ref: 'trigger_player' };
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, saddled: true }, it: { ref: 'self' }, player: null };
   }
+  // "Whenever equipped creature attacks", "When enchanted creature dies" (CR 603.10a: it looks back).
+  const attachedEvent = /^(?:enchanted|equipped) creature (dies|is put into a graveyard|leaves the battlefield|attacks|blocks)$/.exec(t);
+  if (attachedEvent) {
+    const type = eventType(attachedEvent[1] === 'is put into a graveyard' ? 'dies' : attachedEvent[1]!);
+    if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
+    const leaves = type === 'dies' || type === 'leaves';
+    return { trigger: { type, subject: { ref: 'attached' } }, it: leaves ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
+  }
   const self = /^~ (enters(?: the battlefield)?|dies|is put into a graveyard from the battlefield|leaves the battlefield|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
@@ -548,6 +568,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['that ability'] = { ref: 'trigger_object' };
     return { trigger, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
+  // "When ~ is put into a graveyard from anywhere" — it triggers once it's there (CR 603.6c-style, from the graveyard).
+  if (t === '~ is put into a graveyard from anywhere') {
+    b.selfZone = 'graveyard';
+    return { trigger: { type: 'put_into_graveyard', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+  }
+  // CR 701.43: "Whenever you exert a creature"; CR 701.30: "Whenever you clash", "Whenever you win a clash".
+  if (t === 'you exert a creature') {
+    return { trigger: { type: 'exerted', subject: { ref: 'all', filter: { types: ['Creature'], controller: 'you' } } }, it: { ref: 'trigger_object' }, player: null };
+  }
+  if (t === 'you clash' || t === 'you win a clash') return { trigger: { type: 'clashed', ...(t === 'you win a clash' ? { won: true } : {}) }, it: { ref: 'self' }, player: null };
   // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
   if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
   // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
@@ -605,6 +635,9 @@ export const triggeredRule: GrammarRule = {
         const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
         if (iff) {
           condition = parseCondition(iff[1]!, b);
+          // "Whenever another creature enters, if ~ has a counter on it, … onto that creature": the event's object
+          // stays "that creature" after a condition about ~.
+          if (trig.it?.ref === 'trigger_object') b.it = trig.it;
           if (!condition) return null;
           effectText = iff[2]!;
         }
@@ -641,6 +674,10 @@ export const triggeredRule: GrammarRule = {
 const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't block": ['cant_block'],
   "can't attack": ['cant_attack'],
+  // CR 506.5
+  "can't attack alone": ['cant_attack_alone'],
+  "can't block alone": ['cant_block_alone'],
+  "can't attack or block alone": ['cant_attack_alone', 'cant_block_alone'],
   "can't attack or block": ['cant_attack', 'cant_block'],
   // CR 602.5: Arrest
   "can't attack or block, and its activated abilities can't be activated": ['cant_attack', 'cant_block', 'cant_activate'],
@@ -668,6 +705,7 @@ export const continuousRule: GrammarRule = {
     // "Creatures with power less than ~'s power can't block it." — the same as "~ can't be blocked by …".
     const cantBlockIt = /^(Creatures .+?) can't block (?:it|~)$/.exec(rest);
     if (cantBlockIt) rest = `~ can't be blocked by ${cantBlockIt[1]!.replace(/^C/, 'c')}`;
+    rest = rest.replace(/^(~ doesn't untap during (?:your|its controller's) untap step) if (.+)$/, '$1 as long as $2');
     for (;;) {
       const during = /^During (your turn|turns other than yours), (.+)$/i.exec(rest);
       if (during) {
@@ -1016,6 +1054,9 @@ export const exileInsteadRule: GrammarRule = {
 export const selfReplacementRule: GrammarRule = {
   id: 'self_replacement',
   parse(line, original) {
+    if (/^If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead\.$/.test(line)) {
+      return { kind: 'static', text: original, effect: { type: 'graveyard_to_library' } } satisfies StaticAbility;
+    }
     if (!/^If ~ would be put into a graveyard from anywhere, exile it instead\.$/.test(line)) return null;
     const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'graveyard_to_exile' } };
     return node;
@@ -1178,9 +1219,18 @@ export const castOptionRule: GrammarRule = {
       if (!cost || cost.tap || cost.untap || cost.loyalty !== undefined) return null;
       return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind, cost, ...extra } as CastOptionNode };
     };
-    const byPaying = /^You may cast ~( from your graveyard)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);
-    if (byPaying) return make('alternative', byPaying[2]!, byPaying[1] ? { zone: 'graveyard' } : {});
-    const ratherThan = /^(?:If (.+?), )?[Yy]ou may (?:choose to )?pay (.+?) rather than pay ~'s mana cost(?: if (.+))?$/.exec(t);
+    // CR 702.81a (retrace): from the graveyard, discarding a land card as well as paying its mana cost.
+    const retrace = /^You may cast ~ from your graveyard by discarding (a|an) (.+?) as an additional cost to cast it$/.exec(t);
+    if (retrace) {
+      const choice = choiceCost(`Discard ${retrace[1]} ${retrace[2]}`, b);
+      if (!choice) return null;
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost: { other: [choice] }, zone: 'graveyard', withManaCost: true } as CastOptionNode };
+    }
+    const byPaying = /^You may cast ~( transformed)?( from your graveyard| from your hand)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);
+    if (byPaying) {
+      return make('alternative', byPaying[3]!, { ...(byPaying[2] === ' from your graveyard' ? { zone: 'graveyard' } : {}), ...(byPaying[1] ? { transformed: true } : {}) });
+    }
+    const ratherThan = /^(?:If (.+?), )?[Yy]ou may (?:choose to )?pay (.+?) rather than pay ~'s mana cost(?: as you cast ~)?(?: if (.+))?$/.exec(t);
     if (ratherThan) {
       const when = ratherThan[1] ?? ratherThan[3];
       const condition = when ? parseCondition(when, b) : undefined;
@@ -1189,6 +1239,9 @@ export const castOptionRule: GrammarRule = {
     }
     const additional = /^You may pay an additional (.+?) as you cast ~$/.exec(t);
     if (additional) return make('additional', additional[1]!);
+    // Replicate, squad: "As an additional cost to cast this spell, you may pay [cost] any number of times."
+    const anyTimes = /^As an additional cost to cast ~, you may pay (.+?) any number of times$/.exec(t);
+    if (anyTimes) return make('additional', anyTimes[1]!, { repeatable: true });
     // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
     const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+)$/.exec(t);
     if (mayAdditional) {
@@ -1225,16 +1278,26 @@ export const returnIfPaidRule: GrammarRule = {
   id: 'return_if_paid',
   parse(line, original, ctx) {
     const env = envOf(ctx);
-    const m = /^If (.+?), return the permanent ~ becomes to its owner's hand at the beginning of the next end step\.$/.exec(line);
+    const m =
+      /^If (.+?), (return the permanent ~ becomes to its owner's hand|sacrifice the permanent ~ becomes|exile the permanent ~ becomes) at the beginning of the next end step\.( Its owner may cast ~ after the current turn has ended for as long as it remains exiled\.)?$/.exec(line);
     if (!env || !m) return null;
     const condition = parseCondition(m[1]!, new Binder(env));
     if (!condition) return null;
+    const verb = m[2]!.split(' ')[0];
+    // CR 702.109a (dash), 702.152a (blitz), 702.185a (warp)
+    const effect: EffectNode =
+      verb === 'return'
+        ? { type: 'move', what: { ref: 'self' }, to: 'hand' }
+        : verb === 'sacrifice'
+          ? { type: 'sacrifice', what: { ref: 'self' } }
+          : { type: 'move', what: { ref: 'self' }, to: 'exile', ...(m[3] ? { warp: true } : {}) };
+    if (verb === 'exile' && !m[3]) return null;
     const node: TriggeredAbility = {
       kind: 'triggered',
       text: original,
       trigger: { type: 'enters', subject: { ref: 'self' } },
       condition,
-      effects: [{ type: 'delayed', step: 'end', effects: [{ type: 'move', what: { ref: 'self' }, to: 'hand' }] }],
+      effects: [{ type: 'delayed', step: 'end', effects: [effect] }],
     };
     return node;
   },
@@ -1280,6 +1343,36 @@ export const perTargetCostRule: GrammarRule = {
 };
 
 /** CR 731: "If it's neither day nor night, it becomes day as ~ enters." */
+/**
+ * CR 701.43d: "You may exert ~ as it attacks. When you do, …" — an optional cost to attack and the trigger linked
+ * to it; alone, just the option ("Exerted creatures don't untap", with the rest elsewhere on the card).
+ */
+export const exertRule: GrammarRule = {
+  id: 'exert',
+  parse(line, original, ctx) {
+    const m = /^You may exert ~ as it attacks\.(?: When you do, (.+))?$/s.exec(line);
+    if (!m) return null;
+    if (!m[1]) return { kind: 'static', text: original, effect: { type: 'exert_option' } } satisfies StaticAbility;
+    const env = envOf(ctx);
+    if (!env) return null;
+    const r = attempt(new Binder(env), (b) => {
+      b.it = { ref: 'self' };
+      return parseProgram(m[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
+    });
+    if (!r) return null;
+    return { kind: 'triggered', text: original, trigger: { type: 'exerted', subject: { ref: 'self' }, option: true }, ...r } satisfies TriggeredAbility;
+  },
+};
+
+/** CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield." (leylines) */
+export const openingHandRule: GrammarRule = {
+  id: 'opening_hand',
+  parse(line, original) {
+    if (!/^If (?:~|this card) is in your opening hand, you may begin the game with (?:it|~) on the battlefield\.$/.test(line)) return null;
+    return { kind: 'static', text: original, effect: { type: 'begin_on_battlefield' } } satisfies StaticAbility;
+  },
+};
+
 /** CR 722.3a: "This creature enters prepared." */
 export const entersPreparedRule: GrammarRule = {
   id: 'enters_prepared',
@@ -1326,6 +1419,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   reboundRule,
   entersDayRule,
   entersPreparedRule,
+  exertRule,
+  openingHandRule,
   enterWithCounterRule,
   perTargetCostRule,
   resolveToHandRule,

@@ -10,6 +10,16 @@ import { createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from
  * CR 701.19a: a regeneration shield replaces the destruction.
  * Returns whether it was destroyed.
  */
+/**
+ * CR 702.89a (umbra armor): "If enchanted permanent would be destroyed, instead remove all damage marked on it and
+ * destroy this Aura." The first such Aura is destroyed instead (the controller's choice; the engine takes the oldest).
+ */
+function umbraArmor(g: GameState, o: GameObject): GameObject | undefined {
+  return g.zones.battlefield
+    .map((id) => g.objects[id]!)
+    .find((a) => a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && faceOf(g, a).keywords.some((k) => k.id === 'umbra_armor' || k.id === 'totem_armor'));
+}
+
 export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean } = {}): boolean {
   if (o.zone !== 'battlefield') return false;
   if (hasKeyword(g, o, 'indestructible')) return false;
@@ -21,6 +31,13 @@ export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: 
     setTapped(g, o.id, true, events);
     removeFromCombat(g, o.id);
     events.push({ type: 'regenerated', object: o.id });
+    return false;
+  }
+  const umbra = umbraArmor(g, o);
+  if (umbra) {
+    o.damage = 0;
+    delete o.deathtouched;
+    destroy(g, umbra, events);
     return false;
   }
   moveObject(g, o.id, 'graveyard', events);

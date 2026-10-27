@@ -460,6 +460,10 @@ export function matchesFilter(
   if (f.notColors?.some((x) => c.colors.includes(x))) return false;
   if (f.colorless && c.colors.length > 0) return false;
   if (f.multicolored && c.colors.length < 2) return false;
+  // Transmute: "with the same mana value as the discarded card".
+  if (f.sameManaValueAs === 'self' && (!ctx.source || manaValueOf(g, o) !== manaValueOf(g, ctx.source))) return false;
+  // CR 700.6: historic
+  if (f.historic && !(c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;

@@ -140,6 +140,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'mulligan', keep: rnd() < 0.85 || g.players[me]!.mulligans >= 2 } };
     case 'bottom_cards':
       return { player: me, answer: { kind: 'bottom_cards', objects: shuffle(hand()).slice(0, p.count) } };
+    case 'opening_battlefield':
+      return { player: me, answer: { kind: 'opening_battlefield', objects: p.candidates.filter(() => rnd() < 0.8) } };
     case 'discard_to_hand_size':
       return { player: me, answer: { kind: 'discard_to_hand_size', objects: shuffle(hand()).slice(0, p.count) } };
     case 'discard':
@@ -192,6 +194,7 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       if (p.choice === 'pay_life') return { player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life >= (p.amount ?? 0) && rnd() < 0.6 } };
       if (p.choice === 'reveal') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };
       if (p.choice === 'counter') return { player: me, answer: { kind: 'as_enters', pay: rnd() < 0.5 } };
+      if (p.choice === 'devour') return { player: me, answer: { kind: 'as_enters', sacrifice: (p.candidates ?? []).filter(() => rnd() < 0.3) } };
       if (p.choice === 'copy') return { player: me, answer: { kind: 'as_enters', copy: p.candidates?.length && rnd() < 0.9 ? pick(p.candidates) : null } };
       return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };
     case 'declare_attackers': {
@@ -202,7 +205,14 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           const ok = p.targets.filter((t) => !attackRestriction(g, g.objects[attacker]!, t));
           return ok.length ? [{ attacker, target: pick(ok) }] : [];
         });
-      return { player: me, answer: { kind: 'declare_attackers', attacks } };
+      // CR 506.5: a creature that can't attack alone stays home on its own.
+      if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) attacks.length = 0;
+      // CR 701.43d: exert some of those that can be.
+      const exert = attacks.map((a) => a.attacker).filter((id) => p.exertable?.includes(id) && rnd() < 0.6);
+      // CR 702.154a: enlist a creature that stays home, sometimes.
+      const home = (p.enlistable ?? []).filter((id) => !attacks.some((a) => a.attacker === id));
+      const enlist = attacks.filter((a) => p.enlisters?.includes(a.attacker) && rnd() < 0.5).slice(0, home.length).map((a, i) => ({ attacker: a.attacker, tap: home[i]! }));
+      return { player: me, answer: { kind: 'declare_attackers', attacks, ...(exert.length ? { exert } : {}), ...(enlist.length ? { enlist } : {}) } };
     }
     case 'declare_blockers': {
       const random = () => {
@@ -348,6 +358,8 @@ for (let game = 0; game < GAMES; game++) {
       // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
       // (Multikicker: sometimes more than once — CR 702.33c.)
       if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: rnd() < 0.5 ? true : 1 + Math.floor(rnd() * 3) };
+      // Replicate or squad: sometimes pay it once more.
+      if (action.type === 'cast' && action.extras?.length === 1 && rnd() < 0.3) action = { ...action, extras: [...action.extras, action.extras[0]!] };
       if (action !== chosen) offered = false;
       if (!offered) {
         // A randomised version may be illegal; fall back to the offered one if so.

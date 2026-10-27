@@ -4,6 +4,7 @@ import { RulesError, type GameEvent, type GameObject, type GameState, type Objec
 import { onEnterBattlefield } from './registry.js';
 import { chars, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
+import { shuffleInPlace } from './rng.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -18,7 +19,28 @@ export function faceOf(g: GameState, o: GameObject): FaceDef {
   const at = o.copyOf ?? o;
   const def = g.cards[at.card];
   if (!def) throw new RulesError(`no card definition for ${at.card}`);
-  return def.faces[at.face] ?? def.faces[0]!;
+  const face = def.faces[at.face] ?? def.faces[0]!;
+  return o.bestowed && (o.zone === 'battlefield' || o.zone === 'stack') ? bestowedFace(face) : face;
+}
+
+const BESTOWED = new WeakMap<FaceDef, FaceDef>();
+/**
+ * CR 702.103b: a bestowed spell or permanent is an Aura enchantment with enchant creature; it loses the
+ * creature type and creature subtypes (so it has no power or toughness).
+ */
+export function bestowedFace(face: FaceDef): FaceDef {
+  let out = BESTOWED.get(face);
+  if (!out) {
+    const { power: _p, toughness: _t, ...rest } = face;
+    out = {
+      ...rest,
+      types: face.types.filter((t) => t !== 'Creature'),
+      subtypes: ['Aura'],
+      keywords: [...face.keywords, { id: 'enchant', text: 'creature', filter: { types: ['Creature'] } }],
+    };
+    BESTOWED.set(face, out);
+  }
+  return out;
 }
 
 /**
@@ -102,6 +124,9 @@ export function moveObject(
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
   if (to === 'graveyard' && exiledInstead(g, o, from)) to = 'exile';
+  // "If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead."
+  const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
+  if (shuffleInstead) to = 'library';
   delete o.exileOnLeave;
   const controllerBefore = o.controller;
   const countersBefore = from === 'battlefield' ? { ...o.counters } : undefined;
@@ -116,6 +141,7 @@ export function moveObject(
       power: c.power,
       toughness: c.toughness,
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
+      ...(o.attachedTo ? { attachedTo: { ...o.attachedTo } } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
       ...(granted.length ? { granted } : {}),
       ...(o.faceDown ? { faceDown: o.faceDown } : {}),
@@ -151,6 +177,10 @@ export function moveObject(
   delete o.saddledTurn;
   delete o.goadedBy;
   delete o.prepared;
+  // CR 702.103b: bestowed only on the stack and the battlefield it resolves onto.
+  if (!(from === 'stack' && to === 'battlefield')) delete o.bestowed;
+  delete o.exerted;
+  delete o.activations;
   delete o.activatedOnce;
   delete o.plotted;
   delete o.suspended;
@@ -216,6 +246,11 @@ export function moveObject(
   });
   // CR 714.3a: a Saga enters with a lore counter on it.
   if (to === 'battlefield') addLore(g, o, events);
+  if (shuffleInstead) {
+    events.push({ type: 'revealed', player: o.owner, objects: [o.id] });
+    shuffleInPlace(g, zoneList(g, 'library', o.owner));
+    events.push({ type: 'shuffled', player: o.owner });
+  }
 }
 
 /** The zone-change count an object had (or has) on the battlefield: now if it's there, else as it left. */

@@ -69,6 +69,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it(?:'s| is)|~ is) saddled$/.test(t)) return { type: 'saddled' };
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
   if (/^an opponent was dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
+  // Surge (CR 702.117a): "if you or one of your teammates has cast another spell this turn"
+  if (/^(?:you or one of your teammates has|you've) cast another spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
   // CR 702.112b (renown): "if it isn't renowned", "as long as ~ is renowned"
   const renowned = /^(?:it|~) (is|isn't) renowned$/.exec(t);
   if (renowned) return { type: 'renowned', ...(renowned[1] === "isn't" ? { not: true } : {}) };
@@ -79,7 +81,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
-  const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t);
+  const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
@@ -110,6 +112,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // CR 705.2: "If you win the flip", "If you lose the flip"
   if (t === 'you win the flip') return { type: 'won_flip' };
+  // CR 701.30d: "If you win" (a clash), "If you won"
+  if (t === 'you win' || t === 'you won') return { type: 'won_clash' };
   if (t === 'you lose the flip') return { type: 'won_flip', not: true };
   // CR 702.179e: "you have max speed"; CR 702.131c: "you have the city's blessing"
   if (/^you have max speed$/.test(t)) return { type: 'max_speed' };

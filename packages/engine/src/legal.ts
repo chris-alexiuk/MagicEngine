@@ -1,12 +1,12 @@
 import { auraTargetSpec } from './permanents.js';
-import type { AddManaEffect, EffectNode, FaceDef } from '@mtg/schema';
+import type { AddManaEffect, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, withCharsCache } from './characteristics.js';
 import { helperChoices } from './helpers-cost.js';
-import { FACE_DOWN_KEYWORDS } from './face-down.js';
+import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
 import { addPerTargetCost, additionalCosts, castOptions, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost } from './actions.js';
-import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates } from './payment.js';
+import { crewCandidates, discardCandidates, exileCostCandidates, sacrificeCandidates, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -14,6 +14,8 @@ import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { mayPlayFrom, playableFromExile } from './permissions.js';
 import { landsAllowed, playerRule } from './player-rules.js';
+import { activationsThisTurn } from './actions.js';
+import { bestowedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
 
 /**
@@ -55,6 +57,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       } else {
         if (o.zone === 'exile' && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
         if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
+        // CR 702.127a: an aftermath half is cast only from a graveyard.
+        if (face.keywords.some((k) => k.id === 'aftermath')) return;
       }
       if (face.types.includes('Land')) {
         if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc')) {
@@ -143,6 +147,22 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
     if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
   }
+  // CR 702.127a: aftermath halves of split cards in the graveyard.
+  for (const id of zoneList(g, 'graveyard', player)) {
+    const o = g.objects[id]!;
+    const def = g.cards[o.card]!;
+    def.faces.forEach((face, faceIndex) => {
+      if (!face.keywords.some((k) => k.id === 'aftermath')) return;
+      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+      if (!instantSpeed && !mainPhaseEmptyStack) return;
+      const cost = parseManaCost(face.manaCost);
+      applyCostModifiers(g, player, o, face, cost);
+      if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost)) return;
+      const choice = defaultSpellChoice(g, player, o, face);
+      const costs = defaultCostChoices(g, player, o, additionalCosts(face));
+      if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, face: faceIndex, ...choice, ...withCosts(costs) });
+    });
+  }
   // Abilities that work from the hand (cycling, CR 702.29a) or the graveyard (CR 113.6m).
   for (const id of [...zoneList(g, 'hand', player), ...zoneList(g, 'graveyard', player)]) {
     const o = g.objects[id]!;
@@ -161,8 +181,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   const sorcerySpeed = mainPhaseEmptyStack;
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (o.controller !== player) continue;
-    manaAbilities(g, o).forEach((ab, ability) => {
+    // CR 602.2: "Any player may activate this ability."
+    const mine = o.controller === player;
+    if (!mine && !activatedAbilities(g, o).some((a) => a.anyPlayer)) continue;
+    if (mine) manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
       if (ab.cost.mana) return;
       let costs: CostChoices = {};
@@ -184,6 +206,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       } else if (!effect?.options || manaOption(effect.options[0]!, o)) out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
     });
     activatedAbilities(g, o).forEach((ab, ability) => {
+      if (!mine && !ab.anyPlayer) return;
+      if (ab.maxPerTurn && activationsThisTurn(g, o, ability) >= ab.maxPerTurn) return;
       const { cost } = ab;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if ((ab.timing === 'sorcery' || cost.loyalty !== undefined) && !sorcerySpeed) return;
@@ -202,7 +226,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (!choice) return;
       out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
     });
-    faceOf(g, o).unparsed.forEach((line, i) => {
+    if (mine) faceOf(g, o).unparsed.forEach((line, i) => {
       if (line.includes(': ')) out.push({ type: 'activate_manual', player, object: id, line: i, autoTap: true });
     });
   }
@@ -221,18 +245,24 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   const out: Action[] = [];
   for (const opt of options) {
     // From exile (foretell, plot, madness) is listed elsewhere.
-    if (opt.zone === 'exile') continue;
+    if (opt.zone === 'exile' || opt.duringResolution) continue;
     // CR 702.37c: cast face down, it's a creature spell with no text.
     if ((FACE_DOWN_KEYWORDS as readonly string[]).includes(opt.id)) {
       if (fromGraveyard || !sorcerySpeed) continue;
-      if (planAutoTap(g, player, parseManaCost('{3}'))) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
+      // Cost changes apply to the face-down spell too ("Creature spells you cast cost {1} more").
+      const downCost = parseManaCost('{3}');
+      applyCostModifiers(g, player, o, faceDownFace({ ...o, faceDown: opt.id === 'disguise' ? 'disguise' : 'morph' }), downCost);
+      if (!downCost.unsupported.length && planAutoTap(g, player, downCost)) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
       continue;
     }
-    if (!instantSpeed && !sorcerySpeed) continue;
+    // CR 702.190a: sneak only during your declare blockers step.
+    if (opt.id === 'sneak') {
+      if (fromGraveyard || g.active !== player || g.step !== 'declare_blockers') continue;
+    } else if (!instantSpeed && !sorcerySpeed) continue;
     if ((opt.zone === 'graveyard') !== fromGraveyard) continue;
     if (opt.kind === 'additional' && fromGraveyard) continue;
     if (opt.condition && !evalCondition(opt.condition, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) continue;
-    const cost = parseManaCost(opt.kind === 'alternative' ? (opt.cost.mana ?? '') : face.manaCost);
+    const cost = parseManaCost(opt.kind === 'alternative' ? (opt.withManaCost ? `${face.manaCost}${opt.cost.mana ?? ''}` : (opt.cost.mana ?? '')) : face.manaCost);
     if (opt.kind === 'additional') {
       const extra = parseManaCost(opt.cost.mana ?? '');
       cost.generic += extra.generic;
@@ -242,9 +272,22 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       cost.x += extra.x;
     }
     applyCostModifiers(g, player, o, face, cost);
+    // Emerge: the creature it would sacrifice lowers the cost.
+    if (opt.reduceBySacrificed) {
+      const sac = defaultCostChoices(g, player, o, opt.cost.other ?? [])?.sacrifice?.[0];
+      if (sac) cost.generic = Math.max(0, cost.generic - manaValueOf(g, g.objects[sac]!));
+    }
     if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost)) continue;
     // Entwine casts it with every mode; otherwise the default choices.
-    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, face);
+    // Overload: the "each" version takes no targets; disturb: the back face is cast.
+    const asCast = opt.spell
+      ? { ...face, abilities: [...face.abilities.filter((a) => a.kind !== 'spell'), opt.spell] }
+      : opt.transformed
+        ? (g.cards[o.card]!.faces[1] ?? face)
+        : opt.id === 'bestow'
+          ? bestowedFace(face)
+          : face;
+    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast);
     const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])]);
     if (!choice || !costs) continue;
     out.push({ type: 'cast', player, object: o.id, autoTap: true, ...choice, ...withCosts(costs), ...(opt.kind === 'alternative' ? { alt: opt.id } : { extras: [opt.id] }) });
@@ -268,6 +311,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   const discard: ObjectId[] = [];
   const crew: ObjectId[] = [];
   const exile: ObjectId[] = [];
+  const returned: ObjectId[] = [];
   for (const c of other) {
     const n = Number(c.amount ?? 1);
     if (c.type === 'sacrifice') {
@@ -275,7 +319,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (pick.length < n) return null;
       sacrifice.push(...pick);
     } else if (c.type === 'discard') {
-      const pick = discardCandidates(g, player, source).filter((id) => !discard.includes(id)).slice(0, n);
+      const pick = discardCandidates(g, player, source, c.filter as ObjectFilter | undefined).filter((id) => !discard.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       discard.push(...pick);
     } else if (c.type === 'exile_cards') {
@@ -285,7 +329,16 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
-    else if (c.type === 'crew') {
+    else if (c.type === 'return_unblocked') {
+      const first = unblockedAttackers(g, player)[0];
+      if (!first) return null;
+      returned.push(first);
+    } else if (c.type === 'station') {
+      // The strongest other creature.
+      const best = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!))[0];
+      if (!best) return null;
+      crew.push(best);
+    } else if (c.type === 'crew') {
       // The strongest creatures first, until there's enough power.
       const options = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!));
       let total = 0;
@@ -297,10 +350,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {
