@@ -82,6 +82,34 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: colors });
       return true;
     }
+    // Selvala: "Add X mana in any combination of colors" — a mana ability is told the mix ("GGU"); on the stack, each mana
+    // is chosen in turn.
+    if (effect.combination) {
+      const n = Math.max(0, amountOf(ctx, effect.combination.amount));
+      if (!n) return true;
+      const allowed = effect.combination.colors as ManaColor[];
+      const memo = ctx.memo as { mix?: ManaColor[] };
+      let mix: ManaColor[] | undefined;
+      if (typeof choice === 'string') {
+        mix = [...choice] as ManaColor[];
+        if (mix.length !== n || !mix.every((c) => allowed.includes(c))) return false;
+      } else {
+        memo.mix ??= [];
+        const answer = answerOf(ctx, 'choose_option');
+        if (answer) {
+          if (!allowed.includes(answer.choice as ManaColor)) throw new RulesError('Choose one of the colors.');
+          memo.mix.push(answer.choice as ManaColor);
+        }
+        if (memo.mix.length < n) return { ask: { kind: 'choose_option', player: ctx.controller, options: [...allowed], text: `Choose the color of mana ${memo.mix.length + 1} of ${n}.`, sourceName: sourceName(ctx) } };
+        mix = memo.mix;
+      }
+      const ps = ctx.g.players[ctx.controller]!;
+      if (effect.spend || effect.keep) {
+        for (const c of mix) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}) });
+      } else for (const c of mix) ps.pool[c]++;
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: [...mix] });
+      return true;
+    }
     // Culling Ritual: "Add {B} or {G} for each …" — the controller chooses how many of each.
     if (effect.times !== undefined && effect.options && effect.options.length === 2 && effect.options.every((o) => o.length === 1) && choice === undefined) {
       const n = Math.max(0, amountOf(ctx, effect.times));
@@ -113,8 +141,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       choice = effect.anyColor ? (labels[i] as ManaColor) : i;
     }
     if (effect.anyColor) {
-      const color = typeof choice === 'string' ? choice : undefined;
-      if (!color || (color === 'C' && !effect.anyType) || !MANA_COLORS.includes(color)) return false;
+      const color = typeof choice === 'string' && (MANA_COLORS as readonly string[]).includes(choice) ? (choice as ManaColor) : undefined;
+      if (!color || (color === 'C' && !effect.anyType)) return false;
       // CR 106.7: only a type those lands could produce.
       if ((effect.couldProduce || effect.colorsAmong || effect.exiledColors) && !anyColorChoices(ctx.g, ctx.controller, undefined, effect, ctx.source).includes(color)) return false;
       // CR 903.4f: only a color in the commander's color identity.
@@ -570,11 +598,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (node.attachTo && !attachTo) return true; // nothing to attach it to: it isn't created
     // CR 707.2: "a token that's a copy of …" — of the object's copiable values, with this effect's exceptions.
     // "this card" still means the card after a cost moved it (embalm exiles it from the graveyard).
-    const original = node.copyOf ? (ref(node, 'copyOf').ref === 'self' ? ctx.source : refObjects(ctx, ref(node, 'copyOf'))[0]) : undefined;
-    if (node.copyOf && !original) return true;
-    const copy = original ? withExceptions(ctx.g, copiable(original), node.except as CopyExcept | undefined) : undefined;
+    // Second Harvest: "For each token you control, create a token that's a copy of that permanent." — one of each.
+    const originals = node.copyOf ? (ref(node, 'copyOf').ref === 'self' ? (ctx.source ? [ctx.source] : []) : refObjects(ctx, ref(node, 'copyOf'))) : [undefined];
+    const copies = (node.copyEach ? originals : originals.slice(0, 1)).map((original) => (original ? withExceptions(ctx.g, copiable(original), node.except as CopyExcept | undefined) : undefined));
+    if (!copies.length) return true;
     const created: ObjectRef[] = [];
-    for (const p of players) {
+    for (const copy of copies) for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
       const count = replaceQuantity(ctx.g, 'tokens', n, { player: p });
       for (let i = 0; i < count; i++) {
@@ -1283,6 +1312,68 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 701.30b: "Clash with an opponent" — choose an opponent; you and that opponent each clash: reveal the top
   // card (CR 701.30a), then in APNAP order each decides whether it goes to the bottom (CR 701.30c).
+  // CR 700.3: Fact or Fiction — the revealed cards are separated into two piles (either may be empty, CR 700.3a); one
+  // player separates, the other chooses a pile. The chosen pile goes into the hand, the other into the graveyard (or to
+  // the bottom of the library in any order: Jace, Architect of Thought).
+  piles(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { cards?: ObjectId[]; opponent?: PlayerId; first?: ObjectId[]; picked?: ObjectId[] };
+    const me = ctx.controller;
+    if (!memo.cards) {
+      memo.cards = zoneList(g, 'library', me).slice(0, Math.max(0, amountOf(ctx, node.amount)));
+      if (memo.cards.length) ctx.events.push({ type: 'revealed', player: me, objects: [...memo.cards] });
+    }
+    const cards = memo.cards.filter((id) => g.objects[id]?.zone === 'library');
+    if (!cards.length) return true;
+    // Each answer is used once: the opponent, then the piles, then the pile, then the order for the bottom.
+    let used = false;
+    if (!memo.opponent) {
+      const opponents = livePlayers(g).filter((p) => p !== me);
+      if (!opponents.length) return true;
+      const answer = answerOf(ctx, 'choose_option');
+      if (answer) {
+        const p = opponents.find((x) => x === answer.choice || g.players[x]!.name === answer.choice);
+        if (!p) throw new RulesError('Choose an opponent.');
+        memo.opponent = p;
+        used = true;
+      } else if (opponents.length === 1) memo.opponent = opponents[0]!;
+      else return { ask: { kind: 'choose_option', player: me, options: opponents.map((p) => g.players[p]!.name), text: `Choose an opponent to ${node.separator === 'opponent' ? 'separate the cards into two piles' : 'choose a pile'}.`, sourceName: sourceName(ctx) } };
+    }
+    const separator = node.separator === 'opponent' ? memo.opponent : me;
+    const chooser = node.chooser === 'opponent' ? memo.opponent : me;
+    if (!memo.first) {
+      const answer = used ? null : answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: separator, candidates: cards, min: 0, max: cards.length, text: 'Separate these cards into two piles: choose the cards in one pile (the rest are the other).', revealed: cards } };
+      if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => cards.includes(id))) throw new RulesError('Choose cards from among the revealed cards.');
+      memo.first = answer.objects;
+      used = true;
+    }
+    const first = memo.first.filter((id) => cards.includes(id));
+    const second = cards.filter((id) => !first.includes(id));
+    const label = (n: number, pile: ObjectId[]) => `Pile ${n}: ${pile.length ? pile.map((id) => nameOf(g, g.objects[id]!)).join(', ') : '(empty)'}`;
+    if (!memo.picked) {
+      const options = [label(1, first), label(2, second)];
+      const answer = used ? null : answerOf(ctx, 'choose_option');
+      if (!answer) return { ask: { kind: 'choose_option', player: chooser, options, text: 'Choose a pile to put into the hand.', sourceName: sourceName(ctx) } };
+      const n = answer.choice === options[0] || answer.choice === '1' ? 1 : answer.choice === options[1] || answer.choice === '2' ? 2 : 0;
+      if (!n) throw new RulesError('Choose one of the two piles.');
+      memo.picked = n === 1 ? first : second;
+      used = true;
+      for (const id of memo.picked) moveObject(g, id, 'hand', ctx.events);
+      const rest = cards.filter((id) => !memo.picked!.includes(id));
+      if (node.other === 'graveyard' || rest.length < 2) {
+        for (const id of rest) moveObject(g, id, node.other === 'graveyard' ? 'graveyard' : 'library', ctx.events, node.other === 'graveyard' ? {} : { position: 'bottom' });
+        return true;
+      }
+      return { ask: { kind: 'choose_objects', player: me, candidates: rest, min: rest.length, max: rest.length, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).', ordered: true } };
+    }
+    const rest = cards.filter((id) => !memo.picked!.includes(id));
+    const order = (used ? null : answerOf(ctx, 'choose_objects'))?.objects ?? rest;
+    if (order.length !== rest.length || !order.every((id) => rest.includes(id)) || new Set(order).size !== order.length) throw new RulesError('Put each of those cards in order.');
+    for (const id of order) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+    return true;
+  },
+
   clash(_node, ctx) {
     const g = ctx.g;
     const memo = ctx.memo as { opponent?: PlayerId; cards?: Record<PlayerId, string | null>; order?: PlayerId[]; asked?: number; bottom?: PlayerId[] };
@@ -3228,7 +3319,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement', 'trigger_extra'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

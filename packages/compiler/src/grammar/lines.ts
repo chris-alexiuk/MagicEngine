@@ -12,6 +12,7 @@ import type {
   Cost,
   CostModifierNode,
   QuantityReplacementNode,
+  TriggerExtraNode,
   AddManaEffect,
   ExileInsteadNode,
   FaceDef,
@@ -30,7 +31,7 @@ import type {
   TriggeredAbility,
 } from '@mtg/schema';
 import type { GrammarRule } from '../parser.js';
-import { parseManaProduction } from '../rules/mana.js';
+import { combinationColors, parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
@@ -431,6 +432,15 @@ export const activatedRule: GrammarRule = {
       if (mana && many) mana[1] = many[2]!.repeat(parseAmount(many[1]!) as number);
       const xAny = mana ? /^X mana of any one color, where X is (.+)$/.exec(mana[1]!) : null;
       if (xAny && mana) mana[1] = `an amount of ANY equal to ${xAny[1]}`;
+      // Selvala, Axebane Guardian: "Add X mana in any combination of colors, where X is …" (Vivi: "… of {U} and/or {R}").
+      const xCombo = mana ? /^X mana in any combination of (.+?), where X is (.+)$/.exec(mana[1]!) : null;
+      if (xCombo && mana) {
+        const colors = combinationColors(xCombo[1]!);
+        const cb = new Binder(env);
+        const amount = colors ? parseCount(xCombo[2]!, cb) : null;
+        if (!colors || !amount || cb.targets.length || mana[2] || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+        return { ...node, effects: [{ type: 'add_mana', combination: { amount, colors } }], mana: true };
+      }
       const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}|ANY) equal to (.+))$/.exec(mana[1]!) : null;
       const removedThisWay = scaled?.[2] && /^\S+ counter removed this way$/.test(scaled[2]) && cost.other?.some((c) => c.amount === 'X');
       const times = scaled ? (removedThisWay ? { kind: 'x' as const } : scaled[2] ? parseForEach(scaled[2], new Binder(env)) : parseCount(scaled[4]!, new Binder(env))) : null;
@@ -1321,6 +1331,9 @@ export const continuousRule: GrammarRule = {
     // "Creatures with power less than ~'s power can't block it." — the same as "~ can't be blocked by …".
     const cantBlockIt = /^(Creatures .+?) can't block (?:it|~)$/.exec(rest);
     if (cantBlockIt) rest = `~ can't be blocked by ${cantBlockIt[1]!.replace(/^C/, 'c')}`;
+    // Champion of Lambholt: "Creatures with power less than this creature's power can't block creatures you control."
+    const cantBlockYours = /^(Creatures .+?) can't block creatures you control$/.exec(rest);
+    if (cantBlockYours) rest = `Creatures you control can't be blocked by ${cantBlockYours[1]!.replace(/^C/, 'c').replace(/\bthis creature's\b/, "~'s")}`;
     rest = rest.replace(/^(~ doesn't untap during (?:your|its controller's) untap step) if (.+)$/, '$1 as long as $2');
     // Razorkin Needlehead: "This creature has first strike during your turn." — the same as "During your turn, …".
     // (Cast prohibitions keep their own "during your turn" reading.)
@@ -1592,6 +1605,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
     const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (?:land )?types$/.exec(part);
+    if (also && !effect.addTypes && also[1] === 'the chosen type') {
+      effect.addTypes = { types: [], subtypes: [], chosenType: true };
+      continue;
+    }
     if (also && !effect.addTypes) {
       const types: string[] = [];
       const subtypes: string[] = [];
@@ -2489,6 +2506,66 @@ export const additionalCostRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 603.2d: "If an artifact or creature entering causes a triggered ability of a permanent you control to trigger, that
+ * ability triggers an additional time." (Panharmonicon, Teysa Karlov, Isshin, Veyran); "If a triggered ability of a Shaman
+ * or another Wizard you control triggers, that ability triggers an additional time." (Harmonic Prodigy, Roaming Throne);
+ * and "Creatures entering don't cause abilities to trigger." (Torpor Orb, Hushbringer, Elesh Norn's second line).
+ */
+export const triggerExtraRule: GrammarRule = {
+  id: 'trigger_extra',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env) return null;
+    const b = new Binder(env);
+    const make = (node: Omit<TriggerExtraNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'trigger_extra', ...node } });
+    // "another Elemental you control", "a Shaman or another Wizard you control"
+    const filterOf = (text: string, plural = false): ObjectFilter | null => {
+      let other = false;
+      const t = text
+        .replace(/^another /, () => ((other = true), 'a '))
+        .replace(/^(an? \w+) or another (\w+)/, (_m, a: string, w: string) => ((other = true), `${a} or ${w}`))
+        .replace(/^(\w+s) and (\w+s)$/, '$1 or $2');
+      const pf = parseFilter(t.replace(/^a ([aeiouAEIOU])/, 'an $1'), b);
+      if (!pf || pf.plural !== plural || pf.filter.zone) return null;
+      return { ...pf.filter, ...(other ? { other: true } : {}) };
+    };
+    type Cause = NonNullable<TriggerExtraNode['cause']>;
+    const causeOf = (text: string): Cause | null => {
+      if (text === 'you casting or copying an instant or sorcery spell') return { event: 'cast_copy', filter: { types: ['Instant', 'Sorcery'] } };
+      if (text === 'a player drawing a card') return { event: 'draw' };
+      if (text === 'you gaining life') return { event: 'gain_life' };
+      const m = /^(.+?) (entering(?: or leaving)?(?: the battlefield)?|dying|attacking|dealing combat damage to a player)$/.exec(text);
+      if (!m) return null;
+      const filter = filterOf(m[1]!);
+      if (!filter) return null;
+      const event: Cause['event'] = /^entering or leaving/.test(m[2]!) ? 'enters_or_leaves' : m[2]!.startsWith('entering') ? 'enters' : m[2] === 'dying' ? 'dies' : m[2] === 'attacking' ? 'attacks' : 'combat_damage_player';
+      return { event, ...(Object.keys(filter).length ? { filter } : {}) };
+    };
+    const caused = /^If (.+?) causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time\.$/.exec(line);
+    if (caused) {
+      const cause = causeOf(caused[1]!);
+      return cause ? make({ cause, source: { controller: 'you' }, permanent: true }) : null;
+    }
+    const of = /^If a triggered ability of (.+?) triggers, (?:it|that ability) triggers an additional time\.$/.exec(line);
+    if (of) {
+      if (of[1] === 'equipped creature') return make({ sourceAttached: true, permanent: true });
+      if (of[1] === 'a permanent you control') return make({ source: { controller: 'you' }, permanent: true });
+      const source = filterOf(of[1]!);
+      return source ? make({ source, permanent: true }) : null;
+    }
+    // Torpor Orb, Hushbringer ("entering or dying"), Elesh Norn ("… abilities of permanents your opponents control …").
+    const none = /^(.+?) entering(?: the battlefield)?( or dying)? don't cause abilities( of permanents your opponents control)? to trigger\.$/.exec(line);
+    if (none) {
+      const filter = filterOf(none[1]!, true);
+      if (!filter) return null;
+      const cause: Cause = { event: none[2] ? 'enters_or_dies' : 'enters', ...(Object.keys(filter).length ? { filter } : {}) };
+      return make({ cause, none: true, ...(none[3] ? { source: { controller: 'opponent' }, permanent: true } : {}) });
+    }
+    return null;
+  },
+};
+
 export const GRAMMAR_RULES: GrammarRule[] = [
   topPermissionRule,
   manaTriggerRule,
@@ -2505,6 +2582,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   castRestrictionRule,
   costModifierRule,
   quantityReplacementRule,
+  triggerExtraRule,
   exileInsteadRule,
   selfReplacementRule,
   castOptionRule,

@@ -8,7 +8,7 @@ import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, objectAbilit
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
-import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
+import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
 import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 import { replaceQuantity } from './quantities.js';
 
@@ -354,7 +354,7 @@ export function runManaAbility(
   player: PlayerId,
   id: ObjectId,
   index: number,
-  choice: number | ManaColor | undefined,
+  choice: number | ManaColor | ManaMix | undefined,
   events: GameEvent[],
   costChoices: CostChoices = {},
 ): void {
@@ -373,6 +373,8 @@ export function runManaAbility(
     if (!canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
   }
   if (ability.cost.untap && !o.tapped) throw new RulesError(`${nameOf(g, o)} is already untapped.`);
+  // CR 302.6: the untap symbol too.
+  if (ability.cost.untap && !canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
   // CR 602.5b: "Activate only if you control a Swamp."
   if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
     throw new RulesError(`${nameOf(g, o)}'s ability can't be activated now.`);

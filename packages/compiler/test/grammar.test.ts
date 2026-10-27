@@ -1677,3 +1677,29 @@ describe('slice 153', () => {
     expect(parse('{T}: Add one mana of any type that a land you control could produce. If this creature has a +1/+1 counter on it, add three mana of that type instead.', 'Creature — Elf Druid', 'I').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'if', effects: [{ type: 'add_mana', anyColor: 3 }], else: [{ type: 'add_mana', anyColor: 1 }] }] });
   });
 });
+
+describe('slice 154', () => {
+  it('reads trigger doublers and Torpor Orb (CR 603.2d)', () => {
+    expect(parse('If an artifact or creature entering causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.', 'Artifact', 'P').abilities[0]).toMatchObject({ effect: { type: 'trigger_extra', cause: { event: 'enters', filter: { types: ['Artifact', 'Creature'] } }, source: { controller: 'you' }, permanent: true } });
+    expect(parse('If a creature dying causes a triggered ability of a permanent you control to trigger, that ability triggers an additional time.', 'Legendary Creature — Human', 'T').abilities[0]).toMatchObject({ effect: { cause: { event: 'dies' } } });
+    expect(parse('If a triggered ability of a Shaman or another Wizard you control triggers, that ability triggers an additional time.', 'Creature — Human Wizard', 'H').abilities[0]).toMatchObject({ effect: { source: { subtypes: ['Shaman', 'Wizard'], other: true, controller: 'you' } } });
+    expect(parse('If a triggered ability of another creature you control of the chosen type triggers, it triggers an additional time.', 'Artifact Creature — Golem', 'R').abilities[0]).toMatchObject({ effect: { source: { chosenType: true, other: true } } });
+    expect(parse("Creatures entering or dying don't cause abilities to trigger.", 'Creature — Human', 'H').abilities[0]).toMatchObject({ effect: { type: 'trigger_extra', none: true, cause: { event: 'enters_or_dies' } } });
+    expect(parse("Permanents entering don't cause abilities of permanents your opponents control to trigger.", 'Legendary Creature — Phyrexian', 'E').abilities[0]).toMatchObject({ effect: { none: true, source: { controller: 'opponent' } } });
+    expect(parse('This creature is the chosen type in addition to its other types.', 'Artifact Creature — Golem', 'R').abilities[0]).toMatchObject({ effect: { addTypes: { chosenType: true } } });
+  });
+  it('reads piles, combinations of mana, Selvala and Second Harvest', () => {
+    expect(parse('Reveal the top five cards of your library. An opponent separates those cards into two piles. Put one pile into your hand and the other into your graveyard.', 'Instant', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'piles', amount: 5, separator: 'opponent', chooser: 'you', other: 'graveyard' }] });
+    expect(parse('Reveal the top X plus one cards of your library and separate them into two piles. An opponent chooses one of those piles. Put that pile into your hand and the other into your graveyard.', 'Instant', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'piles', amount: { kind: 'x', plus: 1 }, separator: 'you', chooser: 'opponent' }] });
+    expect(parse('{G}, {T}: Add X mana in any combination of colors, where X is the greatest power among creatures you control.', 'Legendary Creature — Elf', 'S').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', combination: { colors: ['W', 'U', 'B', 'R', 'G'] } }] });
+    expect(parse('{5}, {T}: Add five mana in any combination of colors.', 'Land', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', combination: { amount: 5 } }] });
+    expect(parse('{T}: Add two mana in any combination of {U}, {B}, and/or {R}.', 'Artifact', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', options: [['U', 'U'], ['U', 'B'], ['U', 'R'], ['B', 'B'], ['B', 'R'], ['R', 'R']] }] });
+    expect(parse("Whenever another creature enters, its controller may draw a card if its power is greater than each other creature's power.", 'Legendary Creature — Elf', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'is', filter: { powerAboveOthers: true } } }] });
+    expect(parse("Whenever you cast a black spell, you may destroy target creature if it's tapped.", 'Creature — Human', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { of: { ref: 'target', index: 0 }, filter: { tapped: true } } }] });
+    expect(parse("For each token you control, create a token that's a copy of that permanent.", 'Instant', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', copyEach: true, copyOf: { ref: 'all', filter: { token: true, controller: 'you' } } }] });
+  });
+  it('reads Champion of Lambholt and Equipment grants', () => {
+    expect(parse("Creatures with power less than this creature's power can't block creatures you control.", 'Creature — Human', 'C').abilities[0]).toMatchObject({ effect: { affected: { ref: 'all', filter: { controller: 'you' } }, combat: { cantBeBlockedBy: { powerBelowSource: true } } } });
+    expect(parse('Equipment you control have equip {1}.', 'Legendary Creature — Human', 'A').abilities[0]).toMatchObject({ effect: { affected: { ref: 'all', filter: { subtypes: ['Equipment'] } }, keywords: [{ id: 'equip' }] } });
+  });
+});

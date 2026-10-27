@@ -41,6 +41,8 @@ export const STEPS: readonly Step[] = [
 ];
 
 export type ManaColor = 'W' | 'U' | 'B' | 'R' | 'G' | 'C';
+/** Several mana colors at once, one letter each ("GGU"). */
+export type ManaMix = string;
 export type ManaPool = Record<ManaColor, number>;
 
 export interface GameConfig {
@@ -647,7 +649,8 @@ export type Action =
   | { type: 'unlock'; player: PlayerId; object: ObjectId; half: 0 | 1; autoTap?: boolean }
   /** Special actions that exile a card from hand to cast later: foretell (CR 702.143a), plot (CR 702.170a), suspend (CR 702.62a). */
   | { type: 'foretell' | 'plot' | 'suspend'; player: PlayerId; object: ObjectId; autoTap?: boolean }
-  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor; costs?: CostChoices }
+  /** `choice`: which option or color — or, for "any combination of colors", the mix ("GGU"). */
+  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor | ManaMix; costs?: CostChoices }
   | {
       type: 'cast';
       player: PlayerId;

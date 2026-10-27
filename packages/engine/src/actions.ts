@@ -43,6 +43,7 @@ import {
   type GameObject,
   type GameState,
   type ManaColor,
+  type ManaMix,
   type ManualOp,
   type ObjectId,
   type PlayerId,
@@ -346,7 +347,7 @@ function activateMana(
   player: PlayerId,
   id: ObjectId,
   index: number,
-  choice: number | ManaColor | undefined,
+  choice: number | ManaColor | ManaMix | undefined,
   events: GameEvent[],
   costs: CostChoices = {},
 ): void {

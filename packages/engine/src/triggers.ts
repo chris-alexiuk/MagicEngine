@@ -1,6 +1,6 @@
 import { copyChoicePending } from './as-enters.js';
-import type { Amount, TargetSpec, TriggeredAbility, TriggerNode } from '@mtg/schema';
-import { abilitiesOf, matchesFilter, printedAbilities, withCharsCache } from './characteristics.js';
+import type { Amount, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
+import { abilitiesOf, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns } from './program.js';
@@ -103,6 +103,7 @@ function collect(g: GameState, events: GameEvent[]): void {
     return o && !o.spellCopy ? [{ o, controller: s.controller, face: o.face, left: false }] : [];
   });
   const candidates = [...present, ...left.values(), ...inGraveyards, ...onStack];
+  const extras = triggerExtras(g, [...left.values()]);
 
   // Each candidate's triggered abilities: printed and from keywords (granted ones too, while it's on the battlefield).
   const withAbilities = candidates.flatMap((c) => {
@@ -142,19 +143,115 @@ function collect(g: GameState, events: GameEvent[]): void {
         for (const info of infos) {
           // CR 603.4: an intervening "if" must be true for it to trigger at all.
           if (ability.condition && !evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability))) continue;
+          // CR 603.2d: Panharmonicon & co. — it may trigger additional times (or, under Torpor Orb, not at all).
+          const times = extras.length && !info.state ? triggerTimes(g, extras, event, info, c) : 1;
           // CR 603.3a: controlled by whoever controlled the source when it triggered.
-          g.triggers.push({
-            id: `t${g.nextId++}`,
-            controller: c.controller,
-            source: { id: c.o.id, zcc: c.o.zcc },
-            sourceName: face.name,
-            ability,
-            info,
-          });
+          for (let k = 0; k < times; k++) {
+            g.triggers.push({
+              id: `t${g.nextId++}`,
+              controller: c.controller,
+              source: { id: c.o.id, zcc: c.o.zcc },
+              sourceName: face.name,
+              ability,
+              info,
+            });
+          }
         }
       });
     }
   }
+}
+
+interface TriggerExtra {
+  node: TriggerExtraNode;
+  source: GameObject;
+  controller: PlayerId;
+  /** It left the battlefield in this batch (Teysa Karlov dying with other creatures still applies, CR 603.10a). */
+  left: boolean;
+}
+
+/** The statics that change how many times abilities trigger (CR 603.2d). */
+function triggerExtras(g: GameState, left: Candidate[]): TriggerExtra[] {
+  const out: TriggerExtra[] = [];
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    if (source.zone !== 'battlefield') continue;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind === 'static' && a.effect.type === 'trigger_extra') out.push({ node: a.effect as unknown as TriggerExtraNode, source, controller: source.controller, left: false });
+    }
+  }
+  for (const c of left) {
+    const face = g.cards[c.o.card]?.faces[c.face];
+    if (!face || c.o.faceDown) continue;
+    for (const a of printedAbilities(face)) {
+      if (a.kind !== 'static' || a.effect.type !== 'trigger_extra') continue;
+      const node = a.effect as unknown as TriggerExtraNode;
+      // Only an effect about leaving (dying) can apply to the event that took its own source away.
+      if (['dies', 'leaves', 'enters_or_leaves', 'enters_or_dies'].includes(node.cause?.event ?? '')) out.push({ node, source: c.o, controller: c.controller, left: true });
+    }
+  }
+  return out;
+}
+
+/** Whether the event that triggered an ability is the one an effect names ("an artifact or creature entering"). */
+function causedBy(g: GameState, cause: NonNullable<TriggerExtraNode['cause']>, event: GameEvent, info: TriggerInfo, x: TriggerExtra): boolean {
+  const ctx = { controller: x.controller, source: x.source };
+  const fits = (id: ObjectId | undefined, extra: { anyZone?: boolean; lastController?: PlayerId } = {}) => {
+    const o = id ? g.objects[id] : undefined;
+    return Boolean(o && (!cause.filter || matchesFilter(g, o, cause.filter, { ...ctx, ...extra })));
+  };
+  const entering = event.type === 'created' || (event.type === 'moved' && event.to === 'battlefield');
+  const leaving = event.type === 'moved' && event.from === 'battlefield';
+  switch (cause.event) {
+    case 'enters':
+      return entering && fits(event.object);
+    case 'leaves':
+      return leaving && fits(event.object, { anyZone: true, lastController: event.controller });
+    case 'enters_or_leaves':
+      return entering ? fits((event as { object: ObjectId }).object) : leaving && fits(event.object, { anyZone: true, lastController: event.controller });
+    case 'dies':
+      return leaving && event.to === 'graveyard' && fits(event.object, { anyZone: true, lastController: event.controller });
+    case 'enters_or_dies':
+      return entering ? fits((event as { object: ObjectId }).object) : leaving && event.to === 'graveyard' && fits(event.object, { anyZone: true, lastController: event.controller });
+    case 'attacks':
+      if (event.type !== 'attacks_declared') return false;
+      // "Whenever you attack" names no attacker: any of them attacking caused it.
+      return info.object && event.attacks.some((a) => a.attacker === info.object!.id) ? fits(info.object.id) : event.attacks.some((a) => fits(a.attacker));
+    case 'cast_copy': {
+      // Veyran: "you casting or copying an instant or sorcery spell"
+      if (event.type === 'cast') return event.player === x.controller && fits(event.object, { anyZone: true });
+      if (event.type === 'copied') return event.controller === x.controller && fits(event.object, { anyZone: true });
+      return false;
+    }
+    case 'draw':
+      return event.type === 'drew';
+    case 'gain_life':
+      return event.type === 'life' && event.delta > 0 && event.player === x.controller;
+    case 'combat_damage_player':
+      return event.type === 'damage' && event.combat && event.to.kind === 'player' && fits(event.source, { anyZone: true });
+    default:
+      return false;
+  }
+}
+
+/** CR 603.2d: how many times an ability triggers — once, plus one for each effect that adds a time; none under Torpor Orb. */
+function triggerTimes(g: GameState, extras: TriggerExtra[], event: GameEvent, info: TriggerInfo, c: { o: GameObject; controller: PlayerId; left: boolean }): number {
+  let n = 1;
+  for (const x of extras) {
+    const node = x.node;
+    // "of a permanent you control": not a card in a graveyard, a spell, or an emblem.
+    if (node.permanent && (c.o.emblem || !(c.left || c.o.zone === 'battlefield'))) continue;
+    if (node.sourceAttached) {
+      // Wizard's Staff: "If a triggered ability of equipped creature triggers"
+      const at = x.source.attachedTo;
+      if (!at || at.id !== c.o.id) continue;
+    }
+    if (node.source && !matchesFilter(g, c.o, node.source, { controller: x.controller, source: x.source, ...(c.left ? { anyZone: true, lastController: c.controller } : {}) })) continue;
+    if (node.cause && !causedBy(g, node.cause, event, info, x)) continue;
+    if (node.none) return 0;
+    n++;
+  }
+  return n;
 }
 
 /** CR 725.2: the monarch's two inherent triggered abilities. They have no source. */

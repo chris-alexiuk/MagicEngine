@@ -477,7 +477,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Bare plurals: "Creatures you control", "Other Zombies you control".
     const bare = /^(other )?(.+)$/i.exec(t)!;
     const pf = parseFilter(bare[2]!, b);
-    if (!pf || !pf.plural) return null;
+    // "Equipment you control have equip {1}" — the same word in the plural, without an article.
+    if (!pf || (!pf.plural && !/^Equipment\b/.test(bare[2]!))) return null;
     if (bare[1]) pf.filter.other = true;
     return set(b, { ref: { ref: 'all', filter: pf.filter }, plural: true, targeted: false });
   });

@@ -326,6 +326,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // CR 700.3: Fact or Fiction — "Reveal the top five cards of your library. An opponent separates those cards into two
+      // piles. Put one pile into your hand and the other into your graveyard."; Steam Augury — "Reveal the top five cards
+      // of your library and separate them into two piles. An opponent chooses one of those piles. Put that pile into your
+      // hand and the other into your graveyard."
+      const pileTop = /^Reveal the top (\w+|X plus one) cards of your library( and separate them into two piles)?$/.exec(s);
+      if (pileTop) {
+        const theySeparate = !pileTop[2] && sentences[i + 1] === 'An opponent separates those cards into two piles';
+        const theyChoose = Boolean(pileTop[2]) && sentences[i + 1] === 'An opponent chooses one of those piles';
+        const put = sentences[i + 2] ? /^Put (one|that) pile into your hand and the other (into your graveyard|on the bottom of your library in any order)$/.exec(sentences[i + 2]!) : null;
+        const amount = pileTop[1] === 'X plus one' ? { kind: 'x' as const, plus: 1 } : parseAmount(pileTop[1]!);
+        if ((theySeparate || theyChoose) && put && amount !== null && (put[1] === 'one') === theySeparate) {
+          out.push({ type: 'piles', amount, separator: theySeparate ? 'opponent' : 'you', chooser: theySeparate ? 'you' : 'opponent', other: put[2] === 'into your graveyard' ? 'graveyard' : 'bottom' });
+          i += 2;
+          continue;
+        }
+      }
       // "Look at the top five cards of your library. You may reveal a creature card from among them and put it
       // into your hand. Put the rest on the bottom of your library in a random order." — and its relatives.
       // "Look at the top three cards of your library, then put one of those cards into your hand and the rest …"
@@ -435,6 +451,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Tribute to the World Tree: "draw a card if its power is 3 or greater. Otherwise, put two +1/+1 counters on it."
       const trailingIf = sentences[i + 1] && /^Otherwise, /.test(sentences[i + 1]!) && !/^If /.test(s) ? /^(.+?) if ([^,]+)$/.exec(s) : null;
       if (trailingIf && parseCondition(trailingIf[2]!, b.clone())) s = `If ${trailingIf[2]}, ${trailingIf[1]!.replace(/^\w/, (c) => c.toLowerCase())}`;
+      // Selvala: "its controller may draw a card if its power is greater than each other creature's power." — checked as it
+      // resolves, the same as "If …, …" (when the sentence doesn't read as it is).
+      // The condition is read after the effect, so "you may destroy target creature if it's tapped" means that creature.
+      const lastIf = !trailingIf && !/^If /.test(s) && !/ instead$/.test(s) ? /^(.+?) if ([^,]+)$/.exec(s) : null;
+      if (lastIf && !/^(?:able|you do|you don't|they do|they don't|that player does|that player doesn't)$/.test(lastIf[2]!) && !parseSentence(s, b.clone())) {
+        const guarded = attempt(b, (b) => {
+          const effects = parseSentence(lastIf[1]!, b);
+          const cond = effects ? parseCondition(lastIf[2]!, b) : null;
+          return effects && cond ? [{ type: 'if', cond, effects } as EffectNode] : null;
+        });
+        if (guarded) {
+          out.push(...guarded);
+          previous = guarded;
+          continue;
+        }
+      }
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -1403,6 +1435,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const options = vote[secret ? 2 : 1]!.split(/,? or |, /);
     b.votes = options;
     return [{ type: 'vote', options, ...(secret ? { secret: true } : {}) }];
+  }
+  // Second Harvest: "For each token you control, create a token that's a copy of that permanent." (CR 707.2)
+  const eachCopy = /^For each (.+?), create a token that's a copy of (?:that permanent|that creature|it)$/.exec(s);
+  if (eachCopy) {
+    const pf = parseFilter(eachCopy[1]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    createdTokens(b);
+    return [{ type: 'create_token', amount: 1, copyOf: { ref: 'all', filter: pf.filter }, copyEach: true, who: { ref: 'you' } }];
   }
   // "For each opponent, exile up to one target creature that player controls": a target for each of them (CR 601.2c).
   const perPlayer = /^[Ff]or each (opponent|player), (.+)$/.exec(s);

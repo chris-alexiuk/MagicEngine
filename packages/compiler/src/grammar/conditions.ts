@@ -153,6 +153,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       return { type: 'is', of, filter: { [key]: { op: /greater|more/.test(statIs[4]!) ? 'ge' : 'le', n } } };
     }
   }
+  // Selvala: "if its power is greater than each other creature's power"
+  if (t === "its power is greater than each other creature's power" && b.it) return { type: 'is', of: b.it, filter: { powerAboveOthers: true } };
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
   if (itIs && b.it) {

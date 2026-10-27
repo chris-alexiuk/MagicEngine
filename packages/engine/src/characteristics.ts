@@ -330,9 +330,11 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...ptParts(g, e, source),
         ...(e.keywords ? { keywords: e.keywords } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
-        ...(e.combat ? { combat: e.combat } : {}),
+        ...(e.combat ? { combat: { ...e.combat, from: source.id } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
-        ...(e.addTypes ? { types: { types: e.addTypes.types, subtypes: e.addTypes.subtypes, retain: true } } : {}),
+        ...(e.addTypes
+          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && source.chosen?.creatureType ? [source.chosen.creatureType] : [])], retain: true } }
+          : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
         // Theros Gods: "As long as your devotion to red is less than five, Purphoros isn't a creature."
         ...(e.loseTypes ? { types: { types: [], subtypes: [], retain: true, lose: e.loseTypes } } : {}),
@@ -696,6 +698,7 @@ export function matchesFilter(
   if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
+  if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;
   if (f.attachedTo) {
     const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;

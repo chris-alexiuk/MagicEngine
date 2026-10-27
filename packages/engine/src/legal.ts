@@ -5,7 +5,9 @@ import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
-import { anyColorChoices, manaOption, parseManaCost } from './mana.js';
+import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
+import { amountOf } from './resolve.js';
+import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
@@ -27,6 +29,14 @@ import { faceOf, zoneList } from './zones.js';
  * change it using targetPrompts(). Choices and manual moves aren't listed; the
  * pending choice and the UI cover those.
  */
+/** The mixes of `n` mana from `colors` ("GGU"), or just the single-color ones when there would be too many to list. */
+function manaMixes(colors: string[], n: number): string[] {
+  const all = (k: number, from: string[]): string[] => (k === 0 ? [''] : from.flatMap((c, i) => all(k - 1, from.slice(i)).map((rest) => c + rest)));
+  let count = 1;
+  for (let i = 1; i <= n; i++) count = (count * (colors.length - 1 + i)) / i;
+  return count <= 35 ? all(n, colors) : colors.map((c) => c.repeat(n));
+}
+
 export function legalActions(g: GameState, player: PlayerId): Action[] {
   // Read-only: characteristics can be shared across the whole listing.
   return withCharsCache(() => {
@@ -230,7 +240,13 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const manaBanned = activationProhibited(g, player, o, true);
     if (mine && !manaBanned) manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
-      if (ab.cost.mana) return;
+      // CR 107.6: {Q} — untapping it is the cost (Pili-Pala).
+      if (ab.cost.untap && (!o.tapped || !canUseTapAbilities(g, o))) return;
+      // Selvala: "{G}, {T}: Add X mana …" — with that mana already in the pool (mana abilities aren't autotapped for).
+      if (ab.cost.mana) {
+        const need = shortfall(spendablePool(g, player, { kind: 'ability', source: o }), parseManaCost(ab.cost.mana));
+        if (!need || need.specific.length || need.generic > 0) return;
+      }
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if (ab.oncePerTurn && o.activatedTurn?.[-1 - ability] === g.turn) return;
       let costs: CostChoices = {};
@@ -245,7 +261,12 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // Tower, Incubation Druid), the ways the usual mana can be made.
       const first = ab.effects[0];
       const effect = (first?.type === 'if' ? ((first.else as AddManaEffect[] | undefined)?.[0] ?? (first.effects as AddManaEffect[] | undefined)?.[0]) : first) as AddManaEffect | undefined;
-      if (effect?.anyColor) {
+      if (effect?.combination) {
+        // "X mana in any combination of colors": every mix while there are few; otherwise one of each color (any other
+        // mix can still be named).
+        const n = Math.max(0, amountOf({ g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} }, effect.combination.amount));
+        for (const choice of manaMixes(effect.combination.colors, n)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
+      } else if (effect?.anyColor) {
         for (const choice of anyColorChoices(g, player, effect.identity, effect, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
         effect.options.forEach((opt, choice) => {

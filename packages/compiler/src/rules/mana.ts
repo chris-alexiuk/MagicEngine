@@ -23,13 +23,20 @@ function symbols(run: string): string[] {
   return [...run.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!);
 }
 
-const COUNT: Record<string, number> = { two: 2, three: 3, four: 4 };
+const COUNT: Record<string, number> = { two: 2, three: 3, four: 4, five: 5 };
 const ALL_COLORS = ['W', 'U', 'B', 'R', 'G'];
 
 /** Every multiset of `n` symbols from `colors` (with `distinct`, no repeats), as option lists. */
 function combinations(colors: string[], n: number, distinct = false): string[][] {
   if (n === 0) return [[]];
   return colors.flatMap((c, i) => combinations(colors.slice(distinct ? i + 1 : i), n - 1, distinct).map((rest) => [c, ...rest]));
+}
+
+/** "colors", "{R} and/or {G}", "{U}, {B}, and/or {R}" — the colors "in any combination of …" may use. */
+export function combinationColors(text: string): string[] | null {
+  if (text === 'colors') return ALL_COLORS;
+  const m = /^\{([WUBRG])\}(?:, \{([WUBRG])\},)? and\/or \{([WUBRG])\}$/.exec(text);
+  return m ? [m[1]!, ...(m[2] ? [m[2]] : []), m[3]!] : null;
 }
 
 /** "{G}", "{C}{C}", "{R} or {G}", "{W}, {U}, or {B}", "one mana of any color". */
@@ -44,8 +51,14 @@ export function parseManaProduction(text: string): AddManaEffect | null {
   if (anyOne) return { type: 'add_mana', anyColor: ['two', 'three', 'four', 'five'].indexOf(anyOne[1]!) + 2 };
   if (PRODUCED_RUN.test(text)) return { type: 'add_mana', options: [symbols(text)] };
   // CR 106.1b-style choices: "two mana in any combination of colors", "… of {R} and/or {G}", "two mana of different colors".
-  const combo = /^(two|three|four) mana in any combination of (colors|\{([WUBRG])\} and\/or \{([WUBRG])\})$/.exec(text);
-  if (combo) return { type: 'add_mana', options: combinations(combo[3] ? [combo[3], combo[4]!] : ALL_COLORS, COUNT[combo[1]!]!) };
+  const combo = /^(two|three|four|five) mana in any combination of (.+)$/.exec(text);
+  const comboColors = combo ? combinationColors(combo[2]!) : null;
+  if (combo && comboColors) {
+    const n = COUNT[combo[1]!]!;
+    const options = combinations(comboColors, n);
+    // Too many to list as separate options (Cascading Cataracts' five of any colors): the mix is chosen.
+    return options.length <= 35 ? { type: 'add_mana', options } : { type: 'add_mana', combination: { amount: n, colors: comboColors } };
+  }
   const different = /^(two|three) mana of different colors$/.exec(text);
   if (different) return { type: 'add_mana', options: combinations(ALL_COLORS, COUNT[different[1]!]!, true) };
   // "one mana of the chosen color" (CR 614.12: chosen as the source entered).

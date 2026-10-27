@@ -321,6 +321,8 @@ export interface ObjectFilter {
   manaValue?: Compare;
   /** CR 702.134a (mentor): power less than the source's. */
   powerBelowSource?: true;
+  /** Selvala: "its power is greater than each other creature's power" — the greatest, not tied. */
+  powerAboveOthers?: true;
   /** CR 702.78a (conspire): "that each share a color with it" — the source. */
   sharesColorWithSource?: true;
   /** Attached to a permanent ("if this permanent is attached to a creature", reconfigure). */
@@ -537,6 +539,11 @@ export interface AddManaEffect extends EffectNode {
   keep?: 'end_of_turn' | 'end_of_combat';
   /** "Add {G} for each Elf you control", "an amount of {G} equal to ~'s power": the option this many times. */
   times?: Amount;
+  /**
+   * Selvala: "Add X mana in any combination of colors, where X is the greatest power among creatures you control." — N mana,
+   * each of any of `colors`. As a mana ability it's told the mix up front ("GGU"); on the stack, each mana is chosen in turn.
+   */
+  combination?: { amount: Amount; colors: string[] };
 }
 
 /** CR 106.6: what restricted mana can be spent on. */
@@ -549,6 +556,25 @@ export interface ManaSpend {
   special?: ('unlock' | 'face_up')[];
   /** Cavern of Souls: "…, and that spell can't be countered." */
   uncounterable?: true;
+}
+
+/**
+ * CR 603.2d: "If an artifact or creature entering causes a triggered ability of a permanent you control to trigger, that
+ * ability triggers an additional time." (Panharmonicon); "If a triggered ability of a Shaman or another Wizard you
+ * control triggers, …" (Harmonic Prodigy). With `none`: "Creatures entering don't cause abilities to trigger." (Torpor Orb)
+ */
+export interface TriggerExtraNode extends EffectNode {
+  type: 'trigger_extra';
+  /** The event that must have caused it to trigger, and the object involved ("an artifact or creature entering"). */
+  cause?: { event: 'enters' | 'leaves' | 'enters_or_leaves' | 'enters_or_dies' | 'dies' | 'attacks' | 'cast_copy' | 'draw' | 'gain_life' | 'combat_damage_player'; filter?: ObjectFilter };
+  /** Whose triggered ability ("of a Shaman or another Wizard you control"), relative to this effect's source. */
+  source?: ObjectFilter;
+  /** "of equipped creature" */
+  sourceAttached?: true;
+  /** Only abilities of permanents ("of a permanent you control"). */
+  permanent?: true;
+  /** It doesn't trigger at all. */
+  none?: true;
 }
 
 export interface EntersTappedEffect extends EffectNode {
@@ -575,6 +601,8 @@ export interface CombatRules {
   attackOnlyIfDefenderControls?: ObjectFilter;
   /** CR 509.1a: "can block an additional creature each combat" (1); "can block any number of creatures" (99). */
   extraBlocks?: number;
+  /** Set by the engine: the object whose ability this is, for "~'s power" in the filters (Champion of Lambholt). */
+  from?: string;
 }
 
 /** A static ability's continuous effect (CR 611.3): layer 6 abilities, layer 7c P/T, rule flags. */
@@ -681,7 +709,8 @@ export interface ContinuousEffectNode extends EffectNode {
   /** Layer 4: "isn't a creature" (the Theros Gods) — card types it loses. */
   loseTypes?: string[];
   /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */
-  addTypes?: { types: string[]; subtypes: string[] };
+  /** Roaming Throne: "is the chosen type in addition to its other types" (`chosenType`). */
+  addTypes?: { types: string[]; subtypes: string[]; chosenType?: true };
   /** Layer 4: "is a Frog creature" — types and subtypes it becomes, replacing its own (CR 205.1b). */
   setTypes?: { types: string[]; subtypes: string[] };
   /** Layer 4: "is a Bird" — its creature types become these (CR 205.1b). */
@@ -864,7 +893,7 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
-    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
+    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel',
   ],
   conditions: [
@@ -874,7 +903,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement', 'trigger_extra',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
