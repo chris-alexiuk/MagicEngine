@@ -39,6 +39,7 @@ import {
   type Target,
 } from './types.js';
 import { landsAllowed, playerRule } from './player-rules.js';
+import { preparedSource, unprepare } from './prepare.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { mayPlayFrom } from './permissions.js';
@@ -413,6 +414,12 @@ function cast(
   const kicks = typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
   const kicked = kicks > 0;
   const o = obj(g, id);
+  // CR 722.3c: a prepare spell's copy in exile is cast as its prepare spell, by the prepared permanent's controller.
+  const prepared = o.prepareOf ? preparedSource(g, o, player) : undefined;
+  if (o.prepareOf) {
+    if (!prepared) throw new RulesError('That prepare spell can’t be cast now.');
+    faceIndex = 1;
+  }
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
@@ -453,11 +460,11 @@ function cast(
   // "Until the end of your next turn, you may play that card."
   const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
-  if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
+  if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
-  if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout)) throw new RulesError(`${face.name} can’t be cast.`);
+  if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout) && !prepared) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 305.9: a land can't be cast as a spell.
   if (face.types.includes('Land')) throw new RulesError(`${face.name} is a land. Play it instead.`);
   if (!Number.isInteger(x) || x < 0) throw new RulesError('X must be a whole number, 0 or more.');
@@ -528,6 +535,12 @@ function cast(
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
   if (faceDown) ensureFaceDownDefs(g);
+  // CR 722.3c: the permanent loses the prepared designation as the spell becomes cast; the copy is a spell copy now.
+  if (prepared) {
+    delete o.prepareOf;
+    o.spellCopy = true;
+    unprepare(g, prepared, events);
+  }
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   if (flashback) o.exileOnLeave = true;
   // CR 702.40a: storm counts the spells cast before this one this turn.
@@ -535,7 +548,7 @@ function cast(
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
   o.cast = {
     by: player,
-    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile ? 'exile' : 'hand',
+    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape ? 'graveyard' : fromExile || prepared ? 'exile' : 'hand',
     before,
     ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),
@@ -673,7 +686,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     ...(lki ? { costLKI: lki } : {}),
     ...(division ? { division } : {}),
   });
-  events.push({ type: 'ability_activated', player, source: id, text: ability.text });
+  events.push({ type: 'ability_activated', player, source: id, text: ability.text, entry: g.stack[g.stack.length - 1]!.kind === 'ability' ? (g.stack[g.stack.length - 1] as { id: string }).id : '', ...(cost.loyalty !== undefined ? { loyalty: true as const } : {}) });
   announceTargets(g.stack[g.stack.length - 1]!, events);
   // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);
@@ -756,7 +769,7 @@ function activateManual(
     targets: [],
     x: 0,
   });
-  events.push({ type: 'ability_activated', player, source: id, text: line });
+  events.push({ type: 'ability_activated', player, source: id, text: line, entry: (g.stack[g.stack.length - 1] as { id: string }).id, ...(LOYALTY_COST.test(line.split(':')[0]!.trim()) ? { loyalty: true as const } : {}) });
   // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);
 }

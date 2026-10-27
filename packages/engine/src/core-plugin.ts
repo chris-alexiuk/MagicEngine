@@ -11,15 +11,16 @@ import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { payDuringResolution } from './payment.js';
 import { attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
-import { copySpell } from './spell-copies.js';
+import { copyAbility, copySpell } from './spell-copies.js';
+import { becomePrepared, unprepare } from './prepare.js';
 import { dayNightCard, setDayNight } from './day-night.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type Target, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type ChoiceAnswer, type GameObject, type GameState, type ManaColor, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
@@ -99,8 +100,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const division = ctx.resolution?.entry.division ?? [];
       const legal = ctx.targets[index] ?? [];
       original.forEach((t, i) => {
-        const still = legal.some((l) => (l.kind === 'player' ? t.kind === 'player' && l.player === t.player : t.kind === 'object' && l.id === t.id && l.zcc === t.zcc));
-        if (!still) return;
+        const still = legal.some((l) => (l.kind === 'player' ? t.kind === 'player' && l.player === t.player : t.kind === 'object' && l.kind === 'object' && l.id === t.id && l.zcc === t.zcc));
+        if (!still || t.kind === 'ability') return;
         const to = t.kind === 'player' ? { kind: 'player' as const, player: t.player } : { kind: 'permanent' as const, object: t.id };
         if (t.kind === 'object' && ctx.g.objects[t.id]?.zone !== 'battlefield') return;
         dealt += dealDamage(ctx.g, source, to, division[i] ?? 0, false, ctx.events);
@@ -145,6 +146,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   move(node, ctx) {
     const to = node.to as 'hand' | 'library' | 'battlefield' | 'exile' | 'graveyard';
+    // "Shuffle ~ into its owner's library" (CR 701.24a): put there, then the library is shuffled.
+    if (to === 'library' && node.position === 'shuffle') {
+      const owners = new Set<PlayerId>();
+      for (const o of refObjects(ctx, ref(node, 'what'))) {
+        if (o.zone === 'stack' && o.id !== ctx.source?.id) continue;
+        moveObject(ctx.g, o.id, 'library', ctx.events);
+        owners.add(o.owner);
+      }
+      for (const p of owners) {
+        shuffleInPlace(ctx.g, zoneList(ctx.g, 'library', p));
+        ctx.events.push({ type: 'shuffled', player: p });
+      }
+      return true;
+    }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
         moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : 'top' });
@@ -177,19 +192,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   counter(node, ctx) {
-    // An ability the trigger was about ("counter that spell or ability", ward): it's removed from the stack (CR 701.6a).
-    const entry = ref(node, 'what').ref === 'trigger_object' ? ctx.trigger?.entry : undefined;
-    if (entry) {
-      const before = ctx.g.stack.length;
-      ctx.g.stack = ctx.g.stack.filter((e) => !(e.kind === 'ability' && e.id === entry));
-      if (ctx.g.stack.length < before) ctx.events.push({ type: 'countered', object: entry });
+    // An ability ("counter target activated ability", ward's "counter that spell or ability"): it's removed
+    // from the stack (CR 701.6a).
+    for (const entry of refEntries(ctx, ref(node, 'what'))) {
+      if (entry.kind !== 'ability') continue;
+      ctx.g.stack = ctx.g.stack.filter((e) => !(e.kind === 'ability' && e.id === entry.id));
+      ctx.events.push({ type: 'countered', object: entry.id });
     }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'stack') continue;
       // CR 101.2 / "can't be countered": the spell stays on the stack.
       if (hasRule(ctx.g, o, 'cant_be_countered')) continue;
-      // CR 701.6a: it's removed from the stack and put into its owner's graveyard.
-      moveObject(ctx.g, o.id, 'graveyard', ctx.events);
+      // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so.
+      moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
       ctx.events.push({ type: 'countered', object: o.id });
     }
     return true;
@@ -554,6 +569,37 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const p of node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]) {
       shuffleInPlace(ctx.g, zoneList(ctx.g, 'library', p));
       ctx.events.push({ type: 'shuffled', player: p });
+    }
+    return true;
+  },
+
+  // CR 722.3a–b: "~ becomes prepared", "Target creature becomes unprepared."
+  become_prepared(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) becomePrepared(ctx.g, o, ctx.events);
+    return true;
+  },
+  become_unprepared(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) unprepare(ctx.g, o, ctx.events);
+    return true;
+  },
+
+  // CR 701.24a: "Each player shuffles their hand and graveyard into their library", "Shuffle your graveyard into your library."
+  shuffle_zones(node, ctx) {
+    const zones = (node.zones as ('hand' | 'graveyard')[] | undefined) ?? ['graveyard'];
+    for (const p of node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]) {
+      for (const z of zones) for (const id of [...zoneList(ctx.g, z, p)]) moveObject(ctx.g, id, 'library', ctx.events);
+      shuffleInPlace(ctx.g, zoneList(ctx.g, 'library', p));
+      ctx.events.push({ type: 'shuffled', player: p });
+    }
+    return true;
+  },
+
+  // CR 305.2: "You may play an additional land this turn."
+  extra_land(node, ctx) {
+    for (const p of node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]) {
+      const ps = ctx.g.players[p]!;
+      const n = typeof node.amount === 'number' ? node.amount : 1;
+      ps.extraLands = { turn: ctx.g.turn, n: (ps.extraLands?.turn === ctx.g.turn ? ps.extraLands.n : 0) + n };
     }
     return true;
   },
@@ -974,30 +1020,34 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return { expand: ((yes ? node.effects : node.else) as EffectNode[] | undefined) ?? [] };
   },
 
-  // CR 707.10: "copy target instant or sorcery spell", "copy that spell", storm's "copy it for each …".
+  // CR 707.10: "copy target instant or sorcery spell", "copy that spell", storm's "copy it for each …",
+  // "copy target activated or triggered ability you control", "copy that ability".
   copy_spell(node, ctx) {
     const g = ctx.g;
     if (!ctx.memo.made) {
       const n = amountOf(ctx, node.amount ?? 1);
-      const what = ref(node, 'what');
-      const spells = what.ref === 'self' ? (ctx.source?.zone === 'stack' ? [ctx.source] : []) : refObjects(ctx, what).filter((o) => o.zone === 'stack');
       const made: string[] = [];
-      for (const spell of spells) {
-        const entry = g.stack.find((s) => s.kind === 'spell' && s.object === spell.id);
-        if (entry?.kind !== 'spell') continue;
-        for (let i = 0; i < n; i++) made.push(copySpell(g, entry, ctx.controller, ctx.events));
+      for (const entry of refEntries(ctx, ref(node, 'what'))) {
+        for (let i = 0; i < n; i++) made.push(entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events) : copyAbility(g, entry, ctx.controller, ctx.events));
       }
       ctx.memo.made = made;
       ctx.memo.index = 0;
     }
     const made = ctx.memo.made as string[];
-    const entryOf = (id: string) => g.stack.find((s): s is Extract<typeof s, { kind: 'spell' }> => s.kind === 'spell' && s.object === id);
+    // A copied spell is known by its object, a copied ability by its stack id.
+    const entryOf = (id: string) => g.stack.find((s) => (s.kind === 'spell' ? s.object === id : s.id === id));
+    // The object targets are checked against: the spell, or the ability's source (CR 707.10b).
+    const sourceObj = (entry: StackEntry) => (entry.kind === 'spell' ? g.objects[entry.object] : g.objects[entry.source.id]) ?? null;
     const answer = answerOf(ctx, 'copy_targets');
     if (answer) {
       const id = made[ctx.memo.index as number]!;
       const entry = entryOf(id);
       // CR 707.10c: new targets must be legal; keeping them needn't be.
-      if (entry?.program && answer.targets) entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, g.objects[id] ?? null);
+      if (entry?.program && answer.targets) {
+        // CR 115.5: an ability on the stack can't target itself.
+        if (answer.targets.some((list) => list.some((t) => t.kind === 'ability' && t.entry === id))) throw new RulesError('A copy can’t target itself.');
+        entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, sourceObj(entry));
+      }
       ctx.memo.index = (ctx.memo.index as number) + 1;
     }
     if (node.newTargets) {
@@ -1005,9 +1055,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const id = made[ctx.memo.index as number]!;
         const entry = entryOf(id);
         if (!entry?.program?.specs.length) continue;
-        const current = entry.targets.map((list) => list.map((t): Target => (t.kind === 'player' ? { kind: 'player', player: t.player } : { kind: 'object', object: t.id })));
+        const current = entry.targets.map((list) =>
+          list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })),
+        );
+        const prompts = targetPrompts(g, ctx.controller, entry.program.specs, sourceObj(entry)).map((p) => ({
+          ...p,
+          candidates: p.candidates.filter((t) => !(t.kind === 'ability' && t.entry === id)),
+        }));
+        const text = entry.kind === 'spell' ? nameOf(g, g.objects[id]!) : `${entry.sourceName}: ${entry.text}`;
         return {
-          ask: { kind: 'copy_targets', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: nameOf(g, g.objects[id]!), prompts: targetPrompts(g, ctx.controller, entry.program.specs, g.objects[id]!), current },
+          ask: { kind: 'copy_targets', player: ctx.controller, object: id, ...(entry.kind === 'ability' ? { ability: true as const } : {}), sourceName: sourceName(ctx), text, prompts, current },
         };
       }
     }
@@ -1591,6 +1648,22 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.nth && e.nth !== t.nth) return [];
     return [{ player: e.player }];
   },
+  // CR 602.2: "Whenever you activate an ability that isn't a mana ability", "Whenever an opponent activates a
+  // loyalty ability", "Whenever an ability of equipped creature is activated". The ability is what it's about.
+  activate(t, check) {
+    const e = check.event;
+    if (e.type !== 'ability_activated' || check.sourceLeft || !e.entry) return [];
+    if (t.who === 'you' && e.player !== check.controller) return [];
+    if (t.who === 'opponent' && e.player === check.controller) return [];
+    if (t.loyalty && !e.loyalty) return [];
+    // A keyword ability: "an exhaust ability" (its text starts with the keyword).
+    if (typeof t.keyword === 'string' && !e.text.toLowerCase().startsWith(t.keyword)) return [];
+    if (t.subject) {
+      const src = check.g.objects[e.source];
+      if (!src || !subjectMatches(check, t.subject as Ref, src)) return [];
+    }
+    return [{ player: e.player, entry: e.entry }];
+  },
   cast(t, check) {
     const e = check.event;
     if (e.type !== 'cast' || check.sourceLeft) return [];
@@ -1645,6 +1718,10 @@ export const corePlugin: MechanicPlugin = {
     // "If it's neither day nor night, it becomes day as ~ enters."
     enters_day(_node, _o, g) {
       if (!g.dayNight) g.dayNight = 'day';
+    },
+    // CR 722.3a: "This creature enters prepared."
+    enters_prepared(_node, o, g) {
+      becomePrepared(g, o, []);
     },
     enters_with_counters(node, o, g) {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".

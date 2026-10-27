@@ -49,8 +49,13 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const o = g.objects[id]!;
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
-      if (o.zone === 'exile' && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
-      if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
+      if (o.prepareOf) {
+        // CR 722.3c: only its prepare spell can be cast.
+        if (faceIndex !== 1) return;
+      } else {
+        if (o.zone === 'exile' && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
+        if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
+      }
       if (face.types.includes('Land')) {
         if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc')) {
           out.push({ type: 'play_land', player, object: id, ...(faceIndex ? { face: faceIndex } : {}) });

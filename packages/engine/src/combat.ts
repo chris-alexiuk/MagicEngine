@@ -645,7 +645,7 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
     if (amount <= 0) break;
     if (p.turn !== g.turn || (p.combat && !combat)) continue;
     if (p.to) {
-      const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
+      const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : p.to.kind === 'object' && to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
       if (!hit) continue;
     }
     if (p.by && !(p.by.kind === 'object' && p.by.id === source.id && p.by.zcc === source.zcc)) continue;

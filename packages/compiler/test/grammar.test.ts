@@ -97,7 +97,7 @@ describe('effects', () => {
     const modal = parse('Choose one —\n• Destroy target artifact.\n• Venture into the dungeon.');
     expect(modal.unparsed).toEqual([]);
     expect(modal.abilities[0]).toMatchObject({ modes: { options: [{ effects: [{ type: 'destroy' }] }, { manual: true, effects: [] }] } });
-    expect(parse('Choose one —\n• Venture into the dungeon.\n• Learn.').unparsed).toHaveLength(3);
+    expect(parse('Choose one —\n• Venture into the dungeon.\n• The Ring tempts you.').unparsed).toHaveLength(3);
     // Bare instructions only make sense on instants and sorceries.
     expect(parse('Draw a card.', 'Creature — Elf').unparsed).toEqual(['Draw a card.']);
   });
@@ -740,7 +740,47 @@ describe('top-card digs, goad, divided damage (slices 25–26)', () => {
     expect(one('This spell deals 3 damage divided as you choose among one, two, or three targets.', 'Sorcery')).toMatchObject({
       effects: [{ type: 'deal_damage', divided: true, amount: 3 }], targets: [{ count: 3, upTo: true, min: 1 }],
     });
-    expect(one('Investigate twice.', 'Sorcery').effects).toHaveLength(2);
+    expect((one('Investigate twice.', 'Sorcery') as { effects: unknown[] }).effects).toHaveLength(2);
     expect(one('You win the game.', 'Sorcery')).toMatchObject({ effects: [{ type: 'game_result', result: 'win' }] });
+  });
+});
+
+describe('abilities on the stack (slice 27)', () => {
+  it('reads targets that are abilities, copies of them, and activation triggers', () => {
+    expect(one('Counter target activated or triggered ability.', 'Instant')).toMatchObject({
+      targets: [{ what: 'ability', abilities: ['activated', 'triggered'] }], effects: [{ type: 'counter' }],
+    });
+    expect(one('Counter target activated ability from an artifact source.', 'Instant')).toMatchObject({ targets: [{ what: 'ability', abilities: ['activated'], source: { types: ['Artifact'] } }] });
+    expect(one('Counter target triggered ability or colorless spell.', 'Instant')).toMatchObject({ targets: [{ what: 'ability', spells: { colorless: true } }] });
+    expect(one('{2}, {T}: Copy target triggered ability you control. You may choose new targets for the copy.', 'Artifact')).toMatchObject({
+      targets: [{ what: 'ability', abilities: ['triggered'], player: 'you' }], effects: [{ type: 'copy_spell', newTargets: true }],
+    });
+    expect(one("Whenever you activate an ability, if it isn't a mana ability, you may pay {2}. If you do, copy that ability.", 'Artifact')).toMatchObject({
+      trigger: { type: 'activate', who: 'you' },
+    });
+    expect(one('Whenever an opponent activates a loyalty ability, this creature deals 1 damage to that player.', 'Creature — Human')).toMatchObject({
+      trigger: { type: 'activate', who: 'opponent', loyalty: true }, effects: [{ type: 'deal_damage', to: { ref: 'trigger_player' } }],
+    });
+    // An ability "of a creature" could be a mana ability, which never reaches the stack: left to the players.
+    expect(parse('Whenever you activate an ability of a creature, draw a card.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
+  });
+});
+
+describe('preparation cards, shuffling into libraries (slice 28)', () => {
+  it('reads them', () => {
+    expect(one('This creature enters prepared.', 'Creature — Human')).toMatchObject({ effect: { type: 'enters_prepared' } });
+    expect(one("At the beginning of your upkeep, if this creature isn't prepared, it becomes prepared.", 'Creature — Elf')).toMatchObject({
+      condition: { type: 'prepared', not: true }, effects: [{ type: 'become_prepared' }],
+    });
+    expect(one('Each player shuffles their hand and graveyard into their library, then draws seven cards.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'shuffle_zones', zones: ['hand', 'graveyard'] }, { type: 'draw', amount: 7 }],
+    });
+    expect(one('The owner of target permanent shuffles it into their library.', 'Instant')).toMatchObject({ effects: [{ type: 'move', to: 'library', position: 'shuffle' }] });
+    expect(one("Counter target spell. If that spell is countered this way, exile it instead of putting it into its owner's graveyard.", 'Instant')).toMatchObject({
+      effects: [{ type: 'counter', exile: true }],
+    });
+    expect(one('Learn.', 'Sorcery')).toMatchObject({ effects: [{ type: 'may_do' }] });
+    expect(one('You may play an additional land this turn.', 'Sorcery')).toMatchObject({ effects: [{ type: 'extra_land' }] });
+    expect(one('Target creature has base power and toughness 1/1 until end of turn.', 'Instant')).toMatchObject({ effects: [{ type: 'modify', setPower: 1, setToughness: 1, until: 'eot' }] });
   });
 });

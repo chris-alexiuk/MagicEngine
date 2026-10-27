@@ -44,7 +44,7 @@ function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
 // Programs: effect text, possibly modal
 // ---------------------------------------------------------------------------
 
-const MODAL_HEADER = /^choose (one|two|three|one or both|one or more|any number) —$/i;
+const MODAL_HEADER = /^choose (one|two|three|one or both|one or more|any number|up to one|up to two) —$/i;
 
 function modeCount(word: string, options: number): { min: number; max: number } {
   switch (word.toLowerCase()) {
@@ -53,6 +53,9 @@ function modeCount(word: string, options: number): { min: number; max: number } 
     case 'three': return { min: 3, max: 3 };
     case 'one or both': return { min: 1, max: 2 };
     case 'one or more': return { min: 1, max: options };
+    // CR 700.2: "choose up to one —" allows choosing none.
+    case 'up to one': return { min: 0, max: 1 };
+    case 'up to two': return { min: 0, max: 2 };
     default: return { min: 0, max: options }; // "any number"
   }
 }
@@ -515,6 +518,36 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
 
+  // CR 602.2: "Whenever you activate an ability that isn't a mana ability", "Whenever an opponent activates a
+  // loyalty ability", "Whenever you activate an ability of an artifact or creature that isn't a mana ability".
+  // Mana abilities don't use the stack (CR 605.3b): only triggers that leave them out are supported.
+  const activate =
+    /^(you|an opponent|a player) activates? (?:an? )?(?:(loyalty|exhaust|boast|outlast|embalm or eternalize|eternalize or embalm) )?ability(?: of (.+?))?( that isn't a mana ability)?$/.exec(t) ??
+    /^()an ability of ((?:equipped|enchanted) creature)( that isn't a mana ability)? is activated$/.exec(t);
+  if (activate) {
+    const passive = activate.length === 4;
+    const [who, kind, of, nonMana] = passive ? ['a player', undefined, activate[2], activate[3]] : [activate[1]!, activate[2], activate[3], activate[4]];
+    // A planeswalker's abilities are loyalty abilities, never mana abilities (CR 606.3, 605.1a).
+    if (!kind && !nonMana && !/^(?:a|an) (?:\w+ )?planeswalker$/.test(of ?? '')) return null;
+    const trigger: TriggerNode = { type: 'activate', who: who === 'you' ? 'you' : who === 'an opponent' ? 'opponent' : 'any' };
+    if (kind === 'loyalty') trigger.loyalty = true;
+    else if (kind) {
+      if (/embalm|eternalize/.test(kind)) return null;
+      trigger.keyword = kind;
+    }
+    if (of) {
+      const subject = /^(?:enchanted|equipped) (?:creature|planeswalker|permanent|artifact)$/.test(of)
+        ? { ref: 'attached' as const }
+        : (() => {
+            const pf = parseFilter(of.replace(/ on the battlefield$/, '').replace(/^(?:a|an) /, ''), b);
+            return pf && !pf.plural ? { ref: 'all' as const, filter: pf.filter } : null;
+          })();
+      if (!subject) return null;
+      trigger.subject = subject;
+    }
+    b.named['that ability'] = { ref: 'trigger_object' };
+    return { trigger, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
+  }
   // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
   if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
   // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
@@ -545,7 +578,12 @@ export const triggeredRule: GrammarRule = {
   id: 'triggered',
   parse(line, original, ctx) {
     const env = envOf(ctx);
-    const m = /^(When|Whenever|At) (.+)$/s.exec(line);
+    const m = /^(When|Whenever|At) (.+)$/s.exec(
+      // "Whenever you activate an ability, if it isn't a mana ability, …": mana abilities never trigger these (CR 605.3b).
+      line
+        .replace(/^(Whenever .+? activates? an ability(?: of [^,]+?)?), if it isn't a mana ability, /, (_m, head: string) => `${head} that isn't a mana ability, `)
+        .replace(/^Whenever an ability of ((?:equipped|enchanted) creature) is activated, if it isn't a mana ability, /, "Whenever an ability of $1 that isn't a mana ability is activated, "),
+    );
     if (!env || !m) return null;
     const body = m[2]!;
     // Try each ", " as the boundary between the trigger condition and the effect.
@@ -1242,6 +1280,15 @@ export const perTargetCostRule: GrammarRule = {
 };
 
 /** CR 731: "If it's neither day nor night, it becomes day as ~ enters." */
+/** CR 722.3a: "This creature enters prepared." */
+export const entersPreparedRule: GrammarRule = {
+  id: 'enters_prepared',
+  parse(line, original) {
+    if (line !== '~ enters prepared.') return null;
+    return { kind: 'static', text: original, effect: { type: 'enters_prepared' } } satisfies StaticAbility;
+  },
+};
+
 export const entersDayRule: GrammarRule = {
   id: 'enters_day',
   parse(line, original) {
@@ -1278,6 +1325,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   castOptionRule,
   reboundRule,
   entersDayRule,
+  entersPreparedRule,
   enterWithCounterRule,
   perTargetCostRule,
   resolveToHandRule,

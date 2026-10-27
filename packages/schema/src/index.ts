@@ -221,8 +221,17 @@ export interface ConditionNode {
 
 /** One instance of the word "target" (CR 115.3), possibly for several objects ("two target creatures"). */
 export interface TargetSpec {
-  /** CR 115.4: "any target" means a creature, player, planeswalker or battle. */
-  what: 'any' | 'player' | 'object';
+  /**
+   * CR 115.4: "any target" means a creature, player, planeswalker or battle.
+   * 'ability': an activated or triggered ability on the stack (CR 113.1c, 602.2a) — "counter target activated ability".
+   */
+  what: 'any' | 'player' | 'object' | 'ability';
+  /** For abilities: which kinds ("target activated or triggered ability"). */
+  abilities?: ('activated' | 'triggered')[];
+  /** For abilities: what their source must be ("from an artifact source", CR 113.7). */
+  source?: ObjectFilter;
+  /** For abilities: spells that may be chosen too ("target activated ability, triggered ability, or noncreature spell"). */
+  spells?: ObjectFilter;
   /** For objects. */
   filter?: ObjectFilter;
   /** For players: "target opponent". */
@@ -614,19 +623,20 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
+    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step',
+    'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
-    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state',
+    'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate',
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'],
   /** Counted amounts (AmountExpr kinds). */

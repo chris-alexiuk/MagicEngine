@@ -26,6 +26,24 @@ function canTargetObject(g: GameState, controller: PlayerId, spec: TargetSpec, o
   return true;
 }
 
+/**
+ * CR 113.1c / 602.2a: an activated or triggered ability on the stack — "target activated ability
+ * you control from an artifact source". Its source is the object it came from (CR 113.7), wherever that is now.
+ */
+function canTargetAbility(g: GameState, controller: PlayerId, spec: TargetSpec, id: string): boolean {
+  const entry = g.stack.find((s) => s.kind === 'ability' && s.id === id);
+  if (entry?.kind !== 'ability') return false;
+  const kind = entry.trigger ? 'triggered' : 'activated';
+  if (spec.abilities && !spec.abilities.includes(kind)) return false;
+  if (spec.player === 'you' && entry.controller !== controller) return false;
+  if (spec.player === 'opponent' && entry.controller === controller) return false;
+  if (spec.source) {
+    const src = g.objects[entry.source.id];
+    if (!src || !matchesFilter(g, src, spec.source, { controller, anyZone: true })) return false;
+  }
+  return true;
+}
+
 function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, player: PlayerId): boolean {
   if (!livePlayers(g).includes(player)) return false;
   if (spec.player === 'opponent' && player === controller) return false;
@@ -44,19 +62,31 @@ export function isLegalTarget(
   t: TargetRef | Target,
   source: GameObject | null,
 ): boolean {
-  if (t.kind === 'player') return spec.what !== 'object' && canTargetPlayer(g, controller, spec, t.player);
+  if (t.kind === 'player') return spec.what !== 'object' && spec.what !== 'ability' && canTargetPlayer(g, controller, spec, t.player);
+  if (t.kind === 'ability') return spec.what === 'ability' && canTargetAbility(g, controller, spec, t.entry);
   if (spec.what === 'player') return false;
+  if (spec.what === 'ability' && !spec.spells) return false;
   const id = 'id' in t ? t.id : t.object;
   const o = g.objects[id];
   if (!o) return false;
   // CR 608.2b: an object that changed zones since it was targeted is a new object — an illegal target.
   if ('zcc' in t && o.zcc !== t.zcc) return false;
-  return canTargetObject(g, controller, spec, o, source);
+  return canTargetObject(g, controller, spec.what === 'ability' ? { ...spec, filter: { ...spec.spells, zone: 'stack' } } : spec, o, source);
 }
 
 /** Every legal choice for one target spec, players first. */
 export function targetCandidates(g: GameState, controller: PlayerId, spec: TargetSpec, source: GameObject | null): Target[] {
   const out: Target[] = [];
+  if (spec.what === 'ability') {
+    for (const s of g.stack) {
+      if (s.kind === 'ability' && canTargetAbility(g, controller, spec, s.id)) out.push({ kind: 'ability', entry: s.id });
+      if (s.kind === 'spell' && spec.spells) {
+        const o = g.objects[s.object];
+        if (o && canTargetObject(g, controller, { ...spec, filter: { ...spec.spells, zone: 'stack' } }, o, source)) out.push({ kind: 'object', object: s.object });
+      }
+    }
+    return out;
+  }
   if (spec.what !== 'object') {
     for (const p of livePlayers(g)) if (canTargetPlayer(g, controller, spec, p)) out.push({ kind: 'player', player: p });
   }
@@ -137,7 +167,8 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
 }
 
 const sameTarget = (a: Target, b: Target) =>
-  a.kind === b.kind && (a.kind === 'player' ? a.player === (b as typeof a).player : a.object === (b as typeof a).object);
+  a.kind === b.kind &&
+  (a.kind === 'player' ? a.player === (b as typeof a).player : a.kind === 'ability' ? a.entry === (b as typeof a).entry : a.object === (b as typeof a).object);
 
 /**
  * Checks a player's target choices and turns them into stored references.
@@ -163,10 +194,17 @@ export function chooseTargets(
     list.forEach((t, j) => {
       if (list.slice(0, j).some((u) => sameTarget(t, u))) throw new RulesError(`The same target was chosen twice for “${spec.text}”.`);
       if (!isLegalTarget(g, controller, spec, t, source)) {
-        const what = t.kind === 'player' ? (g.players[t.player]?.name ?? t.player) : g.objects[t.object] ? nameOf(g, g.objects[t.object]!) : t.object;
+        const what =
+          t.kind === 'player'
+            ? (g.players[t.player]?.name ?? t.player)
+            : t.kind === 'ability'
+              ? 'That ability'
+              : g.objects[t.object]
+                ? nameOf(g, g.objects[t.object]!)
+                : t.object;
         throw new RulesError(`${what} isn’t a legal target for “${spec.text}”.`);
       }
     });
-    return list.map((t): TargetRef => (t.kind === 'player' ? t : { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc }));
+    return list.map((t): TargetRef => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc }));
   });
 }

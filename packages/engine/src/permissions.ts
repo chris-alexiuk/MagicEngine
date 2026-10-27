@@ -5,6 +5,8 @@ import type { GameObject, GameState, PlayerId } from './types.js';
  * you may play that card"). CR 601.3 / CR 305.1: casting or playing from another zone needs an
  * effect that allows it. A permission ends with its duration, or when the card changes zones (CR 400.7).
  */
+import { preparedSource } from './prepare.js';
+
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
   return (g.mayPlay ?? []).some(
     (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (what === 'spell' || p.mode === 'play'),
@@ -15,6 +17,8 @@ export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what:
 export function playableFromExile(g: GameState, player: PlayerId): string[] {
   return g.zones.exile.filter((id) => {
     const o = g.objects[id]!;
+    // CR 722.3c: a prepared permanent's spell copy.
+    if (o.prepareOf) return Boolean(preparedSource(g, o, player));
     return mayPlayFrom(g, player, o, 'spell') || mayPlayFrom(g, player, o, 'land');
   });
 }

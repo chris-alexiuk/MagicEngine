@@ -61,6 +61,8 @@ export interface PlayerState {
   counters?: Record<string, number>;
   pool: ManaPool;
   landsPlayedThisTurn: number;
+  /** "You may play an additional land this turn." (CR 305.2) */
+  extraLands?: { turn: number; n: number };
   /** Set when the player attempted to draw from an empty library since the last SBA check. */
   drewFromEmptyLibrary: boolean;
   lost: boolean;
@@ -154,6 +156,10 @@ export interface GameObject {
   cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
+  /** CR 722.3a: a permanent with a prepare spell that is prepared. */
+  prepared?: true;
+  /** CR 722.3c: the copy of a prepare spell in exile, castable while this permanent stays prepared. */
+  prepareOf?: ObjectRef;
   /** CR 110.2: the player it entered the battlefield under; control effects (layer 2) apply on top. */
   baseController?: PlayerId;
   /** "If that creature would die this turn, exile it instead" — the turn it applies. */
@@ -218,10 +224,11 @@ export interface DamageChoice {
 }
 
 /** A target as a player picks it. */
-export type Target = { kind: 'player'; player: PlayerId } | { kind: 'object'; object: ObjectId };
+/** `ability`: an activated or triggered ability on the stack, by its stack id (CR 113.1c). */
+export type Target = { kind: 'player'; player: PlayerId } | { kind: 'object'; object: ObjectId } | { kind: 'ability'; entry: string };
 
 /** A chosen target as stored: an object target goes stale if the object changes zones (CR 608.2b). */
-export type TargetRef = { kind: 'player'; player: PlayerId } | { kind: 'object'; id: ObjectId; zcc: number };
+export type TargetRef = { kind: 'player'; player: PlayerId } | { kind: 'object'; id: ObjectId; zcc: number } | { kind: 'ability'; entry: string };
 
 /** What the engine runs for a spell or ability: target specs and effects, with modes already chosen. */
 export interface CompiledProgram {
@@ -410,7 +417,8 @@ export type PendingChoice =
   /** CR 608.2g: cast this card now without paying its mana cost? (cascade, discover, rebound, "you may cast it …") */
   | { kind: 'cast_free'; player: PlayerId; object: ObjectId; sourceName: string; text: string }
   /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */
-  | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][] }
+  /** `object`: the copy — a spell's object, or the stack id of a copied ability (`ability` set). */
+  | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; ability?: true; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][] }
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
@@ -580,6 +588,8 @@ export type GameEvent =
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
+  /** CR 722.3: a permanent became prepared or unprepared. */
+  | { type: 'prepared'; object: ObjectId; prepared: boolean }
   | { type: 'turned_face_up'; object: ObjectId }
   /** CR 731.1a: day became night or night became day (or it first became one). */
   | { type: 'day_night'; to: 'day' | 'night'; from?: 'day' | 'night' }
@@ -614,7 +624,8 @@ export type GameEvent =
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
   | { type: 'land_played'; player: PlayerId; object: ObjectId }
   | { type: 'cast'; player: PlayerId; object: ObjectId }
-  | { type: 'ability_activated'; player: PlayerId; source: ObjectId; text: string }
+  /** `entry`: the ability on the stack; `loyalty`: a loyalty ability (CR 606). Mana abilities don't use the stack and aren't reported. */
+  | { type: 'ability_activated'; player: PlayerId; source: ObjectId; text: string; entry: string; loyalty?: true }
   | { type: 'resolved'; entry: StackEntry }
   | { type: 'life'; player: PlayerId; delta: number; life: number }
   | { type: 'counters'; object: ObjectId; counter: string; delta: number }

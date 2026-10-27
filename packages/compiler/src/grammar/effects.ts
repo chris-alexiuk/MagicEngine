@@ -239,6 +239,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!lastSearch(out)?.zones) return null;
         continue;
       }
+      // "If that spell is countered this way, exile it instead of putting it into its owner's graveyard." (CR 701.6a)
+      if (/^If (?:that spell|it) is countered this way, exile it instead of putting it into its owner's graveyard$/.test(s)) {
+        const last = out[out.length - 1];
+        if (last?.type !== 'counter') return null;
+        last.exile = true;
+        continue;
+      }
+      // CR 701.48a: "Learn." — discard a card to draw a card; there are no Lesson cards outside the game here.
+      if (s === 'Learn') {
+        const r = parseEffectText('You may discard a card. If you do, draw a card.', b);
+        if (!r) return null;
+        out.push(...r);
+        continue;
+      }
       // CR 707.10c: "You may choose new targets for the copy."
       if (/^(?:If the spell has any targets, )?[Yy]ou may choose (?:a )?new targets? for (?:the|any of the) cop(?:y|ies)$/.test(s)) {
         const copyIn = (list: EffectNode[]): EffectNode | null => {
@@ -502,6 +516,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
   }
   // CR 608.2g: "You may cast it without paying its mana cost" — cast during resolution, timing ignored.
+  // CR 305.2: "You may play an additional land this turn."
+  const extraLand = /^(You|Each player) may play (an|two) additional lands? this turn$/.exec(s);
+  if (extraLand) return [{ type: 'extra_land', who: { ref: extraLand[1] === 'You' ? 'you' : 'players' }, ...(extraLand[2] === 'two' ? { amount: 2 } : {}) }];
   const free = /^[Yy]ou may cast (.+?) without paying (?:its|that spell's|~'s) mana cost$/.exec(s);
   if (free) {
     const r = attempt(b, (b) => {
@@ -516,14 +533,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const inner = attempt(b, (b) => parseSentence(may[1]!, b));
     return inner ? [{ type: 'may', effects: inner }] : null;
   }
-  // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …".
+  // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …",
+  // "Copy target activated or triggered ability you control", "copy that ability".
   const copy = /^[Cc]opy (.+?)(?: (twice|three times)| for each (.+))?$/.exec(s);
-  if (copy && !/ ability$/.test(copy[1]!)) {
+  if (copy && (!/ ability$/.test(copy[1]!) || /^(?:target .+|that) ability$/.test(copy[1]!))) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(copy[1]!, b);
       if (!what || what.plural) return null;
-      // Only spells: a target on the stack, the spell that triggered it, or this spell.
-      if (what.ref.ref === 'target' && b.targets[what.ref.index]?.filter?.zone !== 'stack') return null;
+      // Only spells and abilities: a target on the stack, the spell or ability that triggered it, or this spell.
+      const spec = what.ref.ref === 'target' ? b.targets[what.ref.index] : undefined;
+      if (spec && spec.what !== 'ability' && spec.filter?.zone !== 'stack') return null;
       if (!['target', 'trigger_object', 'self'].includes(what.ref.ref)) return null;
       const amount = copy[2] ? (copy[2] === 'twice' ? 2 : 3) : copy[3] ? parseForEach(copy[3], b) : 1;
       if (!amount) return null;
@@ -724,6 +743,48 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 702.112a: "it becomes renowned".
   if (/^(?:it|~) becomes renowned$/.test(s)) return [{ type: 'become_renowned' }];
+  // CR 722.3a–b: "~ becomes prepared", "Target creature becomes unprepared", "Each creature you control becomes prepared."
+  const prep = /^(.+?) becomes? (prepared|unprepared)$/.exec(s);
+  if (prep) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(prep[1]!, b);
+      return what ? [{ type: prep[2] === 'prepared' ? 'become_prepared' : 'become_unprepared', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 701.24a: "Each player shuffles their hand and graveyard into their library", "Shuffle your graveyard into your library."
+  const shuffleZones = /^(?:(.+?) shuffles|[Ss]huffle) (?:their|your) (hand and graveyard|graveyard and hand|graveyard|hand) into (?:their|your) library(?:, then (?:draws?|draw) (\w+) cards?)?$/.exec(s);
+  if (shuffleZones) {
+    const r = attempt(b, (b) => {
+      const who = shuffleZones[1] ? parsePlayerRef(shuffleZones[1], b) : { ref: 'you' as const };
+      if (!who) return null;
+      const zones = shuffleZones[2]!.split(' and ');
+      const out: EffectNode[] = [{ type: 'shuffle_zones', who, zones }];
+      // "…, then draws seven cards" (Timetwister)
+      if (shuffleZones[3]) {
+        const n = parseAmount(shuffleZones[3]);
+        if (typeof n !== 'number') return null;
+        out.push({ type: 'draw', who, amount: n });
+      }
+      return out;
+    });
+    if (r) return r;
+  }
+  // "Shuffle ~ into its owner's library", "Its owner shuffles it into their library",
+  // "The owner of target permanent shuffles it into their library", "Shuffle that card into your library".
+  const shuffleIn =
+    /^[Ss]huffle (.+?) into (?:its owner's|their owners'|your) (?:library|libraries)$/.exec(s) ??
+    /^(?:[Ii]ts owner|~'s owner) shuffles (it|~|him|her) into their library$/.exec(s);
+  const ownerOf = /^[Tt]he owner of (.+?) shuffles it into their library$/.exec(s);
+  if (shuffleIn || ownerOf) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef((shuffleIn ?? ownerOf)![1]!, b);
+      if (!what) return null;
+      // Only cards that are "your" library's: "Shuffle that card into your library."
+      return [{ type: 'move', what: what.ref, to: 'library', position: 'shuffle' }];
+    });
+    if (r) return r;
+  }
   // CR 701.57a: "discover N".
   const discover = /^[Dd]iscover (\d+)$/.exec(s);
   if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
@@ -1168,6 +1229,14 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
  * it's "still a land" or "in addition to its other types" (CR 205.1b).
  */
 function parseBecomes(c: string, b: Binder): EffectNode[] | null {
+  // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
+  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+)\/(\d+) until end of turn$/.exec(c);
+  if (base) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(base[1]!, b);
+      return what ? [{ type: 'modify', what: what.ref, setPower: Number(base[2]), setToughness: Number(base[3]), until: 'eot' }] : null;
+    });
+  }
   const m = /^(.+?) becomes? an? (?:(\d+|X)\/(\d+|X) )?(.+?)(?: with (.+?))?( that's still an? (?:land|planeswalker|artifact|enchantment))?( in addition to its other types)?( until end of turn)?$/.exec(c);
   if (!m) return null;
   // Without a P/T it keeps its own ("This Vehicle becomes an artifact creature", CR 702.122a).

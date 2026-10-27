@@ -8,7 +8,7 @@ import { faceOf, livePlayers, zoneList } from './zones.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step',
+  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -103,6 +103,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'day_night':
       // CR 731: "if it's night"
       return cond.is === 'neither' ? !g.dayNight : g.dayNight === cond.is;
+    case 'prepared':
+      // CR 722.3a: "if this creature isn't prepared"
+      return Boolean(source && source.zone === 'battlefield' && source.prepared) !== Boolean(cond.not);
     case 'saddled':
       // CR 702.171b: saddled until end of turn (or until it leaves).
       return Boolean(source && source.zone === 'battlefield' && source.saddledTurn === g.turn);

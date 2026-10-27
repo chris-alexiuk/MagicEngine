@@ -15,8 +15,8 @@ const bob = { kind: 'player' as const, player: 'bob' };
 const alice = { kind: 'player' as const, player: 'alice' };
 const obj = (object: string) => ({ kind: 'object' as const, object });
 
-function setup(players?: string[]): GameState {
-  return toStep(start({ extra: CARDS, ...(players ? { players } : {}) }), 'main1');
+function setup(): GameState {
+  return toStep(start({ extra: CARDS }), 'main1');
 }
 const settle = (g: GameState) => {
   while (g.stack.length && !g.pending) g = passRound(g);

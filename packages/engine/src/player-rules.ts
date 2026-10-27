@@ -27,5 +27,6 @@ export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): nu
 
 /** CR 305.2: one land a turn, plus any extra land plays. */
 export function landsAllowed(g: GameState, player: PlayerId): number {
-  return 1 + playerRule(g, player, 'extra_lands');
+  const extra = g.players[player]?.extraLands;
+  return 1 + playerRule(g, player, 'extra_lands') + (extra?.turn === g.turn ? extra.n : 0);
 }

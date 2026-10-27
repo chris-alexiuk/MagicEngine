@@ -272,6 +272,39 @@ export interface ParsedRef {
  * An object phrase in an effect or static ability. Declares targets on the binder
  * and updates the "it" antecedent.
  */
+const ABILITY_KINDS: Record<string, ('activated' | 'triggered')[]> = {
+  'activated or triggered ability': ['activated', 'triggered'],
+  'activated ability': ['activated'],
+  'triggered ability': ['triggered'],
+};
+
+/** "target activated ability", "target triggered ability or colorless spell", "up to one target activated or triggered ability". */
+function parseAbilityTarget(t: string, b: Binder): TargetSpec | null {
+  const m =
+    /^(up to one )?target (activated or triggered ability|activated ability|triggered ability|activated ability, triggered ability, or (.+?) spell|triggered ability or (.+?) spell|instant spell, sorcery spell, activated ability, or triggered ability|spell, activated ability, or triggered ability|spell or ability)( you control| you don't control| an opponent controls)?(?: from (?:a|an) (.+?) source)?$/i.exec(
+      t,
+    );
+  if (!m) return null;
+  const spec: TargetSpec = { what: 'ability', abilities: ABILITY_KINDS[m[2]!] ?? ['activated', 'triggered'], text: t.replace(/^\w/, (c) => c.toLowerCase()) };
+  const spellWords = m[3] ?? m[4];
+  if (spellWords) {
+    const pf = parseFilter(`${spellWords} spell`, b);
+    if (!pf || pf.plural || pf.filter.zone !== 'stack') return null;
+    const { zone: _z, ...spells } = pf.filter;
+    spec.spells = spells;
+  } else if (/^instant spell, sorcery spell/.test(m[2]!)) spec.spells = { types: ['Instant', 'Sorcery'] };
+  else if (/^spell/.test(m[2]!)) spec.spells = {};
+  if (m[5]) spec.player = m[5] === ' you control' ? 'you' : 'opponent';
+  if (m[6]) {
+    const pf = parseFilter(`${m[6]} permanent`, b);
+    if (!pf || pf.plural) return null;
+    const { zone: _z, ...source } = pf.filter;
+    spec.source = source;
+  }
+  if (m[1]) spec.upTo = true;
+  return spec;
+}
+
 export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'): ParsedRef | null {
   return attempt(b, (b) => {
     const t = text.trim();
@@ -311,6 +344,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, ...(eachOf[1] ? { upTo: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
+      // CR 113.1c: "target activated or triggered ability you control from an artifact source" — an ability on the stack.
+      const ability = parseAbilityTarget(t, b);
+      if (ability) return set(b, { ref: b.addTarget(ability), plural: false, targeted: true });
       const tm = /^(?:(up to )?((?!another\b|other\b)\w+) )?(another |other )?target (.+)$/i.exec(t);
       if (tm) {
         const count = tm[2] ? parseAmount(tm[2]) : 1;

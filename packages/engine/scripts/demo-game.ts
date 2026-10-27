@@ -128,6 +128,7 @@ function chooseBlocks(g: GameState, me: PlayerId, blockers: string[], attackers:
 /** How much the bot wants to point a harmful spell or ability at a target (higher is better, ≤ 0 means don't). */
 function harmScore(g: GameState, me: PlayerId, t: Target, damage: number | null): number {
   if (t.kind === 'player') return t.player === me ? -100 : g.players[t.player]!.life <= (damage ?? 0) ? 1000 : 1;
+  if (t.kind === 'ability') return 0;
   const o = g.objects[t.object]!;
   if (o.controller === me) return -100;
   const isCreature = def(g, o).faces[o.face]!.types.includes('Creature');
@@ -348,7 +349,7 @@ function narrate(g: GameState, before: GameState, events: GameEvent[], note?: st
         break;
       case 'cast': {
         const entry = g.stack.find((x) => x.kind === 'spell' && x.object === e.object);
-        const aimed = entry?.targets.flat().map((t) => (t.kind === 'player' ? who(t.player) : name(t.id))) ?? [];
+        const aimed = entry?.targets.flat().map((t) => (t.kind === 'player' ? who(t.player) : t.kind === 'ability' ? 'an ability' : name(t.id))) ?? [];
         out.push({ text: `${who(e.player)} casts ${name(e.object)}${aimed.length ? ` targeting ${aimed.join(', ')}` : ''}`, rule: '601.2', kind: 'play' });
         break;
       }

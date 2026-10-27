@@ -62,6 +62,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 731: "if it's night", "if it's day", "if it's neither day nor night"
   const dayNight = /^it(?:'s| is) (day|night|neither day nor night)$/.exec(t);
   if (dayNight) return { type: 'day_night', is: dayNight[1] === 'neither day nor night' ? 'neither' : dayNight[1] };
+  // CR 722.3a: "if this creature isn't prepared"
+  const prepared = /^(?:it|~) (is|isn't) prepared$/.exec(t);
+  if (prepared) return { type: 'prepared', ...(prepared[1] === "isn't" ? { not: true } : {}) };
   // CR 702.171b (saddle): "if it's saddled", "~ is saddled"
   if (/^(?:it(?:'s| is)|~ is) saddled$/.test(t)) return { type: 'saddled' };
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
@@ -205,6 +208,7 @@ export function conditionSubject(c: ConditionNode): Ref | null {
     case 'arrived_since_upkeep':
     case 'renowned':
     case 'saddled':
+    case 'prepared':
       return { ref: 'self' };
     case 'is':
     case 'counters':

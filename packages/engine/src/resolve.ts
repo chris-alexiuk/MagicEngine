@@ -39,6 +39,30 @@ function targetObjects(ctx: EffectContext, index: number): GameObject[] {
   });
 }
 
+/**
+ * The spells and abilities on the stack a reference means: "target activated ability", "that ability"
+ * (what a trigger was about), "that spell", "target spell".
+ */
+export function refEntries(ctx: EffectContext, ref: Ref): StackEntry[] {
+  const { g } = ctx;
+  const spellEntry = (id: string, zcc?: number) =>
+    g.stack.filter((s) => s.kind === 'spell' && s.object === id && (zcc === undefined || g.objects[id]?.zcc === zcc));
+  const abilityEntry = (id: string) => g.stack.filter((s) => s.kind === 'ability' && s.id === id);
+  switch (ref.ref) {
+    case 'target':
+      return (ctx.targets[ref.index] ?? []).flatMap((t) => (t.kind === 'ability' ? abilityEntry(t.entry) : t.kind === 'object' ? spellEntry(t.id, t.zcc) : []));
+    case 'trigger_object': {
+      if (ctx.trigger?.entry) return abilityEntry(ctx.trigger.entry);
+      const r = ctx.trigger?.object;
+      return r ? spellEntry(r.id, r.zcc) : [];
+    }
+    case 'self':
+      return ctx.source?.zone === 'stack' ? spellEntry(ctx.source.id) : [];
+    default:
+      return [];
+  }
+}
+
 /** The objects a reference means right now (CR 608.2h). */
 export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
   const { g } = ctx;
@@ -148,6 +172,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
   if (ref.ref === 'target') {
     return (ctx.targets[ref.index] ?? []).flatMap((t): DamageRecipient[] => {
       if (t.kind === 'player') return livePlayers(ctx.g).includes(t.player) ? [{ kind: 'player' as const, player: t.player }] : [];
+      if (t.kind === 'ability') return [];
       const o = ctx.g.objects[t.id];
       return o && o.zcc === t.zcc && o.zone === 'battlefield' ? [{ kind: 'permanent' as const, object: o.id }] : [];
     });

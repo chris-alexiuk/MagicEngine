@@ -2,9 +2,10 @@
  * Robustness check: random bots play many games with random decks drawn from the
  * real card pool, and every action is checked.
  *
- *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top]
+ *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top] [--focus REGEX]
  *
  * --top lists the sources of the most triggers and tokens (to spot runaway loops).
+ * --focus fills about half of each deck with cards whose text matches REGEX (to exercise a new mechanic).
  *
  * Failures reported:
  *   - crash:     the engine threw something other than a rules error
@@ -52,6 +53,7 @@ const SEED = Number(opt('--seed', '1'));
 const PLAYERS = opt('--players', 'mixed');
 const VERBOSE = args.includes('--verbose');
 const TOP = args.includes('--top');
+const FOCUS = args.includes('--focus') ? new RegExp(opt('--focus', '')) : null;
 const bySource = new Map<string, number>();
 
 let raw = readFileSync(dbPath);
@@ -87,11 +89,14 @@ const pool = db.cards.filter((c) => {
   if (f.types.includes('Land') || c.cmc > 6 || c.automation === 'manual') return false;
   if (!c.legal.commander && !c.legal.legacy) return false;
   if (/\{[^}]*(?:P|S|H|\d\/[WUBRG]|C\/)[^}]*\}/.test(f.manaCost) || /\{X\}/.test(f.manaCost)) return false;
-  return ['normal', 'split', 'adventure', 'transform', 'modal_dfc'].includes(c.layout);
+  return ['normal', 'split', 'adventure', 'transform', 'modal_dfc', 'prepare'].includes(c.layout);
 });
+const focusPool = FOCUS ? pool.filter((c) => c.faces.some((f) => FOCUS.test(f.oracle))) : [];
 
 function makeDeck(colors: Color[]): string[] {
-  const spells = shuffle(pool.filter((c) => c.colorIdentity.every((x) => colors.includes(x)))).slice(0, 23);
+  const fits = (c: CardDef) => c.colorIdentity.every((x) => colors.includes(x));
+  const focus = shuffle(focusPool.filter(fits)).slice(0, 12);
+  const spells = [...focus, ...shuffle(pool.filter((c) => fits(c) && !focus.includes(c))).slice(0, 23 - focus.length)];
   const lands = Array.from({ length: 17 }, (_, i) => BASICS[colors[i % colors.length]!]);
   return [...lands, ...spells.map((c) => c.name)];
 }

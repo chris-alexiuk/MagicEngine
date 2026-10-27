@@ -31,3 +31,14 @@ export function copySpell(g: GameState, entry: StackEntry & { kind: 'spell' }, c
   events.push({ type: 'copied', object: id, of: orig.id, controller });
   return id;
 }
+
+/**
+ * CR 707.10: a copy of an activated or triggered ability — same source (CR 707.10b), same choices
+ * (targets, X, what was paid), controlled by whoever copied it. A copy of an activated ability isn't activated.
+ */
+export function copyAbility(g: GameState, entry: StackEntry & { kind: 'ability' }, controller: PlayerId, events: GameEvent[]): string {
+  const id = `a${g.nextId++}`;
+  g.stack.push({ ...structuredClone(entry), id, controller });
+  events.push({ type: 'copied', object: id, of: entry.id, controller });
+  return id;
+}

@@ -9,6 +9,7 @@ import { applyControlEffects } from './control.js';
 import { playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
+import { preparedSource } from './prepare.js';
 import { ascendOnResolve, checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
 import { addLore, sagaDone } from './sagas.js';
@@ -490,6 +491,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         if (o.token && o.zone !== 'battlefield') vanish.push(o.id);
         // CR 704.5e: so does a copy of a spell off the stack.
         else if (o.spellCopy && o.zone !== 'stack') vanish.push(o.id);
+        // CR 722.3c: a prepare spell's copy stays in exile only while its permanent is prepared.
+        else if (o.prepareOf && (o.zone !== 'exile' || !preparedSource(g, o))) vanish.push(o.id);
       }
 
       for (const id of g.zones.battlefield) {

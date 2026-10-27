@@ -178,7 +178,7 @@ export class ParserRegistry {
 
       // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
       const block = [line];
-      if (/\bchoose (?:one|two|three|one or both|one or more|any number) —$/i.test(line) || /^Choose (?:one|two)\. If .+ instead\.$/.test(line)) {
+      if (/\bchoose (?:one|two|three|one or both|one or more|any number|up to one|up to two) —$/i.test(line) || /^Choose (?:one|two)\. If .+ instead\.$/.test(line)) {
         while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
       }
 
