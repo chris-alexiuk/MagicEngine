@@ -90,6 +90,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (?!a |an )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?:a counter|counters) on (?:it|them)$/, (f) => !f.counter && ((f.counter = 'any'), true)],
   [/ without ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
+  // Shalai: "each creature you control that doesn't have hexproof"
+  [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   [/ with ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
 ];
 
@@ -484,7 +486,14 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Bare plurals: "Creatures you control", "Other Zombies you control".
     const bare = /^(other )?(.+)$/i.exec(t)!;
     // Valley Floodcaller: "Birds, Frogs, Otters, and Rats you control get +1/+1" — every creature of those types.
-    const pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s, (?:[A-Z]\w+s, )*and [A-Z]\w+s\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
+    let pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s, (?:[A-Z]\w+s, )*and [A-Z]\w+s\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
+    // Shalai: "planeswalkers you control and other creatures you control" — either.
+    const pair = pf || bare[1] ? null : /^(.+? you control) and (other )?(.+? you control)$/.exec(bare[2]!);
+    if (pair) {
+      const x = parseFilter(pair[1]!, b);
+      const y = x ? parseFilter(pair[3]!, b) : null;
+      if (x && y && x.plural && y.plural && !x.filter.zone && !y.filter.zone) pf = { filter: { anyOf: [x.filter, { ...y.filter, ...(pair[2] ? { other: true } : {}) }] }, plural: true };
+    }
     // "Equipment you control have equip {1}" — the same word in the plural, without an article.
     if (!pf || (!pf.plural && !/^Equipment\b/.test(bare[2]!))) return null;
     if (bare[1]) pf.filter.other = true;

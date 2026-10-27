@@ -1,4 +1,4 @@
-import type { PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
+import type { ContinuousEffectNode, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
@@ -14,7 +14,10 @@ import { faceOf, abilitySources } from './zones.js';
  * flash", or only some ("You may cast Aura and Equipment spells as though they had flash", Sigarda's Aid).
  */
 export function flashPermission(g: GameState, player: PlayerId, card: GameObject): boolean {
-  for (const e of g.playerEffects ?? []) if (e.player === player && e.rule === 'flash' && e.lastTurn >= g.turn) return true;
+  for (const e of g.playerEffects ?? []) {
+    if (e.player !== player || e.rule !== 'flash' || e.lastTurn < g.turn) continue;
+    if (!e.filter || matchesFilter(g, card, e.filter, { controller: player, anyZone: true })) return true;
+  }
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
@@ -32,10 +35,16 @@ export function flashPermission(g: GameState, player: PlayerId, card: GameObject
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
   // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.
-  for (const e of g.playerEffects ?? []) if (e.player === player && e.rule === rule && e.lastTurn >= g.turn) n++;
+  for (const e of g.playerEffects ?? []) if (e.player === player && e.rule === rule && e.lastTurn >= g.turn && !e.filter) n++;
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
+      // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof."
+      if (a.kind === 'static' && a.effect.type === 'continuous') {
+        const c = a.effect as ContinuousEffectNode;
+        if (c.alsoPlayer === rule && player === source.controller && staticConditionHolds(g, c, source)) n++;
+        continue;
+      }
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       // A rule for some spells only ("Aura and Equipment spells … flash") is checked per spell (flashPermission).

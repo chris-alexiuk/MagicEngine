@@ -1749,3 +1749,17 @@ describe('slice 157', () => {
     expect(parse('{T}, Mill a card: Add {C}.', 'Artifact Creature — Construct', 'M').abilities[0]).toMatchObject({ mana: true, cost: { tap: true, other: [{ type: 'mill', amount: 1 }] } });
   });
 });
+
+describe('slice 158', () => {
+  it('reads Shalai, Teferi, Time Raveler, Magda and "that doesn\'t have hexproof"', () => {
+    expect(parse('You, planeswalkers you control, and other creatures you control have hexproof.', 'Legendary Creature — Angel', 'S').abilities[0]).toMatchObject({ effect: { type: 'continuous', alsoPlayer: 'hexproof', affected: { ref: 'all', filter: { anyOf: [{ types: ['Planeswalker'] }, { types: ['Creature'], other: true }] } } } });
+    expect(parse("{4}{G}{G}: Put two +1/+1 counters on each creature you control that doesn't have hexproof.", 'Legendary Creature — Angel', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { filter: { notKeywords: ['hexproof'] } } }] });
+    expect(parse('Each opponent can cast spells only any time they could cast a sorcery.', 'Legendary Planeswalker — Teferi', 'T').abilities[0]).toMatchObject({ effect: { type: 'player_rule', who: 'opponents', rule: 'sorcery_timing' } });
+    expect(parse('+1: Until your next turn, you may cast sorcery spells as though they had flash.', 'Legendary Planeswalker — Teferi', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'player_effect', rule: 'flash', until: 'your_next_turn', filter: { types: ['Sorcery'] } }] });
+    expect(parse('Sacrifice five Treasures: Search your library for an artifact or Dragon card, put that card onto the battlefield, then shuffle.', 'Legendary Creature — Dwarf', 'M').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 5 }] } });
+  });
+  it("reads Mishra's Bauble and Charismatic Conqueror", () => {
+    expect(parse("{T}, Sacrifice this artifact: Look at the top card of target player's library. Draw a card at the beginning of the next turn's upkeep.", 'Artifact', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'look_at_top', who: { ref: 'target' }, amount: 1 }, {}] });
+    expect(parse("Whenever an artifact or creature an opponent controls enters untapped, they may tap that permanent. If they don't, you create a 1/1 white Vampire creature token with lifelink.", 'Creature — Vampire', 'C').abilities[0]).toMatchObject({ trigger: { type: 'enters', untapped: true }, effects: [{ type: 'may_do', who: { ref: 'trigger_player' }, effects: [{ type: 'tap', what: { ref: 'trigger_object' } }] }] });
+  });
+});

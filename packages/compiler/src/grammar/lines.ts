@@ -166,7 +166,7 @@ const MANA_RUN = /^(?:\{(?:\d+|[WUBRGCSX]|[WUBRG2]\/[WUBRGP])\})+$/;
 
 /** "Sacrifice a creature", "Sacrifice another artifact", "Discard a card" — costs where the player picks what. */
 export function choiceCost(item: string, b: Binder | null): EffectNode | null {
-  const sac = /^[Ss]acrifice (a|an|one|two|three|another) (other )?(.+)$/.exec(item);
+  const sac = /^[Ss]acrifice (a|an|one|two|three|four|five|six|seven|another) (other )?(.+)$/.exec(item);
   if (sac && b) {
     // Mondrak: "Sacrifice two other artifacts and/or creatures"
     const pf = parseFilter(sac[3]!.replace(/ and\/or /g, ' or '), b);
@@ -792,11 +792,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!sac) return null;
     return { trigger: { type: 'either', of: [enters, sac.trigger] }, it: null, player: null };
   }
-  // Amulet of Vigor: "Whenever a permanent you control enters tapped"
-  const entersTapped = /^(.+) enters tapped$/.exec(t);
-  if (entersTapped) {
+  // Amulet of Vigor: "Whenever a permanent you control enters tapped"; Charismatic Conqueror: "… enters untapped"
+  const entersTapped = /^(.+) enters (tapped|untapped)$/.exec(t);
+  if (entersTapped && entersTapped[1] !== '~') {
     const one = parseTrigger(word, `${entersTapped[1]} enters`, b);
-    if (one && one.trigger.type === 'enters' && !one.trigger.batch) return { ...one, trigger: { ...one.trigger, tapped: true } };
+    if (one && one.trigger.type === 'enters' && !one.trigger.batch) return { ...one, trigger: { ...one.trigger, [entersTapped[2]!]: true } };
   }
   const self = /^~ (enters(?: the battlefield)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
@@ -1544,6 +1544,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // CR 401.5: looking at, or playing with, the top card of your library revealed.
   if (/^You may look at the top card of your library (?:any time|at any time)$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'look_at_top' };
   if (body === 'You may activate abilities of creatures you control as though those creatures had haste') return { type: 'player_rule', who: 'you', rule: 'abilities_haste' };
+  // Teferi, Time Raveler; Dosan the Falling Leaf: "Players can cast spells only during their own turns" is different.
+  const sorceryOnly = /^(Each opponent|Your opponents|Each player|Players) can cast spells only any time (?:they|he or she) could cast a sorcery$/.exec(body);
+  if (sorceryOnly) return { type: 'player_rule', who: /opponent/i.test(sorceryOnly[1]!) ? 'opponents' : 'each', rule: 'sorcery_timing' };
   if (/^Play with the top card of your library revealed$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'top_revealed' };
   // CR 701.38d: "While voting, you get an additional vote." / "While voting, you may vote an additional time."
   if (/^While voting, you get an additional vote$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'extra_vote' };
@@ -1555,6 +1558,12 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
 
 /** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
+  // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — the player too.
+  const youToo = /^You, (.+), and (.+?) have (hexproof|shroud)$/.exec(body) ?? /^You and (.+?)() have (hexproof|shroud)$/.exec(body);
+  if (youToo) {
+    const inner = parseContinuous(`${youToo[1]}${youToo[2] ? ` and ${youToo[2]}` : ''} have ${youToo[3]}`, b);
+    return inner && !inner.condition ? { ...inner, alsoPlayer: youToo[3] as 'hexproof' | 'shroud' } : null;
+  }
   // Bender's Waterskin, Unwinding Clock: "Untap this artifact / all artifacts you control during each other player's untap step."
   const untapOthers = /^Untap (~|all (.+?)) during each other player's untap step$/.exec(body);
   // (Seedborn Muse's "all permanents you control" is a rule for the player.)

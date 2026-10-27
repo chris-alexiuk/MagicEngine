@@ -917,6 +917,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^You have no maximum hand size for the rest of the game$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', until: 'game' }];
   // Emergence Zone: "You may cast spells this turn as though they had flash." (CR 702.8a)
   if (/^You may cast spells this turn as though they had flash$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash' }];
+  // Teferi, Time Raveler: "Until your next turn, you may cast sorcery spells as though they had flash." (CR 702.8a)
+  const flashUntil = /^Until your next turn, you may cast (sorcery|creature|instant and sorcery|noncreature) spells as though they had flash$/.exec(s);
+  if (flashUntil) {
+    const pf = parseFilter(`${flashUntil[1]!.replace(' and ', ' or ')} spells`, b);
+    if (!pf) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash', until: 'your_next_turn', filter }];
+  }
   // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
   const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
   if (whileTapped) {
@@ -1190,6 +1198,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const pf = parseFilter(ownBack[1]!, b);
       return pf && pf.plural && !pf.filter.zone ? [{ type: 'gain_control', what: { ref: 'all', filter: pf.filter }, toOwners: true }] : null;
+    });
+    if (r) return r;
+  }
+  // Mishra's Bauble: "Look at the top card of target player's library." — nothing changes; the player sees it.
+  const lookTop = /^[Ll]ook at the top (card|two cards|three cards) of (target player's|target opponent's|each player's|your) library$/.exec(s);
+  if (lookTop && lookTop[2] !== 'each player\'s') {
+    const r = attempt(b, (b) => {
+      const who = lookTop[2] === 'your' ? ({ ref: 'you' } as Ref) : parsePlayerRef(lookTop[2]!.replace(/'s$/, ''), b);
+      return who ? [{ type: 'look_at_top', who, amount: { card: 1, 'two cards': 2, 'three cards': 3 }[lookTop[1]!]! }] : null;
     });
     if (r) return r;
   }
@@ -1907,7 +1924,8 @@ const VERBS: Record<string, VerbHandler> = {
     }
     return null;
   },
-  tap: objectVerb('tap'),
+  // Charismatic Conqueror: "they may tap that permanent" — tapping is the same whoever does it.
+  tap: (args, who, b, imperative) => objectVerb('tap')(args, who, b, imperative || (who.ref !== 'players' && /^(?:it|that permanent|that creature)$/.test(args))),
   untap(args, who, b, imperative) {
     // "untap up to two lands", "untap up to four target lands" (the latter targets)
     const upTo = imperative ? /^up to (\w+) (?!target )(.+)$/.exec(args) : null;

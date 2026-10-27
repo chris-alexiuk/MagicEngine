@@ -453,7 +453,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'game' ? Number.MAX_SAFE_INTEGER : g.turn;
     const players = refPlayers(ctx, ref(node, 'who'));
-    g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn }))];
+    const filter = node.filter ? { filter: node.filter as ObjectFilter } : {};
+    g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn, ...filter }))];
     return true;
   },
 
@@ -1437,6 +1438,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // "Look at target opponent's hand." — its controller looks (CR 701.20a reveals it to everyone).
+  // Mishra's Bauble: "Look at the top card of target player's library." — only the controller sees it.
+  look_at_top(node, ctx) {
+    const [p] = refPlayers(ctx, ref(node, 'who'));
+    if (!p || answerOf(ctx, 'choose_objects')) return true;
+    const top = zoneList(ctx.g, 'library', p).slice(0, amountOf(ctx, node.amount));
+    if (!top.length) return true;
+    return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `Looking at the top of ${ctx.g.players[p]!.name}'s library.`, seen: top } };
+  },
+
   look_at_hand(node, ctx) {
     const [p] = refPlayers(ctx, ref(node, 'who'));
     if (!p || answerOf(ctx, 'choose_objects')) return true;

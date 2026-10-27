@@ -867,7 +867,8 @@ export interface GameState {
   /** "The next spell you cast this turn can't be countered" / "costs {1} less to cast" — used up by that spell. */
   nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
-  playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number }[];
+  /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
+  playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */

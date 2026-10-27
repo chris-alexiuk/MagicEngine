@@ -698,6 +698,8 @@ export interface CopyExcept {
 export interface ContinuousEffectNode extends EffectNode {
   type: 'continuous';
   affected: Ref;
+  /** Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — its controller too. */
+  alsoPlayer?: 'hexproof' | 'shroud';
   /** Wonder, Anger: "As long as this card is in your graveyard …" — it works only from its owner's graveyard. */
   fromGraveyard?: true;
   /** Layer 7c: "gets +1/+1", "gets +1/+1 for each other Zombie you control". */
@@ -876,6 +878,8 @@ export const PLAYER_RULES = [
   'max_one_draw',
   /** Thousand-Year Elixir: "You may activate abilities of creatures you control as though those creatures had haste." */
   'abilities_haste',
+  /** Teferi, Time Raveler: "Each opponent can cast spells only any time they could cast a sorcery." (CR 307.5) */
+  'sorcery_timing',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -909,7 +913,7 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
-    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
+    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel',
   ],
   conditions: [

@@ -77,7 +77,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         }
         return;
       }
-      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o);
+      const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o));
       if (!instantSpeed && !mainPhaseEmptyStack) return;
       // One of its additional costs is chosen as it's cast: listed with the cast options.
       if (hasCostChoice(face)) return;
@@ -311,7 +311,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   const face = g.cards[o.card]!.faces[0]!;
   const options = castOptionsFor(g, player, o, face);
   if (!options.length || face.types.includes('Land')) return [];
-  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o);
+  const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o));
   const out: Action[] = [];
   // With a required choice of additional costs, the bot casts it paying one of them (and no other options).
   const required = options.some((x) => x.required);
