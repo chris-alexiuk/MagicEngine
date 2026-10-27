@@ -292,21 +292,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           !(e.nontoken && d.token) &&
           (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
       ).length;
-    case 'moved_this_way': {
-      // "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved.
-      const how = e.how;
-      return (ctx.resolution?.moves ?? []).filter((m) => {
-        const right =
-          how === 'destroyed'
-            ? m.effect === 'destroy' && m.from === 'battlefield'
-            : how === 'exiled'
-              ? m.to === 'exile'
-              : how === 'sacrificed'
-                ? /^sacrifice/.test(m.effect) && m.from === 'battlefield'
-                : m.effect === 'mill' && m.from === 'library';
-        return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t));
-      }).length;
-    }
+    case 'moved_this_way':
+      return movedThisWay(ctx, e).length;
     case 'discarded_this_way': {
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});
@@ -415,6 +402,22 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     default:
       return 0;
   }
+}
+
+/** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
+export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[] }): NonNullable<Resolution['moves']> {
+  const how = e.how;
+  return (ctx.resolution?.moves ?? []).filter((m) => {
+    const right =
+      how === 'destroyed'
+        ? m.effect === 'destroy' && m.from === 'battlefield'
+        : how === 'exiled'
+          ? m.to === 'exile'
+          : how === 'sacrificed'
+            ? /^sacrifice/.test(m.effect) && m.from === 'battlefield'
+            : m.effect === 'mill' && m.from === 'library';
+    return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t));
+  });
 }
 
 export function amountOf(ctx: EffectContext, a: Amount | unknown): number {

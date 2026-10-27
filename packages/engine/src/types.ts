@@ -470,7 +470,8 @@ export interface Resolution {
   /** Damage this resolution's effects dealt ("You gain life equal to the damage dealt this way"). */
   damageDealt?: number;
   /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
-  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[] }[];
+  /** `controller`: who controlled it as it moved ("its controller creates a 2/2 green Boar creature token"). */
+  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; controller: PlayerId }[];
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
   /** CR 701.30d: "If you win" after "Clash with an opponent". */

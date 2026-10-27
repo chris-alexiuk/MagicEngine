@@ -476,7 +476,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     }
     // Bare plurals: "Creatures you control", "Other Zombies you control".
     const bare = /^(other )?(.+)$/i.exec(t)!;
-    const pf = parseFilter(bare[2]!, b);
+    // Valley Floodcaller: "Birds, Frogs, Otters, and Rats you control get +1/+1" — every creature of those types.
+    const pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s, (?:[A-Z]\w+s, )*and [A-Z]\w+s\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
     // "Equipment you control have equip {1}" — the same word in the plural, without an article.
     if (!pf || (!pf.plural && !/^Equipment\b/.test(bare[2]!))) return null;
     if (bare[1]) pf.filter.other = true;

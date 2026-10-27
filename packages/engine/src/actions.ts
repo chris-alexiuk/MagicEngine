@@ -10,7 +10,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canUseTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
 import { grantedKeywordOff, hasKeyword, matchesFilter, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
@@ -904,9 +904,11 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (cost.tap) {
     // CR 118.3 / CR 302.6
     if (o.tapped) throw new RulesError(`${name} is already tapped.`);
-    if (!canUseTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
+    if (!canActivateTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
   }
   if (cost.untap && !o.tapped) throw new RulesError(`${name} is already untapped.`);
+  // CR 302.6: the untap symbol too.
+  if (cost.untap && !canActivateTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
   checkOtherCosts(g, player, o, cost, choices.costs);
 
   // CR 602.2b (following CR 601.2b–c): modes and targets.
@@ -1011,7 +1013,7 @@ function activateManual(
     }
     if (tap) {
       if (o.tapped) throw new RulesError(`${face.name} is already tapped.`);
-      if (!canUseTapAbilities(g, o)) throw new RulesError(`${face.name} hasn’t been under your control since your turn began.`);
+      if (!canActivateTapAbilities(g, o)) throw new RulesError(`${face.name} hasn’t been under your control since your turn began.`);
     }
     if (mana) {
       const cost = parseManaCost(mana);

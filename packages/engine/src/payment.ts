@@ -4,7 +4,7 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { canActivateTapAbilities, hasType, manaAbilities, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
@@ -370,11 +370,11 @@ export function runManaAbility(
     // CR 118.3: an already tapped permanent can't be tapped to pay a cost.
     if (o.tapped) throw new RulesError(`${nameOf(g, o)} is already tapped.`);
     // CR 302.6: summoning sickness.
-    if (!canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
+    if (!canActivateTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
   }
   if (ability.cost.untap && !o.tapped) throw new RulesError(`${nameOf(g, o)} is already untapped.`);
   // CR 302.6: the untap symbol too.
-  if (ability.cost.untap && !canUseTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
+  if (ability.cost.untap && !canActivateTapAbilities(g, o)) throw new RulesError(`${nameOf(g, o)} hasn’t been under your control since your turn began.`);
   // CR 602.5b: "Activate only if you control a Swamp."
   if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
     throw new RulesError(`${nameOf(g, o)}'s ability can't be activated now.`);

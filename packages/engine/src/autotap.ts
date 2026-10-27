@@ -1,6 +1,6 @@
 import { activationProhibited } from './cast-bans.js';
 import type { AddManaEffect } from '@mtg/schema';
-import { canUseTapAbilities, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, manaAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
 import { canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
@@ -28,7 +28,7 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
   const out: Source[] = [];
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    if (o.controller !== player || o.tapped || !canUseTapAbilities(g, o) || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
+    if (o.controller !== player || o.tapped || !canActivateTapAbilities(g, o) || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {
       // Only simple "{T}: Add …" abilities are used automatically.

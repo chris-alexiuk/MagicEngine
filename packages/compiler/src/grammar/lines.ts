@@ -1246,7 +1246,12 @@ export const triggeredRule: GrammarRule = {
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
         const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
-        if (iff) {
+        // Boromir: "Whenever an opponent casts a spell, if no mana was spent to cast it, counter that spell." — the mana
+        // spent can't change, so it's checked with the cast (CR 603.4).
+        if (iff && iff[1] === 'no mana was spent to cast it' && trig.trigger.type === 'cast') {
+          trig.trigger = { ...trig.trigger, noManaSpent: true };
+          effectText = iff[2]!;
+        } else if (iff) {
           condition = parseCondition(iff[1]!, b);
           // "Whenever another creature enters, if ~ has a counter on it, … onto that creature": the event's object
           // stays "that creature" after a condition about ~.
@@ -1534,6 +1539,7 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
   // CR 401.5: looking at, or playing with, the top card of your library revealed.
   if (/^You may look at the top card of your library (?:any time|at any time)$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'look_at_top' };
+  if (body === 'You may activate abilities of creatures you control as though those creatures had haste') return { type: 'player_rule', who: 'you', rule: 'abilities_haste' };
   if (/^Play with the top card of your library revealed$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'top_revealed' };
   // CR 701.38d: "While voting, you get an additional vote." / "While voting, you may vote an additional time."
   if (/^While voting, you get an additional vote$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'extra_vote' };
@@ -1637,7 +1643,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       const subtypes: string[] = [];
       for (const w of also[1]!.split(' ')) {
         const t = TYPE_NOUNS[w.toLowerCase()];
-        if (t && t.toLowerCase() === w.toLowerCase()) types.push(t);
+        // "are Forest lands in addition to their other types" — the plural with a plural subject.
+        if (t && (t.toLowerCase() === w.toLowerCase() || (/s$/.test(w) && t.toLowerCase() === w.toLowerCase().slice(0, -1)))) types.push(t);
         else if (subtypeOf(w) === w || subtypeOf(w.replace(/s$/, '')) === w.replace(/s$/, '')) subtypes.push(subtypeOf(w) === w ? w : w.replace(/s$/, ''));
         else return null;
       }
@@ -2112,13 +2119,14 @@ export const entersAsCopyRule: GrammarRule = {
   id: 'enters_as_copy',
   parse(line, original, ctx) {
     const env = envOf(ctx);
-    const m = /^You may have ~ enter(?: the battlefield)? as a copy of (.+?)(?:, except (.+))?\.$/.exec(line);
+    // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."
+    const m = /^You may have ~ enter( tapped)?(?: the battlefield)? as a copy of (.+?)(?:, except (.+))?\.$/.exec(line);
     if (!env || !m) return null;
     const b = new Binder(env);
-    const filter = parseCopyCandidates(m[1]!, b);
-    const except = m[2] ? parseCopyExcept(m[2], b) : undefined;
+    const filter = parseCopyCandidates(m[2]!, b);
+    const except = m[3] ? parseCopyExcept(m[3], b) : undefined;
     if (!filter || except === null) return null;
-    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}) };
+    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}), ...(m[1] ? { copyTapped: true } : {}) };
     const ability: StaticAbility = { kind: 'static', text: original, effect: node };
     return ability;
   },

@@ -1720,3 +1720,19 @@ describe('slice 155', () => {
     expect(parse("Destroy target creature. If it's a Spirit, draw a card.", 'Instant', 'T').unparsed).toHaveLength(1);
   });
 });
+
+describe('slice 156', () => {
+  it("reads Archaeomancer's Map, Lieutenant, Boromir, Thousand-Year Elixir and Ashaya", () => {
+    expect(parse('Whenever a land an opponent controls enters, if that player controls more lands than you, you may put a land card from your hand onto the battlefield.', 'Artifact', 'M').abilities[0]).toMatchObject({ condition: { type: 'opponent_has_more', player: { ref: 'trigger_player' } } });
+    expect(parse('Lieutenant — At the beginning of combat on your turn, if you control your commander, create a 1/1 colorless Thopter artifact creature token with flying. That token gains haste until end of turn.', 'Creature — Human', 'L').abilities[0]).toMatchObject({ condition: { type: 'count', filter: { commander: true, owner: 'you' } } });
+    expect(parse('Whenever an opponent casts a spell, if no mana was spent to cast it, counter that spell.', 'Legendary Creature — Human', 'B').abilities[0]).toMatchObject({ trigger: { type: 'cast', noManaSpent: true } });
+    expect(parse('You may activate abilities of creatures you control as though those creatures had haste.', 'Legendary Artifact', 'T').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'abilities_haste' } });
+    expect(parse('Nontoken creatures you control are Forest lands in addition to their other types.', 'Legendary Creature — Avatar', 'A').abilities[0]).toMatchObject({ effect: { addTypes: { types: ['Land'], subtypes: ['Forest'] } } });
+  });
+  it('reads Vesuva, Spark Double, Valley Floodcaller and Rampage of the Clans', () => {
+    expect(parse('You may have this land enter tapped as a copy of any land on the battlefield.', 'Land', 'V').abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'copy', copyTapped: true } });
+    expect(parse("You may have this creature enter as a copy of a creature or planeswalker you control, except it enters with an additional +1/+1 counter on it if it's a creature, it enters with an additional loyalty counter on it if it's a planeswalker, and it isn't legendary.", 'Creature — Illusion', 'S').abilities[0]).toMatchObject({ effect: { copyExcept: { nonlegendary: true, entersWith: [{ counter: '+1/+1', ifType: 'Creature' }, { counter: 'loyalty', ifType: 'Planeswalker' }] } } });
+    expect(parse('Whenever you cast a noncreature spell, Birds, Frogs, Otters, and Rats you control get +1/+1 until end of turn. Untap them.', 'Creature — Otter Wizard', 'V').abilities[0]).toMatchObject({ effects: [{ type: 'modify' }, { type: 'untap' }] });
+    expect(parse('Destroy all artifacts and enchantments. For each permanent destroyed this way, its controller creates a 3/3 green Centaur creature token.', 'Sorcery', 'R').abilities[0]).toMatchObject({ effects: [{}, { type: 'create_token', forEachMoved: { how: 'destroyed' } }] });
+  });
+});

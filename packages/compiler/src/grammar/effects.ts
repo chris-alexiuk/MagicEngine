@@ -1032,7 +1032,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const of = what ? parseObjectRef(becomeCopy[2]!, b) : null;
       if (!what || !of || of.plural) return null;
       const except = becomeCopy[4] ? parseCopyExcept(becomeCopy[4], b) : undefined;
-      if (becomeCopy[4] && !except) return null;
+      // "enters with an additional counter" applies only as a permanent enters as a copy.
+      if ((becomeCopy[4] && !except) || except?.entersWith) return null;
       const until = becomeCopy[3] || /^[Uu]ntil end of turn, /.test(s) ? 'eot' : undefined;
       return [{ type: 'become_copy', what: what.ref, of: of.ref, ...(until ? { until } : {}), ...(except ? { except } : {}) }];
     });
@@ -1444,6 +1445,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     b.votes = options;
     return [{ type: 'vote', options, ...(secret ? { secret: true } : {}) }];
   }
+  // Curse of the Swine: "For each creature exiled this way, its controller creates a 2/2 green Boar creature token."
+  const perMover = /^For each (.+? (?:destroyed|exiled|sacrificed) this way), its controller creates (.+)$/.exec(s);
+  if (perMover) {
+    const each = parseForEach(perMover[1]!, b);
+    const made = each && typeof each === 'object' && each.kind === 'moved_this_way' ? parseSentence(`Create ${perMover[2]}`, b) : null;
+    if (!made || made.length !== 1 || made[0]!.type !== 'create_token' || made[0]!.amount !== 1 || made[0]!.copyOf) return null;
+    const { who: _who, ...node } = made[0]!;
+    const e = each as { how: string; types?: string[]; notTypes?: string[] };
+    return [{ ...node, type: 'create_token', forEachMoved: { how: e.how, ...(e.types ? { types: e.types } : {}), ...(e.notTypes ? { notTypes: e.notTypes } : {}) } }];
+  }
   // Second Harvest: "For each token you control, create a token that's a copy of that permanent." (CR 707.2)
   const eachCopy = /^For each (.+?), create a token that's a copy of (?:that permanent|that creature|it)$/.exec(s);
   if (eachCopy) {
@@ -1712,7 +1723,7 @@ const VERBS: Record<string, VerbHandler> = {
       const of = parseObjectRef(copy[3]!, b);
       if (!of || of.plural) return null;
       const except = copy[4] ? parseCopyExcept(copy[4], b) : undefined;
-      if (except === null) return null;
+      if (except === null || except?.entersWith) return null;
       const node: EffectNode = { type: 'create_token', amount, copyOf: of.ref, who };
       if (except) node.except = except;
       if (copy[2]) node.tapped = true;

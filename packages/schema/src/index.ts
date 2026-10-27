@@ -681,6 +681,11 @@ export interface CopyExcept {
   /** "except it has this ability" — the ability doing the copying (the engine fills in `abilities`). */
   keepThisAbility?: true;
   abilities?: AbilityNode[];
+  /**
+   * Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature" — not a copiable value but a
+   * replacement effect as it enters (CR 614.1c), checked against what it copied.
+   */
+  entersWith?: { counter: string; amount: number; ifType?: string }[];
 }
 
 export interface ContinuousEffectNode extends EffectNode {
@@ -747,6 +752,8 @@ export interface AsEntersNode extends EffectNode {
   except?: Color;
   /** "This land enters tapped. As it enters, choose a color." */
   tapped?: true;
+  /** Vesuva: "You may have this land enter tapped as a copy of …" — tapped only if it copies. */
+  copyTapped?: true;
 }
 
 /**
@@ -860,6 +867,8 @@ export const PLAYER_RULES = [
   'free_from_hand',
   /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." (CR 121.2) */
   'max_one_draw',
+  /** Thousand-Year Elixir: "You may activate abilities of creatures you control as though those creatures had haste." */
+  'abilities_haste',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

@@ -749,7 +749,9 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
   const lost = o.zone === 'battlefield' ? lostSets(g) : { ids: NONE, retyped: NONE };
   const gone = lost.ids.has(o.id);
   const retyped = lost.retyped.has(o.id);
-  if (retyped || (!gone && face.types.includes('Land'))) {
+  // Ashaya: "Nontoken creatures you control are Forest lands in addition to their other types." — a land by an effect.
+  const landNow = face.types.includes('Land') || (o.zone === 'battlefield' && anyAddsLandTypes(g) && chars(g, o).types.includes('Land'));
+  if (retyped || (!gone && landNow)) {
     // CR 305.6: a land has the mana ability of each basic land type it has — including ones an effect gave it
     // ("Each land is a Swamp in addition to its other land types").
     for (const sub of retyped || (o.zone === 'battlefield' && anyAddsLandTypes(g)) ? chars(g, o).subtypes : face.subtypes) {
@@ -824,6 +826,19 @@ function anyGrantedMana(g: GameState): boolean {
 export function canUseTapAbilities(g: GameState, o: GameObject): boolean {
   if (!hasType(g, o, 'Creature')) return true;
   return !o.sick || hasKeyword(g, o, 'haste');
+}
+
+/**
+ * For activating {T} and {Q} abilities (not for attacking): Thousand-Year Elixir — "You may activate abilities of
+ * creatures you control as though those creatures had haste."
+ */
+export function canActivateTapAbilities(g: GameState, o: GameObject): boolean {
+  if (canUseTapAbilities(g, o)) return true;
+  return abilitySources(g).some((id) => {
+    const src = g.objects[id]!;
+    if (src.controller !== o.controller || src.zone !== 'battlefield') return false;
+    return objectAbilities(g, src).some((a) => a.kind === 'static' && a.effect.type === 'player_rule' && a.effect.rule === 'abilities_haste' && staticConditionHolds(g, a.effect as ConditionalNode, src));
+  });
 }
 
 const COLOR_WORDS: Record<string, string> = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };

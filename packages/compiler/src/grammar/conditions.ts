@@ -1,6 +1,6 @@
 import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
-import { parseFilter, parseObjectRef } from './nouns.js';
+import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { parseCount } from './amounts.js';
 import { COLOR_WORDS, parseAmount } from './words.js';
 
@@ -73,6 +73,8 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // Lieutenant (Loyal Apprentice): "if you control your commander" — a commander you own (CR 903.3).
+  if (t === 'you control your commander') return { type: 'count', who: 'you', filter: { commander: true, owner: 'you' }, min: 1 };
   // Jace, Wielder of Mysteries: "if your library has no cards in it"
   if (/^your library has no cards in it$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'library', who: 'you' }, op: 'eq', n: 0 };
   // Field of the Dead: "you control seven or more lands with different names"
@@ -329,11 +331,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return typeof n === 'number' ? { type: 'attacked_with', n } : null;
   }
   // Land Tax: "if an opponent controls more lands than you"
-  const more = /^an opponent controls more (.+?) than you(?: do)?$/.exec(t);
+  // Archaeomancer's Map: "if that player controls more lands than you"
+  const more = /^(an opponent|that player) controls more (.+?) than you(?: do)?$/.exec(t);
   if (more) {
-    const pf = parseFilter(more[1]!, b);
+    const pf = parseFilter(more[2]!, b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
-    return { type: 'opponent_has_more', filter: pf.filter };
+    const player = more[1] === 'that player' ? parsePlayerRef('that player', b) : null;
+    if (more[1] === 'that player' && !player) return null;
+    return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}) };
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"

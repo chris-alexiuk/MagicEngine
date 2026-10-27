@@ -2,7 +2,7 @@ import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canUseTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
+import { canActivateTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
@@ -239,9 +239,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const banned = activationProhibited(g, player, o, false);
     const manaBanned = activationProhibited(g, player, o, true);
     if (mine && !manaBanned) manaAbilities(g, o).forEach((ab, ability) => {
-      if (ab.cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
+      if (ab.cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
       // CR 107.6: {Q} — untapping it is the cost (Pili-Pala).
-      if (ab.cost.untap && (!o.tapped || !canUseTapAbilities(g, o))) return;
+      if (ab.cost.untap && (!o.tapped || !canActivateTapAbilities(g, o))) return;
       // Selvala: "{G}, {T}: Add X mana …" — with that mana already in the pool (mana abilities aren't autotapped for).
       if (ab.cost.mana) {
         const need = shortfall(spendablePool(g, player, { kind: 'ability', source: o }), parseManaCost(ab.cost.mana));
@@ -283,7 +283,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
-      if (cost.tap && (o.tapped || !canUseTapAbilities(g, o))) return;
+      if (cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
       if (cost.untap && !o.tapped) return;
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;
       const mana = parseManaCost(cost.mana ?? '');

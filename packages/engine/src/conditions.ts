@@ -1,7 +1,7 @@
-import type { AmountExpr, ConditionNode, ObjectFilter } from '@mtg/schema';
+import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
-import { amountOf, refObjects } from './resolve.js';
+import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameState, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, nameOf, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
@@ -219,7 +219,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // Land Tax: "if an opponent controls more lands than you"
       const count = (p: PlayerId) => g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, cond.filter as ObjectFilter, { controller: p, source: source ?? null })).length;
       const mine = count(controller);
-      return livePlayers(g).some((p) => p !== controller && count(p) > mine);
+      // Archaeomancer's Map: "that player" — the one the trigger is about.
+      const others = cond.player ? refPlayers(ctx, cond.player as Ref) : livePlayers(g);
+      return others.some((p) => p !== controller && count(p) > mine);
     }
     case 'votes': {
       // CR 701.38: "If sickness gets more votes", "If psychosis gets more votes or the vote is tied"

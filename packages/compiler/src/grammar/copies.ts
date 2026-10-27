@@ -97,6 +97,12 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       if (!typeWords(becomes[4]!.split(' '), out, true)) return null;
       continue;
     }
+    // Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature"
+    const counter = /^it enters with an additional (\S+) counter on it(?: if it's an? (creature|planeswalker|artifact|enchantment|land))?$/.exec(p);
+    if (counter) {
+      (out.entersWith ??= []).push({ counter: counter[1]!, amount: 1, ...(counter[2] ? { ifType: counter[2][0]!.toUpperCase() + counter[2].slice(1) } : {}) });
+      continue;
+    }
     if (/^it has this ability$/.test(p)) {
       out.keepThisAbility = true;
       continue;

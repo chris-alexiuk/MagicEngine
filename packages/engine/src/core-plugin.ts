@@ -23,7 +23,7 @@ import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, apnap, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, apnap, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
@@ -593,7 +593,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   create_token(node, ctx) {
     const n = amountOf(ctx, node.amount);
     const face = node.token as FaceDef | undefined;
-    const players = node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller];
+    // Curse of the Swine: "For each creature exiled this way, its controller creates a 2/2 green Boar creature token."
+    const perMoved = node.forEachMoved ? movedThisWay(ctx, node.forEachMoved as { how: string; types?: string[] }).map((m) => m.controller) : null;
+    const players = perMoved ?? (node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]);
     const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
     if (node.attachTo && !attachTo) return true; // nothing to attach it to: it isn't created
     // CR 707.2: "a token that's a copy of …" — of the object's copiable values, with this effect's exceptions.
@@ -3294,6 +3296,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     // "… during an opponent's turn"
     if (t.opponentsTurn && check.g.active === e.player) return [];
+    // Boromir: "if no mana was spent to cast it"
+    if (t.noManaSpent && (e.manaSpent ?? 0) > 0) return [];
     // "… from your hand", "… from exile", "… from anywhere other than your hand"
     const from = check.g.objects[e.object]?.cast?.from;
     if (typeof t.from === 'string' && from !== t.from) return [];

@@ -1,10 +1,11 @@
 import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
-import { hasType, matchesFilter } from './characteristics.js';
+import { chars, hasType, matchesFilter } from './characteristics.js';
+import { replaceQuantity } from './quantities.js';
 import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
-import { nameOf, zoneList } from './zones.js';
+import { faceOf, nameOf, zoneList } from './zones.js';
 
 /**
  * Choices made as a permanent enters (CR 614.12): "As ~ enters, you may pay 2 life. If you
@@ -146,8 +147,20 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         // CR 707.2: the copiable values of the original, with this effect's exceptions (CR 707.9).
         o.copyOf = withExceptions(g, copiable(original), next.node.copyExcept);
         events.push({ type: 'became_copy', object: o.id, of: original.id });
+        // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."
+        if (next.node.copyTapped) o.tapped = true;
+        // CR 306.5b / 707.5: a copy of a planeswalker enters with its loyalty (a battle, its defense).
+        const copied = faceOf(g, o);
+        if (copied.loyalty !== undefined && /^\d+$/.test(copied.loyalty) && !o.counters.loyalty) o.counters.loyalty = Number(copied.loyalty);
+        if (copied.defense !== undefined && /^\d+$/.test(copied.defense) && !o.counters.defense) o.counters.defense = Number(copied.defense);
         // CR 707.5: the copied permanent's own "enters with" / "as ~ enters" abilities apply as it enters.
         onEnterBattlefield(g, o, events);
+        // Spark Double: "… except it enters with an additional +1/+1 counter on it if it's a creature" (CR 614.1c).
+        for (const w of next.node.copyExcept?.entersWith ?? []) {
+          if (w.ifType && !chars(g, o).types.includes(w.ifType)) continue;
+          const n = replaceQuantity(g, 'counters', w.amount, { player: o.controller, object: o, counter: w.counter });
+          if (n > 0) o.counters[w.counter] = (o.counters[w.counter] ?? 0) + n;
+        }
       }
       break;
     }
