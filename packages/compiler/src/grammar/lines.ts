@@ -278,6 +278,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
     // Simian Spirit Guide: "Exile this card from your hand: Add {R}." (CR 605.1a: from the hand)
     else if (/^[Ee]xile ~ from your hand$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_hand' });
+    // Relic of Progenitus, Plaza of Heroes: "Exile this artifact", "Exile this land" (CR 118.3).
+    else if (/^[Ee]xile ~$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_battlefield' });
     // Lion's Eye Diamond: "Discard your hand" (CR 701.9b).
     else if (/^[Dd]iscard your hand$/.test(item)) (cost.other ??= []).push({ type: 'discard_hand' });
     // "Remove a +1/+1 counter from ~", "Remove three spore counters from ~" (CR 118.3).
@@ -393,6 +395,11 @@ export const activatedRule: GrammarRule = {
       const pf = parseFilter(eachColor[1]!, new Binder(env));
       if (!pf || !pf.plural || pf.filter.zone || node.timing || node.maxPerTurn || node.oncePerGame) return null;
       return { ...node, effects: [{ type: 'add_mana', colorsAmong: pf.filter, eachColor: true }], mana: true };
+    }
+    // Chrome Mox: "Add one mana of any of the exiled card's colors."
+    if (cost.loyalty === undefined && /^Add one mana of any of the exiled card's colors\.$/.test(effectText)) {
+      if (node.timing || node.maxPerTurn || node.oncePerGame) return null;
+      return { ...node, effects: [{ type: 'add_mana', anyColor: 1, exiledColors: true }], mana: true };
     }
     // Mox Amber: "Add one mana of any color among legendary creatures and planeswalkers you control."
     const among = cost.loyalty === undefined ? /^Add one mana of any color among (.+?)\.$/.exec(effectText) : null;
@@ -992,6 +999,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', nth: ['first', 'second', 'third'].indexOf(nth[2]!) + 1 }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
   }
   if (t === 'an opponent draws a card') return { trigger: { type: 'draw', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  // Orcish Bowmasters: "whenever an opponent draws a card except the first one they draw in each of their draw steps"
+  const exceptFirst = /^(you draw|an opponent draws) a card except the first one (?:you|they) draw in each of (?:your|their) draw steps$/.exec(t);
+  if (exceptFirst) {
+    const opp = exceptFirst[1] !== 'you draw';
+    return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', exceptFirstInDrawStep: true }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
+  }
   const draw = /^(you draw|enchanted player draws) a card$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
@@ -1190,7 +1203,9 @@ export const triggeredRule: GrammarRule = {
         }
         effectText = effectText.replace(/^\w/, (c) => c.toUpperCase());
         const program = parseProgram(effectText, b);
-        return program ? { trig, program, oncePerTurn, condition, zone: b.selfZone } : null;
+        // A triggered ability doesn't work from the hand ("put ~ from your hand onto the battlefield" is unread).
+        if (b.selfZone === 'hand') return null;
+        return program ? { trig, program, oncePerTurn, condition, zone: b.selfZone as 'graveyard' | null } : null;
       });
       if (r) {
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
@@ -1320,7 +1335,7 @@ export const continuousRule: GrammarRule = {
       if (!found) return null;
     }
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
-      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
+      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
     if (fromGraveyard) {
       if (effect.type !== 'continuous') return null;
@@ -1407,6 +1422,16 @@ function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | nu
   }
   const ban = parseCastBan(m[2]!.replace(/^cast /, ''), b);
   return ban ? { type: 'cast_prohibition', who: WHO[m[1]!]!, ...ban } : null;
+}
+
+/** Sigarda's Aid, Shimmer Myr: "You may cast Aura and Equipment spells as though they had flash." (CR 702.8a) */
+function parseFlashFor(body: string, b: Binder): PlayerRuleNode | null {
+  const m = /^You may cast (.+?) spells as though they had flash$/.exec(body);
+  if (!m) return null;
+  const pf = parseFilter(`${m[1]!.replace(/ and /g, ' or ')} spells`, b);
+  if (!pf || !pf.plural) return null;
+  const { zone: _z, ...filter } = pf.filter;
+  return Object.keys(filter).length ? { type: 'player_rule', who: 'you', rule: 'flash', filter } : null;
 }
 
 function parsePlayerRule(body: string): PlayerRuleNode | null {
@@ -1508,7 +1533,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   const effect: ContinuousEffectNode = { type: 'continuous', affected: subject.ref };
   // "gets +2/+0 and has menace", "has hexproof and can't be blocked", "gets -1/-1 and can't block".
   // "gets +1/+0, has "…," and is a Wizard in addition to its other types": a list of predicates.
-  const predicates = m[2]!.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are ))/g, ' and ').replace(/ and and /g, ' and ');
+  // Brotherhood Regalia: "has ward {2}, is an Assassin in addition to its other types, and can't be blocked"
+  const predicates = m[2]!.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't ))/g, ' and ').replace(/ and and /g, ' and ');
   for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? )/)) {
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"

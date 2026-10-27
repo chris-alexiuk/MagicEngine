@@ -29,7 +29,7 @@ export class Binder {
   /** Other phrases with a fixed meaning in this ability ("the blocking creature"). */
   named: Record<string, Ref> = {};
   /** Set when the text moves this object out of a zone ("return ~ from your graveyard"): the ability works there (CR 113.6m). */
-  selfZone: 'graveyard' | null = null;
+  selfZone: 'graveyard' | 'hand' | null = null;
   /** "it" is this object even though it has left the battlefield ("When ~ dies, it deals damage …"). */
   itIsSource = false;
   /** The trigger event has an amount, so "that much" / "that many" means it. */

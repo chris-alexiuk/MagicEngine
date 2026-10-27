@@ -42,6 +42,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Eldritch Evolution: "Search your library for … X or less, where X is …. Put that card onto the battlefield, then
   // shuffle." — the same as one sentence.
   text = text.replace(/(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (?:that card|it) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./, '$1, put it $3, then shuffle$2.');
+  // Thassa's Oracle: "look at the top X cards of your library, where X is your devotion to blue. Put up to one of them on
+  // top of your library and the rest on the bottom of your library in a random order. If X is greater than or equal to
+  // the number of cards in your library, you win the game."
+  const oracle = /^[Ll]ook at the top X cards of your library, where X is your devotion to (\w+)\. Put up to one of them on top of your library and the rest on the bottom of your library in a random order\. If X is greater than or equal to the number of cards in your library, you win the game\.$/.exec(text.trim());
+  if (oracle && COLOR_WORDS[oracle[1]!]) {
+    const x = { kind: 'devotion', colors: [COLOR_WORDS[oracle[1]!]] };
+    return [
+      { type: 'dig', amount: x, take: 1, upTo: true, to: 'top', rest: 'bottom', order: 'random' },
+      { type: 'if', cond: { type: 'amount', amount: x, op: 'ge', n: { kind: 'cards', zone: 'library', who: 'you' } }, effects: [{ type: 'game_result', who: { ref: 'you' }, result: 'win' }] },
+    ];
+  }
   // Sylvan Library (CR 121.1, 119.4)
   if (/^You may draw two additional cards\. If you do, choose two cards in your hand drawn this turn\. For each of those cards, pay 4 life or put the card on top of your library\.$/.test(text.trim())) {
     return [{ type: 'sylvan_library' }];
@@ -58,6 +69,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     let previous: EffectNode[] = [];
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
+      // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
+      s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
@@ -348,7 +361,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "Look at the top card of your library. If it's a land card, you may put it onto the battlefield tapped.
       // (Otherwise, put it into your hand.)" — one card, maybe taken.
       const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
-      const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      // Herald's Horn: "If it's a creature card of the chosen type, you may reveal it and put it into your hand."
+      const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card(?: of the chosen type)?, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      const ofChosen = Boolean(ifIts && / card of the chosen type, /.test(sentences[i + 1]!));
       // Chaos Warp: "The owner of target permanent shuffles it into their library, then reveals the top card of their
       // library. If it's a permanent card, they put it onto the battlefield."
       const warp = /^(.+?), then reveals the top card of their library$/.exec(s);
@@ -378,6 +393,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const pf = parseFilter(`${ifIts[1]} card in your library`, b);
         if (!pf) return null;
         const { zone: _z, owner: _o, ...filter } = pf.filter;
+        if (ofChosen) filter.chosenType = true;
         const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't put the card (?:onto the battlefield|into your hand)), put (?:it|that card) (into your hand|into your graveyard|on the bottom of your library)$/.exec(sentences[i + 2]!) : null;
         const to = ifIts[3]!.startsWith('onto') ? 'battlefield' : ifIts[3] === 'into your hand' ? 'hand' : 'graveyard';
         const rest = otherwise ? (otherwise[1] === 'into your hand' ? 'hand' : otherwise[1] === 'into your graveyard' ? 'graveyard' : 'bottom') : 'top';
@@ -1101,6 +1117,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^[Cc]lash with an opponent$/.test(s)) return [{ type: 'clash' }];
   // "Discard all the cards in your hand, then draw that many cards", "discard up to two cards, then draw that many cards",
   // Flux: "Each player discards any number of cards, then draws that many cards." (CR 701.9, 121.1)
+  // Valakut Awakening: "Put any number of cards from your hand on the bottom of your library, then draw that many cards plus one."
+  const bottom = /^Put any number of cards from your hand on the bottom of your library, then draw that many cards( plus one)?$/.exec(s);
+  if (bottom) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'any', to: 'bottom', ...(bottom[1] ? { delta: 1 } : {}) }];
   const wheel = /^(?:(.+?) )?(?:discards?|[Dd]iscard) (all the cards in (?:your|their) hand|any number of cards|up to (\w+) cards), then (?:draws?|draw) that many cards( plus one| minus one)?$/.exec(s);
   if (wheel) {
     const r = attempt(b, (b) => {
@@ -1712,7 +1731,7 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) \S+ counters? on it)?$/.exec(args);
-    if (onto && !/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$/.test(onto[1]!)) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$/.test(onto[1]!)) || onto[1] === '~ from your hand')) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -1753,6 +1772,14 @@ const VERBS: Record<string, VerbHandler> = {
       return [{ type: 'exile_top', amount, who: owner }];
     }
     if (!imperative) return null;
+    // Imprint (Chrome Mox, Isochron Scepter): "exile a nonartifact, nonland card from your hand" — chosen as it resolves.
+    const fromHand = /^(a|an) ((?:.+? )?card\b.*?) from your hand$/.exec(args);
+    if (fromHand) {
+      const pf = parseFilter(`${fromHand[2]!} in your hand`, b);
+      if (!pf || pf.plural) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: 1, then: 'exile' }];
+    }
     // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
     const until = / until ~ leaves the battlefield$/.exec(args);
     const what = parseObjectRef(until ? args.slice(0, until.index) : args, b);

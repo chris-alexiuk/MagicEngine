@@ -15,7 +15,7 @@ import { replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -234,6 +234,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (chosen.length !== 1 || !crewCandidates(g, player, o).includes(chosen[0]!)) throw new RulesError('Choose another untapped creature you control to tap.');
     } else if (c.type === 'discard_hand') {
       // CR 701.9b: always possible, even with no cards in hand.
+    } else if (c.type === 'exile_self_battlefield') {
+      if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t exile ${nameOf(g, o)}.`);
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -290,7 +292,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       events.push({ type: 'sacrificed', object: o.id, player });
       moveObject(g, o.id, 'graveyard', events);
-    } else if (c.type === 'exile_self' || c.type === 'exile_self_hand') {
+    } else if (c.type === 'exile_self' || c.type === 'exile_self_hand' || c.type === 'exile_self_battlefield') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
     } else if (c.type === 'discard_hand') {

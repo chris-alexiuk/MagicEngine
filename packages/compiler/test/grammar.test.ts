@@ -1637,3 +1637,20 @@ describe('slice 151', () => {
     expect(parse('{T}: Put a +1/+1 counter on each green creature that entered this turn.', 'Land', 'O').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { filter: { enteredThisTurn: true } } }] });
   });
 });
+
+describe('slice 152', () => {
+  it('reads Bowmasters, Herald\'s Horn, flash grants and imprint', () => {
+    expect(parse('When this creature enters and whenever an opponent draws a card except the first one they draw in each of their draw steps, this creature deals 1 damage to any target. Then amass Orcs 1.', 'Creature — Orc Archer', 'O').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters' }, { type: 'draw', who: 'opponent', exceptFirstInDrawStep: true }] } });
+    expect(parse("At the beginning of your upkeep, look at the top card of your library. If it's a creature card of the chosen type, you may reveal it and put it into your hand.", 'Artifact', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'dig', to: 'hand', filter: { types: ['Creature'], chosenType: true }, optional: true }] });
+    expect(parse('You may cast Aura and Equipment spells as though they had flash.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'flash', filter: { subtypes: ['Aura', 'Equipment'] } } });
+    expect(parse('Imprint — When this artifact enters, you may exile a nonartifact, nonland card from your hand.', 'Artifact', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'choose_from_hand', then: 'exile' }] }] });
+    expect(parse("{T}: Add one mana of any of the exiled card's colors.", 'Artifact', 'C').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', exiledColors: true }] });
+  });
+  it('reads Talon Gates, "Exile this land" costs, Valakut Awakening, Entish Restoration and Thassa\'s Oracle', () => {
+    expect(parse('{4}: Put this card from your hand onto the battlefield.', 'Land', 'Talon Gates of Madara').abilities[0]).toMatchObject({ zone: 'hand', effects: [{ type: 'move', what: { ref: 'self' }, to: 'battlefield' }] });
+    expect(parse('{3}, {T}, Exile this land: Target legendary creature gains hexproof and indestructible until end of turn.', 'Land', 'P').abilities[0]).toMatchObject({ cost: { other: [{ type: 'exile_self_battlefield' }] } });
+    expect(parse('Put any number of cards from your hand on the bottom of your library, then draw that many cards plus one.', 'Instant', 'V').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', to: 'bottom', delta: 1 }] });
+    expect(parse('Draw two cards. If you control a creature with power 4 or greater, instead draw three cards.', 'Instant', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ type: 'draw', amount: 3 }], else: [{ type: 'draw', amount: 2 }] }] });
+    expect(parse('When this creature enters, look at the top X cards of your library, where X is your devotion to blue. Put up to one of them on top of your library and the rest on the bottom of your library in a random order. If X is greater than or equal to the number of cards in your library, you win the game.', 'Creature — Merfolk Wizard', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'dig', to: 'top', rest: 'bottom' }, { type: 'if', effects: [{ type: 'game_result', result: 'win' }] }] });
+  });
+});

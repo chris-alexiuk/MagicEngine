@@ -1,4 +1,4 @@
-import type { ConditionNode, ObjectFilter } from '@mtg/schema';
+import type { AmountExpr, ConditionNode, ObjectFilter } from '@mtg/schema';
 import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects } from './resolve.js';
@@ -25,6 +25,8 @@ export interface TurnLog {
   noncreatureCast: PlayerId[];
   /** Active players who have drawn in this turn's draw step ("except the first one you draw in each of your draw steps"). */
   drawStepDrew?: PlayerId[];
+  /** Cards the active player has actually drawn in this turn's draw step (Orcish Bowmasters). */
+  drawStepCards?: number;
   /** What died this turn, as it last existed ("for each creature that died this turn"). */
   died?: { controller: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
@@ -242,8 +244,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return mine.some((d) => (cond.subtype !== undefined && d.types.includes('Creature') && d.subtypes.includes(String(cond.subtype))) || (cond.orCommander && d.commander));
     }
     case 'amount':
-      // "if X is 5 or more" (ravenous, CR 702.156a)
-      return cmp(amountOf(ctx, cond.amount), cond);
+      // "if X is 5 or more" (ravenous, CR 702.156a); Thassa's Oracle: "if X is greater than or equal to the number of
+      // cards in your library" — two counts.
+      return cmp(amountOf(ctx, cond.amount), typeof cond.n === 'object' && cond.n ? { ...cond, n: amountOf(ctx, cond.n as AmountExpr) } : cond);
     case 'compare_stats': {
       // CR 702.100a (evolve): either stat greater.
       const [a] = refObjects(ctx, cond.of as never);

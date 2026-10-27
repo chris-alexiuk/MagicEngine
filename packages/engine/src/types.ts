@@ -692,7 +692,8 @@ export type GameEvent =
   | { type: 'game_started'; order: PlayerId[] }
   | { type: 'shuffled'; player: PlayerId }
   /** nth: which card this is that the player drew this turn. */
-  | { type: 'drew'; player: PlayerId; object: ObjectId; nth?: number; revealed?: true }
+  /** `firstInDrawStep`: the first card the active player draws in their draw step (CR 504.1). */
+  | { type: 'drew'; player: PlayerId; object: ObjectId; nth?: number; revealed?: true; firstInDrawStep?: true }
   | { type: 'mulligan'; player: PlayerId; count: number }
   | { type: 'kept'; player: PlayerId; bottomed: number }
   | { type: 'turn_began'; turn: number; player: PlayerId }

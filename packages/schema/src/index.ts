@@ -529,6 +529,8 @@ export interface AddManaEffect extends EffectNode {
   /** Mox Amber: "any color among legendary creatures and planeswalkers you control"; with `eachColor`, Bloom Tender's "For each color among permanents you control, add one mana of that color". */
   colorsAmong?: ObjectFilter;
   eachColor?: true;
+  /** Chrome Mox: "one mana of any of the exiled card's colors" — cards exiled with the source (CR 607.2a). */
+  exiledColors?: true;
   /** CR 106.6: "Spend this mana only to …" — what the mana can pay for. */
   spend?: ManaSpend;
   /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
@@ -836,6 +838,8 @@ export interface PlayerRuleNode extends EffectNode {
   /** For extra_lands: how many more. */
   amount?: number;
   condition?: ConditionNode;
+  /** flash: only for these spells ("You may cast Aura and Equipment spells as though they had flash"). */
+  filter?: ObjectFilter;
 }
 
 /** A token as created: a face definition plus a name (CR 111.4). */
@@ -875,7 +879,7 @@ export const CORE_NODES = {
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
     'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */

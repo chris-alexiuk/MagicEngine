@@ -418,7 +418,10 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
   const drawn = (g.turnLog.drawn ??= {});
   drawn[player] = (drawn[player] ?? 0) + 1;
   ((g.turnLog.drawnIds ??= {})[player] ??= []).push(top);
-  events.push({ type: 'drew', player, object: top, nth: drawn[player] });
+  const inDrawStep = g.step === 'draw' && g.active === player;
+  const first = inDrawStep && !g.turnLog.drawStepCards;
+  if (inDrawStep) g.turnLog.drawStepCards = (g.turnLog.drawStepCards ?? 0) + 1;
+  events.push({ type: 'drew', player, object: top, nth: drawn[player], ...(first ? { firstInDrawStep: true as const } : {}) });
 }
 
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */

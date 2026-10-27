@@ -103,7 +103,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const many = effect.anyColor || (effect.options?.length ?? 0) > 1;
     if (many && choice === undefined) {
       const labels = effect.anyColor
-        ? anyColorChoices(ctx.g, ctx.controller, effect.identity, effect)
+        ? anyColorChoices(ctx.g, ctx.controller, effect.identity, effect, ctx.source)
         : effect.options!.map((opt) => opt.map((s) => `{${s === 'chosen' ? ctx.source?.chosen?.color ?? '?' : s}}`).join(''));
       if (!labels.length) return true;
       const answer = answerOf(ctx, 'choose_option');
@@ -116,7 +116,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const color = typeof choice === 'string' ? choice : undefined;
       if (!color || (color === 'C' && !effect.anyType) || !MANA_COLORS.includes(color)) return false;
       // CR 106.7: only a type those lands could produce.
-      if ((effect.couldProduce || effect.colorsAmong) && !anyColorChoices(ctx.g, ctx.controller, undefined, effect).includes(color)) return false;
+      if ((effect.couldProduce || effect.colorsAmong || effect.exiledColors) && !anyColorChoices(ctx.g, ctx.controller, undefined, effect, ctx.source).includes(color)) return false;
       // CR 903.4f: only a color in the commander's color identity.
       if (effect.identity && !anyColorChoices(ctx.g, ctx.controller, true).includes(color)) return false;
       mana = Array.from({ length: effect.anyColor }, () => color);
@@ -778,7 +778,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     for (const id of chosen) {
-      if (node.then === 'exile') moveObject(g, id, 'exile', ctx.events);
+      if (node.then === 'exile') {
+        moveObject(g, id, 'exile', ctx.events);
+        // Imprint (Chrome Mox): "the exiled card" is the one this ability exiled (CR 607.2a).
+        const src = ctx.source;
+        if (src && src.id !== id && g.objects[id]!.zone === 'exile') g.objects[id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
+      }
       else if (node.then === 'battlefield') moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
       else discardCard(g, id, ctx.events);
     }
@@ -2087,13 +2092,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             memo.counts.push(0);
             continue;
           }
-          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: 0, max, text: `Discard ${node.mode === 'up_to' ? `up to ${max}` : 'any number of'} cards, then draw that many.` } };
+          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: 0, max, text: `${node.to === 'bottom' ? 'Put' : 'Discard'} ${node.mode === 'up_to' ? `up to ${max}` : 'any number of'} cards${node.to === 'bottom' ? ' on the bottom of your library' : ''}, then draw that many.` } };
         }
         chosen = answer.objects;
         if (chosen.length > max || new Set(chosen).size !== chosen.length || !chosen.every((id) => hand.includes(id))) throw new RulesError(`Choose up to ${max} cards in your hand.`);
         answer = null;
       }
-      for (const id of chosen) discardCard(g, id, ctx.events);
+      for (const id of chosen) {
+        if (node.to === 'bottom') moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+        else discardCard(g, id, ctx.events);
+      }
       memo.counts.push(chosen.length);
       memo.i = i + 1;
     }
@@ -2916,6 +2924,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     // "Whenever you draw your second card each turn"
     if (t.nth && e.nth !== t.nth) return [];
+    // Orcish Bowmasters: "except the first one they draw in each of their draw steps"
+    if (t.exceptFirstInDrawStep && e.firstInDrawStep) return [];
     return [{ player: e.player }];
   },
   // CR 508.3d: "Whenever you attack" (with N or more creatures) — once as you declare attackers;

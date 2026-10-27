@@ -51,8 +51,18 @@ function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', an
 }
 
 /** The colors an "any color" mana ability can make for this player. */
-export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined, effect?: AddManaEffect): ManaColor[] {
+export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined, effect?: AddManaEffect, source?: GameObject | null): ManaColor[] {
   if (effect?.couldProduce) return producible(g, player, effect.couldProduce, Boolean(effect.anyType));
+  // Chrome Mox: the colors of the card it imprinted.
+  if (effect?.exiledColors) {
+    if (!source) return [];
+    const colors = new Set<ManaColor>();
+    for (const id of g.zones.exile) {
+      const o = g.objects[id]!;
+      if (o.exiledBy?.id === source.id && o.exiledBy.zcc === source.zcc) for (const c of g.cards[o.card]?.faces[0]?.colors ?? []) colors.add(c as ManaColor);
+    }
+    return [...colors];
+  }
   if (effect?.colorsAmong) return colorsAmong(g, player, effect.colorsAmong, null) as ManaColor[];
   const all: ManaColor[] = ['W', 'U', 'B', 'R', 'G'];
   if (!identity) return all;

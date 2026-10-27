@@ -381,6 +381,11 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       b.selfZone = 'graveyard';
       return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     }
+    // Talon Gates of Madara: "{4}: Put this card from your hand onto the battlefield." — activated from the hand.
+    if (t === '~ from your hand') {
+      b.selfZone = 'hand';
+      return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
+    }
     if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
     if (/^(?:it|that card) from (?:your|its owner's|their) graveyard$/i.test(t) && b.it && b.it.ref !== 'self') return { ref: b.it, plural: false, targeted: false };

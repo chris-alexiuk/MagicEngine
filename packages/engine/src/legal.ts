@@ -14,7 +14,7 @@ import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameS
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { mayPlayFrom, playableFromExile, playableFromTop } from './permissions.js';
-import { landsAllowed, playerRule } from './player-rules.js';
+import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { activationsThisTurn } from './actions.js';
 import { bestowedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
@@ -67,7 +67,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         }
         return;
       }
-      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
+      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o);
       if (!instantSpeed && !mainPhaseEmptyStack) return;
       // One of its additional costs is chosen as it's cast: listed with the cast options.
       if (hasCostChoice(face)) return;
@@ -244,7 +244,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color").
       const effect = ab.effects[0] as AddManaEffect | undefined;
       if (effect?.anyColor) {
-        for (const choice of anyColorChoices(g, player, effect.identity, effect)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
+        for (const choice of anyColorChoices(g, player, effect.identity, effect, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
       } else if (effect?.options && effect.options.length > 1) {
         effect.options.forEach((opt, choice) => {
           if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
@@ -288,7 +288,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
   const face = g.cards[o.card]!.faces[0]!;
   const options = castOptions(face);
   if (!options.length || face.types.includes('Land')) return [];
-  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || playerRule(g, player, 'flash');
+  const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o);
   const out: Action[] = [];
   // With a required choice of additional costs, the bot casts it paying one of them (and no other options).
   const required = options.some((x) => x.required);
