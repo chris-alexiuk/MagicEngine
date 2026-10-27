@@ -285,6 +285,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
       const m = /^[Pp]ut (\S+) (\S+) counters? on ~$/.exec(item)!;
       (cost.other ??= []).push({ type: 'put_counters_self', counter: m[2]!.replace(/−/g, '-'), amount: parseAmount(m[1]!.replace(/^an$/, 'a')) ?? 1 });
     }
+    // Millikin: "Mill a card" (CR 701.17b).
+    else if (/^[Mm]ill (a card|two cards|three cards)$/.test(item)) (cost.other ??= []).push({ type: 'mill', amount: { 'a card': 1, 'two cards': 2, 'three cards': 3 }[/^[Mm]ill (.+)$/.exec(item)![1]!]! });
     // Relic of Progenitus, Plaza of Heroes: "Exile this artifact", "Exile this land" (CR 118.3).
     else if (/^[Ee]xile ~$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_battlefield' });
     // Lion's Eye Diamond: "Discard your hand" (CR 701.9b).
@@ -1019,7 +1021,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
   // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
-  const countersOn = /^one or more ([+-]\d+\/[+-]\d+|\w+) counters are put on (~|(?:a|an|another) (.+?))$/.exec(t);
+  // Exemplar of Light: "Whenever you put one or more +1/+1 counters on this creature" — counters you put on (CR 122.6).
+  const youPut = /^you put one or more ([+-]\d+\/[+-]\d+|\w+) counters on (~|(?:a|an|another) (.+?))$/.exec(t);
+  const countersOn = /^one or more ([+-]\d+\/[+-]\d+|\w+) counters are put on (~|(?:a|an|another) (.+?))$/.exec(t) ?? youPut;
   if (countersOn) {
     let subject: Ref = { ref: 'self' };
     if (countersOn[3]) {
@@ -1029,7 +1033,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       subject = { ref: 'all', filter: pf.filter };
     }
     b.eventAmount = true;
-    return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+    return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject, ...(youPut ? { byYou: true } : {}) }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
   }
   // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
   // Mayhem Devil: "Whenever a player sacrifices a permanent"
@@ -1972,6 +1976,12 @@ export const quantityReplacementRule: GrammarRule = {
     if (tokens) {
       const op = quantityOp(tokens[1]!);
       return op ? make({ event: 'tokens', who: 'you', ...op }) : null;
+    }
+    // Primal Vigor: "If one or more tokens would be created, twice that many of those tokens are created instead." — anyone's.
+    const anyTokens = /^If one or more tokens would be created, (.+?) of those tokens are created instead\.$/.exec(line);
+    if (anyTokens) {
+      const op = quantityOp(anyTokens[1]!);
+      return op ? make({ event: 'tokens', who: 'each', ...op }) : null;
     }
     const counters = /^If one or more (\S+) counters would be put on (.+?), (.+?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (counters) {

@@ -1736,3 +1736,16 @@ describe('slice 156', () => {
     expect(parse('Destroy all artifacts and enchantments. For each permanent destroyed this way, its controller creates a 3/3 green Centaur creature token.', 'Sorcery', 'R').abilities[0]).toMatchObject({ effects: [{}, { type: 'create_token', forEachMoved: { how: 'destroyed' } }] });
   });
 });
+
+describe('slice 157', () => {
+  it('reads "shares a creature type with it"', () => {
+    expect(parse('Whenever a creature you control attacks, it gets +1/+0 until end of turn for each other attacking creature that shares a creature type with it.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effects: [{ power: { kind: 'count', filter: { sharesCreatureTypeWith: { ref: 'trigger_object' }, otherThan: { ref: 'trigger_object' } } } }] });
+    expect(parse('Equipped creature gets +1/+1 for each other creature you control that shares a creature type with it.', 'Artifact — Equipment', 'S').abilities[0]).toMatchObject({ effect: { power: { kind: 'count', filter: { sharesCreatureTypeWith: { ref: 'attached' }, otherThan: { ref: 'attached' } } } } });
+    expect(parse('Each creature gets +1/+1 for each other creature on the battlefield that shares at least one creature type with it.', 'Artifact', 'C').unparsed).toHaveLength(1);
+  });
+  it('reads "you put counters on", Primal Vigor and mill costs', () => {
+    expect(parse('Whenever you put one or more +1/+1 counters on this creature, draw a card. This ability triggers only once each turn.', 'Creature — Angel', 'E').abilities[0]).toMatchObject({ trigger: { type: 'counters_put', byYou: true, subject: { ref: 'self' } }, oncePerTurn: true });
+    expect(parse('If one or more tokens would be created, twice that many of those tokens are created instead.', 'Enchantment', 'P').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'tokens', who: 'each', op: 'double' } });
+    expect(parse('{T}, Mill a card: Add {C}.', 'Artifact Creature — Construct', 'M').abilities[0]).toMatchObject({ mana: true, cost: { tap: true, other: [{ type: 'mill', amount: 1 }] } });
+  });
+});

@@ -426,6 +426,8 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       exile.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, source, c)) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
+    // CR 701.17b: "Mill a card" as a cost needs a card to mill.
+    else if (c.type === 'mill' && zoneList(g, 'library', player).length < n) return null;
     else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
     else if (c.type === 'return_permanents') {

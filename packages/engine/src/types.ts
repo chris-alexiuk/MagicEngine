@@ -800,7 +800,8 @@ export type GameEvent =
   | { type: 'resolved'; entry: StackEntry }
   /** `firstGain`: the first time this player gained life this turn (set as the turn log records it). */
   | { type: 'life'; player: PlayerId; delta: number; life: number; firstGain?: true }
-  | { type: 'counters'; object: ObjectId; counter: string; delta: number }
+  /** `by`: the player who put them on ("Whenever you put one or more +1/+1 counters on …"). */
+  | { type: 'counters'; object: ObjectId; counter: string; delta: number; by?: PlayerId }
   | { type: 'manual'; player: PlayerId; op: ManualOp }
   | { type: 'attacks_declared'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
   | { type: 'blocks_declared'; player: PlayerId; blocks: { blocker: ObjectId; attacker: ObjectId }[] }

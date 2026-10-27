@@ -132,7 +132,17 @@ export function canAutomate(ability: { effects: EffectNode[] }): boolean {
   return ability.effects.every((e) => effects.has(e.type));
 }
 
-export function onEnterBattlefield(g: GameState, o: GameObject, _events: GameEvent[]): void {
+export function onEnterBattlefield(g: GameState, o: GameObject, events: GameEvent[]): void {
+  // CR 122.6: counters it enters with are "put on" it too — "Whenever one or more +1/+1 counters are put on …" sees them.
+  const before = { ...o.counters };
+  applyEnterReplacements(g, o);
+  for (const [counter, n] of Object.entries(o.counters)) {
+    const delta = n - (before[counter] ?? 0);
+    if (delta > 0) events.push({ type: 'counters', object: o.id, counter, delta, by: o.controller });
+  }
+}
+
+function applyEnterReplacements(g: GameState, o: GameObject): void {
   // CR 708.3: a permanent that enters face down has no abilities as it enters.
   if (o.faceDown) return;
   const at = o.copyOf ?? o;

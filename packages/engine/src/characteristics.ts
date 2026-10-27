@@ -114,6 +114,11 @@ export function grantedKeywordOff(g: GameState, o: GameObject, id: string): Keyw
   return undefined;
 }
 
+/** CR 205.3m / 702.73a: its creature types (changeling: all of them). */
+export function creatureTypesOf(c: Characteristics): readonly string[] {
+  return c.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : c.subtypes.filter((s) => CREATURE_TYPES.includes(s));
+}
+
 /** CR 205.3m / 702.73a: whether it has a creature type one of this player's commanders has (changeling: all of them). */
 function sharesTypeWithCommander(g: GameState, c: Characteristics, player: PlayerId | undefined): boolean {
   const kinds = (x: Characteristics) => (x.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : x.subtypes.filter((s) => CREATURE_TYPES.includes(s)));
@@ -714,6 +719,17 @@ export function matchesFilter(
   // Oran-Rief: "that entered this turn" — on the battlefield since it entered this turn.
   if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;
   if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
+  // Shared Animosity: "that shares a creature type with it" — bound to that object's types as the effect applies
+  // (bindFilter); unbound, it matches nothing.
+  if (f.sharesCreatureTypeWith && !f.sharesCreatureTypes) {
+    // Folk Hero: "a spell that shares a creature type with this creature" — the source itself needs no binding.
+    if ((f.sharesCreatureTypeWith as { ref?: string }).ref !== 'self' || !ctx.source) return false;
+    const theirs = creatureTypesOf(chars(g, ctx.source));
+    if (!creatureTypesOf(c).some((t) => theirs.includes(t))) return false;
+  }
+  if (f.sharesCreatureTypes && !creatureTypesOf(c).some((t) => f.sharesCreatureTypes!.includes(t))) return false;
+  if (f.otherThan && f.notObject === undefined && !((f.otherThan as { ref?: string }).ref === 'self' && ctx.source && ctx.source.id !== o.id)) return false;
+  if (f.notObject !== undefined && f.notObject === o.id) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
   if (f.chosenName && !(ctx.source?.chosen?.cardName && g.cards[o.card]?.faces.some((x) => x.name === ctx.source!.chosen!.cardName) && !o.faceDown)) return false;
   return true;

@@ -932,7 +932,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     // CR 606.4: the cost is putting on or removing loyalty counters.
     o.counters.loyalty = (o.counters.loyalty ?? 0) + cost.loyalty;
     o.loyaltyActivatedTurn = g.turn;
-    events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty });
+    events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty, by: player });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
   if (ability.maxPerTurn) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };
@@ -998,7 +998,7 @@ function activateManual(
     // CR 606.4: the cost is adding or removing loyalty counters.
     o.counters.loyalty = current + delta;
     o.loyaltyActivatedTurn = g.turn;
-    events.push({ type: 'counters', object: id, counter: 'loyalty', delta });
+    events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
   } else {
     // CR 602.5d: "Activate only as a sorcery" follows sorcery timing.
     if (/Activate only as a sorcery/i.test(effectText) && !sorcerySpeed()) {

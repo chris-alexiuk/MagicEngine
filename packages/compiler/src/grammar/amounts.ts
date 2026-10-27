@@ -1,4 +1,4 @@
-import type { Amount, AmountExpr, Color, EffectNode, ObjectFilter } from '@mtg/schema';
+import type { Amount, AmountExpr, Color, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { COLOR_WORDS, parseAmount } from './words.js';
@@ -24,7 +24,11 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   const other = /^(?:other|another) (.+)$/.exec(text.trim());
   if (other) {
     const inner = objects(other[1]!, b, plural);
-    return inner?.kind === 'count' ? { ...inner, filter: { ...inner.filter, other: true } } : null;
+    if (inner?.kind !== 'count') return null;
+    // Shared Animosity: "each other attacking creature that shares a creature type with it" — other than it.
+    const about = inner.filter.sharesCreatureTypeWith as Ref | undefined;
+    if (about && about.ref !== 'self') return { ...inner, filter: { ...inner.filter, otherThan: about } };
+    return { ...inner, filter: { ...inner.filter, other: true } };
   }
   const t = text.trim();
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"

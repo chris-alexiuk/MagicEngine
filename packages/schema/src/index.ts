@@ -354,6 +354,13 @@ export interface ObjectFilter {
   chosenName?: true;
   /** Path of Ancestry: "a creature spell that shares a creature type with your commander". */
   sharesTypeWithCommander?: true;
+  /** Shared Animosity: "that shares a creature type with it" (CR 205.3m) — it being this object. */
+  sharesCreatureTypeWith?: Ref;
+  /** "each other attacking creature that shares a creature type with it": other than it, not other than the source. */
+  otherThan?: Ref;
+  /** Set by the engine as an effect applies: the creature types `sharesCreatureTypeWith` stands for, and `otherThan`'s id. */
+  sharesCreatureTypes?: string[];
+  notObject?: string;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
   /** Oran-Rief: "each green creature that entered this turn" */
@@ -921,7 +928,7 @@ export const CORE_NODES = {
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
     'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched',
   ],
-  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self'],
+  costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */

@@ -1,5 +1,5 @@
-import type { Amount, AmountExpr, EffectNode, Ref } from '@mtg/schema';
-import { chars, colorsAmong, matchesFilter, power, toughness } from './characteristics.js';
+import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
+import { chars, colorsAmong, creatureTypesOf, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -98,9 +98,10 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       const owners = ref.filter.controlledBy ? refPlayers(ctx, ref.filter.controlledBy as Ref) : null;
       // "all cards from target player's graveyard"
       const ownedBy = ref.filter.ownedBy ? refPlayers(ctx, ref.filter.ownedBy as Ref) : null;
+      const filter = bindFilter(ctx, ref.filter);
       return ids
         .map((id) => g.objects[id]!)
-        .filter((o) => o && (!owners || owners.includes(o.controller)) && (!ownedBy || ownedBy.includes(o.owner)) && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
+        .filter((o) => o && (!owners || owners.includes(o.controller)) && (!ownedBy || ownedBy.includes(o.owner)) && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null }));
     }
     case 'created': {
       // "the token", "sacrifice it at the beginning of the next end step"
@@ -240,7 +241,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'count': {
       // "for each creature target player controls"
       const owners = e.filter.controlledBy ? refPlayers(ctx, e.filter.controlledBy as Ref) : null;
-      return g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, e.filter, { controller: ctx.controller, source })).length;
+      const filter = bindFilter(ctx, e.filter);
+      return g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source })).length;
     }
     case 'cards': {
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
@@ -402,6 +404,21 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     default:
       return 0;
   }
+}
+
+/**
+ * Binds a filter's references to objects as an effect applies: "that shares a creature type with it" becomes those
+ * creature types, "other than it" that object (CR 608.2h).
+ */
+export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
+  if (!f.sharesCreatureTypeWith && !f.otherThan) return f;
+  const out: ObjectFilter = { ...f };
+  if (f.sharesCreatureTypeWith) {
+    const [o] = refObjects(ctx, f.sharesCreatureTypeWith as Ref);
+    out.sharesCreatureTypes = o ? [...creatureTypesOf(chars(ctx.g, o))] : [];
+  }
+  if (f.otherThan) out.notObject = refObjects(ctx, f.otherThan as Ref)[0]?.id ?? '';
+  return out;
 }
 
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */

@@ -23,7 +23,7 @@ import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, apnap, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, apnap, bindFilter, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
@@ -64,7 +64,7 @@ function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: numb
   n = replaceQuantity(ctx.g, 'counters', n, { player: ctx.controller, object: o, counter });
   if (n <= 0) return;
   o.counters[counter] = (o.counters[counter] ?? 0) + n;
-  ctx.events.push({ type: 'counters', object: o.id, counter, delta: n });
+  ctx.events.push({ type: 'counters', object: o.id, counter, delta: n, by: ctx.controller });
 }
 
 const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectResult> = {
@@ -2541,7 +2541,9 @@ function chooserOf(node: EffectNode, ctx: EffectContext): PlayerId | null {
  * A filter with its numbers worked out as the effect resolves: "with mana value X or less" (the spell's X), or what the
  * text says X is ("where X is the sacrificed creature's mana value", CR 107.3a).
  */
-function liveFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
+function liveFilter(ctx: EffectContext, f0: ObjectFilter): ObjectFilter {
+  // Heirloom Blade: "a creature card that shares a creature type with it"
+  const f = bindFilter(ctx, f0);
   const n = f.manaValue?.n;
   if (n === 'X') return { ...f, manaValue: { ...f.manaValue!, n: ctx.x } };
   if (n !== undefined && typeof n === 'object') return { ...f, manaValue: { ...f.manaValue!, n: amountOf(ctx, n) } };
@@ -3186,9 +3188,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   counters_put(t, check) {
     const e = check.event;
     if (e.type !== 'counters' || e.delta <= 0 || check.sourceLeft || e.counter !== t.counter) return [];
+    // "Whenever you put one or more +1/+1 counters on …"
+    if (t.byYou && e.by !== check.controller) return [];
     const o = check.g.objects[e.object];
     if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
-    const together = (check.batch ?? [e]).filter((x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && x.counter === e.counter);
+    const together = (check.batch ?? [e]).filter((x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && x.counter === e.counter && (!t.byYou || x.by === check.controller));
     if (together[0] !== e) return [];
     return [{ object: refTo(o), amount: together.reduce((n, x) => n + (x.type === 'counters' ? x.delta : 0), 0) }];
   },

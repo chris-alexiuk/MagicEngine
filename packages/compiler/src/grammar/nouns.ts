@@ -49,6 +49,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that (?:aren't|isn't) of the chosen type$/, (f) => !f.notChosenType && ((f.notChosenType = true), true)],
   [/ of (?:the chosen|that) type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ that shares a creature type with your commander$/, (f) => !f.sharesTypeWithCommander && ((f.sharesTypeWithCommander = true), true)],
+  // Shared Animosity: "that shares a creature type with it"; Coat of Arms: "that shares at least one creature type with it"
+  [/ that shares? (?:at least one|a) creature type with (it|~|this creature|that creature)$/, (f, m, b) => {
+    if (f.sharesCreatureTypeWith) return false;
+    // One object: not "each creature … with it" (Coat of Arms compares each creature with itself in turn).
+    const about: Ref | null = m[1] === '~' || m[1] === 'this creature' ? { ref: 'self' } : b.it && ['self', 'trigger_object', 'attached', 'target'].includes(b.it.ref) ? b.it : null;
+    return Boolean(about && ((f.sharesCreatureTypeWith = about), true));
+  }],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],

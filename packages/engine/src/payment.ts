@@ -15,7 +15,7 @@ import { replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -114,7 +114,7 @@ export function blight(g: GameState, player: PlayerId, target: GameObject, n: nu
   const amount = replaceQuantity(g, 'counters', n, { player, object: target, counter: '-1/-1' });
   if (amount <= 0) return;
   target.counters['-1/-1'] = (target.counters['-1/-1'] ?? 0) + amount;
-  events.push({ type: 'counters', object: target.id, counter: '-1/-1', delta: amount });
+  events.push({ type: 'counters', object: target.id, counter: '-1/-1', delta: amount, by: player });
 }
 
 /** How much life a cost asks for: a number, or counted now ("Pay life equal to the number of colors in your commanders' color identity"). */
@@ -239,6 +239,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     } else if (c.type === 'put_counters_self') {
       // Devoted Druid: "Put a -1/-1 counter on this creature" — it must be on the battlefield (CR 118.3).
       if (o.zone !== 'battlefield') throw new RulesError(`${nameOf(g, o)} isn’t on the battlefield.`);
+    } else if (c.type === 'mill') {
+      // CR 701.17b: not more cards than the library has.
+      if (zoneList(g, 'library', player).length < Number(c.amount ?? 1)) throw new RulesError('Your library doesn’t have enough cards to mill.');
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -295,11 +298,14 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       events.push({ type: 'sacrificed', object: o.id, player });
       moveObject(g, o.id, 'graveyard', events);
+    } else if (c.type === 'mill') {
+      // Millikin: "{T}, Mill a card: Add {C}." (CR 701.17a)
+      for (const id of zoneList(g, 'library', player).slice(0, Number(c.amount ?? 1))) moveObject(g, id, 'graveyard', events);
     } else if (c.type === 'put_counters_self') {
       const counter = String(c.counter);
       const n = Number(c.amount ?? 1);
       o.counters[counter] = (o.counters[counter] ?? 0) + n;
-      events.push({ type: 'counters', object: o.id, counter, delta: n });
+      events.push({ type: 'counters', object: o.id, counter, delta: n, by: player });
     } else if (c.type === 'exile_self' || c.type === 'exile_self_hand' || c.type === 'exile_self_battlefield') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
