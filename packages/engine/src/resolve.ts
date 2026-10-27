@@ -197,7 +197,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -247,6 +247,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'cards': {
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
       const zone = e.zone;
+      if (e.least && zone !== 'exile') return Math.min(...players.map((p) => (g.zones[zone][p] ?? []).length));
       const ids = zone === 'exile' ? g.zones.exile : players.flatMap((p) => g.zones[zone][p] ?? []);
       return ids.filter((id) => {
         const o = g.objects[id]!;
@@ -296,6 +297,13 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       ).length;
     case 'moved_this_way':
       return movedThisWay(ctx, e).length;
+    // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
+    case 'life_this_turn': {
+      const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.lifeGained;
+      const players = e.who === 'you' ? [ctx.controller] : g.order.filter((p) => p !== ctx.controller);
+      const each = players.map((p) => log?.[p] ?? 0);
+      return e.who === 'an_opponent' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
+    }
     case 'discarded_this_way': {
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});

@@ -6,7 +6,7 @@ import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom 
 import type { AbilityNode, AddManaEffect, Amount, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
 import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
-import { playerRule } from './player-rules.js';
+import { landsAllowed, playerRule } from './player-rules.js';
 import { extraTokens, replaceQuantity } from './quantities.js';
 import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { dealDamage } from './combat.js';
@@ -287,6 +287,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         shuffleInPlace(ctx.g, zoneList(ctx.g, 'library', p));
         ctx.events.push({ type: 'shuffled', player: p });
       }
+      return true;
+    }
+    // Endurance: "puts all the cards from their graveyard on the bottom of their library in a random order".
+    if (to === 'library' && node.position === 'bottom_random') {
+      const ids = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone !== 'stack').map((o) => o.id);
+      shuffleInPlace(ctx.g, ids);
+      for (const id of ids) moveObject(ctx.g, id, 'library', ctx.events, { position: 'bottom' });
       return true;
     }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
@@ -578,8 +585,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
-      until: node.until === 'game' || node.until === 'source_tapped' ? 'game' : 'eot',
+      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' ? 'game' : 'eot',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
+      ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
     });
     return true;
   },
@@ -825,6 +833,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       else if (node.then === 'battlefield') moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
       else discardCard(g, id, ctx.events);
+    }
+    // Through the Breach: "That creature gains haste." — the permanent put onto the battlefield this way.
+    if (node.then === 'battlefield' && ctx.resolution) {
+      ctx.resolution.created = chosen.filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
     }
     return true;
   },
@@ -2206,6 +2218,49 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 702.75a: "Hideaway N" — look at the top N cards of your library, exile one of them face down, and put the rest on
+  // the bottom of your library in a random order. The exiled card is linked to this permanent (CR 607.2a).
+  hideaway(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { looked?: string[] };
+    const looked = (memo.looked ??= zoneList(g, 'library', ctx.controller).slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
+    if (!looked.length) return true;
+    let chosen = looked[0]!;
+    if (looked.length > 1) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: looked, min: 1, max: 1, text: `Choose a card to exile face down (hideaway). The rest go on the bottom of your library in a random order.`, seen: looked } };
+      if (answer.objects.length !== 1 || !looked.includes(answer.objects[0]!)) throw new RulesError('Choose one of those cards.');
+      chosen = answer.objects[0]!;
+    }
+    moveObject(g, chosen, 'exile', ctx.events);
+    const o = g.objects[chosen]!;
+    o.hiddenFor = ctx.controller;
+    const src = ctx.source;
+    if (src && src.id !== chosen) o.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
+    const rest = looked.filter((id) => id !== chosen && g.objects[id]!.zone === 'library');
+    shuffleInPlace(g, rest);
+    for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+    return true;
+  },
+
+  // Hideaway: "You may play the exiled card without paying its mana cost" — a land is played (CR 305.3: only on your
+  // turn, and it uses a land play, CR 305.2); a spell is cast as this resolves (CR 608.2g).
+  play_free(node, ctx) {
+    const g = ctx.g;
+    const o = refObjects(ctx, ref(node, 'what'))[0];
+    if (!o || o.zone === 'stack' || o.zone === 'battlefield') return true;
+    if (castableCard(g, o)) return offerFreeCast(ctx, o.id) ?? true;
+    const ps = g.players[ctx.controller]!;
+    if (g.active !== ctx.controller || ps.landsPlayedThisTurn >= landsAllowed(g, ctx.controller)) return true;
+    const answer = answerOf(ctx, 'may');
+    if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Play ${nameOf(g, o)}?`, sourceName: sourceName(ctx) } };
+    if (!answer.yes) return true;
+    ps.landsPlayedThisTurn++;
+    moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller });
+    ctx.events.push({ type: 'land_played', player: ctx.controller, object: o.id });
+    return true;
+  },
+
   // CR 608.2g: "You may cast it without paying its mana cost."
   cast_free(node, ctx) {
     const o = refObjects(ctx, ref(node, 'what'))[0];
@@ -2478,13 +2533,27 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       applyControlEffects(g, ctx.events);
       return true;
     }
+    // Wishclaw Talisman: "An opponent gains control of this artifact" — one the controller chooses; "Target opponent …".
+    let to: PlayerId | undefined = ctx.controller;
+    if (node.to) to = refPlayers(ctx, ref(node, 'to'))[0];
+    if (node.toOpponent) {
+      const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
+      to = opponents[0];
+      if (opponents.length > 1) {
+        const answer = answerOf(ctx, 'choose_option');
+        if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: opponents, text: `Choose an opponent to gain control of ${objects.map((o) => nameOf(g, o)).join(', ')}.`, sourceName: sourceName(ctx) } };
+        if (!opponents.includes(answer.choice)) throw new RulesError('Choose an opponent.');
+        to = answer.choice;
+      }
+    }
+    if (!to) return true;
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
       source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
       controller: ctx.controller,
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
-      control: ctx.controller,
+      control: to,
       until: node.until === 'eot' ? 'eot' : 'game',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
     });
@@ -2812,6 +2881,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   leaves(t, check) {
     const e = check.event;
     if (e.type !== 'moved' || e.from !== 'battlefield') return [];
+    // Kaya's Ghostform: "When enchanted permanent dies or is put into exile" — only to those zones.
+    if (Array.isArray(t.toZones) && !(t.toZones as string[]).includes(e.to)) return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
@@ -2990,9 +3061,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true }) || !chars(check.g, hit).types.includes('Creature')) return [];
       return [{ object: refTo(hit), amount: e.amount }];
     }
-    // "Whenever ~ deals damage to a player" / "to an opponent": once for each player dealt damage.
-    if (t.to === 'player' || t.to === 'opponent') {
-      if (e.to.kind !== 'player' || (t.to === 'opponent' && e.to.player === check.controller)) return [];
+    // "Whenever ~ deals damage to a player" / "to an opponent": once for each player dealt damage; No Mercy: "to you".
+    if (t.to === 'player' || t.to === 'opponent' || t.to === 'you') {
+      if (e.to.kind !== 'player' || (t.to === 'opponent' && e.to.player === check.controller) || (t.to === 'you' && e.to.player !== check.controller)) return [];
       const to = e.to.player;
       const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat && x.to.kind === 'player' && x.to.player === to);
       if (hits[0] !== e) return [];
@@ -3081,7 +3152,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 508.3e: "Whenever you attack a player" — once for each player attacked.
   you_attack(t, check) {
     const e = check.event;
-    if (e.type !== 'attacks_declared' || check.sourceLeft || check.g.active !== check.controller || !e.attacks.length) return [];
+    if (e.type !== 'attacks_declared' || check.sourceLeft || (!t.anyone && check.g.active !== check.controller) || !e.attacks.length) return [];
     if (typeof t.min === 'number' && e.attacks.length < t.min) return [];
     if (t.perPlayer) {
       const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
@@ -3388,7 +3459,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

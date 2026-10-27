@@ -368,6 +368,8 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   for (const p of Object.values(g.players)) p.landsPlayedThisTurn = 0;
   // "You may play that card this turn" ends with the turn.
   prunePermissions(g);
+  // "until your next turn" effects end as that turn begins.
+  if (g.effects.some((e) => e.untilTurnOf === player)) g.effects = g.effects.filter((e) => e.untilTurnOf !== player);
   // CR 701.15a: goad lasts until the goading player's next turn.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;

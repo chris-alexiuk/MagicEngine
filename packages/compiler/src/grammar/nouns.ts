@@ -89,6 +89,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?!a |an )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?:a counter|counters) on (?:it|them)$/, (f) => !f.counter && ((f.counter = 'any'), true)],
+  // Wave Goodbye: "each creature without a +1/+1 counter on it"
+  [/ without (?:a|an) (\S+) counters? on (?:it|them)$/, (f, m) => !f.notCounter && ((f.notCounter = m[1]!.replace(/−/g, '-')), true)],
+  [/ without (?:a counter|counters) on (?:it|them)$/, (f) => !f.notCounter && ((f.notCounter = 'any'), true)],
   [/ without ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   // Shalai: "each creature you control that doesn't have hexproof"
   [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
@@ -521,9 +524,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'each player') return { ref: 'players', who: 'each' };
   // In a free-for-all game (CR 806), every other player is an opponent: "each other player sacrifices a creature".
   if (t === 'each opponent' || t === 'each of your opponents' || t === 'your opponents' || t === 'each other player') return { ref: 'players', who: 'opponents' };
-  if (t === 'target player' || t === 'target opponent') {
+  // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.
+  const playerTarget = /^(up to one )?target (player|opponent)$/.exec(t);
+  if (playerTarget) {
     const spec: TargetSpec = { what: 'player', text: t };
-    if (t === 'target opponent') spec.player = 'opponent';
+    if (playerTarget[2] === 'opponent') spec.player = 'opponent';
+    if (playerTarget[1]) spec.upTo = true;
     const ref = b.addTarget(spec);
     b.player = ref;
     return ref;

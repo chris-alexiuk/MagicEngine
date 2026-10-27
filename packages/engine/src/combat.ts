@@ -1,5 +1,5 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, StaticAbility } from '@mtg/schema';
+import type { AttackTaxNode, StaticAbility, StaticPreventionNode } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
 import {
@@ -17,6 +17,7 @@ import {
 } from './types.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
+import { amountOf } from './resolve.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
@@ -137,16 +138,27 @@ function combatDamageOf(g: GameState, o: GameObject): number {
   return hasRule(g, o, 'damage_by_toughness') ? toughness(g, o) : power(g, o);
 }
 
+/** CR 701.15: the players who goaded it — by a goad effect, or a static "is goaded" (Shiny Impetus: its controller). */
+export function goaders(g: GameState, o: GameObject): PlayerId[] {
+  const out = [...(o.goadedBy ?? [])];
+  for (const r of chars(g, o).combat) {
+    const by = r.goaded && r.from ? g.objects[r.from]?.controller : undefined;
+    if (by && !out.includes(by)) out.push(by);
+  }
+  return out;
+}
+
 /** CR 508.1d / 701.15b: it attacks each combat if able (or is goaded). */
 export function mustAttack(g: GameState, o: GameObject): boolean {
-  return hasRule(g, o, 'attacks_each_combat') || Boolean(o.goadedBy?.length) || o.attacksPlayer?.turn === g.turn;
+  return hasRule(g, o, 'attacks_each_combat') || goaders(g, o).length > 0 || o.attacksPlayer?.turn === g.turn;
 }
 
 export function attackRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
   // CR 701.15b: a goaded creature attacks a player other than one who goaded it, if able.
-  if (o.goadedBy?.length) {
+  const goadedBy = goaders(g, o);
+  if (goadedBy.length) {
     const defender = defenderOf(g, target);
-    if (defender && o.goadedBy.includes(defender) && attackTargets(g).some((t) => !o.goadedBy!.includes(defenderOf(g, t) ?? '') && !otherRestriction(g, o, t))) {
+    if (defender && goadedBy.includes(defender) && attackTargets(g).some((t) => !goadedBy.includes(defenderOf(g, t) ?? '') && !otherRestriction(g, o, t))) {
       return `${nameOf(g, o)} is goaded: it attacks a player other than the one who goaded it, if able.`;
     }
   }
@@ -184,11 +196,15 @@ export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; 
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
       const e = (a as StaticAbility).effect as AttackTaxNode;
       if (!staticConditionHolds(g, e, src)) continue;
+      // Sphere of Safety: {X} each, X counted now.
+      const n = e.x ? amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, e.x) : 0;
+      if (e.x && n <= 0) continue;
+      const cost = e.x ? `{${n}}` : e.cost;
       for (const { attacker, target } of attacks) {
         const at = target.kind === 'player' ? target.player === src.controller : Boolean(e.planeswalkers) && g.objects[target.object]?.controller === src.controller;
         const o = g.objects[attacker];
         if (!at || !o || (e.filter && !matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) continue;
-        out += e.cost;
+        out += cost;
       }
     }
   }
@@ -238,7 +254,7 @@ export function declareAttackers(
     const o = g.objects[id]!;
     // CR 508.1d: a cost to attack is never required, so a creature that would have to pay one isn't required to attack.
     if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: id, target: t }]))) {
-      throw new RulesError(`${nameOf(g, o)} ${o.goadedBy?.length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
+      throw new RulesError(`${nameOf(g, o)} ${goaders(g, o).length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
     }
   }
 
@@ -846,8 +862,35 @@ export function dealDamage(
   return amount;
 }
 
-/** CR 615: applies prevention shields to damage about to be dealt; returns what's left. */
+/** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): boolean {
+  for (const id of abilitySources(g)) {
+    const holder = g.objects[id]!;
+    for (const a of objectAbilities(g, holder)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'prevent_damage') continue;
+      const e = (a as StaticAbility).effect as StaticPreventionNode;
+      if ((e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
+      if (!staticConditionHolds(g, e, holder)) continue;
+      if (e.bySelf && source.id === holder.id) return true;
+      if (to.kind === 'player') {
+        if (e.toYou && to.player === holder.controller) return true;
+        continue;
+      }
+      const o = g.objects[to.object];
+      if (!o) continue;
+      if (e.toSelf && o.id === holder.id) return true;
+      if (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder })) return true;
+    }
+  }
+  return false;
+}
+
+/** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
 function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
+  if (amount > 0 && staticallyPrevented(g, source, to, combat)) {
+    events.push({ type: 'prevented', source: source.id, amount });
+    return 0;
+  }
   if (amount <= 0 || !g.prevention.length) return amount;
   const left0 = amount;
   for (const p of g.prevention) {

@@ -50,7 +50,9 @@ export interface ParsedToken {
  */
 export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // CR 111.4: "named X" gives it that name instead.
-  const m = /^(\w+) (tapped )?(?:(\d+)\/(\d+) )?(.+?) tokens?(?: named ([A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
+  // Koma: "a 3/3 blue Serpent creature token named Koma's Coil" — the card's own name was shortened to "~".
+  const m = /^(\w+) (tapped )?(?:(\d+)\/(\d+) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
+  if (m?.[6]?.startsWith('~')) m[6] = m[6].replace(/^~/, b.env.faceName.split(',')[0]!);
   if (!m) return null;
   const amount = parseAmount(m[1]!);
   if (amount === null) return null;

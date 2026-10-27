@@ -156,6 +156,8 @@ export interface GameObject {
   activatedOnce?: Record<number, true>;
   /** CR 702.143a: foretold (exiled face down from hand) on this turn. */
   foretold?: number;
+  /** CR 702.75a (hideaway): exiled face down; only this player may look at it. */
+  hiddenFor?: PlayerId;
   /** CR 702.170a: plotted on this turn. */
   plotted?: number;
   /** CR 702.62a: suspended (in exile with time counters). */
@@ -388,6 +390,8 @@ export interface ContinuousEffect {
   until: 'eot' | 'game';
   /** CR 611.2b: "for as long as ~ remains tapped" — it ends once that object isn't tapped (or is gone). */
   whileTapped?: ObjectRef;
+  /** "until your next turn": it ends as this player's next turn begins. */
+  untilTurnOf?: PlayerId;
 }
 
 /** CR 603.7: a delayed triggered ability waiting for its moment ("at the beginning of the next end step"). */

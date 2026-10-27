@@ -73,6 +73,29 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // Haliya: "if you've gained 3 or more life this turn"; Bloodchief Ascension: "if an opponent lost 2 or more life this
+  // turn"; Spinerock Knoll: "if an opponent was dealt 7 or more damage this turn".
+  const lifeN =
+    /^(you|an opponent)(?:'ve| has| have)? (gained|lost) (\w+) or more life this turn$/.exec(t) ??
+    /^(you|an opponent) (?:were|was) (dealt) (\w+) or more damage this turn$/.exec(t);
+  if (lifeN) {
+    const n = parseAmount(lifeN[3]!);
+    const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
+  }
+  // Howltooth Hollow: "if each player has no cards in hand"; Shelldock Isle: "if a library has twenty or fewer cards in it"
+  if (/^each player has no cards in hand$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'hand', who: 'each' }, op: 'eq', n: 0 };
+  const aLibrary = /^a library has (\w+) or fewer cards in it$/.exec(t);
+  if (aLibrary) {
+    const n = parseAmount(aLibrary[1]!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'cards', zone: 'library', who: 'each', least: true }, op: 'le', n };
+  }
+  // Triskaidekaphile: "if you have exactly thirteen cards in your hand"
+  const exactlyHand = /^you have exactly (\w+) cards in (?:your )?hand$/.exec(t);
+  if (exactlyHand) {
+    const n = parseAmount(exactlyHand[1]!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'cards', zone: 'hand', who: 'you' }, op: 'eq', n };
+  }
   // Lieutenant (Loyal Apprentice): "if you control your commander" — a commander you own (CR 903.3).
   if (t === 'you control your commander') return { type: 'count', who: 'you', filter: { commander: true, owner: 'you' }, min: 1 };
   // Jace, Wielder of Mysteries: "if your library has no cards in it"

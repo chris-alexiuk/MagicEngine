@@ -221,6 +221,7 @@ export function moveObject(
   }
   delete o.regenShields;
   delete o.foretold;
+  delete o.hiddenFor;
   delete o.renowned;
   delete o.saddledTurn;
   delete o.goadedBy;

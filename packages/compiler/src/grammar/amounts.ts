@@ -110,6 +110,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Neheb, the Eternal: "for each 1 life your opponents have lost this turn"
+  const lifeEach = /^1 life (.+?) this turn$/.exec(t);
+  if (lifeEach) return lifeThisTurn(lifeEach[1]!);
   // Faeburrow Elder: "for each color among permanents you control"
   const colorAmong = /^color among (.+)$/.exec(t);
   if (colorAmong) {
@@ -143,9 +146,19 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   return objects(t, b, false);
 }
 
+/** "you've gained", "your opponents have lost" (this turn). */
+function lifeThisTurn(who: string): AmountExpr | null {
+  const m = /^(you|your opponents)(?:'ve| have)? (gained|lost)$/.exec(who);
+  if (!m) return null;
+  return { kind: 'life_this_turn', who: m[1] === 'you' ? 'you' : 'opponents', ...(m[2] === 'lost' ? { stat: 'lost' as const } : {}) };
+}
+
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // "the amount of life you gained this turn", "the total amount of life your opponents have lost this turn"
+  const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
+  if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Ghalta: "the total power of creatures you control"
   const totalPower = /^the total power of (.+)$/.exec(t);
   if (totalPower) {

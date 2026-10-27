@@ -404,6 +404,12 @@ export class ParserRegistry {
         }];
         result.manualKeywords = result.manualKeywords.filter((l) => !/^Firebending\b/.test(l));
       }
+      // CR 702.75a: "Hideaway N" — "When this permanent enters, look at the top N cards of your library. Exile one of
+      // them face down and put the rest on the bottom of your library in a random order."
+      if (kw.id === 'hideaway' && kw.n !== undefined) {
+        kw.abilities = [{ kind: 'triggered', text: `Hideaway ${kw.n}`, trigger: { type: 'enters', subject: { ref: 'self' } }, effects: [{ type: 'hideaway', amount: kw.n }] }];
+        result.manualKeywords = result.manualKeywords.filter((l) => !/^Hideaway\b/.test(l));
+      }
       if (kw.id === 'myriad') {
         kw.abilities = [{ kind: 'triggered', text: 'Myriad', trigger: { type: 'attacks', subject: { ref: 'self' } }, effects: [{ type: 'myriad' }] }];
         result.manualKeywords = result.manualKeywords.filter((l) => l !== 'Myriad');

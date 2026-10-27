@@ -27,6 +27,7 @@ import type {
   RuleFlag,
   SpellAbility,
   StaticAbility,
+  StaticPreventionNode,
   TriggerNode,
   TriggeredAbility,
 } from '@mtg/schema';
@@ -635,6 +636,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
+  // No Mercy, Mikaeus: "Whenever a creature deals damage to you" — once for each source.
+  const hitsYou = /^(?:a|an) (.+?) deals (combat )?damage to you$/.exec(t);
+  if (hitsYou) {
+    const pf = parseFilter(hitsYou[1]!, b);
+    if (pf && !pf.plural && !pf.filter.zone) {
+      b.eventAmount = true;
+      const subject: Ref = { ref: 'all', filter: pf.filter };
+      return { trigger: { type: 'deals_damage', subject, to: 'you', ...(hitsYou[2] ? { combat: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+    }
+  }
   // "Whenever ~ deals combat damage to a player or planeswalker" / "… or battle"
   const hitsOr = /^(~|enchanted creature|equipped creature) deals combat damage to a player or (planeswalker|battle)$/.exec(t);
   if (hitsOr) {
@@ -728,6 +739,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (youAttack[1] && !min) return null;
     return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
   }
+  // Duelist's Heritage: "Whenever one or more creatures attack" — whoever attacks (once per declaration, CR 508.3d).
+  if (t === 'one or more creatures attack') return { trigger: { type: 'you_attack', anyone: true }, it: { ref: 'self' }, player: null };
   // CR 508.3e: "Whenever you attack a player" — "that player" is the one attacked.
   if (t === 'you attack a player') return { trigger: { type: 'you_attack', perPlayer: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // CR 509.3g: "Whenever ~ attacks and isn't blocked"
@@ -759,6 +772,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === '~ attacks while saddled') {
     b.named['defending player'] = { ref: 'trigger_player' };
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, saddled: true }, it: { ref: 'self' }, player: null };
+  }
+  // Kaya's Ghostform: "When enchanted permanent dies or is put into exile" — it leaves for one of those zones.
+  const attachedGone = /^(~|(?:enchanted|equipped) (?:creature|permanent|artifact|land)) (dies or is put into exile|is put into exile)$/.exec(t);
+  if (attachedGone) {
+    const subject: Ref = attachedGone[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    const toZones = attachedGone[2] === 'is put into exile' ? ['exile'] : ['graveyard', 'exile'];
+    return { trigger: { type: 'leaves', subject, toZones }, it: { ref: 'trigger_object' }, player: null };
   }
   // "Whenever equipped creature attacks", "When enchanted creature dies" (CR 603.10a: it looks back).
   const attachedEvent = /^(?:enchanted|equipped) (?:creature|land|permanent|artifact) (dies|is put into a graveyard|leaves the battlefield|attacks alone|attacks|blocks)$/.exec(t);
@@ -963,13 +983,20 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
   }
   // "Whenever a creature card is put into a graveyard from anywhere other than the battlefield" (Syr Konrad)
-  const intoYard = /^(a|an) (.+? card) is put into (a|your|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
+  // Bloodchief Ascension: "Whenever a card is put into an opponent's graveyard from anywhere" — "that player" is its owner.
+  const intoYard = /^(a|an) ((?:.+? )?card) is put into (a|your|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
   if (intoYard) {
     const pf = parseFilter(`${intoYard[2]} in a graveyard`, b);
     if (pf && !pf.plural && pf.filter.zone === 'graveyard') {
       const { zone: _z, ...filter } = pf.filter;
+      // A card: not a token (CR 108.2a).
+      filter.token = false;
       if (intoYard[3] !== 'a') filter.owner = intoYard[3] === 'your' ? 'you' : 'opponent';
-      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, ...(intoYard[4] ? { notFromBattlefield: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+      return {
+        trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, ...(intoYard[4] ? { notFromBattlefield: true } : {}) },
+        it: { ref: 'trigger_object' },
+        player: { ref: 'owner_of', of: { ref: 'trigger_object' } },
+      };
     }
   }
   // "Whenever a creature card leaves your graveyard" — once for each card.
@@ -1183,11 +1210,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     let what = cast[3]!;
     const extra: Record<string, unknown> = {};
     // Where it was cast from, and when.
-    const from = / from (anywhere other than your hand|your hand|exile|your graveyard)$/.exec(what);
+    // Ghostly Pilferer: "Whenever an opponent casts a spell from anywhere other than their hand"
+    const from = / from (anywhere other than (?:your|their) hand|your hand|their hand|exile|your graveyard|their graveyard|a graveyard)$/.exec(what);
     if (from) {
       what = what.slice(0, from.index);
-      if (from[1] === 'anywhere other than your hand') extra.notFrom = 'hand';
-      else extra.from = from[1] === 'your hand' ? 'hand' : from[1] === 'exile' ? 'exile' : 'graveyard';
+      if (/^anywhere other than/.test(from[1]!)) extra.notFrom = 'hand';
+      else extra.from = /hand$/.test(from[1]!) ? 'hand' : from[1] === 'exile' ? 'exile' : 'graveyard';
     }
     // "Whenever you cast a kicked spell"
     if (/^kicked /.test(what)) {
@@ -1474,13 +1502,15 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
 
 /** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you." */
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
-  const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGC])\})+) for each (?:creature they control that's attacking you|of those creatures)$/i.exec(body);
-  if (!m) return null;
+  const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX])\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
+  if (!m || /X/.test(m[3]!) !== Boolean(m[4])) return null;
+  const x = m[4] ? parseCount(m[4], b) : undefined;
+  if (x === null || (x && m[3] !== '{X}')) return null;
   const pf = parseFilter(m[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
   if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
   const { types, ...rest } = pf.filter;
   if (types && (types.length !== 1 || types[0] !== 'Creature')) return null;
-  return { type: 'attack_tax', cost: m[3]!, ...(m[2] ? { planeswalkers: true } : {}), ...(Object.keys(rest).length ? { filter: rest } : {}) };
+  return { type: 'attack_tax', cost: m[3]!, ...(x ? { x } : {}), ...(m[2] ? { planeswalkers: true } : {}), ...(Object.keys(rest).length ? { filter: rest } : {}) };
 }
 
 /** CR 101.2: "Your opponents can't cast spells during your turn.", "Each player can't cast more than one spell each turn." */
@@ -2049,6 +2079,44 @@ export const quantityReplacementRule: GrammarRule = {
       });
     }
     return null;
+  },
+};
+
+/**
+ * CR 615.1a: static prevention — "Prevent all combat damage that would be dealt to attacking creatures you control."
+ * (Dolmen Gate), "Prevent all damage that would be dealt to you." (Glacial Chasm), "Prevent all noncombat damage that
+ * would be dealt to you and other permanents you control." (The Wanderer), "… to and dealt by this creature" (Fog Bank).
+ */
+export const staticPreventionRule: GrammarRule = {
+  id: 'static_prevention',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env || /\b(?:Instant|Sorcery)\b/.test(env.typeLine)) return null;
+    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to) (.+?)( during your turn)?\.$/.exec(line);
+    if (!m) return null;
+    const b = new Binder(env);
+    const node: StaticPreventionNode = { type: 'prevent_damage' };
+    if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
+    if (m[4]) node.condition = { type: 'your_turn', value: true };
+    const self = (t: string) => t === '~' || /^this (?:creature|permanent|artifact|enchantment|land)$/.test(t);
+    if (m[2] === 'to and dealt by') {
+      if (!self(m[3]!)) return null;
+      node.toSelf = true;
+      node.bySelf = true;
+    } else {
+      // "you and other permanents you control", "you and creatures you control", "attacking creatures you control"
+      for (const part of m[3]!.split(/,? and /)) {
+        if (part === 'you') node.toYou = true;
+        else if (self(part)) node.toSelf = true;
+        else {
+          const other = /^other /.test(part);
+          const pf = node.to ? null : parseFilter(part.replace(/^other /, ''), b);
+          if (!pf || !pf.plural) return null;
+          node.to = { ...pf.filter, ...(other ? { other: true as const } : {}) };
+        }
+      }
+    }
+    return { kind: 'static', text: original, effect: node };
   },
 };
 
@@ -2677,6 +2745,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   costModifierRule,
   quantityReplacementRule,
   triggerExtraRule,
+  staticPreventionRule,
   exileInsteadRule,
   selfReplacementRule,
   castOptionRule,

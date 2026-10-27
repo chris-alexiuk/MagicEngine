@@ -19,6 +19,11 @@ export interface TurnLog {
   attacked: PlayerId[];
   gainedLife: PlayerId[];
   lostLife: PlayerId[];
+  /** How much life each player gained / lost this turn (Haliya: "if you've gained 3 or more life this turn"). */
+  lifeGained?: Record<PlayerId, number>;
+  lifeLost?: Record<PlayerId, number>;
+  /** Damage dealt to each player this turn (Spinerock Knoll). */
+  damageTaken?: Record<PlayerId, number>;
   spellsCast: Record<PlayerId, number>;
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
   castSpells?: { player: PlayerId; id: ObjectId }[];
@@ -114,9 +119,12 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           e.firstGain = true;
         }
         if (e.delta < 0 && !log.lostLife.includes(e.player)) log.lostLife.push(e.player);
+        if (e.delta > 0) (log.lifeGained ??= {})[e.player] = (log.lifeGained[e.player] ?? 0) + e.delta;
+        if (e.delta < 0) (log.lifeLost ??= {})[e.player] = (log.lifeLost[e.player] ?? 0) - e.delta;
         break;
       case 'damage':
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
+        if (e.to.kind === 'player') (log.damageTaken ??= {})[e.to.player] = (log.damageTaken[e.to.player] ?? 0) + e.amount;
         if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
           const s = g.objects[e.source]!;
           const c = chars(g, s);

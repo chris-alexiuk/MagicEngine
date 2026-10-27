@@ -12,6 +12,8 @@ import { parseAmount } from './words.js';
 export function parseCombatRule(predicate: string, b: Binder): CombatRules | null {
   const p = predicate.trim();
   if (/^must be blocked(?: this turn)? if able$/.test(p)) return { mustBeBlocked: 'one' };
+  // Shiny Impetus: "Enchanted creature … is goaded" (a static ability; see goaders in the engine).
+  if (/^(?:is|are) goaded$/.test(p)) return { goaded: true };
   if (/^can't be blocked by more than one creature(?: each combat)?$/.test(p)) return { maxBlockers: 1 };
   // CR 509.1a: blocking more than one attacker.
   const additional = /^can block (?:an additional|(\w+) additional) creatures?(?: each combat)?$/.exec(p);

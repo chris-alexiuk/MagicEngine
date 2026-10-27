@@ -1778,3 +1778,62 @@ describe('slice 159', () => {
     expect(parse("At the beginning of each opponent's upkeep, ~ deals 2 damage to that player unless they sacrifice a creature of their choice.", 'Legendary Enchantment Creature — God', 'Mogis').abilities[0]).toMatchObject({ effects: [{ type: 'unless_does', payer: { ref: 'trigger_player' }, action: [{ type: 'sacrifice_choice' }] }] });
   });
 });
+
+describe('slice 160', () => {
+  it('reads "For each X, create …", named tokens, and damage to you', () => {
+    expect(parse('For each land you control, create a Treasure token.', 'Sorcery', 'B').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'count', filter: { types: ['Land'], controller: 'you' } } }] });
+    expect(parse("At the beginning of each upkeep, create a 3/3 blue Serpent creature token named Koma's Coil.", 'Legendary Creature — Serpent', 'Koma, Cosmos Serpent').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', token: { name: "Koma's Coil" } }] });
+    expect(parse('Whenever a creature deals damage to you, destroy it.', 'Enchantment', 'M').abilities[0]).toMatchObject({ trigger: { type: 'deals_damage', to: 'you' }, effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] });
+    expect(parse('Whenever an opponent casts a spell from anywhere other than their hand, draw a card.', 'Creature — Spirit', 'G').abilities[0]).toMatchObject({ trigger: { type: 'cast', who: 'opponent', notFrom: 'hand' } });
+  });
+  it('reads life gained this turn and exact hand sizes', () => {
+    expect(parse("At the beginning of your end step, draw a card if you've gained 3 or more life this turn.", 'Legendary Creature — Human', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'amount', amount: { kind: 'life_this_turn', who: 'you' }, op: 'ge', n: 3 } }] });
+    expect(parse('At the beginning of your upkeep, if you have exactly thirteen cards in your hand, you win the game.', 'Creature — Human Wizard', 'T').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'cards', zone: 'hand' }, op: 'eq', n: 13 } });
+  });
+  it('reads "without a counter", static goad, anyone attacking, and graveyard shuffles', () => {
+    expect(parse("Return each creature without a +1/+1 counter on it to its owner's hand.", 'Sorcery', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'move', what: { ref: 'all', filter: { notCounter: '+1/+1' } }, to: 'hand' }] });
+    expect(parse('Enchanted creature gets +2/+2 and is goaded.', 'Enchantment — Aura', 'S').abilities[0]).toMatchObject({ effect: { type: 'continuous', affected: { ref: 'attached' }, combat: { goaded: true } } });
+    expect(parse('Whenever one or more creatures attack, you may have target attacking creature gain double strike until end of turn.', 'Enchantment', 'D').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', anyone: true } });
+    expect(parse("{2}, {T}: You gain 5 life. Shuffle this artifact and your graveyard into their owner's library.", 'Artifact', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'move', what: { ref: 'self' }, position: 'shuffle' }, { type: 'shuffle_zones', zones: ['graveyard'] }] });
+    expect(parse('When this creature enters, up to one target player puts all the cards from their graveyard on the bottom of their library in a random order.', 'Creature — Elemental Incarnation', 'N').abilities[0]).toMatchObject({ targets: [{ what: 'player', upTo: true }], effects: [{ type: 'move', position: 'bottom_random' }] });
+  });
+  it('reads static prevention on permanents only', () => {
+    expect(parse('Prevent all combat damage that would be dealt to attacking creatures you control.', 'Artifact', 'D').abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'prevent_damage', damage: 'combat', to: { combat: 'attacking', controller: 'you' } } });
+    expect(parse('Prevent all combat damage that would be dealt to and dealt by this creature.', 'Creature — Wall', 'F').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', toSelf: true, bySelf: true } });
+    expect(parse('Prevent all noncombat damage that would be dealt to you and other permanents you control.', 'Legendary Planeswalker', 'W').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', damage: 'noncombat', toYou: true, to: { other: true } } });
+    expect(parse('Prevent all damage that would be dealt to ~ during your turn.', 'Legendary Planeswalker — Gideon', 'G').abilities[0]).toMatchObject({ effect: { toSelf: true, condition: { type: 'your_turn' } } });
+    expect(parse('Prevent all combat damage that would be dealt to you.', 'Instant', 'I').abilities[0]).not.toMatchObject({ kind: 'static' });
+  });
+  it('reads hideaway, playing the exiled card, and its conditions', () => {
+    const wind = parse('Hideaway 4\nThis land enters tapped.\n{T}: Add {W}.\n{W}, {T}: You may play the exiled card without paying its mana cost if you attacked with three or more creatures this turn.', 'Land', 'Windbrisk Heights');
+    expect(wind.unparsed).toHaveLength(0);
+    expect(wind.manualKeywords).toHaveLength(0);
+    expect(wind.keywords[0]).toMatchObject({ id: 'hideaway', n: 4, abilities: [{ kind: 'triggered', trigger: { type: 'enters' }, effects: [{ type: 'hideaway', amount: 4 }] }] });
+    expect(wind.abilities.at(-1)).toMatchObject({ effects: [{ type: 'if', cond: { type: 'attacked_with', n: 3 }, effects: [{ type: 'play_free', what: { ref: 'exiled_with' } }] }] });
+    expect(parse('{R}, {T}: You may play the exiled card without paying its mana cost if an opponent was dealt 7 or more damage this turn.', 'Land', 'S').abilities[0]).toMatchObject({ effects: [{ cond: { amount: { kind: 'life_this_turn', who: 'an_opponent', stat: 'damage' }, n: 7 } }] });
+    expect(parse('{U}, {T}: You may play the exiled card without paying its mana cost if a library has twenty or fewer cards in it.', 'Land', 'S').abilities[0]).toMatchObject({ effects: [{ cond: { amount: { kind: 'cards', zone: 'library', least: true }, op: 'le', n: 20 } }] });
+    expect(parse('{B}, {T}: You may play the exiled card without paying its mana cost if each player has no cards in hand.', 'Land', 'H').abilities[0]).toMatchObject({ effects: [{ cond: { amount: { kind: 'cards', zone: 'hand', who: 'each' }, op: 'eq', n: 0 } }] });
+    expect(parse("When this creature leaves the battlefield, put the exiled card into its owner's hand.", 'Creature — Human Soldier', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'move', what: { ref: 'exiled_with' }, to: 'hand' }] });
+  });
+  it('reads life lost this turn, and cards put into an opponent’s graveyard', () => {
+    expect(parse('At the beginning of your postcombat main phase, add {R} for each 1 life your opponents have lost this turn.', 'Legendary Creature — Zombie Warrior', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', times: { kind: 'life_this_turn', who: 'opponents', stat: 'lost' } }] });
+    expect(parse('At the beginning of each end step, if an opponent lost 2 or more life this turn, you may put a quest counter on this enchantment.', 'Enchantment', 'B').abilities[0]).toMatchObject({ condition: { amount: { kind: 'life_this_turn', who: 'an_opponent', stat: 'lost' }, n: 2 } });
+    expect(parse("Whenever a card is put into an opponent's graveyard from anywhere, if this enchantment has three or more quest counters on it, you may have that player lose 2 life. If you do, you gain 2 life.", 'Enchantment', 'B').abilities[0]).toMatchObject({
+      trigger: { type: 'put_into_graveyard', subject: { filter: { token: false, owner: 'opponent' } } },
+      effects: [{ type: 'may_do', effects: [{ type: 'lose_life', who: { ref: 'owner_of' } }], then: [{ type: 'gain_life' }] }],
+    });
+  });
+  it('reads "until your next turn" grants, lasting player effects with a rider, repeats, and control changes', () => {
+    expect(parse('Put a +1/+1 counter on each creature you control. Those creatures gain flying until your next turn.', 'Sorcery', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters' }, { type: 'modify', until: 'your_next_turn', keywords: [{ id: 'flying' }] }] });
+    expect(parse("Until end of turn, your life total can't change, and permanents you control gain hexproof and indestructible.", 'Instant', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'player_effect', rule: 'life_cant_change', until: 'eot' }, { type: 'modify', until: 'eot' }] });
+    expect(parse('Repeat the following process X times. Each opponent loses 3 life unless that player sacrifices a nonland permanent of their choice or discards a card.', 'Sorcery', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'repeat', times: 'X', effects: [{ type: 'unless_does' }] }] });
+    expect(parse('{1}, {T}, Remove a wish counter from this artifact: Search your library for a card, put it into your hand, then shuffle. An opponent gains control of this artifact. Activate only during your turn.', 'Artifact', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'search' }, { type: 'gain_control', what: { ref: 'self' }, toOpponent: true }] });
+    expect(parse('When enchanted permanent dies or is put into exile, return that card to the battlefield under your control.', 'Enchantment — Aura', 'K').abilities[0]).toMatchObject({ trigger: { type: 'leaves', subject: { ref: 'attached' }, toZones: ['graveyard', 'exile'] } });
+    expect(parse("Creatures can't attack you or planeswalkers you control unless their controller pays {X} for each of those creatures, where X is the number of enchantments you control.", 'Enchantment', 'S').abilities[0]).toMatchObject({ effect: { type: 'attack_tax', cost: '{X}', x: { kind: 'count', filter: { types: ['Enchantment'] } }, planeswalkers: true } });
+  });
+  it('waits for a delayed coin flip, binds the creature put onto the battlefield, and never pumps an instant itself', () => {
+    expect(parse('Whenever this creature attacks or blocks, flip a coin at end of combat. If you lose the flip, an opponent gains control of this creature.', 'Creature — Efreet', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'delayed', step: 'end_of_combat', effects: [{ type: 'flip_coin' }, { type: 'if', cond: { type: 'won_flip', not: true } }] }] });
+    expect(parse('You may put a creature card from your hand onto the battlefield. That creature gains haste. Sacrifice that creature at the beginning of the next end step.', 'Instant — Arcane', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'may' }, { type: 'modify', what: { ref: 'created' } }, { type: 'delayed', effects: [{ type: 'sacrifice', what: { ref: 'created' } }] }] });
+    expect(parse('Search your library for a Dinosaur creature card, put it onto the battlefield, then shuffle. It gains indestructible until your next turn.', 'Sorcery', 'S').unparsed).toHaveLength(1);
+  });
+});

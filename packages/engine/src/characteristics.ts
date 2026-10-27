@@ -701,6 +701,7 @@ export function matchesFilter(
   if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
   // "with a +1/+1 counter on it" (CR 122.1)
   if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
+  if (f.notCounter && (f.notCounter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.notCounter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;

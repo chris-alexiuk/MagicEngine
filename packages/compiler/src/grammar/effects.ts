@@ -61,6 +61,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // all creatures they control, then puts all cards they exiled this way onto the battlefield."
   const swap = /^Each player exiles all (creature|artifact) cards from their graveyard, then sacrifices all (?:creatures|artifacts) they control, then puts all cards they exiled this way onto the battlefield\.$/.exec(text.trim());
   if (swap) return [{ type: 'swap_graveyard', cardType: swap[1] === 'creature' ? 'Creature' : 'Artifact' }];
+  // Torment of Hailfire: "Repeat the following process X times. Each opponent loses 3 life unless …"
+  const repeatN = /^Repeat the following process (\w+) times\. ([^.]+\.)$/.exec(text.trim());
+  if (repeatN) {
+    const times = parseAmount(repeatN[1]!);
+    const inner = times === null ? null : attempt(b, (b) => parseEffectText(repeatN[2]!, b));
+    return inner && times !== null ? [{ type: 'repeat', times, effects: inner }] : null;
+  }
   return attempt(b, (b) => {
     const sentences = splitSentences(text);
     if (!sentences) return null;
@@ -274,10 +281,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 118.12: "You may sacrifice a creature. If you do, …" — the first part is done only if possible.
       const mayDo = /^You may (.+)$/.exec(s);
+      // Bloodchief Ascension: "you may have that player lose 2 life. If you do, …" — what they do.
+      const mayFirst = (t: string): EffectNode[] | null => {
+        if (!/^have /.test(t)) return parseSentence(capitalise(t), b);
+        const r = parseSentence(`You may ${t}`, b);
+        return r?.length === 1 && r[0]!.type === 'may' ? (r[0]!.effects as EffectNode[]) : null;
+      };
       // "You may put two +1/+1 counters on it. If you don't, create two 1/1 … Servo … tokens." (CR 702.123a)
       const youDont = sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
       if (mayDo && youDont && !/^pay /.test(mayDo[1]!)) {
-        const first = parseSentence(capitalise(mayDo[1]!), b);
+        const first = mayFirst(mayDo[1]!);
         const otherwise = first ? parseSentence(capitalise(youDont[1]!), b) : null;
         if (!first || !otherwise) return null;
         out.push({ type: 'may_do', effects: first, then: [], else: otherwise });
@@ -285,7 +298,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       if (mayDo && then) {
-        const first = parseSentence(capitalise(mayDo[1]!), b);
+        const first = mayFirst(mayDo[1]!);
         const rest = first ? parseSentence(capitalise(then[1]!), b) : null;
         if (!first || !rest) return null;
         out.push({ type: 'may_do', effects: first, then: rest });
@@ -662,6 +675,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const [what, when] = delayed[0].startsWith('At ') ? [delayed[2]!, delayed[1]!] : [delayed[1]!, delayed[2]!];
         const inner = parseSentence(capitalise(what), b);
         if (!inner) return null;
+        // Fickle Efreet: "flip a coin at end of combat. If you lose the flip, …" — the flip's outcome waits for it too.
+        while (inner.some((n) => n.type === 'flip_coin') && /^If you (?:win|lose) the flip, /.test(sentences[i + 1] ?? '')) {
+          const then = parseEffectText(`${sentences[i + 1]!}.`, b);
+          if (!then) return null;
+          inner.push(...then);
+          i++;
+        }
         // CR 511.2: "at end of combat" — as the end of combat step begins.
         out.push({ type: 'delayed', step: when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep', effects: inner });
         continue;
@@ -1020,6 +1040,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Hideaway: "You may play the exiled card without paying its mana cost." — a land, too.
+  const playFree = /^[Yy]ou may play (the exiled card|that card|it) without paying its mana cost$/.exec(s);
+  if (playFree) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(playFree[1]!, b);
+      return what && !what.plural ? [{ type: 'play_free', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
   const free = /^[Yy]ou may cast (.+?) without paying (?:its|that spell's|~'s) mana cost$/.exec(s);
   if (free) {
     const r = attempt(b, (b) => {
@@ -1180,6 +1209,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const to = parseObjectRef(moveCounter[4]!, b);
       const from = to ? parseObjectRef(moveCounter[3]!, b) : null;
       return from && to ? [{ type: 'move_counters', from: from.ref, to: to.ref, counter: moveCounter[2]!.replace(/−/g, '-'), amount: 1 }] : null;
+    });
+    if (r) return r;
+  }
+  // Wishclaw Talisman: "An opponent gains control of this artifact." (the controller chooses which); "Target opponent gains
+  // control of ~" (Layer 2, CR 613.1b).
+  const theyControl = /^(An opponent|Target opponent|Target player|That player) gains control of (.+)$/.exec(s);
+  if (theyControl) {
+    const r = attempt(b, (b) => {
+      const to = theyControl[1] === 'An opponent' ? null : parsePlayerRef(theyControl[1]!, b);
+      if (theyControl[1] !== 'An opponent' && !to) return null;
+      const what = parseObjectRef(theyControl[2]!, b);
+      return what ? [{ type: 'gain_control', what: what.ref, ...(to ? { to } : { toOpponent: true }) }] : null;
     });
     if (r) return r;
   }
@@ -1376,6 +1417,29 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Endurance: "up to one target player puts all the cards from their graveyard on the bottom of their library in a random order."
+  const yardBottom = /^(.+?) puts? all (?:the )?cards from their graveyard on the bottom of their library in a random order$/.exec(s);
+  if (yardBottom) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(yardBottom[1]!, b);
+      return who ? [{ type: 'move', what: { ref: 'all', filter: { zone: 'graveyard', ownedBy: who } }, to: 'library', position: 'bottom_random' }] : null;
+    });
+    if (r) return r;
+  }
+  // Elixir of Immortality: "Shuffle this artifact and your graveyard into their owner's library." — it goes to its
+  // owner's library and your graveyard to yours, each shuffled.
+  const withYard = /^[Ss]huffle (.+?) and your graveyard into (?:their owner's|your) library$/.exec(s);
+  if (withYard) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(withYard[1]!, b);
+      if (!what || what.plural || what.ref.ref !== 'self') return null;
+      return [
+        { type: 'move', what: what.ref, to: 'library', position: 'shuffle' },
+        { type: 'shuffle_zones', who: { ref: 'you' }, zones: ['graveyard'] },
+      ];
+    });
+    if (r) return r;
+  }
   // "Shuffle ~ into its owner's library", "Its owner shuffles it into their library",
   // "The owner of target permanent shuffles it into their library", "Shuffle that card into your library".
   const shuffleIn =
@@ -1393,10 +1457,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // The One Ring: "you gain protection from everything until your next turn"; Teferi's Protection: "Until your next
   // turn, your life total can't change and you gain protection from everything." (CR 702.16j, CR 119.8)
-  const lasting = /^(?:Until your next turn, )?(you gain protection from everything|your life total can't change)(?: until your next turn)?(?: and (you gain protection from everything|your life total can't change))?$/i.exec(s);
-  if (lasting && (/^Until your next turn/i.test(s) || / until your next turn$/.test(s))) {
+  // Flare of Fortitude: "Until end of turn, your life total can't change, and permanents you control gain hexproof and
+  // indestructible." — the duration goes with both parts.
+  const lasting = /^(?:(Until your next turn|Until end of turn), )?(you gain protection from everything|your life total can't change)(?: (until your next turn|until end of turn))?(?: and (you gain protection from everything|your life total can't change))?(?:, and (.+))?$/i.exec(s);
+  if (lasting && Boolean(lasting[1]) !== Boolean(lasting[3]) && !(lasting[5] && (lasting[3] || lasting[4]))) {
     const rule = (t: string) => (/protection/.test(t) ? 'protection_everything' : 'life_cant_change');
-    return [lasting[1]!, lasting[2]].filter(Boolean).map((t) => ({ type: 'player_effect', who: { ref: 'you' }, rule: rule(t!), until: 'your_next_turn' }));
+    const nextTurn = /next turn/i.test(lasting[1] ?? lasting[3]!);
+    const out: EffectNode[] = [lasting[2]!, lasting[4]].filter(Boolean).map((t) => ({ type: 'player_effect', who: { ref: 'you' }, rule: rule(t!), until: nextTurn ? 'your_next_turn' : 'eot' }));
+    if (lasting[5]) {
+      const rest = attempt(b, (b) => parseSentence(`${capitalise(lasting[5]!)} ${nextTurn ? 'until your next turn' : 'until end of turn'}`, b));
+      if (!rest) return null;
+      out.push(...rest);
+    }
+    return out;
   }
   // Pyroblast: "Counter target spell if it's blue.", "Destroy target permanent if it's blue." (CR 608.2c)
   const ifIts = /^(.+) if it's (white|blue|black|red|green|(?:a|an) [a-z]+)$/.exec(s);
@@ -1489,6 +1562,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const { who: _who, ...node } = made[0]!;
     const e = each as { how: string; types?: string[]; notTypes?: string[] };
     return [{ ...node, type: 'create_token', forEachMoved: { how: e.how, ...(e.types ? { types: e.types } : {}), ...(e.notTypes ? { notTypes: e.notTypes } : {}) } }];
+  }
+  // Brass's Bounty: "For each land you control, create a Treasure token." — the same as "Create … for each …".
+  const eachCreate = /^For each (.+?), create (a|an|one|two) (.+? tokens?)$/.exec(s);
+  if (eachCreate && !/ copy | that player| it\b|them\b|this way/.test(s)) {
+    const r = attempt(b, (b) => parseSentence(`Create ${eachCreate[2]} ${eachCreate[3]} for each ${eachCreate[1]}`, b));
+    if (r) return r;
   }
   // Second Harvest: "For each token you control, create a token that's a copy of that permanent." (CR 707.2)
   const eachCopy = /^For each (.+?), create a token that's a copy of (?:that permanent|that creature|it)$/.exec(s);
@@ -1849,6 +1928,8 @@ const VERBS: Record<string, VerbHandler> = {
       const pf = parseFilter(`${fromHand[2]} in your hand`, b);
       if (!pf || pf.plural !== n > 1) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;
+      // "That creature gains haste": the one put onto the battlefield.
+      if (n === 1) b.it = { ref: 'created' };
       return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(/^(?:up to|any number)/.test(fromHand[1]!) ? { optional: true } : {}) }];
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
@@ -1870,6 +1951,16 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(counters[3]!, b);
       if (amount === null || !what || !/^[+-]?\w+(?:\/[+-]\d+)?$/.test(counters[2]!)) return null;
       return [{ type: 'add_counters', what: what.ref, counter: counters[2]!.replace(/−/g, '-'), amount }];
+    }
+    // Watcher for Tomorrow: "put the exiled card into its owner's hand"; "put it into its owner's graveyard" (CR 400.3:
+    // a card goes to its owner's hand or graveyard).
+    const into = /^(.+?) into (?:its owner's|their owners'|their owner's|your) (hand|graveyard)s?$/.exec(args);
+    if (into && !/ from /.test(into[1]!)) {
+      const r = attempt(b, (b) => {
+        const what = parseObjectRef(into[1]!, b);
+        return what ? [{ type: 'move', what: what.ref, to: into[2]! }] : null;
+      });
+      if (r) return r;
     }
     const lib = /^(.+?) on (top|the bottom) of (?:its owner's|their owners'|your) library$/.exec(args);
     if (lib) {
@@ -2504,14 +2595,17 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
 /** "Target creature gets +2/+2 and gains trample until end of turn." (CR 611.2a: lasts as stated.) */
 function parsePump(c: string, b: Binder): EffectNode[] | null {
   // Without a duration it lasts indefinitely (CR 611.2a): "It gains haste." (unearth).
-  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until end of turn$/.exec(c) ?? /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
+  // Elspeth, Storm Slayer: "Those creatures gain flying until your next turn."
+  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ?? /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
   if (!m) return null;
-  const until = / until end of turn$/.test(c) ? 'eot' : 'game';
+  const until = / until end of turn$/.test(c) ? 'eot' : / until your next turn$/.test(c) ? 'your_next_turn' : 'game';
   return attempt(b, (b) => {
     // "Two target creatures each get +1/+1": "each" goes with a plural subject.
     const each = / each$/.test(m[1]!);
     const what = parseObjectRef(m[1]!.replace(/ each$/, ''), b);
     if (!what || (each && !what.plural)) return null;
+    // An instant or sorcery is never on the battlefield to get anything ("Search … It gains indestructible": the card found).
+    if (what.ref.ref === 'self' && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
     const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)![2]!;
     const parts = `${verb} ${m[2]}`.split(/ and (?=gets? |gains? |has |have )/);
     const node: EffectNode = { type: 'modify', what: what.ref, until };
@@ -2560,7 +2654,7 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const rule = parseCombatRule(combat[2]!.replace(' this turn', ''), b);
       const what = rule && parseObjectRef(combat[1]!, b);
-      return what && rule ? [{ type: 'modify', what: what.ref, combat: rule, until: 'eot' }] : null;
+      return what && rule && !rule.goaded ? [{ type: 'modify', what: what.ref, combat: rule, until: 'eot' }] : null;
     });
     if (r) return r;
   }
