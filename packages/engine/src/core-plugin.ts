@@ -7,7 +7,7 @@ import type { AbilityNode, AddManaEffect, Amount, AsEntersNode, Color, CombatRul
 import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
-import { replaceQuantity } from './quantities.js';
+import { extraTokens, replaceQuantity } from './quantities.js';
 import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
@@ -82,6 +82,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: colors });
       return true;
     }
+    // Culling Ritual: "Add {B} or {G} for each …" — the controller chooses how many of each.
+    if (effect.times !== undefined && effect.options && effect.options.length === 2 && effect.options.every((o) => o.length === 1) && choice === undefined) {
+      const n = Math.max(0, amountOf(ctx, effect.times));
+      if (!n) return true;
+      const [a, b2] = effect.options.map((o) => manaOption(o, ctx.source)?.[0]);
+      if (!a || !b2) return false;
+      const mixes = Array.from({ length: n + 1 }, (_, k) => [...Array<ManaColor>(n - k).fill(a), ...Array<ManaColor>(k).fill(b2)]);
+      const labels = mixes.map((m) => m.map((c) => `{${c}}`).join(''));
+      const answer = answerOf(ctx, 'choose_option');
+      if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: labels, text: 'Choose which mana to add.', sourceName: sourceName(ctx) } };
+      const i = labels.indexOf(answer.choice);
+      if (i < 0) throw new RulesError('Choose one of the options.');
+      const ps = ctx.g.players[ctx.controller]!;
+      for (const c of mixes[i]!) ps.pool[c]++;
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: mixes[i]! });
+      return true;
+    }
     // As a spell or a non-mana ability resolves, its controller chooses which mana (a mana ability is told up front).
     const many = effect.anyColor || (effect.options?.length ?? 0) > 1;
     if (many && choice === undefined) {
@@ -112,7 +129,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!mana) return false;
     // "Add {G} for each Elf you control"
     if (effect.times !== undefined) {
-      const n = Math.max(0, amountOf(ctx, effect.times));
+      // Nykthos: "your devotion to that color" — the color just chosen.
+      const t = effect.times;
+      const times = typeof t === 'object' && t.kind === 'devotion' && t.manaColor ? { ...t, colors: mana[0] && mana[0] !== 'C' ? [mana[0] as Color] : [] } : t;
+      const n = Math.max(0, amountOf(ctx, times));
       mana = Array.from({ length: n }, () => mana!).flat();
       if (!mana.length) return true;
     }
@@ -152,6 +172,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     for (const to of refRecipients(ctx, ref(node, 'to'))) dealt += dealDamage(ctx.g, source, to, n, false, ctx.events);
+    if (ctx.resolution) ctx.resolution.damageDealt = (ctx.resolution.damageDealt ?? 0) + dealt;
     // CR 702.15b: lifelink — the source's controller gains that much life.
     if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
     return true;
@@ -260,8 +281,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         moveObject(ctx.g, o.id, 'exile', ctx.events);
         (ctx.g.exiledUntil ??= []).push({ source: { id: src.id, zcc: src.zcc }, object: { id: o.id, zcc: o.zcc } });
       } else {
-        // CR 701.13a: exile moves it to the exile zone from wherever it is.
-        if (o.zone === 'stack' && o.id !== ctx.source?.id) continue;
+        // CR 701.13a: exile moves it to the exile zone from wherever it is. A spell on the stack moves only when it's
+        // the source or what the effect targets ("Return target spell to its owner's hand", Venser, Narset's Reversal).
+        if (o.zone === 'stack' && o.id !== ctx.source?.id && (node.what as Ref | undefined)?.ref !== 'target') continue;
         moveObject(ctx.g, o.id, to, ctx.events);
         // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
         if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
@@ -562,6 +584,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (node.attacking) enterAttacking(ctx.g, t, ctx.source);
         created.push({ id: t.id, zcc: t.zcc });
       }
+      // Peregrin Took, Xorn: "those tokens plus an additional Food token" (CR 614.1a; doubled too, CR 616.1).
+      const copied = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
+      const made = { types: (copied ?? face)?.types ?? [], subtypes: (copied ?? face)?.subtypes ?? [] };
+      for (const x of extraTokens(ctx.g, p, made, count)) {
+        const more = replaceQuantity(ctx.g, 'tokens', x.count, { player: p });
+        for (let i = 0; i < more; i++) createToken(ctx.g, x.token, p, ctx.events, {});
+      }
     }
     if (ctx.resolution) ctx.resolution.created = created;
     return true;
@@ -714,7 +743,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const [p] = refPlayers(ctx, ref(node, 'who'));
     if (!p) return true;
     const hand = zoneList(g, 'hand', p);
-    const filter = { ...(node.filter as ObjectFilter), zone: 'hand' as const };
+    const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'hand' as const });
     const candidates = hand.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
     const answer = answerOf(ctx, 'choose_objects');
     let chosen: string[];
@@ -771,7 +800,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const take = amountOf(ctx, node.take ?? 1);
     const answer = answerOf(ctx, 'choose_objects');
     if (!memo.chosen) {
-      const filter = node.filter ? { ...(node.filter as ObjectFilter), zone: 'library' as const } : null;
+      const filter = node.filter ? liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'library' as const }) : null;
       const candidates = filter ? looked.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null })) : looked;
       const max = Math.min(take, candidates.length);
       const min = node.optional || node.upTo ? 0 : max;
@@ -1417,6 +1446,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const n = amountOf(ctx, node.amount);
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       const ps = ctx.g.players[p]!;
+      // CR 122.1f / 104.3d: poison counters (ten or more and the player loses).
+      if (node.counter === 'poison') {
+        ps.poison += n;
+        ctx.events.push({ type: 'player_counters', player: p, counter: 'poison', delta: n });
+        continue;
+      }
       const counters = (ps.counters ??= {});
       counters[String(node.counter)] = (counters[String(node.counter)] ?? 0) + n;
       ctx.events.push({ type: 'player_counters', player: p, counter: String(node.counter), delta: n });
@@ -1781,9 +1816,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const owner = node.library ? refPlayers(ctx, ref(node, 'library'))[0] : player;
     if (!owner) return true;
     const library = zoneList(g, 'library', owner);
-    const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
-    // "with mana value X or less": the spell's X.
-    if (filter.manaValue?.n === 'X') filter.manaValue = { ...filter.manaValue, n: ctx.x };
+    // "with mana value X or less": the spell's X, or what the text says X is (Eldritch Evolution).
+    const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'library' as const });
     // "Search your library and/or graveyard": cards in those zones too.
     const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
     const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
@@ -1877,6 +1911,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (done.includes(p)) continue;
       const candidates = candidatesOf(p);
       if (candidates.length <= n) {
+        if (!candidates.length) ctx.memo.couldnt = [...((ctx.memo.couldnt as PlayerId[] | undefined) ?? []), p];
         for (const id of candidates) sacrifice(g.objects[id]!, p);
         done.push(p);
         continue;
@@ -1885,6 +1920,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ctx.memo.asking = p;
       return { ask: { kind: 'sacrifice', player: p, candidates, count: n } };
     }
+    // Plaguecrafter: "Each player who can't discards a card." — each player who had nothing to sacrifice.
+    const couldnt = (ctx.memo.couldnt as PlayerId[] | undefined) ?? [];
+    if (node.cant && couldnt.length) return { expand: couldnt.flatMap((p) => (node.cant as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
     return true;
   },
 
@@ -2027,6 +2065,77 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return offerFreeCast(ctx, o.id) ?? true;
   },
 
+  // "Discard all the cards in your hand, then draw that many cards" (Tolarian Winds), "discard up to two cards, then
+  // draw that many cards" (Tersa), Flux, Dark Deal ("minus one"): each player discards (in APNAP order, CR 101.4), then
+  // each draws as many as they discarded.
+  wheel(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { players?: PlayerId[]; i?: number; counts?: number[] };
+    memo.players ??= refPlayers(ctx, ref(node, 'who'));
+    memo.counts ??= [];
+    let answer = answerOf(ctx, 'choose_objects');
+    for (let i = memo.i ?? 0; i < memo.players.length; i++) {
+      const p = memo.players[i]!;
+      const hand = [...zoneList(g, 'hand', p)];
+      let chosen: ObjectId[];
+      if (node.mode === 'all') chosen = hand;
+      else {
+        const max = node.mode === 'up_to' ? Math.min(Number(node.upTo), hand.length) : hand.length;
+        if (!answer) {
+          memo.i = i;
+          if (!max) {
+            memo.counts.push(0);
+            continue;
+          }
+          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: 0, max, text: `Discard ${node.mode === 'up_to' ? `up to ${max}` : 'any number of'} cards, then draw that many.` } };
+        }
+        chosen = answer.objects;
+        if (chosen.length > max || new Set(chosen).size !== chosen.length || !chosen.every((id) => hand.includes(id))) throw new RulesError(`Choose up to ${max} cards in your hand.`);
+        answer = null;
+      }
+      for (const id of chosen) discardCard(g, id, ctx.events);
+      memo.counts.push(chosen.length);
+      memo.i = i + 1;
+    }
+    const delta = Number(node.delta ?? 0);
+    return { expand: memo.players.flatMap((p, i) => (memo.counts![i]! + delta > 0 ? [{ type: 'draw', amount: memo.counts![i]! + delta, who: { ref: 'you' }, asPlayer: p }] : [])) };
+  },
+
+  // Dark Confidant: "reveal the top card of your library and put that card into your hand. You lose life equal to its
+  // mana value." (CR 701.20a)
+  reveal_top(node, ctx) {
+    const g = ctx.g;
+    const top = zoneList(g, 'library', ctx.controller)[0];
+    if (!top) return true;
+    const o = g.objects[top]!;
+    const mv = manaValueOf(g, o);
+    ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [top] });
+    moveObject(g, top, 'hand', ctx.events);
+    if (!node.life || mv <= 0) return true;
+    return { expand: [{ type: node.life === 'gain' ? 'gain_life' : 'lose_life', amount: mv, who: { ref: 'you' } }] };
+  },
+
+  // Rishkar's Expertise: "You may cast a spell with mana value 5 or less from your hand without paying its mana cost."
+  // CR 608.2g: cast as this resolves, timing ignored.
+  cast_from_hand(node, ctx) {
+    const g = ctx.g;
+    // Electrodominance: "with mana value X or less" — the spell's X.
+    const filter = liveFilter(ctx, { ...((node.filter ?? {}) as ObjectFilter), zone: 'hand' as const });
+    let picked = ctx.memo.picked as string | undefined;
+    if (!picked) {
+      const candidates = zoneList(g, 'hand', ctx.controller).filter((id) => castableCard(g, g.objects[id]!) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+      if (!candidates.length) return true;
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: 1, text: 'Choose a card to cast without paying its mana cost (or none).' } };
+      const id = answer.objects[0];
+      if (answer.objects.length > 1 || (id !== undefined && !candidates.includes(id))) throw new RulesError('Choose one of those cards, or none.');
+      if (id === undefined) return true;
+      ctx.memo.picked = picked = id;
+      return offerFreeCast(ctx, picked) ?? true;
+    }
+    return offerFreeCast(ctx, picked) ?? true;
+  },
+
   // CR 702.62a: remove a time counter; when the last is removed, it may be cast without paying its mana cost.
   suspend_tick(node, ctx) {
     const o = refObjects(ctx, { ref: 'self' })[0];
@@ -2069,7 +2178,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const memo = ctx.memo as { seen?: string[]; hit?: string | null };
     if (!memo.seen) {
-      const filter = { ...((node.filter ?? {}) as ObjectFilter), zone: 'library' as const };
+      const filter = liveFilter(ctx, { ...((node.filter ?? {}) as ObjectFilter), zone: 'library' as const });
       const seen: string[] = [];
       let hit: string | null = null;
       for (const id of zoneList(g, 'library', ctx.controller)) {
@@ -2200,6 +2309,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
     if (!objects.length) return true;
     const g = ctx.g;
+    // Homeward Path: "Each player gains control of all creatures they own."
+    if (node.toOwners) {
+      for (const p of new Set(objects.map((o) => o.owner))) {
+        g.effects.push({
+          id: `e${g.nextId++}`,
+          timestamp: ++g.clock,
+          source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
+          controller: ctx.controller,
+          objects: objects.filter((o) => o.owner === p).map((o) => ({ id: o.id, zcc: o.zcc })),
+          control: p,
+          until: 'game',
+        });
+      }
+      applyControlEffects(g, ctx.events);
+      return true;
+    }
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
@@ -2300,6 +2425,17 @@ function chooserOf(node: EffectNode, ctx: EffectContext): PlayerId | null {
  * Asks whether to cast a card for free now; on "yes" casts it (CR 608.2g). Returns the prompt, or null once
  * answered (or if there's nothing to ask).
  */
+/**
+ * A filter with its numbers worked out as the effect resolves: "with mana value X or less" (the spell's X), or what the
+ * text says X is ("where X is the sacrificed creature's mana value", CR 107.3a).
+ */
+function liveFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
+  const n = f.manaValue?.n;
+  if (n === 'X') return { ...f, manaValue: { ...f.manaValue!, n: ctx.x } };
+  if (n !== undefined && typeof n === 'object') return { ...f, manaValue: { ...f.manaValue!, n: amountOf(ctx, n) } };
+  return f;
+}
+
 function offerFreeCast(ctx: EffectContext, id: string): EffectResult | null {
   const g = ctx.g;
   const answer = answerOf(ctx, 'cast_free');
@@ -2481,8 +2617,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const id = e.type === 'created' ? e.object : e.type === 'moved' && e.to === 'battlefield' ? e.object : null;
     const o = id ? check.g.objects[id] : undefined;
     if (!o || o.zone !== 'battlefield' || !subjectMatches(check, t.subject as Ref, o)) return [];
-    // "When ~ enters untapped"
+    // "When ~ enters untapped"; Amulet of Vigor: "Whenever a permanent you control enters tapped"
     if (t.untapped && o.tapped) return [];
+    if (t.tapped && !o.tapped) return [];
     // "Whenever one or more tokens you control enter": once for the batch.
     if (t.batch) {
       const first = (check.batch ?? [e]).find((x) => {
@@ -3063,7 +3200,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable', 'draw_replacement'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

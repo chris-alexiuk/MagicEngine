@@ -207,6 +207,8 @@ function resolvePermanentSpell(g: GameState, entry: StackEntry & { kind: 'spell'
       // CR 608.3c: an Aura spell enters attached to the object it targeted.
       moveObject(g, o.id, 'battlefield', events, { controller: entry.controller });
       o.attachedTo = { id: enchanted.id, zcc: enchanted.zcc };
+      // What it does now depends on what it's attached to: anything worked out as it entered is out of date.
+      g.clock++;
       events.push({ type: 'attached', object: o.id, to: enchanted.id });
       finishResolution(g, entry, events);
       return;
@@ -360,6 +362,7 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   g.turnLog = newTurnLog();
   g.turn++;
   g.active = player;
+  g.players[player]!.turnsBegun = (g.players[player]!.turnsBegun ?? 0) + 1;
   g.extraCleanup = false;
   // CR 305.2: one land per turn — the count restarts each turn.
   for (const p of Object.values(g.players)) p.landsPlayedThisTurn = 0;
@@ -587,6 +590,12 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     for (const p of livePlayers(g)) if (checkDungeonDone(g, p, events)) changed = true;
     // Checking doesn't change anything that characteristics depend on, so lookups share one cache.
     withCharsCache(() => {
+      // CR 104.2b: an effect says a player wins (Laboratory Maniac) — everyone else loses.
+      const winner = livePlayers(g).find((p) => g.players[p]!.wonByEffect);
+      if (winner) {
+        delete g.players[winner]!.wonByEffect;
+        for (const q of livePlayers(g)) if (q !== winner && !playerRule(g, q, 'cant_lose')) losers.push({ player: q, reason: `${g.players[winner]!.name} won the game` });
+      }
       for (const p of livePlayers(g)) {
         const ps = g.players[p]!;
         // "You can't lose the game." (CR 104.3a: conceding still works.)
@@ -669,6 +678,7 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       const o = g.objects[id]!;
       delete o.attachedTo;
       delete o.bestowed;
+      g.clock++;
     }
 
     for (const id of vanish) removeObjectEntirely(g, id);

@@ -1,6 +1,7 @@
 import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef } from './nouns.js';
+import { parseCount } from './amounts.js';
 import { COLOR_WORDS, parseAmount } from './words.js';
 
 /**
@@ -255,6 +256,22 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'graveyard', ...c } : null;
   }
 
+  // Starting Town: "it's your first, second, or third turn of the game"
+  if (t === "it's your first, second, or third turn of the game") return { type: 'early_turn', max: 3 };
+  // The Theros Gods: "your devotion to red is less than five", "your devotion to white and black is less than seven"
+  const devotion = /^your devotion to (\w+)(?: and (\w+))? is less than (\w+)$/.exec(t);
+  if (devotion) {
+    const colors = [devotion[1], devotion[2]].filter(Boolean).map((c) => COLOR_WORDS[c!]);
+    const n = parseAmount(devotion[3]!);
+    if (colors.every(Boolean) && typeof n === 'number') return { type: 'amount', amount: { kind: 'devotion', colors: colors as never }, op: 'le', n: n - 1 };
+  }
+  // "if two or more creatures died this turn", "if three or more Zubera died this turn"
+  const died = /^(\w+ or more) (.+?) died this turn$/.exec(t);
+  if (died) {
+    const c = compare(died[1]!);
+    const amount = c ? parseCount(`the number of ${died[2]} that died this turn`, b) : null;
+    if (c && amount) return { type: 'amount', amount, ...c };
+  }
   // Things that happened this turn.
   const events: Record<string, string> = {
     'a creature died this turn': 'creature_died',
@@ -305,6 +322,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (oppDrew) {
     const c = count(oppDrew[1]!);
     return c?.min ? { type: 'this_turn', event: 'opponent_drew', min: c.min } : null;
+  }
+  // Blasphemous Edict: "there are thirteen or more creatures on the battlefield" — everyone's.
+  const onField = /^there are (\w+ or more) (.+?) on the battlefield$/.exec(t);
+  if (onField) {
+    const c = count(onField[1]!);
+    const pf = parseFilter(onField[2]!, b);
+    if (c && pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'count', who: 'all', filter: pf.filter, ...c };
   }
   // "If three or more creatures are attacking", "If exactly one creature is attacking", "If a white creature is attacking"
   const attacking = /^(a|an|exactly \w+|\w+ or more|\w+ or fewer) (.+?) (?:is|are) attacking$/.exec(t);

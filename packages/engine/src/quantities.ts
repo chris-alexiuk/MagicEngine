@@ -29,7 +29,7 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
       const e = (a as StaticAbility).effect as QuantityReplacementNode;
-      if (e.event !== event || !applies(g, e, source, subject)) continue;
+      if (e.event !== event || e.op === 'extra' || !applies(g, e, source, subject)) continue;
       mods.push(e);
     }
   }
@@ -37,6 +37,28 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
   const plus = mods.filter((m) => m.op === 'plus').reduce((x, m) => x + (m.n ?? 0), 0);
   const factor = mods.reduce((x, m) => x * (m.op === 'double' ? 2 : m.op === 'triple' ? 3 : 1), 1);
   return event === 'damage' ? n * factor + plus : (n + plus) * factor;
+}
+
+/**
+ * Peregrin Took, Xorn: the extra tokens to create as well when a player creates tokens (CR 614.1a), and how many —
+ * for tokens matching `tokenFilter` (by the created face's types and subtypes).
+ */
+export function extraTokens(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number): { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number }[] {
+  const out: { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number }[] = [];
+  if (n <= 0) return out;
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
+      const e = (a as StaticAbility).effect as QuantityReplacementNode;
+      if (e.event !== 'tokens' || e.op !== 'extra' || !e.extra || source.controller !== player) continue;
+      const f = e.tokenFilter;
+      if (f?.subtypes && !f.subtypes.some((t) => made.subtypes.includes(t))) continue;
+      if (f?.types && !f.types.some((t) => made.types.includes(t))) continue;
+      out.push({ token: e.extra.token, count: e.extra.thatMany ? n : 1 });
+    }
+  }
+  return out;
 }
 
 function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s: QuantitySubject): boolean {

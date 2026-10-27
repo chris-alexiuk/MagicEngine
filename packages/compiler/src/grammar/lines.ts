@@ -14,6 +14,7 @@ import type {
   QuantityReplacementNode,
   AddManaEffect,
   ExileInsteadNode,
+  FaceDef,
   ManaSpend,
   ObjectFilter,
   PlayerRule,
@@ -277,6 +278,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
     // Simian Spirit Guide: "Exile this card from your hand: Add {R}." (CR 605.1a: from the hand)
     else if (/^[Ee]xile ~ from your hand$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_hand' });
+    // Lion's Eye Diamond: "Discard your hand" (CR 701.9b).
+    else if (/^[Dd]iscard your hand$/.test(item)) (cost.other ??= []).push({ type: 'discard_hand' });
     // "Remove a +1/+1 counter from ~", "Remove three spore counters from ~" (CR 118.3).
     else if (/^[Rr]emove (a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+) (\S+) counters? from ~$/.test(item)) {
       const m = /^[Rr]emove (\S+) (\S+) counters? from ~$/.exec(item)!;
@@ -324,6 +327,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
   [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
   [/ (?:Activate|Transmute|Transfigure) only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
+  // Lion's Eye Diamond: matters only for a mana ability (CR 605.3a) — any other ability is activated at instant speed anyway.
+  [/ Activate only as an instant\.$/, (a) => (a.timing = 'instant')],
   // CR 702.151a (reconfigure)
   [/ Activate only if ~ is attached to a creature and only as a sorcery\.$/, (a) => ((a.timing = 'sorcery'), andIf(a, { type: 'is', of: { ref: 'self' }, filter: { attached: true } }))],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
@@ -396,6 +401,14 @@ export const activatedRule: GrammarRule = {
       if (!pf || !pf.plural || pf.filter.zone || node.timing || node.maxPerTurn || node.oncePerGame) return null;
       return { ...node, effects: [{ type: 'add_mana', anyColor: 1, colorsAmong: pf.filter }], mana: true };
     }
+    // Nykthos, Three Tree City: "Choose a color. Add an amount of mana of that color equal to your devotion to that color."
+    const chooseAdd = cost.loyalty === undefined ? /^Choose a color\. Add an amount of mana of that color equal to (.+)\.$/.exec(effectText) : null;
+    if (chooseAdd) {
+      const cb = new Binder(env);
+      const times = chooseAdd[1] === 'your devotion to that color' ? { kind: 'devotion' as const, colors: [], manaColor: true as const } : parseCount(chooseAdd[1]!, cb);
+      if (!times || cb.targets.length) return null;
+      return { ...node, effects: [{ type: 'add_mana', anyColor: 1, times }], mana: true };
+    }
     if (cost.loyalty === undefined) {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
@@ -444,9 +457,10 @@ export const activatedRule: GrammarRule = {
         return { ...node, effects: [{ type: 'if', cond, effects: [alt], else: [effect] }], mana: true };
       }
       if (mana && effect) {
-        // Mana abilities with timing restrictions ("Activate only as a sorcery") aren't modelled yet;
-        // conditions ("Activate only if you control a Swamp") are checked as they're activated (CR 602.5b).
-        if (node.timing || node.maxPerTurn || node.oncePerGame) return null;
+        // Mana abilities with timing restrictions ("Activate only as a sorcery") aren't modelled yet ("only as an
+        // instant" is: only with priority); conditions ("Activate only if you control a Swamp") are checked as
+        // they're activated (CR 602.5b).
+        if (node.timing === 'sorcery' || node.maxPerTurn || node.oncePerGame) return null;
         // "{T}: Add {R} or {W}. ~ deals 1 damage to you." — extra untargeted effects (CR 605.1a allows them).
         const b = new Binder(env);
         b.it = { ref: 'self' };
@@ -725,6 +739,29 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
+  // Mirkwood Bats: "Whenever you create or sacrifice a token"; "Whenever you create a token", "… one or more creature
+  // tokens" — tokens are created on the battlefield (CR 111.1), so as they enter under your control.
+  const createOrSac = /^you create or sacrifice a token$/.test(t);
+  const create = createOrSac ? null : /^you create (a|an|one or more) (?:(.+?) )?tokens?$/.exec(t);
+  if ((create || createOrSac) && word === 'Whenever') {
+    let filter: ObjectFilter = { token: true, controller: 'you' };
+    if (create?.[2]) {
+      const pf = parseFilter(`${create[2]} tokens`, b);
+      if (!pf || !pf.plural || pf.filter.zone) return null;
+      filter = { ...pf.filter, token: true, controller: 'you' };
+    }
+    const enters = { type: 'enters', subject: { ref: 'all', filter }, ...(create?.[1] === 'one or more' ? { batch: true } : {}) } as TriggerNode;
+    if (!createOrSac) return { trigger: enters, it: { ref: 'trigger_object' }, player: null };
+    const sac = parseTrigger(word, 'you sacrifice a token', b);
+    if (!sac) return null;
+    return { trigger: { type: 'either', of: [enters, sac.trigger] }, it: null, player: null };
+  }
+  // Amulet of Vigor: "Whenever a permanent you control enters tapped"
+  const entersTapped = /^(.+) enters tapped$/.exec(t);
+  if (entersTapped) {
+    const one = parseTrigger(word, `${entersTapped[1]} enters`, b);
+    if (one && one.trigger.type === 'enters' && !one.trigger.batch) return { ...one, trigger: { ...one.trigger, tapped: true } };
+  }
   const self = /^~ (enters(?: the battlefield)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
   if (self) {
     const type = eventType(self[1]!);
@@ -761,6 +798,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!one || !two) return null;
     // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies").
     return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
+  }
+  // Up the Beanstalk: "When this enchantment enters and whenever you cast a spell with mana value 5 or greater" — two
+  // unrelated events (CR 603.2), so there's no "it" or "that player" to speak of.
+  const andWhenever = /^~ enters and whenever (.+)$/.exec(t);
+  if (andWhenever && !/^(?:it|~) /.test(andWhenever[1]!)) {
+    const one = parseTrigger(word, '~ enters', b);
+    const two = one ? parseTrigger('Whenever', andWhenever[1]!, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: null };
   }
   // Kindred Discovery: "Whenever a creature you control of the chosen type enters or attacks"
   const eitherAny = /^((?:a|an|another) .+?) (enters|attacks) or (attacks|dies)$/.exec(t);
@@ -1170,6 +1216,8 @@ export const triggeredRule: GrammarRule = {
 
 const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't block": ['cant_block'],
+  // Doran, the Siege Tower (CR 510.1a)
+  'assigns combat damage equal to its toughness rather than its power': ['damage_by_toughness'],
   "can't attack": ['cant_attack'],
   // CR 506.5
   "can't attack alone": ['cant_attack_alone'],
@@ -1213,6 +1261,26 @@ export const continuousRule: GrammarRule = {
     const cantBlockIt = /^(Creatures .+?) can't block (?:it|~)$/.exec(rest);
     if (cantBlockIt) rest = `~ can't be blocked by ${cantBlockIt[1]!.replace(/^C/, 'c')}`;
     rest = rest.replace(/^(~ doesn't untap during (?:your|its controller's) untap step) if (.+)$/, '$1 as long as $2');
+    // Topiary Stomper: "This creature can't attack or block unless you control seven or more lands." (CR 611.3a)
+    // ("… unless defending player controls an Island" is checked per attack, elsewhere.)
+    const unless = /^(~ can't (?:attack|block|attack or block)) unless (?!defending player)(.+)$/.exec(rest);
+    const unlessCond = unless ? attempt(b, (b) => parseCondition(unless[2]!, b)) : null;
+    if (unless && unlessCond) {
+      conds.push({ type: 'not', cond: unlessCond });
+      rest = unless[1]!;
+    }
+    // Wonder: "As long as this card is in your graveyard and you control an Island, creatures you control have flying."
+    const inYard = /^As long as (?:this card|~) is in your graveyard(?: and (.+?))?, (.+)$/.exec(rest);
+    let fromGraveyard = false;
+    if (inYard) {
+      if (inYard[1]) {
+        const cond = attempt(b, (b) => parseCondition(inYard[1]!, b));
+        if (!cond) return null;
+        conds.push(cond);
+      }
+      rest = inYard[2]!;
+      fromGraveyard = true;
+    }
     for (;;) {
       const during = /^During (your turn|turns other than yours), (.+)$/i.exec(rest);
       if (during) {
@@ -1254,6 +1322,10 @@ export const continuousRule: GrammarRule = {
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
       parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
+    if (fromGraveyard) {
+      if (effect.type !== 'continuous') return null;
+      effect.fromGraveyard = true;
+    }
     if (conds.length) effect.condition = conds.length === 1 ? conds[0]! : { type: 'and', all: conds };
     const node: StaticAbility = { kind: 'static', text: original, effect };
     return node;
@@ -1429,7 +1501,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless) )*(?:[A-Z][\w’'-]* )*creature with base power and toughness \d+\/\d+.*|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1451,6 +1523,11 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
         else return null;
       }
       effect.addTypes = { types, subtypes };
+      continue;
+    }
+    // Layer 4: "isn't a creature" (the Theros Gods, under their condition).
+    if (/^(?:isn't a creature|aren't creatures)$/.test(part) && !effect.loseTypes) {
+      effect.loseTypes = ['Creature'];
       continue;
     }
     // CR 613.1f: "loses all abilities" (layer 6).
@@ -1493,7 +1570,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];
       continue;
     }
-    const isLand = /^is an? (Plains|Island|Swamp|Mountain|Forest)$/.exec(part);
+    // Blood Moon: "Nonbasic lands are Mountains." (CR 305.7)
+    const isLand = /^is an? (Plains|Island|Swamp|Mountain|Forest)$/.exec(part) ?? /^are (Plains|Island|Swamp|Mountain|Forest)s?$/.exec(part);
     if (isLand && !effect.landTypes) {
       effect.landTypes = [isLand[1]!];
       continue;
@@ -1718,6 +1796,37 @@ export const quantityReplacementRule: GrammarRule = {
     if (life) {
       const op = quantityOp(life[1]!);
       return op && /\blife\b/.test(life[1]!) ? make({ event: 'gain_life', who: 'you', ...op }) : null;
+    }
+    // Peregrin Took, Xorn, Chatterfang: "… those tokens plus an additional Food token are created instead."
+    const plusToken =
+      /^If one or more (?:(.+?) )?tokens would be created under your control, those tokens plus (an additional|that many|an?) (.+?) (?:are created|is created) instead\.$/.exec(line) ??
+      /^If you would create one or more (?:(.+?) )?tokens, instead create those tokens plus (an additional|that many|an?) (.+?)\.$/.exec(line);
+    if (plusToken) {
+      const made = parseEffectText(`Create ${plusToken[2] === 'that many' ? 'a' : 'a'} ${plusToken[3]!.replace(/tokens$/, 'token')}.`.replace(/ a ([AEIOU])/, ' an $1'), new Binder(env));
+      const token = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.amount === 1 ? (made[0]!.token as FaceDef | undefined) : undefined;
+      if (!token) return null;
+      let tokenFilter: ObjectFilter | undefined;
+      if (plusToken[1]) {
+        const pf = parseFilter(`${plusToken[1]} tokens`, b);
+        if (!pf || !pf.plural) return null;
+        const { token: _t, ...f } = pf.filter;
+        tokenFilter = f;
+      }
+      return make({ event: 'tokens', who: 'you', op: 'extra', extra: { token, ...(plusToken[2] === 'that many' ? { thatMany: true as const } : {}) }, ...(tokenFilter ? { tokenFilter } : {}) });
+    }
+    // Teferi's Ageless Insight: "If you would draw a card except the first one you draw in each of your draw steps, draw
+    // two cards instead."; Thought Reflection: "If you would draw a card, draw two cards instead."
+    const drawTwo = /^If you would draw a card( except the first one you draw in each of your draw steps)?, draw two cards instead\.$/.exec(line);
+    if (drawTwo) return { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1] ? { exceptFirst: true } : {}) } };
+    // Laboratory Maniac, Jace, Wielder of Mysteries
+    if (/^If you would draw a card while your library has no cards in it, you win the game instead\.$/.test(line)) return { kind: 'static', text: original, effect: { type: 'draw_replacement', emptyWin: true } };
+    // Doubling Season: "If an effect would put one or more counters on a permanent you control, it puts twice that many
+    // of those counters on that permanent instead."
+    const effectPuts = /^If an effect would put one or more (?:(\S+) )?counters on (.+?), it puts (.+?) of those counters on (?:that \w+|it) instead\.$/.exec(line);
+    if (effectPuts) {
+      const op = quantityOp(effectPuts[3]!);
+      const pf = parseFilter(effectPuts[2]!.replace(/^(?:a|an) /, ''), b);
+      return op && pf && !pf.plural ? make({ event: 'counters', ...(effectPuts[1] ? { counter: effectPuts[1] } : {}), filter: pf.filter, ...op }) : null;
     }
     const tokens =
       /^If (?:one or more|an effect would create one or more) tokens would be created under your control, (.+?) of those tokens are created instead\.$/.exec(line) ??
@@ -1975,6 +2084,24 @@ export const castOptionRule: GrammarRule = {
       const choice = choiceCost(`Discard ${retrace[1]} ${retrace[2]}`, b);
       if (!choice) return null;
       return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost: { other: [choice] }, zone: 'graveyard', withManaCost: true } as CastOptionNode };
+    }
+    // Gravecrawler: "You may cast this card from your graveyard [as long as you control a Zombie]"; Rona: "… by discarding
+    // two cards in addition to paying its other costs" — a permission, with the mana cost still paid (CR 601.2a).
+    const fromYard = /^You may cast ~ from your graveyard(?:,? (?:as long as|if) (.+?)| by (.+?) in addition to paying its other costs)?$/.exec(t);
+    if (fromYard) {
+      const condition = fromYard[1] ? parseCondition(fromYard[1], b) : undefined;
+      if (fromYard[1] && !condition) return null;
+      let cost: Cost = {};
+      if (fromYard[2]) {
+        const items = fromYard[2].split(/,? and |, /).map((x) => {
+          const pay = /^paying ((?:\{[^}]+\})+)$/.exec(x);
+          return pay ? pay[1]! : x.replace(/^paying /, 'pay ').replace(/^discarding /, 'discard ').replace(/^sacrificing /, 'sacrifice ').replace(/^exiling /, 'exile ').replace(/^\w/, (c) => c.toUpperCase());
+        });
+        const parsed = parseCost(items.join(', '), false, b);
+        if (!parsed || parsed.tap || parsed.untap || parsed.loyalty !== undefined || parsed.mana) return null;
+        cost = parsed;
+      }
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost, zone: 'graveyard', withManaCost: true, ...(condition ? { condition } : {}) } as CastOptionNode };
     }
     // "As long as you discarded this card this turn, you may cast it from your graveyard by paying …" (mayhem).
     const byPaying = /^(?:As long as (.+?), )?[Yy]ou may cast (?:~|it)( transformed)?( from your graveyard| from your hand)? by paying (.+?) rather than (?:paying )?its mana cost$/.exec(t);

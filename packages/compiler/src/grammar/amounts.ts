@@ -1,6 +1,6 @@
 import type { Amount, AmountExpr, Color, EffectNode, ObjectFilter } from '@mtg/schema';
 import type { Binder } from './binder.js';
-import { parseFilter, parseObjectRef } from './nouns.js';
+import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { COLOR_WORDS, parseAmount } from './words.js';
 
 /**
@@ -27,6 +27,21 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     return inner?.kind === 'count' ? { ...inner, filter: { ...inner.filter, other: true } } : null;
   }
   const t = text.trim();
+  // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
+  const theirs = /^(.+) in (target player|target opponent|that player)'s (hand|graveyard|library)$/.exec(t);
+  if (theirs) {
+    const head = theirs[1]!;
+    let filter: ObjectFilter | undefined;
+    if (!/^cards?$/.test(head)) {
+      const pf = parseFilter(`${head} in your graveyard`, b);
+      if (!pf || pf.plural !== plural) return null;
+      const { zone: _z, owner: _o, ...rest } = pf.filter;
+      filter = rest as ObjectFilter;
+    } else if (head.endsWith('s') !== plural) return null;
+    const player = parsePlayerRef(theirs[2]!, b);
+    if (!player) return null;
+    return { kind: 'cards', zone: theirs[3] as 'hand' | 'graveyard' | 'library', who: 'each', player, ...(filter ? { filter } : {}) };
+  }
   for (const [suffix, where] of Object.entries(ZONES)) {
     if (!t.endsWith(` ${suffix}`)) continue;
     const head = t.slice(0, -suffix.length - 1);
@@ -42,9 +57,42 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   return { kind: 'count', filter: pf.filter };
 }
 
+/** "creature destroyed this way", "cards exiled this way": what the resolution moved (by card type only). */
+function movedThisWay(text: string, b: Binder): AmountExpr | null {
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled) this way$/.exec(text.trim());
+  if (!m) return null;
+  const noun = m[1]!.replace(/^(?:a|an) /, '').replace(/ cards?$|^cards?$/, '');
+  const how = m[2] as 'destroyed' | 'exiled' | 'sacrificed' | 'milled';
+  if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how };
+  const pf = parseFilter(noun, b.clone());
+  if (!pf) return null;
+  const f = pf.filter;
+  if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes')) return null;
+  return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}) };
+}
+
+/** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
+function diedThisTurn(text: string, b: Binder): AmountExpr | null {
+  const m = /^(.+?) that died this turn$/.exec(text.trim());
+  if (!m) return null;
+  const pf = parseFilter(m[1]!, b.clone());
+  if (!pf) return null;
+  const { types, subtypes, token, controller, ...rest } = pf.filter;
+  if (Object.keys(rest).length || token === true || (controller && controller !== 'you' && controller !== 'opponent')) return null;
+  return {
+    kind: 'died_this_turn',
+    ...(types && !(types.length === 1 && types[0] === 'Creature') ? { types } : {}),
+    ...(subtypes ? { subtypes } : {}),
+    ...(token === false ? { nontoken: true as const } : {}),
+    ...(controller ? { controller: controller as 'you' | 'opponent' } : {}),
+  };
+}
+
 /** What follows "for each": a singular noun phrase. */
 export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
+  if (moved) return moved;
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"
@@ -128,6 +176,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const number = /^the number of (.+)$/.exec(t);
   if (number) {
     const what = number[1]!;
+    const moved = movedThisWay(what, b) ?? diedThisTurn(what, b);
+    if (moved) return moved;
     if (what === 'opponents you have') return { kind: 'players', who: 'opponents' };
     const counters = /^(\S+) counters on (.+)$/.exec(what);
     if (counters) {
@@ -153,6 +203,7 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Windfall: "the greatest number of cards a player discarded this way"; "the number of cards discarded this way"
   if (t === 'the greatest number of cards a player discarded this way') return { kind: 'discarded_this_way', max: true };
   if (t === 'the number of cards discarded this way') return { kind: 'discarded_this_way' };
+  if (t === 'the damage dealt this way') return { kind: 'damage_this_way' };
   // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
   const greatest = /^the greatest (power|toughness|mana value) among (.+)$/.exec(t);
   if (greatest) {
@@ -184,7 +235,9 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
   return effects.map((e) => {
     const out: EffectNode = { ...e };
     for (const [k, v] of Object.entries(e)) {
-      if (k === 'effects' || k === 'then' || k === 'else') out[k] = bindX(v as EffectNode[], expr);
+      if ((k === 'effects' || k === 'then' || k === 'else' || k === 'cant') && Array.isArray(v)) out[k] = bindX(v as EffectNode[], expr);
+      // Eldritch Evolution: "a creature card with mana value X or less, where X is …"
+      else if (k === 'filter' && (v as ObjectFilter | undefined)?.manaValue?.n === 'X') out[k] = { ...(v as ObjectFilter), manaValue: { ...(v as ObjectFilter).manaValue!, n: expr } };
       else out[k] = sub(v);
     }
     return out;

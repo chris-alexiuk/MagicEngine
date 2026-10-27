@@ -10,7 +10,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canUseTapAbilities, isPermanentCard } from './characteristics.js';
+import { canUseTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
 import { grantedKeywordOff, hasKeyword, matchesFilter, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
@@ -352,6 +352,9 @@ function activateMana(
 ): void {
   // CR 605.3a: mana abilities can be activated with priority, or while something asks for a mana payment.
   const paying = (g.pending?.kind === 'manual_resolution' || g.pending?.kind === 'pay') && g.pending.player === player;
+  // Lion's Eye Diamond: "Activate only as an instant" — with priority, not in the middle of a payment.
+  const ab = g.objects[id] ? manaAbilities(g, g.objects[id]!)[index] : undefined;
+  if (paying && ab?.timing === 'instant') throw new RulesError('That ability can be activated only as an instant.');
   if (!paying) {
     if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose.`);
     if (g.priority !== player) throw new RulesError('You don’t have priority.');

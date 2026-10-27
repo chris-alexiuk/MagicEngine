@@ -87,6 +87,10 @@ export interface PlayerState {
   extraLands?: { turn: number; n: number };
   /** Set when the player attempted to draw from an empty library since the last SBA check. */
   drewFromEmptyLibrary: boolean;
+  /** How many turns this player has begun ("if it's your first, second, or third turn of the game"). */
+  turnsBegun?: number;
+  /** Laboratory Maniac: "you win the game instead" — the game ends as state-based actions are next checked (CR 104.2b). */
+  wonByEffect?: boolean;
   lost: boolean;
   mulligans: number;
   keptHand: boolean;
@@ -461,6 +465,10 @@ export interface Resolution {
   chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
   lifeLost?: number;
+  /** Damage this resolution's effects dealt ("You gain life equal to the damage dealt this way"). */
+  damageDealt?: number;
+  /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
+  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[] }[];
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
   /** CR 701.30d: "If you win" after "Clash with an opponent". */
@@ -855,7 +863,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; types?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number }[];

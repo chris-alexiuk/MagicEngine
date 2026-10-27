@@ -39,6 +39,9 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Eldritch Evolution: "Search your library for … X or less, where X is …. Put that card onto the battlefield, then
+  // shuffle." — the same as one sentence.
+  text = text.replace(/(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (?:that card|it) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./, '$1, put it $3, then shuffle$2.');
   // Sylvan Library (CR 121.1, 119.4)
   if (/^You may draw two additional cards\. If you do, choose two cards in your hand drawn this turn\. For each of those cards, pay 4 life or put the card on top of your library\.$/.test(text.trim())) {
     return [{ type: 'sylvan_library' }];
@@ -66,6 +69,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!what) return null;
         out.push({ type: 'modify', what: what.ref, until: fbGrant[2] ? 'eot' : 'game', keywords: [{ id: 'flashback', costIsManaCost: true }] });
         i++;
+        continue;
+      }
+      // Plaguecrafter: "Each player sacrifices a creature or planeswalker of their choice. Each player who can't discards a card."
+      const whoCant = /^Each (?:player|opponent) who can't (.+)$/.exec(s);
+      const lastNode = out[out.length - 1];
+      if (whoCant && lastNode?.type === 'sacrifice_choice' && (lastNode.who as { ref?: string } | undefined)?.ref === 'players') {
+        const then = parseSentence(`You ${whoCant[1]!.replace(/^(\w+?)s\b/, '$1')}`, b);
+        if (!then) return null;
+        lastNode.cant = then;
+        continue;
+      }
+      // Eldrazi Monument: "sacrifice a creature. If you can't, sacrifice this artifact."
+      const youCant = /^If you can't, (.+)$/.exec(s);
+      if (youCant && lastNode?.type === 'sacrifice_choice' && (lastNode.who as { ref?: string } | undefined)?.ref === 'you') {
+        const then = parseSentence(capitalise(youCant[1]!), b);
+        if (!then) return null;
+        lastNode.cant = then;
         continue;
       }
       // Victimize: "Sacrifice a creature. If you do, return the chosen cards …" — not optional, but what follows
@@ -315,6 +335,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += dig.used;
         continue;
       }
+      // Dark Confidant: "Reveal the top card of your library and put that card into your hand. You lose life equal to its
+      // mana value." (Augury Adept: "You gain life equal to …")
+      if (/^[Rr]eveal the top card of your library and put (?:that card|it) into your hand$/.test(s)) {
+        const life = sentences[i + 1] ? /^You (lose|gain) life equal to its mana value$/.exec(sentences[i + 1]!) : null;
+        out.push({ type: 'reveal_top', ...(life ? { life: life[1] } : {}) });
+        if (life) i += 1;
+        // "where X is that card's mana value" (Twilight Prophet): the card isn't one an effect can find later.
+        b.it = null;
+        continue;
+      }
       // "Look at the top card of your library. If it's a land card, you may put it onto the battlefield tapped.
       // (Otherwise, put it into your hand.)" — one card, maybe taken.
       const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
@@ -489,7 +519,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           }
           return null;
         };
-        const last = copyIn(out.slice(-1));
+        // Narset's Reversal: "Copy target instant or sorcery spell, then return it to its owner's hand. You may choose new
+        // targets for the copy." — the latest copy, even with an instruction after it.
+        const last = copyIn(out.slice(-1)) ?? (out.length > 1 && out[out.length - 1]!.type === 'move' ? copyIn(out.slice(-2, -1)) : null);
         if (!last) return null;
         last.newTargets = true;
         continue;
@@ -806,6 +838,16 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         return inner && expr ? bindX(inner, expr) : null;
       });
       if (r) return r;
+      // "~ deals damage to target player equal to the number of cards in that player's hand": the count names a
+      // player the instruction targets.
+      const later = /\bthat (?:player|opponent)\b/.test(what)
+        ? attempt(b, (b) => {
+            const inner = parseInner(text, b);
+            const expr = inner && parseCount(what, b);
+            return inner && expr ? bindX(inner, expr) : null;
+          })
+        : null;
+      if (later) return later;
     }
   }
   return null;
@@ -881,6 +923,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 305.2: "You may play an additional land this turn."
   const extraLand = /^(You|Each player) may play (an|two) additional lands? this turn$/.exec(s);
   if (extraLand) return [{ type: 'extra_land', who: { ref: extraLand[1] === 'You' ? 'you' : 'players' }, ...(extraLand[2] === 'two' ? { amount: 2 } : {}) }];
+  // Rishkar's Expertise: "You may cast a spell with mana value 5 or less from your hand without paying its mana cost."
+  const fromHand = /^[Yy]ou may cast (?:a|an) (.+? )?spell( with mana value (?:\d+|X) or less)? from your hand without paying its mana cost$/.exec(s);
+  if (fromHand) {
+    const r = attempt(b, (b) => {
+      const noun = `${(fromHand[1] ?? '').trim() ? `${fromHand[1]!.trim()} card` : 'card'}${fromHand[2] ?? ''} in your hand`;
+      const pf = parseFilter(noun, b);
+      if (!pf || pf.plural) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return [{ type: 'cast_from_hand', filter }];
+    });
+    if (r) return r;
+  }
   const free = /^[Yy]ou may cast (.+?) without paying (?:its|that spell's|~'s) mana cost$/.exec(s);
   if (free) {
     const r = attempt(b, (b) => {
@@ -889,6 +943,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return [{ type: 'cast_free', what: what.ref }];
     });
     if (r) return r;
+  }
+  // "You may have it deal damage equal to its power to target creature", "you may have that player lose 1 life":
+  // the object or player does it, if you choose.
+  const mayHave = /^[Yy]ou may have (.+)$/.exec(s);
+  if (mayHave) {
+    const words = mayHave[1]!.split(' ');
+    for (let i = 1; i < words.length; i++) {
+      const verb = HAVE_VERBS[words[i]!];
+      if (!verb) continue;
+      const sentence = `${capitalise(words.slice(0, i).join(' '))} ${verb} ${words.slice(i + 1).join(' ')}`.trim();
+      const r = attempt(b, (b) => parseSentence(sentence, b));
+      if (r) return [{ type: 'may', effects: r }];
+    }
   }
   const may = /^[Yy]ou may (.+)$/.exec(s);
   if (may) {
@@ -1032,6 +1099,37 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 701.30b: "Clash with an opponent."
   if (/^[Cc]lash with an opponent$/.test(s)) return [{ type: 'clash' }];
+  // "Discard all the cards in your hand, then draw that many cards", "discard up to two cards, then draw that many cards",
+  // Flux: "Each player discards any number of cards, then draws that many cards." (CR 701.9, 121.1)
+  const wheel = /^(?:(.+?) )?(?:discards?|[Dd]iscard) (all the cards in (?:your|their) hand|any number of cards|up to (\w+) cards), then (?:draws?|draw) that many cards( plus one| minus one)?$/.exec(s);
+  if (wheel) {
+    const r = attempt(b, (b) => {
+      const who = wheel[1] ? parsePlayerRef(wheel[1], b) : { ref: 'you' as const };
+      const upTo = wheel[3] ? parseAmount(wheel[3]) : undefined;
+      if (!who || (wheel[3] && typeof upTo !== 'number')) return null;
+      const mode = wheel[2]!.startsWith('all') ? 'all' : wheel[3] ? 'up_to' : 'any';
+      return [{ type: 'wheel', who, mode, ...(typeof upTo === 'number' ? { upTo } : {}), ...(wheel[4] ? { delta: wheel[4] === ' plus one' ? 1 : -1 } : {}) }];
+    });
+    if (r) return r;
+  }
+  // Dawn's Truce: "You and permanents you control gain hexproof until end of turn." (CR 702.11)
+  const youAndGain = /^You and (.+?) gain (hexproof|hexproof and indestructible|indestructible and hexproof) until end of turn$/.exec(s);
+  if (youAndGain) {
+    const r = attempt(b, (b) => {
+      const rest = parseSentence(`${capitalise(youAndGain[1]!)} gain ${youAndGain[2]} until end of turn`, b);
+      return rest ? [{ type: 'player_effect', who: { ref: 'you' }, rule: 'hexproof' }, ...rest] : null;
+    });
+    if (r) return r;
+  }
+  // Homeward Path: "Each player gains control of all creatures they own." (layer 2)
+  const ownBack = /^[Ee]ach player gains control of all (.+?) they own$/.exec(s);
+  if (ownBack) {
+    const r = attempt(b, (b) => {
+      const pf = parseFilter(ownBack[1]!, b);
+      return pf && pf.plural && !pf.filter.zone ? [{ type: 'gain_control', what: { ref: 'all', filter: pf.filter }, toOwners: true }] : null;
+    });
+    if (r) return r;
+  }
   // "Look at target opponent's hand." / "Target opponent reveals their hand." (CR 701.20a)
   const lookHand = /^[Ll]ook at (.+?)'s? hand$/.exec(s);
   const revealHand = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
@@ -1412,6 +1510,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Narset's Reversal: "Copy target instant or sorcery spell, then return it to its owner's hand." — two instructions
+  // in order, where the first is a sentence of its own kind.
+  for (const j of joints) {
+    // "… shuffles it into their library, then draws two cards": the subject goes on — not this.
+    if (j[0] !== ', then ' || /^\w+s\b/.test(s.slice(j.index! + j[0].length).replace(/^amass\b/, 'amass_'))) continue;
+    const r = attempt(b, (b) => {
+      const l = parseSentence(s.slice(0, j.index), b);
+      const rest = l ? parseSentence(capitalise(s.slice(j.index! + j[0].length)), b) : null;
+      return l && rest ? [...l, ...rest] : null;
+    });
+    if (r) return r;
+  }
   return null;
 }
 
@@ -1455,6 +1565,12 @@ interface Clause {
   subject: Ref | null;
 }
 
+/** "You may have it deal …": the verbs, as the third person says them. */
+const HAVE_VERBS: Record<string, string> = {
+  deal: 'deals', fight: 'fights', get: 'gets', lose: 'loses', discard: 'discards', mill: 'mills', gain: 'gains', draw: 'draws',
+  sacrifice: 'sacrifices', create: 'creates', shuffle: 'shuffles', become: 'becomes', return: 'returns', put: 'puts', exile: 'exiles',
+};
+
 /** Player verbs: lemma → handler. The subject is the player performing it ("you" when imperative). */
 type VerbHandler = (args: string, who: Ref, b: Binder, imperative: boolean) => EffectNode[] | null;
 
@@ -1465,6 +1581,8 @@ const VERBS: Record<string, VerbHandler> = {
     const upTo = /^up to (\w+) cards?$/.exec(args);
     const n = upTo ? parseAmount(upTo[1]!) : null;
     if (upTo) return typeof n === 'number' && n > 0 && who.ref !== 'players' ? [{ type: 'draw', amount: n, who, upTo: true }] : null;
+    // Anvil of Bogardan: "that player draws an additional card, then discards a card"
+    if (args === 'an additional card') return [{ type: 'draw', amount: 1, who }];
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
@@ -1564,7 +1682,7 @@ const VERBS: Record<string, VerbHandler> = {
   sacrifice(args, who, b) {
     // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
     // "sacrifices a creature of their choice" (the 2024 wording; CR 701.21a: the player chooses either way).
-    const choice = /^(a|an|one|two|three|four|five|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
+    const choice = /^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|thirteen|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
     if (choice) {
       const pf = parseFilter(choice[2]!, b);
       const amount = choice[1] === 'another' ? 1 : parseAmount(choice[1]!);
@@ -1847,7 +1965,8 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     if (/^an? (?:creature|permanent|creature or planeswalker) dealt damage this way$/.test(dies[1]!)) {
       return b.damaged ? [{ type: 'exile_if_dies', what: b.damaged }] : null;
     }
-    const what = parseObjectRef(dies[1]!, b);
+    // "If that creature or planeswalker would die this turn" — the object the sentence before was about.
+    const what = parseObjectRef(dies[1]!.replace(/^that (creature|permanent) or planeswalker$/, 'that $1'), b);
     return what ? [{ type: 'exile_if_dies', what: what.ref }] : null;
   }
   // CR 702.84a (unearth): "If it would leave the battlefield, exile it instead of putting it anywhere else."
@@ -1909,7 +2028,7 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
   const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);
-  const experience = /^(.+?) gets? (an?|one|two|three) (experience|rad) counters?$/i.exec(c);
+  const experience = /^(.+?) gets? (an?|one|two|three|four|five|six|seven|eight|nine|ten) (experience|rad|poison) counters?$/i.exec(c);
   if (energy || experience) {
     const who = parsePlayerRef((energy ?? experience)![1]!, b);
     const amount = energy ? energy[2]!.length / 3 : parseAmount(experience![2]!);
@@ -2000,7 +2119,8 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     if (base && times) return [{ ...base, times }];
   }
   // Mana Geyser: "Add {R} for each tapped land your opponents control."
-  const addEach = add ? /^((?:\{[WUBRGC]\})+) for each (.+)$/.exec(add[1]!) : null;
+  // Culling Ritual: "Add {B} or {G} for each permanent destroyed this way" — any mix of the two.
+  const addEach = add ? /^((?:\{[WUBRGC]\})+|\{[WUBRGC]\} or \{[WUBRGC]\}) for each (.+)$/.exec(add[1]!) : null;
   if (addEach) {
     const base = parseManaProduction(addEach[1]!);
     const times = base ? parseForEach(addEach[2]!, b) : null;
@@ -2079,12 +2199,13 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   const m = /^(.+?) becomes? an? (?:(\d+|X)\/(\d+|X) )?(.+?)(?: with (.+?))?( that's still an? (?:land|planeswalker|artifact|enchantment))?( in addition to its other types)?( until end of turn)?$/.exec(c);
   if (!m) return null;
   // Without a P/T it keeps its own ("This Vehicle becomes an artifact creature", CR 702.122a).
-  if (!m[2] && !/\bcreature$/.test(m[4]!)) return null;
+  // Liquimetal Torque: "Target nonland permanent becomes an artifact in addition to its other types until end of turn".
+  if (!m[2] && !/\bcreature$/.test(m[4]!) && !m[7]) return null;
   return attempt(b, (b) => {
     const what = parseObjectRef(m[1]!, b);
     if (!what) return null;
     const words = m[4]!.replace(/ and /g, ' ').split(' ');
-    if (words[words.length - 1] !== 'creature') return null;
+    if (words[words.length - 1] !== 'creature' && !m[7]) return null;
     const colors: string[] = [];
     const types: string[] = [];
     const subtypes: string[] = [];

@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -23,6 +23,10 @@ export interface TurnLog {
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
   castSpells?: { player: PlayerId; id: ObjectId }[];
   noncreatureCast: PlayerId[];
+  /** Active players who have drawn in this turn's draw step ("except the first one you draw in each of your draw steps"). */
+  drawStepDrew?: PlayerId[];
+  /** What died this turn, as it last existed ("for each creature that died this turn"). */
+  died?: { controller: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
@@ -66,7 +70,13 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
     switch (e.type) {
       case 'moved': {
         const types = g.cards[e.card]?.faces[e.face]?.types ?? [];
-        if (e.from === 'battlefield' && e.to === 'graveyard' && types.includes('Creature')) log.creatureDied = true;
+        if (e.from === 'battlefield' && e.to === 'graveyard') {
+          // CR 700.4: it died — as it last existed on the battlefield.
+          const lk = g.lastKnown?.[e.object];
+          const was = lk?.types ?? types;
+          if (was.includes('Creature') || types.includes('Creature')) log.creatureDied = true;
+          (log.died ??= []).push({ controller: e.controller, types: [...was], subtypes: [...(lk?.subtypes ?? [])], token: Boolean(g.objects[e.object]?.token) });
+        }
         if (e.from === 'battlefield') {
           if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
           if (!types.includes('Land')) log.nonlandLeft = true;
@@ -327,6 +337,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'or':
       return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
+    // Starting Town: "it's your first, second, or third turn of the game"
+    case 'early_turn':
+      return g.active === ctx.controller && (g.players[ctx.controller]!.turnsBegun ?? 0) <= Number(cond.max);
+    // "~ can't attack or block unless you control seven or more lands"
+    case 'not':
+      return !evalCondition(cond.cond as ConditionNode, ctx);
     case 'this_turn': {
       const log = g.turnLog;
       switch (cond.event) {

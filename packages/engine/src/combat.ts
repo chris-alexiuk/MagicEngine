@@ -132,6 +132,11 @@ export function canExert(g: GameState, o: GameObject): boolean {
 }
 
 /** CR 508.1c: restrictions on what a creature may attack ("can't attack unless defending player controls an Island"). */
+/** CR 510.1a: the combat damage a creature assigns — its power, or its toughness (Doran, the Siege Tower). */
+function combatDamageOf(g: GameState, o: GameObject): number {
+  return hasRule(g, o, 'damage_by_toughness') ? toughness(g, o) : power(g, o);
+}
+
 /** CR 508.1d / 701.15b: it attacks each combat if able (or is goaded). */
 export function mustAttack(g: GameState, o: GameObject): boolean {
   return hasRule(g, o, 'attacks_each_combat') || Boolean(o.goadedBy?.length) || o.attacksPlayer?.turn === g.turn;
@@ -562,7 +567,7 @@ export function startCombatDamage(g: GameState, events: GameEvent[]): void {
   for (const o of dealers) {
     const a = c.attackers[o.id];
     if (!a) continue;
-    const amount = power(g, o);
+    const amount = combatDamageOf(g, o);
     // CR 510.1a: a creature with 0 or less power assigns no combat damage.
     if (amount <= 0) continue;
     const blockers = a.blockers.map((b) => stillThere(g, b.id, b.zcc)).filter((b): b is GameObject => b !== null);
@@ -587,7 +592,7 @@ export function startCombatDamage(g: GameState, events: GameEvent[]): void {
   for (const o of dealers) {
     const b = c.blockers[o.id];
     if (!b?.alsoBlocking?.length) continue;
-    const amount = power(g, o);
+    const amount = combatDamageOf(g, o);
     if (amount <= 0) continue;
     const blocked = blockedAttackers(g, b);
     if (blocked.length < 2) continue;
@@ -706,7 +711,7 @@ function planDamage(g: GameState, dealers: GameObject[], chosen: Record<ObjectId
   const c = g.combat!;
   const plan: PlannedDamage[] = [];
   for (const o of dealers) {
-    const amount = power(g, o);
+    const amount = combatDamageOf(g, o);
     if (amount <= 0) continue;
     const a = c.attackers[o.id];
     if (a) {

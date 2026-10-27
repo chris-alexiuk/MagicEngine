@@ -49,8 +49,8 @@ interface ActiveEffect {
   pt?: () => [number, number];
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
   set?: { layer: '7a' | '7b'; pt: () => [number | null, number | null] };
-  /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained). */
-  types?: { types: string[]; subtypes: string[]; retain: boolean };
+  /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained); `lose`: types it stops having. */
+  types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[] };
   /** Layer 5: colors it becomes. */
   colors?: Color[];
   /** Layer 4: creature types it becomes; land types it becomes (CR 305.7). */
@@ -300,15 +300,29 @@ function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pic
   return out;
 }
 
-/** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3). */
+/** Card definitions (by id) with a static ability that works from the graveyard (Wonder). */
+const YARD_STATIC = new Map<string, boolean>();
+function hasYardStatic(g: GameState, card: string): boolean {
+  let v = YARD_STATIC.get(card);
+  if (v === undefined) {
+    v = (g.cards[card]?.faces ?? []).some((f) => f.abilities.some((a) => a.kind === 'static' && a.effect.type === 'continuous' && (a.effect as ContinuousEffectNode).fromGraveyard));
+    YARD_STATIC.set(card, v);
+  }
+  return v;
+}
+
+/** The static abilities of permanents on the battlefield that create continuous effects (CR 611.3), and of cards
+ * in graveyards that say they work there (CR 113.6b). */
 function staticEffects(g: GameState): ActiveEffect[] {
   const out: ActiveEffect[] = [];
-  for (const id of abilitySources(g)) {
+  const yard = g.order.flatMap((p) => (g.zones.graveyard[p] ?? []).filter((id) => g.objects[id] && hasYardStatic(g, g.objects[id]!.card)));
+  for (const id of yard.length ? [...abilitySources(g), ...yard] : abilitySources(g)) {
     const source = g.objects[id];
     if (!source) continue;
     for (const ability of objectAbilities(g, source)) {
       if (ability.kind !== 'static' || ability.effect.type !== 'continuous') continue;
       const e = (ability as StaticAbility).effect as ContinuousEffectNode;
+      if (Boolean(e.fromGraveyard) !== (source.zone === 'graveyard')) continue;
       if (!staticConditionHolds(g, e, source)) continue;
       out.push({
         // CR 613.7a: a static ability's effect has the timestamp of the object it's on.
@@ -320,6 +334,8 @@ function staticEffects(g: GameState): ActiveEffect[] {
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes ? { types: { types: e.addTypes.types, subtypes: e.addTypes.subtypes, retain: true } } : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
+        // Theros Gods: "As long as your devotion to red is less than five, Purphoros isn't a creature."
+        ...(e.loseTypes ? { types: { types: [], subtypes: [], retain: true, lose: e.loseTypes } } : {}),
         ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
         ...(e.landTypes ? { landTypes: e.landTypes } : {}),
         ...(e.colors ? { colors: e.colors } : {}),
@@ -440,6 +456,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
   // CR 613.1d: layer 4 — type-changing effects.
   for (const e of effects) {
     if (!e.types || !e.applies(o, c)) continue;
+    if (e.types.lose) {
+      const lose = e.types.lose;
+      c.types = c.types.filter((t) => !lose.includes(t));
+      // CR 208.3: a noncreature permanent has no power or toughness (a Vehicle keeps its printed ones).
+      if (!c.types.includes('Creature') && !c.subtypes.includes('Vehicle')) c.hasPT = false;
+      continue;
+    }
     if (e.types.retain) {
       c.types = [...new Set([...c.types, ...e.types.types])];
       c.subtypes = [...new Set([...c.subtypes, ...e.types.subtypes])];
@@ -605,7 +628,8 @@ export interface FilterContext {
   lastController?: PlayerId;
 }
 
-const compare = (v: number, c: { op: string; n: number | 'X' }) => (c.n === 'X' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : v === c.n);
+// An X or a counted amount not yet worked out (only as an effect resolves) matches nothing.
+const compare = (v: number, c: { op: string; n: unknown }) => (typeof c.n !== 'number' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : v === c.n);
 
 /** Whether an object matches a filter from the compiled AST. */
 export function matchesFilter(
@@ -683,6 +707,9 @@ export function matchesFilter(
   }
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
   if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
+  if (f.notChosenType && ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType)) return false;
+  // Oran-Rief: "that entered this turn" — on the battlefield since it entered this turn.
+  if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;
   if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;
   if (f.chosenName && !(ctx.source?.chosen?.cardName && g.cards[o.card]?.faces.some((x) => x.name === ctx.source!.chosen!.cardName) && !o.faceDown)) return false;

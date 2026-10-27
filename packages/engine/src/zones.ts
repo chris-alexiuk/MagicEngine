@@ -182,12 +182,18 @@ export function moveObject(
       power: c.power,
       toughness: c.toughness,
       types: [...c.types],
+      subtypes: [...c.subtypes],
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
       ...(o.attachedTo ? { attachedTo: { ...o.attachedTo } } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
       ...(granted.length ? { granted } : {}),
       ...(o.faceDown ? { faceDown: o.faceDown } : {}),
     };
+  }
+  // "for each creature destroyed this way": the resolving effect that moved it, and what it was.
+  if (g.resolving) {
+    const r = g.resolving;
+    (r.moves ??= []).push({ id, effect: String(r.effects[r.index]?.type ?? ''), from, to, types: from === 'battlefield' ? [...(g.lastKnown?.[id]?.types ?? [])] : [...chars(g, o).types] });
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;
@@ -356,12 +362,55 @@ export function discardCard(g: GameState, id: ObjectId, events: GameEvent[]): vo
   events.push({ type: 'discarded', object: id, player: o.owner, ...(madness && o.zone === 'exile' ? { madness: true as const } : {}) });
 }
 
+/**
+ * Teferi's Ageless Insight, Alhammarret's Archive: "If you would draw a card [except the first one you draw in each of your
+ * draw steps], draw two cards instead." — how many such replacements apply to this draw (CR 614.1a, 614.5: each once).
+ */
+function drawReplacements(g: GameState, player: PlayerId): number {
+  const firstInDrawStep = g.step === 'draw' && g.active === player && !(g.turnLog.drawStepDrew ?? []).includes(player);
+  let n = 0;
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    if (source.controller !== player) continue;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || a.effect.type !== 'draw_replacement' || a.effect.emptyWin) continue;
+      if (a.effect.exceptFirst && firstInDrawStep) continue;
+      n++;
+    }
+  }
+  return n;
+}
+
+function emptyDrawWins(g: GameState, player: PlayerId): boolean {
+  return abilitySources(g).some((id) => {
+    const source = g.objects[id]!;
+    return source.controller === player && objectAbilities(g, source).some((a) => a.kind === 'static' && a.effect.type === 'draw_replacement' && a.effect.emptyWin);
+  });
+}
+
 /** Draws one card. CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions. */
-export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): void {
+export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], replaced = false): void {
+  if (g.step === 'draw' && g.active === player) {
+    const replacements = replaced ? 0 : drawReplacements(g, player);
+    const drew = (g.turnLog.drawStepDrew ??= []);
+    if (!drew.includes(player)) drew.push(player);
+    if (replacements) {
+      for (let i = 0; i < 2 ** replacements; i++) drawCard(g, player, events, true);
+      return;
+    }
+  } else if (!replaced) {
+    const replacements = drawReplacements(g, player);
+    if (replacements) {
+      for (let i = 0; i < 2 ** replacements; i++) drawCard(g, player, events, true);
+      return;
+    }
+  }
   const library = zoneList(g, 'library', player);
   const top = library[0];
   if (!top) {
-    g.players[player]!.drewFromEmptyLibrary = true;
+    // Laboratory Maniac: "If you would draw a card while your library has no cards in it, you win the game instead."
+    if (emptyDrawWins(g, player)) g.players[player]!.wonByEffect = true;
+    else g.players[player]!.drewFromEmptyLibrary = true;
     return;
   }
   moveObject(g, top, 'hand', events);

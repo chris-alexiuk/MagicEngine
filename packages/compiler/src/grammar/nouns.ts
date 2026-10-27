@@ -46,17 +46,26 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Transmute (CR 702.53a), transfigure (CR 702.71a)
   [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
-  [/ of the chosen type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
+  [/ that (?:aren't|isn't) of the chosen type$/, (f) => !f.notChosenType && ((f.notChosenType = true), true)],
+  [/ of (?:the chosen|that) type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ that shares a creature type with your commander$/, (f) => !f.sharesTypeWithCommander && ((f.sharesTypeWithCommander = true), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
-  [/ (?:from|in) an opponent's graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
-  [/ (?:from|in) (?:a|any|each|target player's) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  [/ (?:from|in) (?:an opponent's|each opponent's|your opponents') graveyards?$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
+  [/ (?:from|in) (?:a|any|each) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  // "Exile all cards from target player's graveyard": that player's cards only.
+  [/ (?:from|in) (target player|target opponent|that player)'s graveyard$/, (f, m, b) => {
+    if (f.zone) return false;
+    const who = parsePlayerRef(m[1]!, b);
+    return Boolean(who && ((f.zone = 'graveyard'), (f.ownedBy = who), true));
+  }],
   [/ (?:from|in) all graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
+  // Oran-Rief: "each green creature that entered this turn"
+  [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
   // "creature that was dealt damage this turn"
   [/ that was dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
   // "a card named Pir, Imaginative Rascal" (CR 201.2) — after any zone words are peeled off.
@@ -322,6 +331,16 @@ const ABILITY_KINDS: Record<string, ('activated' | 'triggered')[]> = {
 };
 
 /** "target activated ability", "target triggered ability or colorless spell", "up to one target activated or triggered ability". */
+/** "you", "a creature you control", "you or a permanent you control": what a spell or ability targets. */
+function parseTargeting(text: string, b: Binder): { you?: true; filter?: ObjectFilter } | null {
+  if (text === 'you') return { you: true };
+  const m = /^(you or |you and\/or )?(?:a|an|one or more) (.+?)$/.exec(text);
+  if (!m) return null;
+  const pf = parseFilter(m[2]!, b.clone());
+  if (!pf || pf.plural || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
+  return { ...(m[1] ? { you: true as const } : {}), filter: pf.filter };
+}
+
 function parseAbilityTarget(t: string, b: Binder): TargetSpec | null {
   const m =
     /^(up to one )?target (activated or triggered ability|activated ability|triggered ability|activated ability, triggered ability, or (.+?) spell|triggered ability or (.+?) spell|instant spell, sorcery spell, activated ability, or triggered ability|spell, activated ability, or triggered ability|spell or ability)( you control| you don't control| an opponent controls)?(?: from (?:a|an) (.+?) source)?$/i.exec(
@@ -363,6 +382,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     }
     if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
+    // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
+    if (/^(?:it|that card) from (?:your|its owner's|their) graveyard$/i.test(t) && b.it && b.it.ref !== 'self') return { ref: b.it, plural: false, targeted: false };
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
       return set(b, { ref: { ref: 'attached' }, plural: false, targeted: false });
     }
@@ -387,6 +408,18 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, ...(eachOf[1] ? { upTo: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
+      // Siren Stormtamer: "target spell or ability that targets you or a creature you control".
+      const targeting = /^((?:up to one )?target .*?\b(?:spell|ability))( that targets (.+))$/.exec(t);
+      if (targeting) {
+        const want = parseTargeting(targeting[3]!, b);
+        if (!want) return null;
+        const inner = parseObjectRef(targeting[1]!, b, mode);
+        const spec = inner?.targeted && inner.ref.ref === 'target' ? b.targets[inner.ref.index] : undefined;
+        if (!inner || !spec || (spec.what !== 'ability' && spec.filter?.zone !== 'stack')) return null;
+        spec.targeting = want;
+        spec.text = t.replace(/^\w/, (c) => c.toLowerCase());
+        return inner;
+      }
       // CR 113.1c: "target activated or triggered ability you control from an artifact source" — an ability on the stack.
       const ability = parseAbilityTarget(t, b);
       if (ability) return set(b, { ref: b.addTarget(ability), plural: false, targeted: true });
@@ -407,7 +440,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         // "up to two target cards from a single graveyard"
         const single = / from a single graveyard$/.test(tm[4]!);
         const pf = parseFilter(single ? `${tm[4]!.replace(/ from a single graveyard$/, '')} in a graveyard` : tm[4]!, b);
-        if (!pf || pf.plural !== count > 1) return null;
+        if (!pf || pf.plural !== count > 1 || pf.filter.ownedBy) return null;
         if (tm[3]) pf.filter.other = true;
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), ...(single ? { sameOwner: true } : {}) };
         if (count > 1) spec.count = count;
@@ -418,7 +451,18 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
 
     const each = /^(?:each|all) (other )?(.+)$/i.exec(t);
     if (each) {
-      const pf = parseFilter(each[2]!, b);
+      let pf = parseFilter(each[2]!, b);
+      // "all artifacts and enchantments [your opponents control]", "all artifacts, creatures, and enchantments":
+      // anything that's any of them.
+      const list = pf ? null : /^((?:[a-z-]+, )*[a-z-]+),? and ([a-z-]+s\b.*)$/.exec(each[2]!);
+      if (list && !/ and /.test(list[2]!)) pf = parseFilter(`${list[1]}, or ${list[2]}`.replace(/^(\w+), or /, '$1 or '), b);
+      // "all creatures you don't control and all planeswalkers you don't control"
+      const both = pf ? null : /^(.+?) and (?:all|each) (.+)$/.exec(each[2]!);
+      if (both) {
+        const x = parseFilter(both[1]!, b);
+        const y = x ? parseFilter(both[2]!, b) : null;
+        if (x && y && x.plural && y.plural && !x.filter.zone && !y.filter.zone) pf = { filter: { anyOf: [x.filter, y.filter] }, plural: true };
+      }
       if (!pf) return null;
       if (each[1]) pf.filter.other = true;
       return set(b, { ref: { ref: 'all', filter: pf.filter }, plural: true, targeted: false });
@@ -457,7 +501,7 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };
   if (b.named[t]) return b.named[t]!;
-  const owner = /^(?:its|that (?:creature|permanent|spell|card)'s) (controller|owner)$/.exec(t);
+  const owner = /^(?:its|that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token)'s) (controller|owner)$/.exec(t);
   if (owner && b.it) return { ref: owner[1] === 'controller' ? 'controller_of' : 'owner_of', of: b.it };
   return null;
 }

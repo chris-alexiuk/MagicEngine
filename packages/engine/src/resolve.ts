@@ -96,9 +96,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
               : g.order.flatMap((p) => g.zones[zone][p] ?? []);
       // "all creatures target player controls"
       const owners = ref.filter.controlledBy ? refPlayers(ctx, ref.filter.controlledBy as Ref) : null;
+      // "all cards from target player's graveyard"
+      const ownedBy = ref.filter.ownedBy ? refPlayers(ctx, ref.filter.ownedBy as Ref) : null;
       return ids
         .map((id) => g.objects[id]!)
-        .filter((o) => o && (!owners || owners.includes(o.controller)) && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
+        .filter((o) => o && (!owners || owners.includes(o.controller)) && (!ownedBy || ownedBy.includes(o.owner)) && matchesFilter(g, o, ref.filter, { controller: ctx.controller, source: ctx.source ?? null }));
     }
     case 'created': {
       // "the token", "sacrifice it at the beginning of the next end step"
@@ -194,7 +196,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -241,7 +243,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, e.filter, { controller: ctx.controller, source })).length;
     }
     case 'cards': {
-      const players = e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
+      const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
       const zone = e.zone;
       const ids = zone === 'exile' ? g.zones.exile : players.flatMap((p) => g.zones[zone][p] ?? []);
       return ids.filter((id) => {
@@ -279,6 +281,32 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'spells_cast_this_turn':
       // Aetherflux Reservoir: including the one that triggered it.
       return g.turnLog.spellsCast[ctx.controller] ?? 0;
+    case 'damage_this_way':
+      return ctx.resolution?.damageDealt ?? 0;
+    case 'died_this_turn':
+      // "for each creature that died this turn" — creatures by default, as they last existed (CR 700.4).
+      return (g.turnLog.died ?? []).filter(
+        (d) =>
+          (e.types ?? ['Creature']).some((t) => d.types.includes(t)) &&
+          (!e.subtypes || e.subtypes.some((t) => d.subtypes.includes(t))) &&
+          !(e.nontoken && d.token) &&
+          (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
+      ).length;
+    case 'moved_this_way': {
+      // "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved.
+      const how = e.how;
+      return (ctx.resolution?.moves ?? []).filter((m) => {
+        const right =
+          how === 'destroyed'
+            ? m.effect === 'destroy' && m.from === 'battlefield'
+            : how === 'exiled'
+              ? m.to === 'exile'
+              : how === 'sacrificed'
+                ? /^sacrifice/.test(m.effect) && m.from === 'battlefield'
+                : m.effect === 'mill' && m.from === 'library';
+        return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t));
+      }).length;
+    }
     case 'discarded_this_way': {
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});

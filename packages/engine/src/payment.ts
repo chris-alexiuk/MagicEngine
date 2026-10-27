@@ -15,7 +15,7 @@ import { replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -232,6 +232,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       // CR 702.184a: "Tap another untapped creature you control".
       const chosen = choices.crew ?? [];
       if (chosen.length !== 1 || !crewCandidates(g, player, o).includes(chosen[0]!)) throw new RulesError('Choose another untapped creature you control to tap.');
+    } else if (c.type === 'discard_hand') {
+      // CR 701.9b: always possible, even with no cards in hand.
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -291,6 +293,9 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'exile_self' || c.type === 'exile_self_hand') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
+    } else if (c.type === 'discard_hand') {
+      // CR 701.9b: "Discard your hand" — every card in it (possible with none).
+      for (const id of [...zoneList(g, 'hand', player)]) discardCard(g, id, events);
     } else if (c.type === 'collect_evidence') {
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
       events.push({ type: 'evidence_collected', player });

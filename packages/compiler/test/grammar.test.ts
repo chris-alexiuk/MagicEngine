@@ -1549,3 +1549,91 @@ describe('slice 147', () => {
     });
   });
 });
+
+describe('slice 148', () => {
+  it("reads a targeted player's graveyard and hand", () => {
+    expect(parse("When this land enters, exile target player's graveyard.", 'Land', 'Bog').abilities[0]).toMatchObject({
+      targets: [{ what: 'player' }],
+      effects: [{ type: 'move', what: { ref: 'all', filter: { zone: 'graveyard', ownedBy: { ref: 'target', index: 0 } } }, to: 'exile' }],
+    });
+    expect(parse("Add {R} for each card in target opponent's hand.", 'Sorcery', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', times: { kind: 'cards', zone: 'hand', player: { ref: 'target', index: 0 } } }] });
+    // A target card in a targeted player's graveyard needs the targets checked together: not read.
+    expect(parse("Return target creature card from target player's graveyard to the battlefield under your control.", 'Sorcery', 'R').unparsed).toHaveLength(1);
+  });
+  it('reads the chosen type, "this way" counts and Nykthos', () => {
+    expect(parse("Choose a creature type. Destroy all creatures that aren't of the chosen type.", 'Sorcery', 'K').abilities[0]).toMatchObject({ effects: [{ type: 'choose_value' }, { type: 'destroy', what: { filter: { notChosenType: true } } }] });
+    expect(parse('Destroy all creatures. You gain 1 life for each creature destroyed this way.', 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{}, { type: 'gain_life', amount: { kind: 'moved_this_way', how: 'destroyed', types: ['Creature'] } }] });
+    expect(parse('{2}, {T}: Choose a color. Add an amount of mana of that color equal to your devotion to that color.', 'Legendary Land', 'N').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', anyColor: 1, times: { kind: 'devotion', manaColor: true } }] });
+  });
+  it('reads Plaguecrafter, Lion\'s Eye Diamond, Wonder, Gravecrawler', () => {
+    expect(parse("When this creature enters, each player sacrifices a creature or planeswalker of their choice. Each player who can't discards a card.", 'Creature — Human Shaman', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice', cant: [{ type: 'discard', who: { ref: 'you' } }] }] });
+    expect(parse('Discard your hand, Sacrifice this artifact: Add three mana of any one color. Activate only as an instant.', 'Artifact', 'L').abilities[0]).toMatchObject({ mana: true, timing: 'instant', cost: { other: [{ type: 'discard_hand' }, { type: 'sacrifice_self' }] } });
+    expect(parse('As long as this card is in your graveyard and you control an Island, creatures you control have flying.', 'Creature — Incarnation', 'Wonder').abilities[0]).toMatchObject({ effect: { type: 'continuous', fromGraveyard: true, condition: { type: 'count' } } });
+    expect(parse('You may cast this card from your graveyard as long as you control a Zombie.', 'Creature — Zombie', 'G').abilities[0]).toMatchObject({ effect: { type: 'cast_option', zone: 'graveyard', withManaCost: true, condition: {} } });
+  });
+  it("reads free casts from hand, Narset's Reversal and Eldritch Evolution", () => {
+    expect(parse('You may cast a spell with mana value 5 or less from your hand without paying its mana cost.', 'Sorcery', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'cast_from_hand', filter: { manaValue: { op: 'le', n: 5 } } }] });
+    expect(parse("Copy target instant or sorcery spell, then return it to its owner's hand. You may choose new targets for the copy.", 'Instant', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'copy_spell', newTargets: true }, { type: 'move', to: 'hand' }] });
+    expect(parse("Search your library for a creature card with mana value X or less, where X is 2 plus the sacrificed creature's mana value. Put that card onto the battlefield, then shuffle.", 'Sorcery', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { n: { kind: 'cost_lki', plus: 2 } } }, to: 'battlefield' }] });
+    // "…, then discards a card": the subject goes on (Anvil of Bogardan).
+    expect(parse("At the beginning of each player's draw step, that player draws an additional card, then discards a card.", 'Artifact', 'A').abilities[0]).toMatchObject({
+      effects: [{ type: 'draw', who: { ref: 'trigger_player' } }, { type: 'discard', who: { ref: 'trigger_player' } }],
+    });
+  });
+});
+
+describe('slice 149', () => {
+  it('reads "you may have …" causatives', () => {
+    expect(parse('Whenever a creature an opponent controls enters, you may have that player lose 1 life.', 'Creature — Human', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'lose_life', who: { ref: 'trigger_player' } }] }] });
+    expect(parse('When this creature enters, you may have it fight target creature you don\'t control.', 'Creature — Elf', 'A').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'fight', a: { ref: 'self' } }] }] });
+  });
+  it('reads deaths this turn, the Theros Gods and "unless" restrictions', () => {
+    expect(parse('At the beginning of your end step, create a Treasure token for each nontoken creature that died this turn.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'died_this_turn', nontoken: true } }] });
+    expect(parse('At the beginning of your end step, if two or more creatures died this turn, draw a card.', 'Creature — Cat', 'M').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'died_this_turn' }, op: 'ge', n: 2 } });
+    expect(parse("As long as your devotion to red is less than five, Purphoros isn't a creature.", 'Legendary Enchantment Creature — God', 'Purphoros, God of the Forge').abilities[0]).toMatchObject({
+      effect: { type: 'continuous', affected: { ref: 'self' }, loseTypes: ['Creature'], condition: { type: 'amount', amount: { kind: 'devotion', colors: ['R'] }, op: 'le', n: 4 } },
+    });
+    expect(parse("This creature can't attack or block unless you control seven or more lands.", 'Creature — Plant', 'T').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack', 'cant_block'], condition: { type: 'not' } } });
+    // Still the per-attack form.
+    expect(parse("This creature can't attack unless defending player controls an Island.", 'Creature — Serpent', 'S').unparsed).toHaveLength(0);
+  });
+  it('reads triggers, targets and sweepers', () => {
+    expect(parse('When this enchantment enters and whenever you cast a spell with mana value 5 or greater, draw a card.', 'Enchantment', 'U').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters' }, { type: 'cast' }] } });
+    expect(parse('Whenever a permanent you control enters tapped, untap it.', 'Artifact', 'A').abilities[0]).toMatchObject({ trigger: { type: 'enters', tapped: true } });
+    expect(parse('{U}, Sacrifice this creature: Counter target spell or ability that targets you or a creature you control.', 'Creature — Siren', 'S').abilities[0]).toMatchObject({ targets: [{ what: 'ability', targeting: { you: true, filter: { controller: 'you', types: ['Creature'] } } }] });
+    expect(parse('Destroy all artifacts and enchantments your opponents control.', 'Sorcery', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { filter: { controller: 'opponent', types: ['Artifact', 'Enchantment'] } } }] });
+    expect(parse("Destroy all creatures you don't control and all planeswalkers you don't control.", 'Sorcery', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { filter: { anyOf: [{ types: ['Creature'] }, { types: ['Planeswalker'] }] } } }] });
+    expect(parse('{T}: Each player gains control of all creatures they own.', 'Land', 'H').abilities[1] ?? parse('{T}: Each player gains control of all creatures they own.', 'Land', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'gain_control', toOwners: true }] });
+    expect(parse("At the beginning of your upkeep, sacrifice a creature. If you can't, sacrifice this artifact.", 'Artifact', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice', cant: [{ type: 'sacrifice', what: { ref: 'self' } }] }] });
+    expect(parse('At the beginning of your upkeep, reveal the top card of your library and put that card into your hand. You lose life equal to its mana value.', 'Creature — Human', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'reveal_top', life: 'lose' }] });
+  });
+});
+
+describe('slice 150', () => {
+  it('reads wheels, poison, "the damage dealt this way" and Doran', () => {
+    expect(parse('Each player discards any number of cards, then draws that many cards.', 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', who: { ref: 'players', who: 'each' }, mode: 'any' }] });
+    expect(parse('Discard all the cards in your hand, then draw that many cards plus one.', 'Sorcery', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', who: { ref: 'you' }, mode: 'all', delta: 1 }] });
+    expect(parse('When this creature enters, discard up to two cards, then draw that many cards.', 'Creature — Human', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', mode: 'up_to', upTo: 2 }] });
+    expect(parse('Each opponent gets two poison counters.', 'Instant', 'B').abilities[0]).toMatchObject({ effects: [{ type: 'get_counters', counter: 'poison', amount: 2 }] });
+    expect(parse('Corrupt deals damage to any target equal to the number of Swamps you control. You gain life equal to the damage dealt this way.', 'Sorcery', 'Corrupt').abilities[0]).toMatchObject({ effects: [{}, { type: 'gain_life', amount: { kind: 'damage_this_way' } }] });
+    expect(parse("~ deals damage to target player equal to the number of cards in that player's hand.", 'Sorcery', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'cards', zone: 'hand', player: { ref: 'target', index: 0 } } }] });
+    expect(parse('Each creature assigns combat damage equal to its toughness rather than its power.', 'Creature — Treefolk', 'D').abilities[0]).toMatchObject({ effect: { type: 'continuous', rules: ['damage_by_toughness'] } });
+  });
+});
+
+describe('slice 151', () => {
+  it('reads token, counter and draw replacements', () => {
+    expect(parse('If one or more tokens would be created under your control, those tokens plus an additional Food token are created instead.', 'Legendary Creature — Halfling', 'P').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'tokens', op: 'extra', extra: { token: { subtypes: ['Food'] } } } });
+    expect(parse('If you would create one or more Treasure tokens, instead create those tokens plus an additional Treasure token.', 'Creature — Elemental', 'X').abilities[0]).toMatchObject({ effect: { op: 'extra', tokenFilter: { subtypes: ['Treasure'] } } });
+    expect(parse('If one or more tokens would be created under your control, those tokens plus that many 1/1 green Squirrel creature tokens are created instead.', 'Legendary Creature — Squirrel', 'C').abilities[0]).toMatchObject({ effect: { op: 'extra', extra: { thatMany: true } } });
+    expect(parse('If an effect would put one or more counters on a permanent you control, it puts twice that many of those counters on that permanent instead.', 'Enchantment', 'D').abilities[0]).toMatchObject({ effect: { event: 'counters', op: 'double', filter: { controller: 'you' } } });
+    expect(parse('If you would draw a card except the first one you draw in each of your draw steps, draw two cards instead.', 'Enchantment', 'T').abilities[0]).toMatchObject({ effect: { type: 'draw_replacement', exceptFirst: true } });
+    expect(parse('If you would draw a card while your library has no cards in it, you win the game instead.', 'Creature — Human', 'L').abilities[0]).toMatchObject({ effect: { type: 'draw_replacement', emptyWin: true } });
+  });
+  it('reads Mirkwood Bats, Starting Town, Blood Moon, Oran-Rief', () => {
+    expect(parse('Whenever you create or sacrifice a token, each opponent loses 1 life.', 'Creature — Bat', 'M').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters', subject: { filter: { token: true } } }, { type: 'sacrificed' }] } });
+    expect(parse("This land enters tapped unless it's your first, second, or third turn of the game.", 'Land — Town', 'S').abilities[0]).toMatchObject({ effect: { type: 'enters_tapped', unless: { type: 'early_turn', max: 3 } } });
+    expect(parse('Nonbasic lands are Mountains.', 'Enchantment', 'B').abilities[0]).toMatchObject({ effect: { landTypes: ['Mountain'], affected: { filter: { notSupertypes: ['Basic'] } } } });
+    expect(parse('{T}: Put a +1/+1 counter on each green creature that entered this turn.', 'Land', 'O').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { filter: { enteredThisTurn: true } } }] });
+  });
+});
