@@ -132,6 +132,9 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
   if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  // "As an additional cost to cast this spell, pay 3 life." (CR 119.4)
+  const life = /^[Pp]ay (\d+) life$/.exec(item);
+  if (life) return { type: 'pay_life', amount: Number(life[1]) };
   // "Exile a creature card from your graveyard", "Exile two cards from your graveyard" (CR 118.3).
   const exile = /^[Ee]xile (a|an|one|two|three|four|five) (.+?) from your graveyard$/.exec(item);
   if (exile && b) {
@@ -163,6 +166,13 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
+    // "Remove a +1/+1 counter from ~", "Remove three spore counters from ~" (CR 118.3).
+    else if (/^[Rr]emove (a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+) (\S+) counters? from ~$/.test(item)) {
+      const m = /^[Rr]emove (\S+) (\S+) counters? from ~$/.exec(item)!;
+      const amount = parseAmount(m[1]!);
+      if (typeof amount !== 'number') return null;
+      (cost.other ??= []).push({ type: 'remove_counters_self', counter: m[2]!.replace(/−/g, '-'), amount });
+    }
     // Escape's "Exile five other cards from your graveyard" (CR 702.138a).
     else if (/^[Ee]xile (\w+) other cards? from your graveyard$/.test(item) && typeof parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) === 'number') {
       (cost.other ??= []).push({ type: 'exile_cards', amount: parseAmount(/^[Ee]xile (\w+)/.exec(item)![1]!) as number, other: true });
@@ -264,6 +274,8 @@ const STEP_WORDS: Record<string, string> = {
   upkeep: 'upkeep',
   'draw step': 'draw',
   'precombat main phase': 'main1',
+  // CR 505.1: the first main phase (the 2025 name for the precombat main phase).
+  'first main phase': 'main1',
   'end step': 'end',
   combat: 'beginning_of_combat',
 };
@@ -274,7 +286,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
     const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
     if (cursed) return { trigger: { type: 'phase', step: STEP_WORDS[cursed[1]!]!, whose: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
-    const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|end step|combat)( on your turn)?$/.exec(t);
+    const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|first main phase|end step|combat)( on your turn)?$/.exec(t);
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
     const whose = m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
@@ -299,6 +311,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
+  }
+  // "Whenever ~ blocks a creature with flying" — the creature it blocks is of that kind.
+  const blocksA = /^~ blocks (?:a|an) (.+)$/.exec(t);
+  if (blocksA) {
+    const pf = parseFilter(blocksA[1]!, b);
+    if (!pf || pf.plural) return null;
+    return { trigger: { type: 'blocks', subject: { ref: 'self' }, blocked: pf.filter }, it: { ref: 'self' }, player: null };
   }
   // CR 509.3c: "blocks or becomes blocked", "becomes blocked", "becomes blocked by a creature without flanking".
   const blocked = /^~ (blocks or becomes blocked|becomes blocked)(?: by (?:a|an) (.+))?$/.exec(t);
@@ -552,6 +571,9 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't block": ['cant_block'],
   "can't attack": ['cant_attack'],
   "can't attack or block": ['cant_attack', 'cant_block'],
+  // CR 602.5: Arrest
+  "can't attack or block, and its activated abilities can't be activated": ['cant_attack', 'cant_block', 'cant_activate'],
+  "can't block, and its activated abilities can't be activated": ['cant_block', 'cant_activate'],
   "can't be blocked": ['cant_be_blocked'],
   'attacks each combat if able': ['attacks_each_combat'],
   'attack each combat if able': ['attacks_each_combat'],

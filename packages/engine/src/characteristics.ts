@@ -476,6 +476,8 @@ function intrinsicManaAbility(color: ManaColor): ActivatedAbility {
  * CR 305.6: a land with a basic land type has the intrinsic ability "{T}: Add [mana symbol]."
  */
 export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
+  // CR 602.5: "its activated abilities can't be activated" — mana abilities too.
+  if (o.zone === 'battlefield' && anyCantActivate(g) && hasRule(g, o, 'cant_activate')) return [];
   const face = faceOf(g, o);
   const out: ActivatedAbility[] = [];
   if (face.types.includes('Land')) {
@@ -492,6 +494,21 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
 
 const grantsMana = (kws: KeywordInstance[] | undefined): boolean => Boolean(kws?.some((k) => k.abilities?.some((a) => a.kind === 'activated' && a.mana)));
 let grantedManaMemo: { g: GameState; v: boolean } | null = null;
+
+let cantActivateMemo: { g: GameState; v: boolean } | null = null;
+/** Whether any effect stops activated abilities right now — rare, so mana abilities usually skip the check. */
+function anyCantActivate(g: GameState): boolean {
+  if (cantActivateMemo?.g === g) return cantActivateMemo.v;
+  let v = g.effects.some((e) => e.rules?.includes('cant_activate'));
+  for (const id of abilitySources(g)) {
+    if (v) break;
+    const o = g.objects[id];
+    if (!o) continue;
+    v = printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && Boolean((a.effect as ContinuousEffectNode).rules?.includes('cant_activate')));
+  }
+  if (charsDepth > 0) cantActivateMemo = { g, v };
+  return v;
+}
 
 /** Whether anything grants a mana ability right now — rare, so other objects skip computing their characteristics. */
 function anyGrantedMana(g: GameState): boolean {

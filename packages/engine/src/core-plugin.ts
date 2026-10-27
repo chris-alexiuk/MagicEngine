@@ -138,8 +138,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // CR 712.14a: "transformed" — a double-faced card enters with its back face up (others don't move at all).
         const dfc = (ctx.g.cards[o.card]?.faces.length ?? 0) > 1 && ['transform', 'modal_dfc', 'meld'].includes(ctx.g.cards[o.card]!.layout);
         if (node.transformed && !dfc) continue;
-        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}) });
-        if (node.tapped) setTapped(ctx.g, o.id, true, ctx.events);
+        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}) });
       } else if (node.until === 'source_leaves') {
         // CR 610.3a: if the source has already left the battlefield, the object doesn't move at all.
         const src = ctx.source;
@@ -386,6 +385,63 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (node.then === 'exile') moveObject(g, id, 'exile', ctx.events);
       else discardCard(g, id, ctx.events);
     }
+    return true;
+  },
+
+  // "Look at the top N cards of your library. Put K of them into your hand and the rest …"
+  dig(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { looked?: string[]; chosen?: string[] };
+    const library = zoneList(g, 'library', ctx.controller);
+    const looked = (memo.looked ??= library.slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
+    if (!looked.length) return true;
+    const take = amountOf(ctx, node.take ?? 1);
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!memo.chosen) {
+      const filter = node.filter ? { ...(node.filter as ObjectFilter), zone: 'library' as const } : null;
+      const candidates = filter ? looked.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null })) : looked;
+      const max = Math.min(take, candidates.length);
+      const min = node.optional || node.upTo ? 0 : max;
+      if (answer) {
+        if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+          throw new RulesError(min === max ? `Choose ${max} of those cards.` : `Choose up to ${max} of those cards.`);
+        }
+        memo.chosen = answer.objects;
+      } else if (min === max && (max === 0 || candidates.length === max)) {
+        memo.chosen = candidates.slice(0, max);
+      } else {
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards.`, seen: looked } };
+      }
+      // The chosen cards go where the text says.
+      const chosen = memo.chosen;
+      if (node.reveal && chosen.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...chosen] });
+      const to = String(node.to);
+      if (to === 'top') {
+        // Kept on top, in the order chosen; the rest of the library follows.
+        const others = library.filter((id) => !chosen.includes(id));
+        library.length = 0;
+        library.push(...chosen, ...others);
+      } else {
+        for (const id of chosen) moveObject(g, id, to as 'hand' | 'battlefield' | 'graveyard', ctx.events, to === 'battlefield' ? { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) } : {});
+      }
+      const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
+      if (node.rest === 'graveyard') {
+        for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
+        return true;
+      }
+      if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
+        if (node.order === 'random') shuffleInPlace(g, rest);
+        if (node.rest !== 'top') for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+        return true;
+      }
+      // "on the bottom of your library in any order": the player orders them.
+      return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: rest, min: rest.length, max: rest.length, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).', ordered: true } };
+    }
+    // The order for the bottom.
+    const rest = looked.filter((id) => !memo.chosen!.includes(id) && g.objects[id]!.zone === 'library');
+    const order = answer?.objects ?? rest;
+    if (order.length !== rest.length || !order.every((id) => rest.includes(id)) || new Set(order).size !== order.length) throw new RulesError('Put each of those cards in order.');
+    for (const id of order) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
     return true;
   },
 
@@ -732,8 +788,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const to = node.to as 'hand' | 'battlefield' | 'graveyard' | 'library';
     if (to !== 'library') {
       for (const id of chosen) {
-        moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player } : {});
-        if (to === 'battlefield' && node.tapped) setTapped(g, id, true, ctx.events);
+        moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}) } : {});
       }
     }
     // CR 701.24a: then the library is shuffled.
@@ -1201,7 +1256,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const out = new Map<string, TriggerInfo>();
     for (const { blocker, attacker } of e.blocks) {
       const o = check.g.objects[blocker];
-      if (o && subjectMatches(check, t.subject as Ref, o)) out.set(o.id, { object: refTo(o) });
+      // "Whenever ~ blocks a creature with flying"
+      const blockedOk = !t.blocked || Boolean(check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.blocked as ObjectFilter, { controller: check.controller, source: check.source }));
+      if (o && blockedOk && subjectMatches(check, t.subject as Ref, o)) out.set(o.id, { object: refTo(o) });
       // "blocks or becomes blocked" (bushido, CR 702.45a).
       const a = check.g.objects[attacker];
       if (t.orBlocked && a && subjectMatches(check, t.subject as Ref, a)) out.set(a.id, { object: refTo(a) });

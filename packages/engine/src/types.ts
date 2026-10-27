@@ -391,7 +391,19 @@ export type PendingChoice =
   | { kind: 'proliferate'; player: PlayerId; objects: ObjectId[]; players: PlayerId[] }
   /** A choice of one or more objects ("choose an Army creature you control"). */
   /** revealed: cards every player sees while the choice is made (a revealed hand, CR 701.20a). */
-  | { kind: 'choose_objects'; player: PlayerId; candidates: ObjectId[]; min: number; max: number; text: string; revealed?: ObjectId[] }
+  | {
+      kind: 'choose_objects';
+      player: PlayerId;
+      candidates: ObjectId[];
+      min: number;
+      max: number;
+      text: string;
+      revealed?: ObjectId[];
+      /** Other cards the chooser looks at (the top of their library). */
+      seen?: ObjectId[];
+      /** The answer's order matters. */
+      ordered?: true;
+    }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
    * (reveal lists the cards that qualify); color / creature_type: pick one of `options`;

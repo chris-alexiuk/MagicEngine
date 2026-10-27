@@ -54,7 +54,7 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   // A revealed hand (CR 701.20a), and cards a player chooses among.
   if (g.pending?.kind === 'choose_objects') {
     for (const id of g.pending.revealed ?? []) visible.add(id);
-    if (g.pending.player === viewer) for (const id of g.pending.candidates) visible.add(id);
+    if (g.pending.player === viewer) for (const id of [...g.pending.candidates, ...(g.pending.seen ?? [])]) visible.add(id);
   }
   // CR 701.23a: a player searching their library looks at all of it.
   if (g.pending?.kind === 'search' && g.pending.player === viewer) {

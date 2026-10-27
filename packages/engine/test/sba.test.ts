@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { act, give, illegal, passRound, start, toStep } from './helpers.js';
+import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 describe('state-based actions', () => {
   it('CR 704.5a / CR 104.2a: a player at 0 life loses; the last player standing wins', () => {
@@ -134,15 +134,17 @@ describe('planeswalkers', () => {
 
 describe('abilities the compiler couldn’t parse', () => {
   it('CR 602.2: they can be activated by paying their mana cost, then resolved by hand', () => {
-    let g = toStep(start(), 'main1');
-    const kinnan = give(g, 'alice', 'Kinnan, Bonder Prodigy', 'battlefield');
+    // A line the grammar won't read any time soon.
+    const odd = makeCard({ name: 'Odd Engine', type_line: 'Artifact', mana_cost: '{2}', oracle_text: "{5}{G}{U}: Put the top card of your library onto the battlefield if its name has an odd number of letters." });
+    let g = toStep(start({ extra: [odd] }), 'main1');
+    const engine = give(g, 'alice', 'Odd Engine', 'battlefield');
     for (let i = 0; i < 6; i++) give(g, 'alice', 'Forest', 'battlefield');
     give(g, 'alice', 'Breeding Pool', 'battlefield');
-    g = act(g, { type: 'activate_manual', player: 'alice', object: kinnan, line: 1, autoTap: true });
+    g = act(g, { type: 'activate_manual', player: 'alice', object: engine, line: 0, autoTap: true });
     expect(g.stack).toMatchObject([{ kind: 'ability', controller: 'alice' }]);
     expect(g.zones.battlefield.filter((id) => g.objects[id]!.tapped)).toHaveLength(7);
     g = passRound(g);
-    expect(g.pending).toMatchObject({ kind: 'manual_resolution', sourceName: 'Kinnan, Bonder Prodigy' });
+    expect(g.pending).toMatchObject({ kind: 'manual_resolution', sourceName: 'Odd Engine' });
     // While resolving, the player makes the moves the text describes.
     const top = g.zones.library.alice![0]!;
     g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: top, to: 'battlefield' } });

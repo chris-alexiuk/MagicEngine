@@ -265,6 +265,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       exile.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < n) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
+    else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
     else if (c.type === 'crew') {
       // The strongest creatures first, until there's enough power.
       const options = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!));

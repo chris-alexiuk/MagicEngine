@@ -1,5 +1,5 @@
 import type { ActivatedAbility, ConditionNode, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
-import { abilitiesOf } from './characteristics.js';
+import { abilitiesOf, hasRule } from './characteristics.js';
 import { canAutomate } from './registry.js';
 import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
 
@@ -89,6 +89,8 @@ export function spellPrograms(face: FaceDef): Program[] | null {
  * CR 702). Most work on the battlefield; some only from the hand (cycling, CR 702.29a).
  */
 export function activatedAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
+  // CR 602.5: "its activated abilities can't be activated" (Arrest).
+  if (o.zone === 'battlefield' && hasRule(g, o, 'cant_activate')) return [];
   return abilitiesOf(g, o).filter(
     (a): a is ActivatedAbility => a.kind === 'activated' && !a.mana && (a.zone ?? 'battlefield') === o.zone && programRuns(a),
   );

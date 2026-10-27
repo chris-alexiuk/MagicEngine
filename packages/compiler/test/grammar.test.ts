@@ -654,3 +654,18 @@ describe('compound triggers, keyword actions, revealed hands (slice 19)', () => 
     });
   });
 });
+
+describe('looking at the top of the library, counter costs (slice 20)', () => {
+  it('reads dig effects', () => {
+    expect(one('Look at the top four cards of your library. Put two of them into your hand and the rest on the bottom of your library in any order.', 'Sorcery')).toMatchObject({
+      effects: [{ type: 'dig', amount: 4, take: 2, to: 'hand', rest: 'bottom', order: 'any' }],
+    });
+    expect(one('When this creature enters, look at the top five cards of your library. You may reveal a creature card from among them and put it into your hand. Put the rest on the bottom of your library in a random order.', 'Creature — Elf')).toMatchObject({
+      effects: [{ type: 'dig', amount: 5, take: 1, optional: true, reveal: true, filter: { types: ['Creature'] }, rest: 'bottom', order: 'random' }],
+    });
+  });
+  it('reads "Remove a counter from ~" costs and Arrest', () => {
+    expect(one('{2}, Remove a +1/+1 counter from this creature: You gain 2 life.', 'Creature — Spike')).toMatchObject({ cost: { other: [{ type: 'remove_counters_self', counter: '+1/+1', amount: 1 }] } });
+    expect(one("Enchanted creature can't attack or block, and its activated abilities can't be activated.", 'Enchantment — Aura')).toMatchObject({ effect: { rules: ['cant_attack', 'cant_block', 'cant_activate'] } });
+  });
+});

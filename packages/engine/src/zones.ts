@@ -91,7 +91,7 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown'] } = {},
+  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
@@ -182,6 +182,8 @@ export function moveObject(
   if (to === 'battlefield') {
     // CR 110.2: it's controlled by the player under whose control it entered.
     o.baseController = o.controller;
+    // "onto the battlefield tapped": it enters tapped (it doesn't become tapped, CR 110.5b).
+    if (opts.tapped) o.tapped = true;
     // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
     for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     // CR 702.145b: if it's night, a daybound double-faced permanent enters transformed.

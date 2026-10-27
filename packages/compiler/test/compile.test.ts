@@ -72,7 +72,7 @@ describe('compileCards', () => {
     expect(byName('Thornwood Falls').automation).toBe('full'); // enters tapped, gain-life trigger, mana ability
     expect(byName('Counterspell').automation).toBe('full');
     expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
-    expect(byName('Kinnan, Bonder Prodigy').automation).toBe('manual'); // mana-ability triggers aren't compiled yet
+    expect(byName('Kinnan, Bonder Prodigy').automation).toBe('partial'); // mana-ability triggers aren't compiled yet
     expect(byName('Breeding Pool').automation).toBe('full'); // intrinsic mana, and the shock clause (CR 614.12)
     // Escape is applied (CR 702.138a); the other lines are unparsed.
     expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('partial');

@@ -107,6 +107,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // "Look at the top five cards of your library. You may reveal a creature card from among them and put it
+      // into your hand. Put the rest on the bottom of your library in a random order." — and its relatives.
+      const look = /^[Ll]ook at the top (\w+) cards of your library$/.exec(s);
+      if (look && sentences[i + 1]) {
+        const dig = parseDig(look[1]!, sentences[i + 1]!, sentences[i + 2], b);
+        if (!dig) return null;
+        out.push(dig.node);
+        i += dig.used;
+        continue;
+      }
       // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards
       // that card." — the chosen card is discarded (or exiled).
       const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
@@ -259,6 +269,56 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     }
     return out.length ? out : null;
   });
+}
+
+const REST: Record<string, { rest: string; order?: string }> = {
+  'into your graveyard': { rest: 'graveyard' },
+  'on the bottom of your library in any order': { rest: 'bottom', order: 'any' },
+  'on the bottom of your library in a random order': { rest: 'bottom', order: 'random' },
+  'on the bottom of your library': { rest: 'bottom', order: 'any' },
+  'back on top of your library in any order': { rest: 'top', order: 'any' },
+  'on top of your library in any order': { rest: 'top', order: 'any' },
+};
+
+/** The sentences after "Look at the top N cards of your library." (CR 701.16 isn't a keyword action: just looking). */
+function parseDig(count: string, next: string, after: string | undefined, b: Binder): { node: EffectNode; used: number } | null {
+  const amount = parseAmount(count);
+  if (typeof amount !== 'number' || amount < 1) return null;
+  const restOf = (text: string | undefined) => {
+    const m = text ? /^Put the (?:rest|others?) (.+)$/.exec(text) : null;
+    return m ? REST[m[1]!] ?? null : null;
+  };
+  // "Put two of them into your hand and the rest into your graveyard."
+  const put = /^Put (up to )?(\w+)(?: of (?:them|those cards))? into your (hand|graveyard) and the (?:rest|others?) (.+)$/.exec(next);
+  if (put) {
+    const take = parseAmount(put[2]!);
+    const rest = REST[put[4]!];
+    if (typeof take !== 'number' || !rest) return null;
+    return { node: { type: 'dig', amount, take, to: put[3], ...rest, ...(put[1] ? { upTo: true } : {}) }, used: 1 };
+  }
+  // "You may reveal a creature card from among them and put it into your hand." + "Put the rest …"
+  const reveal = /^You may (reveal|put) (a|an|up to \w+) (.+?) from among (?:them|those cards)(?: and put (?:it|them))? (into your hand|onto the battlefield( tapped)?|into your graveyard)$/.exec(next);
+  if (reveal) {
+    const rest = restOf(after);
+    const n = reveal[2]!.startsWith('up to ') ? parseAmount(reveal[2]!.slice(6)) : 1;
+    const pf = parseFilter(`${reveal[3]} in your library`, b);
+    if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    const to = reveal[4]!.startsWith('into your hand') ? 'hand' : reveal[4]!.startsWith('onto') ? 'battlefield' : 'graveyard';
+    return {
+      node: { type: 'dig', amount, take: n, to, filter, optional: true, ...rest, ...(reveal[1] === 'reveal' ? { reveal: true } : {}), ...(reveal[5] ? { tapped: true } : {}) },
+      used: 2,
+    };
+  }
+  // "You may put one of them back on top of your library. Put the rest into your graveyard."
+  const back = /^You may put (\w+) of (?:them|those cards) (?:back )?on top of your library$/.exec(next);
+  if (back) {
+    const take = parseAmount(back[1]!);
+    const rest = restOf(after);
+    if (typeof take !== 'number' || rest?.rest !== 'graveyard') return null;
+    return { node: { type: 'dig', amount, take, to: 'top', optional: true, rest: 'graveyard' }, used: 2 };
+  }
+  return null;
 }
 
 function capitalise(s: string): string {

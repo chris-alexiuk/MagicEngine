@@ -48,6 +48,11 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (t === 'player') return { kind: 'players', who: 'each' };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"
   if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
+  // CR 700.8: "for each creature in your party"
+  if (t === 'creature in your party') return { kind: 'party' };
+  // "for each instant and sorcery card in your graveyard": a card of either type.
+  const both = /^(\w+) and (\w+) card (in .+)$/.exec(t);
+  if (both) return objects(`${both[1]} or ${both[2]} card ${both[3]}`, b, false);
   // CR 702.33c (multikicker): "for each time it was kicked"
   if (/^time (?:~|it) was kicked$/.test(t)) return { kind: 'kicks' };
   // CR 702.40a: "for each other spell that was cast before it this turn"

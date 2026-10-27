@@ -160,7 +160,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -230,6 +230,18 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'event':
       // "that much", "that many": how much the trigger event was.
       return ctx.trigger?.amount ?? 0;
+    case 'party': {
+      // CR 700.8: up to one each of Cleric, Rogue, Warrior and Wizard — the biggest such group.
+      const roles = ['Cleric', 'Rogue', 'Warrior', 'Wizard'];
+      const creatures = g.zones.battlefield
+        .map((id) => g.objects[id]!)
+        .filter((o) => o.controller === ctx.controller && chars(g, o).types.includes('Creature'))
+        .map((o) => roles.filter((r) => chars(g, o).subtypes.includes(r)))
+        .filter((rs) => rs.length);
+      const best = (i: number, used: Set<string>): number =>
+        i >= creatures.length ? 0 : Math.max(best(i + 1, used), ...creatures[i]!.filter((r) => !used.has(r)).map((r) => 1 + best(i + 1, new Set([...used, r]))));
+      return Math.min(4, best(0, new Set()));
+    }
     case 'kicks':
       // CR 702.33c: how many times the spell (or the permanent it became) was kicked.
       return ctx.source?.cast?.kicks ?? (ctx.source?.cast?.kicked ? 1 : 0);

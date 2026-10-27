@@ -9,7 +9,7 @@ import { discardCard, moveObject, nameOf, obj, setTapped, zoneList } from './zon
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -75,6 +75,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
       if (o.zone !== 'graveyard' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your graveyard.`);
+    } else if (c.type === 'remove_counters_self') {
+      // CR 118.3: a cost can be paid only if it's possible — enough counters of that kind.
+      if ((o.counters[String(c.counter)] ?? 0) < Number(c.amount ?? 1)) throw new RulesError(`${nameOf(g, o)} doesn’t have enough ${c.counter} counters.`);
     } else if (c.type === 'pay_energy') {
       // CR 107.14: paying {E} removes an energy counter from you.
       if ((g.players[player]!.counters?.energy ?? 0) < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} energy.`);
@@ -124,6 +127,12 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       moveObject(g, o.id, 'exile', events);
     } else if (c.type === 'pay_energy') {
       payEnergy(g, player, Number(c.amount), events);
+    } else if (c.type === 'remove_counters_self') {
+      const counter = String(c.counter);
+      const n = Number(c.amount ?? 1);
+      o.counters[counter] = (o.counters[counter] ?? 0) - n;
+      if (o.counters[counter]! <= 0) delete o.counters[counter];
+      events.push({ type: 'counters', object: o.id, counter, delta: -n });
     } else if (c.type === 'crew') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
     } else if (c.type === 'exile_cards') {
