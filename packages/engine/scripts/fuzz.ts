@@ -194,6 +194,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       // Keep the targets, or pick new ones where there are enough candidates.
       const fresh = p.prompts.map((pr) => pr.candidates.slice().sort(() => rnd() - 0.5).slice(0, pr.count));
       const ok = p.prompts.every((pr, i) => fresh[i]!.length === pr.count || (pr.upTo && fresh[i]!.length <= pr.count));
+      // "Change the target": a new one is required.
+      if (p.mustChange) return { player: me, answer: { kind: 'copy_targets', targets: fresh } };
       return { player: me, answer: { kind: 'copy_targets', ...(ok && rnd() < 0.5 ? { targets: fresh } : {}) } };
     }
     case 'pay':

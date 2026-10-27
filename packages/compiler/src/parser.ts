@@ -103,6 +103,17 @@ export class ParserRegistry {
       return result;
     }
     const lines = text.split('\n').map(stripReminder);
+    // Cabal Ritual: "Add {B}{B}{B}." then "Threshold — Add {B}{B}{B}{B}{B} instead if …" — on an instant or sorcery
+    // the second line replaces the first (CR 608.2c), so they're read as one.
+    if (/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) {
+      for (let i = 1; i < lines.length; i++) {
+        const next = stripAbilityWord(lines[i]!);
+        if (/^[A-Z][^.]* instead if [^.]+\.$/.test(next) && lines[i - 1] && /\.$/.test(lines[i - 1]!) && !/^[•+]/.test(lines[i - 1]!)) {
+          lines.splice(i - 1, 2, `${lines[i - 1]} ${next}`);
+          i--;
+        }
+      }
+    }
     // Abilities below a class level bar (CR 716.2a) or a level symbol (CR 711.2a) exist only at that level.
     let gate: ConditionNode | undefined;
     const isClass = /\bClass\b/.test(ctx.typeLine);

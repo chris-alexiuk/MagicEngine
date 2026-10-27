@@ -47,6 +47,13 @@ function stateFilter(text: string, b: Binder): ObjectFilter | null {
 
 export function parseCondition(text: string, b: Binder): ConditionNode | null {
   const t = text.trim();
+  // Urza's Tower: "you control an Urza's Mine and an Urza's Power-Plant" — both.
+  const both = /^you control (an? [^,]+?) and (an? .+)$/.exec(t.replace(/\bUrza's (Mine|Tower|Power-Plant)\b/g, '$1'));
+  if (both) {
+    const one = parseCondition(`you control ${both[1]}`, b);
+    const two = one ? parseCondition(`you control ${both[2]}`, b) : null;
+    if (one && two) return { type: 'and', all: [one, two] };
+  }
   const single = parseOne(t, b);
   if (single) return single;
   // "you have 30 or more life and an opponent has 10 or less life"
@@ -267,6 +274,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
+  // The Enduring cycle: "it was a creature" (a leaves-the-battlefield trigger looks back, CR 603.10a)
+  const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
+  if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
+  // Minas Tirith: "you attacked with two or more creatures this turn"
+  const attackedWith = /^you attacked with (\w+) or more creatures this turn$/.exec(t);
+  if (attackedWith) {
+    const n = parseAmount(attackedWith[1]!);
+    return typeof n === 'number' ? { type: 'attacked_with', n } : null;
+  }
   // Land Tax: "if an opponent controls more lands than you"
   const more = /^an opponent controls more (.+?) than you(?: do)?$/.exec(t);
   if (more) {

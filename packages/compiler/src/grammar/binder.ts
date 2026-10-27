@@ -38,6 +38,8 @@ export class Binder {
   damaged: Ref | null = null;
   /** CR 701.38: the options of the vote this ability holds ("If sickness gets more votes"). */
   votes: string[] = [];
+  /** Set when the text uses something the engine can't do (the line stays unread). */
+  unsupported = false;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -52,6 +54,7 @@ export class Binder {
     b.eventAmount = this.eventAmount;
     b.damaged = this.damaged;
     b.votes = this.votes;
+    b.unsupported = this.unsupported;
     return b;
   }
 
@@ -65,9 +68,12 @@ export class Binder {
     this.eventAmount = other.eventAmount;
     this.damaged = other.damaged;
     this.votes = other.votes;
+    this.unsupported = other.unsupported;
   }
 
   addTarget(spec: TargetSpec): Ref {
+    // "target spell with mana value X or less, where X is …": the engine can't check X as targets are chosen yet.
+    if ((spec.filter as { manaValue?: { n?: unknown } } | undefined)?.manaValue?.n === 'X') this.unsupported = true;
     this.targets.push(spec);
     return { ref: 'target', index: this.targets.length - 1 };
   }

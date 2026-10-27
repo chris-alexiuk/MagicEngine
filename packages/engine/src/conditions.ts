@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -27,6 +27,8 @@ export interface TurnLog {
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
   drawn?: Record<PlayerId, number>;
+  /** Which cards ("cards in your hand drawn this turn", Sylvan Library). */
+  drawnIds?: Record<PlayerId, ObjectId[]>;
   /** Players who created a token this turn. */
   createdToken?: PlayerId[];
   /** Players who controlled a permanent that left the battlefield this turn (revolt). */
@@ -190,6 +192,17 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
     case 'city_blessing':
       return Boolean(g.players[controller]?.cityBlessing);
+    // The Enduring cycle: "if it was a creature" — as it last existed on the battlefield (CR 603.10a).
+    case 'was_type': {
+      const r = ctx.trigger?.object;
+      const last = r ? g.lastKnown?.[r.id] : undefined;
+      return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && last.types?.includes(String(cond.cardType)));
+    }
+    // Minas Tirith: "if you attacked with two or more creatures this turn"
+    case 'attacked_with': {
+      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => g.objects[id]?.controller === controller).length;
+      return n >= Number(cond.n ?? 1);
+    }
     case 'opponent_has_more': {
       // Land Tax: "if an opponent controls more lands than you"
       const count = (p: PlayerId) => g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, cond.filter as ObjectFilter, { controller: p, source: source ?? null })).length;

@@ -181,6 +181,7 @@ export function moveObject(
       zcc: o.zcc,
       power: c.power,
       toughness: c.toughness,
+      types: [...c.types],
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
       ...(o.attachedTo ? { attachedTo: { ...o.attachedTo } } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
@@ -367,6 +368,7 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[]): v
   // "Whenever you draw your second card each turn": count them as they're drawn.
   const drawn = (g.turnLog.drawn ??= {});
   drawn[player] = (drawn[player] ?? 0) + 1;
+  ((g.turnLog.drawnIds ??= {})[player] ??= []).push(top);
   events.push({ type: 'drew', player, object: top, nth: drawn[player] });
 }
 

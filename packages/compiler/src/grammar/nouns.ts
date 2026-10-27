@@ -52,7 +52,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
   [/ (?:from|in) an opponent's graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
-  [/ (?:from|in) (?:a|any|target player's) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  [/ (?:from|in) (?:a|any|each|target player's) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   [/ (?:from|in) all graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
@@ -61,7 +61,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that was dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
   // "a card named Pir, Imaginative Rascal" (CR 201.2) — after any zone words are peeled off.
   [/ named ([A-Z].*)$/, (f, m) => !f.name && ((f.name = m[1]!.trim()), true)],
+  // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
+  [/ named ~$/, (f, _m, b) => !f.name && ((f.name = b.env.cardName), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
+  // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
+  [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
@@ -71,7 +75,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
 ];
 
-function compare(f: ObjectFilter, what: string, n: number, op: 'le' | 'ge' | 'eq'): boolean {
+function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge' | 'eq'): boolean {
   const key = what === 'power' ? 'power' : what === 'toughness' ? 'toughness' : 'manaValue';
   if (f[key]) return false;
   f[key] = { op, n };

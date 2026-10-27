@@ -39,6 +39,14 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Sylvan Library (CR 121.1, 119.4)
+  if (/^You may draw two additional cards\. If you do, choose two cards in your hand drawn this turn\. For each of those cards, pay 4 life or put the card on top of your library\.$/.test(text.trim())) {
+    return [{ type: 'sylvan_library' }];
+  }
+  // Living Death, Living End, Scrap Mastery: "Each player exiles all creature cards from their graveyard, then sacrifices
+  // all creatures they control, then puts all cards they exiled this way onto the battlefield."
+  const swap = /^Each player exiles all (creature|artifact) cards from their graveyard, then sacrifices all (?:creatures|artifacts) they control, then puts all cards they exiled this way onto the battlefield\.$/.exec(text.trim());
+  if (swap) return [{ type: 'swap_graveyard', cardType: swap[1] === 'creature' ? 'Creature' : 'Artifact' }];
   return attempt(b, (b) => {
     const sentences = splitSentences(text);
     if (!sentences) return null;
@@ -47,7 +55,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     let previous: EffectNode[] = [];
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
-      if (i > 0 && !/ instead$/.test(s)) previous = [];
+      if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
       // CR 702.34a: "target instant or sorcery card in your graveyard gains flashback until end of turn. The flashback
@@ -375,6 +383,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += r.used - 1;
         continue;
       }
+      // "Add {B}{B}{B}{B}{B} instead if there are seven or more cards in your graveyard." — the same as "If …, … instead".
+      const insteadIf = i > 0 ? /^(.+) instead if (.+)$/.exec(s) : null;
+      if (insteadIf) s = `If ${insteadIf[2]}, ${insteadIf[1]!.replace(/^\w/, (c) => c.toLowerCase())} instead`;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -564,6 +575,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         out.push({ type: 'delayed', step: when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep', effects: inner });
         continue;
       }
+      // The Enduring cycle: "Return it to the battlefield under its owner's control. It's an enchantment." (layer 4,
+      // CR 205.1a: it's no longer a creature).
+      const itsA = /^It's an? (enchantment|artifact|land)$/.exec(s);
+      if (itsA) {
+        const last = out[out.length - 1];
+        if (!last || last.type !== 'move' || last.to !== 'battlefield' || !b.it) return null;
+        out.push({ type: 'modify', what: b.it, types: [itsA[1]!.replace(/^\w/, (c) => c.toUpperCase())], subtypes: [], until: 'game' });
+        continue;
+      }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
       // CR 205.1b: "It's still a land." — the earlier "becomes a creature" keeps its other types.
       if (/^(?:It's|They're) still (?:a land|lands|an artifact|artifacts|an enchantment|a planeswalker)$/.test(s)) {
@@ -699,7 +719,7 @@ type InnerParse = (s: string, b: Binder) => EffectNode[] | null;
 export interface CastBan {
   filter?: ObjectFilter;
   during?: 'your_turn' | 'combat';
-  fromZones?: ('graveyard' | 'library' | 'exile')[];
+  fromZones?: ('graveyard' | 'library' | 'exile' | 'command')[];
   maxPerTurn?: number;
 }
 
@@ -711,7 +731,13 @@ export function parseCastBan(text: string, b: Binder): CastBan | null {
     ban.during = during[1] === 'combat' ? 'combat' : 'your_turn';
     t = t.slice(0, during.index);
   }
-  const from = / from (?:graveyards|a graveyard)(?: or (libraries|exile))?$/.exec(t);
+  // Drannith Magistrate: "from anywhere other than their hands" (the command zone too, CR 903.8).
+  const notHand = / from anywhere other than (?:their|your) hands?$/.exec(t);
+  if (notHand) {
+    ban.fromZones = ['graveyard', 'library', 'exile', 'command'];
+    t = t.slice(0, notHand.index);
+  }
+  const from = / from (?:graveyards|a graveyard|their graveyards|your graveyard)(?: or (libraries|exile))?$/.exec(t);
   if (from) {
     ban.fromZones = ['graveyard', ...(from[1] === 'libraries' ? (['library'] as const) : from[1] === 'exile' ? (['exile'] as const) : [])];
     t = t.slice(0, from.index);
@@ -786,6 +812,8 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Sea Gate Restoration: "You have no maximum hand size for the rest of the game."
+  if (/^You have no maximum hand size for the rest of the game$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', until: 'game' }];
   // Emergence Zone: "You may cast spells this turn as though they had flash." (CR 702.8a)
   if (/^You may cast spells this turn as though they had flash$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash' }];
   // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
@@ -1702,7 +1730,7 @@ const VERBS: Record<string, VerbHandler> = {
       ];
     }
     const m =
-      /^your library for (.+?), (?:reveal (?:it|them|those cards), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
+      /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
     if (!m) return null;
     const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(m[1]!);
@@ -1727,6 +1755,17 @@ const VERBS: Record<string, VerbHandler> = {
     if (args !== 'dread' || who.ref !== 'you') return null;
     b.it = { ref: 'created' };
     return [{ type: 'manifest', amount: 1, dread: true }];
+  },
+  // CR 115.7a: "Change the target of target spell or ability with a single target." (Bolt Bend, Redirect Lightning)
+  change(args, who, b, imperative) {
+    const m = imperative ? /^the target of (target .+?) with a single target$/.exec(args) : null;
+    if (!m) return null;
+    const what = parseObjectRef(m[1]!, b);
+    if (!what?.targeted || what.plural || what.ref.ref !== 'target') return null;
+    const spec = b.targets[what.ref.index];
+    if (!spec || (spec.what !== 'ability' && spec.filter?.zone !== 'stack')) return null;
+    spec.singleTarget = true;
+    return [{ type: 'retarget', what: what.ref, change: true }];
   },
   // "choose target instant or sorcery card in your graveyard, then roll a d20" — the target, for what follows.
   choose(args, who, b, imperative) {
@@ -1878,6 +1917,20 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 701.34a
   if (/^proliferate$/i.test(c)) return [{ type: 'proliferate' }];
+  // CR 701.10e: "double the number of +1/+1 counters on each creature you control", "… each kind of counter on target permanent"
+  const dblCounters = /^double the number of (\+1\/\+1 counters|each kind of counter) on (.+)$/i.exec(c);
+  if (dblCounters) {
+    const what = parseObjectRef(dblCounters[2]!, b);
+    return what ? [{ type: 'double_counters', what: what.ref, counter: /^each/.test(dblCounters[1]!) ? 'each' : '+1/+1' }] : null;
+  }
+  // CR 701.10a/c: "double its power until end of turn", "double the power and toughness of each creature you control until end of turn"
+  const dblPT = /^double (?:(its|.+?'s) power( and toughness)?|the power( and toughness)? of (.+?))( until end of turn)?$/i.exec(c);
+  if (dblPT) {
+    const whoText = dblPT[1] ? (dblPT[1] === 'its' ? 'it' : dblPT[1].replace(/'s$/, '')) : dblPT[4]!;
+    const what = parseObjectRef(whoText, b);
+    if (!what) return null;
+    return [{ type: 'modify', what: what.ref, double: dblPT[2] || dblPT[3] ? 'both' : 'power', until: dblPT[5] ? 'eot' : 'game' }];
+  }
   // CR 701.61a
   if (/^forage$/i.test(c)) return [{ type: 'forage' }];
   // CR 701.50a: "~ connives", "target creature you control connives".

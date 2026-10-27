@@ -13,6 +13,7 @@ const ZONES: Record<string, { zone: 'hand' | 'graveyard' | 'library'; who: 'you'
   'in your graveyard': { zone: 'graveyard', who: 'you' },
   'in your library': { zone: 'library', who: 'you' },
   'in all graveyards': { zone: 'graveyard', who: 'each' },
+  'in each graveyard': { zone: 'graveyard', who: 'each' },
   "in your opponents' graveyards": { zone: 'graveyard', who: 'opponents' },
   "in each opponent's graveyard": { zone: 'graveyard', who: 'opponents' },
   "in an opponent's graveyard": { zone: 'graveyard', who: 'opponents' },
@@ -103,6 +104,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (twice) {
     const inner = parseCount(twice[1]!, b);
     return inner ? { ...inner, times: (inner.times ?? 1) * 2 } : null;
+  }
+  // Sea Gate Restoration: "the number of cards in your hand plus one"
+  const plusAfter = /^(.+) plus (one|two|three|four|five)$/.exec(t);
+  if (plusAfter && !/^\w+$/.test(plusAfter[1]!)) {
+    const inner = parseCount(plusAfter[1]!, b);
+    const n = parseAmount(plusAfter[2]!);
+    if (inner && typeof n === 'number') return { ...inner, plus: (inner.plus ?? 0) + n };
   }
   const plus = /^(\w+) plus (.+)$/.exec(t);
   if (plus) {

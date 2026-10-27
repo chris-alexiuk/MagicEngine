@@ -315,7 +315,7 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
-  const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'land');
+  const fromExile = (o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'land');
   // "You may play lands from your graveyard."
   const fromGraveyard = o.zone === 'graveyard' && o.owner === player && playerRule(g, player, 'lands_from_graveyard');
   if (!fromExile && !fromGraveyard && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
@@ -553,7 +553,7 @@ function cast(
   // CR 702.127a: "You may cast this half of this split card from your graveyard."
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
   // "Until the end of your next turn, you may play that card."
-  const fromExile = o.zone === 'exile' && mayPlayFrom(g, player, o, 'spell');
+  const fromExile = (o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'spell');
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
@@ -694,7 +694,7 @@ function cast(
   if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
   o.cast = {
     by: player,
-    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? 'exile' : 'hand',
+    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? (castFrom === 'library' ? 'library' : 'exile') : 'hand',
     before,
     ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),

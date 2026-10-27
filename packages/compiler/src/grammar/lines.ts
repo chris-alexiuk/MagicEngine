@@ -37,7 +37,7 @@ import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept } from './copies.js';
 import { parseCastBan, parseEffectText, parseManaSpend, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
-import { COLOR_WORDS, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
+import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
 function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
@@ -71,6 +71,11 @@ function modeCount(word: string, options: number): { min: number; max: number } 
  * modes keep their own targets (CR 700.2c).
  */
 export function parseProgram(text: string, b: Binder): Program | null {
+  const program = parseProgramText(text, b);
+  return program && !b.unsupported ? program : null;
+}
+
+function parseProgramText(text: string, b: Binder): Program | null {
   const [head, ...bullets] = text.split('\n');
   // "Choose one. If you control a commander as you cast this spell, you may choose both instead."
   const bonus =
@@ -116,9 +121,9 @@ export function parseProgram(text: string, b: Binder): Program | null {
       const mb = b.clone();
       mb.targets = [];
       // A mode's name ("• Sell Contraband — Create a Treasure token.") has no rules meaning.
-      const effects = parseEffectText(bullet.slice(2).replace(/^[A-Z][\w' ,!-]{1,40} — (?=[A-Z])/, ''), mb);
+      const effects = mb.unsupported ? null : parseEffectText(bullet.slice(2).replace(/^[A-Z][\w' ,!-]{1,40} — (?=[A-Z])/, ''), mb);
       // A mode the grammar can't read stays manual; the others still run (CR 700.2).
-      if (!effects) options.push({ text: bullet.slice(2), effects: [], manual: true });
+      if (!effects || mb.unsupported) options.push({ text: bullet.slice(2), effects: [], manual: true });
       else options.push({ text: bullet.slice(2), ...(mb.targets.length ? { targets: mb.targets } : {}), effects });
     }
     if (options.every((o) => o.manual)) return null;
@@ -270,6 +275,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
+    // Simian Spirit Guide: "Exile this card from your hand: Add {R}." (CR 605.1a: from the hand)
+    else if (/^[Ee]xile ~ from your hand$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_hand' });
     // "Remove a +1/+1 counter from ~", "Remove three spore counters from ~" (CR 118.3).
     else if (/^[Rr]emove (a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+) (\S+) counters? from ~$/.test(item)) {
       const m = /^[Rr]emove (\S+) (\S+) counters? from ~$/.exec(item)!;
@@ -343,6 +350,7 @@ export const activatedRule: GrammarRule = {
     // exiling it from your graveyard, from the graveyard (CR 113.6m).
     if (cost.other?.some((c) => c.type === 'discard_self')) node.zone = 'hand';
     if (cost.other?.some((c) => c.type === 'exile_self')) node.zone = 'graveyard';
+    if (cost.other?.some((c) => c.type === 'exile_self_hand')) node.zone = 'hand';
     for (let changed = true; changed; ) {
       changed = false;
       for (const [re, set] of ACTIVATION_LIMITS) {
@@ -392,6 +400,9 @@ export const activatedRule: GrammarRule = {
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
       // counter removed this way" (X, the number removed).
+      // Castle Garenbrig: "Add six {G}."
+      const many = mana ? /^(two|three|four|five|six|seven|eight|nine|ten) (\{[WUBRGC]\})$/.exec(mana[1]!) : null;
+      if (mana && many) mana[1] = many[2]!.repeat(parseAmount(many[1]!) as number);
       const xAny = mana ? /^X mana of any one color, where X is (.+)$/.exec(mana[1]!) : null;
       if (xAny && mana) mana[1] = `an amount of ANY equal to ${xAny[1]}`;
       const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}|ANY) equal to (.+))$/.exec(mana[1]!) : null;
@@ -423,6 +434,14 @@ export const activatedRule: GrammarRule = {
       if (mana && effect && keep) {
         effect.keep = 'end_of_turn';
         mana[2] = keep[1]!;
+      }
+      // Urza's Tower: "{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead."
+      const insteadMana = mana && effect && mana[2] ? /^If (.+?), add ((?:\{[WUBRGC]\})+) instead\.$/.exec(mana[2]) : null;
+      if (mana && effect && insteadMana) {
+        const cond = parseCondition(insteadMana[1]!, new Binder(env));
+        const alt = cond ? parseManaProduction(insteadMana[2]!) : null;
+        if (!cond || !alt || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+        return { ...node, effects: [{ type: 'if', cond, effects: [alt], else: [effect] }], mana: true };
       }
       if (mana && effect) {
         // Mana abilities with timing restrictions ("Activate only as a sorcery") aren't modelled yet;
@@ -702,6 +721,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const alone = attachedEvent[1] === 'attacks alone' ? { alone: true } : {};
     return { trigger: { type, subject: { ref: 'attached' }, ...alone }, it: leaves ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
   }
+  // Forbidden Orchard: "Whenever you tap ~ for mana" — an ordinary triggered ability when it doesn't add mana (CR 605.1b).
+  if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
   const self = /^~ (enters(?: the battlefield)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks|blocks|deals combat damage to a player)$/.exec(t);
@@ -1655,7 +1676,10 @@ export const costModifierRule: GrammarRule = {
       const adjectives = others[1]!.trim().replace(/ and /g, ' or ');
       let filter: ObjectFilter = {};
       if ((adjectives && !/^Spells?$/i.test(adjectives)) || suffix) {
-        const pf = parseFilter(`${adjectives && !/^Spells?$/i.test(adjectives) ? `${adjectives.replace(/^\w/, (c) => c.toLowerCase())} ` : ''}spells${suffix}`, b);
+        // "Aura and Equipment spells": a subtype keeps its capital.
+        const first = adjectives.split(' ')[0]!;
+        const words = isSubtype(first) ? adjectives : adjectives.replace(/^\w/, (c) => c.toLowerCase());
+        const pf = parseFilter(`${adjectives && !/^Spells?$/i.test(adjectives) ? `${words} ` : ''}spells${suffix}`, b);
         if (!pf) return null;
         const { zone: _z, ...rest } = pf.filter;
         filter = rest;
@@ -2179,6 +2203,36 @@ export const manaTriggerRule: GrammarRule = {
   },
 };
 
+/**
+ * CR 401.? / 601.3: "You may play lands from the top of your library" (Oracle of Mul Daya), "You may cast creature spells
+ * from the top of your library" (Eladamri), "You may play lands and cast spells from the top of your library".
+ */
+export const topPermissionRule: GrammarRule = {
+  id: 'top_permission',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.$/.exec(line);
+    if (!env || !m || (!m[1] && !m[2])) return null;
+    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}) };
+    if (m[2]) {
+      let phrase = m[2];
+      // "Angel spells and Human spells", "instant and sorcery spells"
+      const two = /^(\w+) spells and (\w+) spells$/.exec(phrase);
+      if (two) phrase = `${two[1]} or ${two[2]} spells`;
+      phrase = phrase.replace(/^(\w+) and (\w+) spells/, '$1 or $2 spells');
+      if (phrase === 'spells') effect.spells = {};
+      else {
+        const first = phrase.split(' ')[0]!;
+        const pf = parseFilter(isSubtype(first) ? phrase : phrase.replace(/^\w/, (c) => c.toLowerCase()), new Binder(env));
+        if (!pf || !pf.plural || pf.filter.zone !== 'stack') return null;
+        const { zone: _z, ...filter } = pf.filter;
+        effect.spells = filter;
+      }
+    }
+    return { kind: 'static', text: original, effect } as StaticAbility;
+  },
+};
+
 /** Lier, Disciple of the Drowned: "Each instant and sorcery card in your graveyard has flashback. The flashback cost is equal to that card's mana cost." */
 export const grantedFlashbackRule: GrammarRule = {
   id: 'granted_flashback',
@@ -2230,6 +2284,7 @@ export const additionalCostRule: GrammarRule = {
 };
 
 export const GRAMMAR_RULES: GrammarRule[] = [
+  topPermissionRule,
   manaTriggerRule,
   grantedFlashbackRule,
   chapterRule,

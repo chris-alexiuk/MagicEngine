@@ -15,7 +15,7 @@ import { replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage'];
+export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -158,6 +158,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
       if (o.zone !== 'graveyard' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your graveyard.`);
+    } else if (c.type === 'exile_self_hand') {
+      if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'collect_evidence') {
       // CR 701.59a: exile cards from your graveyard with total mana value N or greater.
       const chosen = choices.exile ?? [];
@@ -286,7 +288,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       events.push({ type: 'sacrificed', object: o.id, player });
       moveObject(g, o.id, 'graveyard', events);
-    } else if (c.type === 'exile_self') {
+    } else if (c.type === 'exile_self' || c.type === 'exile_self_hand') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
     } else if (c.type === 'collect_evidence') {
@@ -343,7 +345,8 @@ export function runManaAbility(
 ): void {
   const o = obj(g, id);
   // CR 602.2: only an object's controller can activate its abilities.
-  if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError('You don’t control that permanent.');
+  const fromHand = o.zone === 'hand' && o.owner === player;
+  if (!fromHand && (o.zone !== 'battlefield' || o.controller !== player)) throw new RulesError('You don’t control that permanent.');
   const ability = manaAbilities(g, o)[index];
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such mana ability.`);
   if (activationProhibited(g, player, o, true)) throw new RulesError(`You can’t activate ${nameOf(g, o)}’s abilities now.`);
@@ -399,7 +402,12 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
         subject.ref === 'attached'
           ? src.attachedTo?.id === tapped.id && src.attachedTo.zcc === tapped.zcc
           : subject.ref === 'all' && tapped.zone === 'battlefield' && matchesFilter(g, tapped, subject.filter, { controller: src.controller, source: src });
-      if (!hit) continue;
+      if (!hit && !(subject.ref === 'self' && src.id === tapped.id)) continue;
+      // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
+      if (!a.effects.every((x) => x.type === 'add_mana')) {
+        g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });
+        continue;
+      }
       // "its controller adds …"; "add …" — the trigger's controller.
       const controller = a.trigger.its ? tapped.controller : src.controller;
       for (const effect of a.effects) {

@@ -605,7 +605,7 @@ export interface FilterContext {
   lastController?: PlayerId;
 }
 
-const compare = (v: number, c: { op: string; n: number }) => (c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : v === c.n);
+const compare = (v: number, c: { op: string; n: number | 'X' }) => (c.n === 'X' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : v === c.n);
 
 /** Whether an object matches a filter from the compiled AST. */
 export function matchesFilter(
@@ -727,7 +727,9 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
       if (color) out.push(intrinsicManaAbility(color));
     }
   }
-  if (!gone) for (const a of face.abilities) if (a.kind === 'activated' && a.mana && gateOpen(g, o, a)) out.push(a);
+  // Simian Spirit Guide's ability works from the hand (CR 605.1a); others on the battlefield.
+  const here = (a: ActivatedAbility) => (o.zone === 'hand' ? a.zone === 'hand' : !a.zone);
+  if (!gone) for (const a of face.abilities) if (a.kind === 'activated' && a.mana && here(a) && gateOpen(g, o, a)) out.push(a);
   // Granted ones ("Creatures you control have "{T}: Add {G}."", CR 613.1f).
   if (o.zone === 'battlefield' && anyGrantedMana(g)) for (const a of keywordAbilities(chars(g, o).keywords)) if (a.kind === 'activated' && a.mana) out.push(a);
   return out;

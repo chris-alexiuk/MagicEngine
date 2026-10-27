@@ -1,6 +1,6 @@
 import type { EffectNode, TargetSpec } from '@mtg/schema';
 import { hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
-import { RulesError, type GameObject, type GameState, type PlayerId, type Target, type TargetPrompt, type TargetRef } from './types.js';
+import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef } from './types.js';
 import { playerRule } from './player-rules.js';
 import { livePlayers, nameOf } from './zones.js';
 
@@ -30,9 +30,15 @@ function canTargetObject(g: GameState, controller: PlayerId, spec: TargetSpec, o
  * CR 113.1c / 602.2a: an activated or triggered ability on the stack — "target activated ability
  * you control from an artifact source". Its source is the object it came from (CR 113.7), wherever that is now.
  */
+/** CR 115.10: "a spell or ability with a single target" — exactly one target, counting each instance of "target". */
+function singleTargeted(entry: StackEntry | undefined): boolean {
+  return Boolean(entry && entry.targets.reduce((n, list) => n + list.length, 0) === 1);
+}
+
 function canTargetAbility(g: GameState, controller: PlayerId, spec: TargetSpec, id: string): boolean {
   const entry = g.stack.find((s) => s.kind === 'ability' && s.id === id);
   if (entry?.kind !== 'ability') return false;
+  if (spec.singleTarget && !singleTargeted(entry)) return false;
   const kind = entry.trigger ? 'triggered' : 'activated';
   if (spec.abilities && !spec.abilities.includes(kind)) return false;
   if (spec.player === 'you' && entry.controller !== controller) return false;
@@ -71,6 +77,7 @@ export function isLegalTarget(
   const id = 'id' in t ? t.id : t.object;
   const o = g.objects[id];
   if (!o) return false;
+  if (spec.singleTarget && !singleTargeted(g.stack.find((s) => s.kind === 'spell' && s.object === id))) return false;
   // CR 608.2b: an object that changed zones since it was targeted is a new object — an illegal target.
   if ('zcc' in t && o.zcc !== t.zcc) return false;
   return canTargetObject(g, controller, spec.what === 'ability' ? { ...spec, filter: { ...spec.spells, zone: 'stack' } } : spec, o, source);
@@ -82,7 +89,7 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
   if (spec.what === 'ability') {
     for (const s of g.stack) {
       if (s.kind === 'ability' && canTargetAbility(g, controller, spec, s.id)) out.push({ kind: 'ability', entry: s.id });
-      if (s.kind === 'spell' && spec.spells) {
+      if (s.kind === 'spell' && spec.spells && (!spec.singleTarget || singleTargeted(s))) {
         const o = g.objects[s.object];
         if (o && canTargetObject(g, controller, { ...spec, filter: { ...spec.spells, zone: 'stack' } }, o, source)) out.push({ kind: 'object', object: s.object });
       }
@@ -105,6 +112,7 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
     // "For each opponent, … target creature that player controls": only those players' objects.
     const players = spec.perPlayer ? perPlayerSet(g, controller, spec) : null;
     for (const id of ids) {
+      if (spec.singleTarget && !singleTargeted(g.stack.find((s) => s.kind === 'spell' && s.object === id))) continue;
       const o = g.objects[id];
       if (!o || (players && !players.includes(o.zone === 'battlefield' ? o.controller : o.owner))) continue;
       if (canTargetObject(g, controller, spec, o, source)) out.push({ kind: 'object', object: id });

@@ -401,7 +401,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // "you gain protection from everything until your next turn" (The One Ring), "your life total can't change" (CR 119.8).
   player_effect(node, ctx) {
     const g = ctx.g;
-    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : g.turn;
+    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'game' ? Number.MAX_SAFE_INTEGER : g.turn;
     const players = refPlayers(ctx, ref(node, 'who'));
     g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn }))];
     return true;
@@ -491,6 +491,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!objects.length) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
+    // CR 701.10a / 701.10c: "double its power and toughness" — it gets +X/+Y, where X and Y are its power and toughness now.
+    if (node.double) {
+      for (const o of objects) {
+        const p = power(g, o);
+        const t = node.double === 'both' ? toughness(g, o) : 0;
+        g.effects.push({
+          id: `e${g.nextId++}`, timestamp: ++g.clock,
+          source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
+          controller: ctx.controller, objects: [{ id: o.id, zcc: o.zcc }], power: p, toughness: t,
+          until: node.until === 'game' ? 'game' : 'eot',
+        });
+      }
+      return true;
+    }
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
@@ -842,6 +856,95 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}),
       },
     });
+    return true;
+  },
+
+  // Sylvan Library: "you may draw two additional cards. If you do, choose two cards in your hand drawn this turn. For
+  // each of those cards, pay 4 life or put the card on top of your library."
+  sylvan_library(_node, ctx) {
+    const g = ctx.g;
+    const p = ctx.controller;
+    const memo = ctx.memo as { stage?: 'choose' | 'pay'; chosen?: ObjectId[]; i?: number; asked?: number };
+    if (!memo.stage) {
+      const answer = answerOf(ctx, 'may');
+      if (!answer) return { ask: { kind: 'may', player: p, text: 'Draw two additional cards?', sourceName: sourceName(ctx) } };
+      if (!answer.yes) return true;
+      drawCard(g, p, ctx.events);
+      drawCard(g, p, ctx.events);
+      memo.stage = 'choose';
+    }
+    if (memo.stage === 'choose') {
+      const drawn = [...new Set(g.turnLog.drawnIds?.[p] ?? [])].filter((id) => g.objects[id]?.zone === 'hand' && g.objects[id]!.owner === p);
+      const n = Math.min(2, drawn.length);
+      if (!n) return true;
+      if (drawn.length > n) {
+        const answer = answerOf(ctx, 'choose_objects');
+        if (!answer) return { ask: { kind: 'choose_objects', player: p, candidates: drawn, min: n, max: n, text: 'Choose two cards in your hand drawn this turn.' } };
+        if (answer.objects.length !== n || new Set(answer.objects).size !== n || !answer.objects.every((id) => drawn.includes(id))) throw new RulesError('Choose two cards you drew this turn.');
+        memo.chosen = answer.objects;
+      } else memo.chosen = drawn;
+      memo.stage = 'pay';
+      memo.i = 0;
+    }
+    const OPTIONS = ['Pay 4 life', 'Put it on top of your library'];
+    while ((memo.i ?? 0) < (memo.chosen?.length ?? 0)) {
+      const id = memo.chosen![memo.i!]!;
+      const ps = g.players[p]!;
+      // CR 119.4: life can be paid only if the player has that much (and their life total can change).
+      const canPay = ps.life >= 4 && !playerRule(g, p, 'life_cant_change');
+      let pay = false;
+      if (canPay) {
+        const answer = memo.asked === memo.i ? answerOf(ctx, 'choose_option') : null;
+        if (!answer) {
+          memo.asked = memo.i;
+          return { ask: { kind: 'choose_option', player: p, options: OPTIONS, text: `${nameOf(g, g.objects[id]!)}: pay 4 life, or put it on top of your library?`, sourceName: sourceName(ctx) } };
+        }
+        if (!OPTIONS.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+        pay = answer.choice === OPTIONS[0];
+      }
+      if (pay) {
+        ps.life -= 4;
+        ctx.events.push({ type: 'life', player: p, delta: -4, life: ps.life });
+      } else if (g.objects[id]?.zone === 'hand') moveObject(g, id, 'library', ctx.events, { position: 'top' });
+      memo.i = (memo.i ?? 0) + 1;
+    }
+    return true;
+  },
+
+  // Living Death: each player exiles their creature cards from their graveyard, sacrifices their creatures, then puts the
+  // exiled cards onto the battlefield (each step at the same time for everyone, CR 101.4).
+  swap_graveyard(node, ctx) {
+    const g = ctx.g;
+    const type = String(node.cardType);
+    const exiled: string[] = [];
+    for (const p of livePlayers(g)) {
+      for (const id of [...zoneList(g, 'graveyard', p)]) {
+        if (!faceOf(g, g.objects[id]!).types.includes(type)) continue;
+        moveObject(g, id, 'exile', ctx.events);
+        exiled.push(id);
+      }
+    }
+    for (const id of [...g.zones.battlefield]) {
+      const o = g.objects[id]!;
+      if (hasType(g, o, type)) sacrifice(g, o, o.controller, ctx.events);
+    }
+    for (const id of exiled) {
+      const o = g.objects[id]!;
+      if (o.zone === 'exile') moveObject(g, id, 'battlefield', ctx.events, { controller: o.owner });
+    }
+    return true;
+  },
+
+  // CR 701.10e: "double the number of +1/+1 counters on it" — put that many more on it.
+  double_counters(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      const kinds = node.counter === 'each' ? Object.keys(o.counters) : [String(node.counter)];
+      for (const k of kinds) {
+        const n = o.counters[k] ?? 0;
+        if (n > 0) addCounters(ctx, o, k, n);
+      }
+    }
     return true;
   },
 
@@ -1679,6 +1782,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!owner) return true;
     const library = zoneList(g, 'library', owner);
     const filter = { ...(node.filter as ObjectFilter), zone: 'library' as const };
+    // "with mana value X or less": the spell's X.
+    if (filter.manaValue?.n === 'X') filter.manaValue = { ...filter.manaValue, n: ctx.x };
     // "Search your library and/or graveyard": cards in those zones too.
     const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
     const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
@@ -1853,7 +1958,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const id = entry.kind === 'spell' ? entry.object : entry.id;
     const source = (entry.kind === 'spell' ? g.objects[entry.object] : g.objects[entry.source.id]) ?? null;
     const answer = answerOf(ctx, 'copy_targets');
+    // CR 115.7a: "change the target" — to another legal target if there is one; otherwise it stays.
+    const current0 = entry.targets.flat()[0];
+    const sameAs = (t: Target | undefined) => Boolean(t && current0 && (t.kind === 'player' ? current0.kind === 'player' && current0.player === t.player : t.kind === 'ability' ? current0.kind === 'ability' && current0.entry === t.entry : current0.kind === 'object' && current0.id === t.object));
     if (answer) {
+      if (node.change && answer.targets && sameAs(answer.targets.flat()[0])) throw new RulesError('Choose a different target.');
       if (answer.targets) {
         if (answer.targets.some((list) => list.some((t) => (t.kind === 'ability' && t.entry === id) || (t.kind === 'object' && t.object === id)))) throw new RulesError('A spell or ability can’t target itself.');
         entry.targets = chooseTargets(g, entry.controller, entry.program.specs, answer.targets, source);
@@ -1867,7 +1976,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       candidates: p.candidates.filter((t) => !(t.kind === 'ability' && t.entry === id) && !(t.kind === 'object' && t.object === id)),
     }));
     const text = entry.kind === 'spell' ? nameOf(g, g.objects[entry.object]!) : `${entry.sourceName}: ${entry.text}`;
-    return { ask: { kind: 'copy_targets', player: ctx.controller, object: id, ...(entry.kind === 'ability' ? { ability: true as const } : {}), sourceName: sourceName(ctx), text, prompts, current } };
+    if (node.change) {
+      // Nothing else it could target: it stays as it is.
+      const others = prompts[0]?.candidates.filter((t) => !sameAs(t)) ?? [];
+      if (prompts.length !== 1 || !others.length) return true;
+      prompts[0] = { ...prompts[0]!, candidates: others };
+    }
+    return { ask: { kind: 'copy_targets', player: ctx.controller, object: id, ...(entry.kind === 'ability' ? { ability: true as const } : {}), sourceName: sourceName(ctx), text, prompts, current, ...(node.change ? { mustChange: true as const } : {}) } };
   },
 
   // CR 701.40a / 701.58a: manifest or cloak the top card(s) of your library.
@@ -2948,7 +3063,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

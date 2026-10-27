@@ -1489,3 +1489,63 @@ describe('slice 138', () => {
     expect(parse('Whenever you tap a land for mana, add one mana of any type that land produced.', 'Enchantment', 'Wake').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', produced: true }] });
   });
 });
+
+describe('slices 139–141', () => {
+  it('reads Simian Spirit Guide, Cabal Ritual, Minas Tirith, Chord of Calling and doubling', () => {
+    expect(parse('Exile this card from your hand: Add {R}.', 'Creature — Ape Spirit', 'Guide').abilities[0]).toMatchObject({ mana: true, zone: 'hand', cost: { other: [{ type: 'exile_self_hand' }] } });
+    expect(parse('Add {B}{B}{B}.\nThreshold — Add {B}{B}{B}{B}{B} instead if there are seven or more cards in your graveyard.', 'Instant', 'Ritual').abilities[0]).toMatchObject({
+      effects: [{ type: 'if', effects: [{ type: 'add_mana', options: [['B', 'B', 'B', 'B', 'B']] }], else: [{ type: 'add_mana', options: [['B', 'B', 'B']] }] }],
+    });
+    expect(parse('{1}{W}, {T}: Draw a card. Activate only if you attacked with two or more creatures this turn.', 'Land', 'Tirith').abilities[0]).toMatchObject({ activateIf: { type: 'attacked_with', n: 2 } });
+    expect(parse('Search your library for a creature card with mana value X or less, put it onto the battlefield, then shuffle.', 'Instant', 'Chord').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { op: 'le', n: 'X' } } }] });
+    // A target with mana value X can't be checked as targets are chosen: unread.
+    expect(parse('When this creature enters, counter target spell with mana value X or less, where X is the number of Faeries you control.', 'Creature — Faerie', 'Sprite').unparsed).toHaveLength(1);
+    expect(parse('Double the power and toughness of each creature you control until end of turn.', 'Instant', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'modify', double: 'both', until: 'eot' }] });
+    expect(parse('Double the number of +1/+1 counters on each creature you control.', 'Sorcery', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'double_counters', counter: '+1/+1' }] });
+  });
+});
+
+describe('slices 142–143', () => {
+  it('reads Living Death and Bolt Bend', () => {
+    expect(parse('Each player exiles all creature cards from their graveyard, then sacrifices all creatures they control, then puts all cards they exiled this way onto the battlefield.', 'Sorcery', 'Death').abilities[0]).toMatchObject({ effects: [{ type: 'swap_graveyard', cardType: 'Creature' }] });
+    expect(parse('Change the target of target spell or ability with a single target.', 'Instant', 'Bend').abilities[0]).toMatchObject({ targets: [{ what: 'ability', singleTarget: true }], effects: [{ type: 'retarget', change: true }] });
+  });
+});
+
+describe('slice 144', () => {
+  it('reads a batch of staples', () => {
+    expect(parse('Search your library for a creature card, reveal that card, put it into your hand, then shuffle.', 'Instant', 'Call').abilities[0]).toMatchObject({ effects: [{ type: 'search', to: 'hand', filter: { types: ['Creature'] } }] });
+    expect(parse("{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead.", "Land — Urza's Tower", 'Tower').abilities[0]).toMatchObject({
+      mana: true, effects: [{ type: 'if', cond: { type: 'and' }, effects: [{ options: [['C', 'C', 'C']] }], else: [{ options: [['C']] }] }],
+    });
+    expect(parse('Add {R}{R}, then add {R} for each card named Rite of Flame in each graveyard.', 'Sorcery', 'Rite of Flame').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana' }, { type: 'add_mana', times: { kind: 'cards', who: 'each', filter: { name: 'Rite of Flame' } } }] });
+    expect(parse('{2}{G}{G}, {T}: Add six {G}. Spend this mana only to cast creature spells or activate abilities of creatures.', 'Land', 'Castle').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', options: [['G', 'G', 'G', 'G', 'G', 'G']], spend: { spells: { types: ['Creature'] } } }] });
+    expect(parse('Aura and Equipment spells you cast cost {1} less to cast.', 'Creature — Human', 'D').abilities[0]).toMatchObject({ effect: { filter: { subtypes: ['Aura', 'Equipment'] } } });
+    expect(parse("Your opponents can't cast spells from anywhere other than their hands.", 'Creature — Human', 'M').abilities[0]).toMatchObject({ effect: { fromZones: ['graveyard', 'library', 'exile', 'command'] } });
+    expect(parse('Whenever you tap this land for mana, target opponent creates a 1/1 colorless Spirit creature token.', 'Land', 'O').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } } });
+  });
+});
+
+describe('slice 145', () => {
+  it('reads permissions to play from the top of your library', () => {
+    expect(parse('You may play lands from the top of your library.', 'Creature — Elf', 'A').abilities[0]).toMatchObject({ effect: { type: 'top_permission', lands: true } });
+    expect(parse('You may cast creature spells from the top of your library.', 'Creature — Elf', 'E').abilities[0]).toMatchObject({ effect: { type: 'top_permission', spells: { types: ['Creature'] } } });
+    expect(parse('You may cast Angel spells and Human spells from the top of your library.', 'Creature — Angel', 'S').abilities[0]).toMatchObject({ effect: { spells: { subtypes: ['Angel', 'Human'] } } });
+    expect(parse('You may play lands and cast spells from the top of your library.', 'Enchantment', 'F').abilities[0]).toMatchObject({ effect: { lands: true, spells: {} } });
+  });
+});
+
+describe('slice 146', () => {
+  it('reads Sylvan Library', () => {
+    expect(parse('At the beginning of your draw step, you may draw two additional cards. If you do, choose two cards in your hand drawn this turn. For each of those cards, pay 4 life or put the card on top of your library.', 'Enchantment', 'Library').abilities[0]).toMatchObject({ effects: [{ type: 'sylvan_library' }] });
+  });
+});
+
+describe('slice 147', () => {
+  it('reads the Enduring cycle', () => {
+    expect(parse("When Enduring Vitality dies, if it was a creature, return it to the battlefield under its owner's control. It's an enchantment. (It's not a creature.)", 'Enchantment Creature — Elk Glimmer', 'Enduring Vitality').abilities[0]).toMatchObject({
+      condition: { type: 'was_type', cardType: 'Creature' },
+      effects: [{ type: 'move', to: 'battlefield' }, { type: 'modify', types: ['Enchantment'], subtypes: [], until: 'game' }],
+    });
+  });
+});

@@ -519,7 +519,8 @@ export type PendingChoice =
   | { kind: 'cast_free'; player: PlayerId; object: ObjectId; sourceName: string; text: string }
   /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */
   /** `object`: the copy — a spell's object, or the stack id of a copied ability (`ability` set). */
-  | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; ability?: true; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][] }
+  /** mustChange: "change the target" — to another legal one, if there is one (CR 115.7a). */
+  | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; ability?: true; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][]; mustChange?: true }
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
@@ -854,7 +855,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; types?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number }[];

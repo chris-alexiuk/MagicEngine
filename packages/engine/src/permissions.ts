@@ -1,4 +1,7 @@
+import type { ObjectFilter } from '@mtg/schema';
+import { matchesFilter, objectAbilities } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
+import { abilitySources } from './zones.js';
 
 /**
  * Permissions to play cards from somewhere other than the hand ("Until the end of your next turn,
@@ -8,9 +11,37 @@ import type { GameObject, GameState, PlayerId } from './types.js';
 import { preparedSource } from './prepare.js';
 
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
+  if (o.zone === 'library') return fromTop(g, player, o, what);
   return (g.mayPlay ?? []).some(
     (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn && (what === 'spell' || p.mode === 'play'),
   );
+}
+
+/**
+ * "You may play lands from the top of your library", "You may cast creature spells from the top of your library":
+ * the top card, from a static ability of a permanent the player controls.
+ */
+function fromTop(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
+  const lib = g.zones.library[player] ?? [];
+  if (o.owner !== player || lib[0] !== o.id) return false;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'top_permission') continue;
+      if (what === 'land' && a.effect.lands) return true;
+      const spells = a.effect.spells as ObjectFilter | undefined;
+      if (what === 'spell' && spells && matchesFilter(g, o, spells, { controller: player, source: src, anyZone: true })) return true;
+    }
+  }
+  return false;
+}
+
+/** The top card of a player's library, if they may play it now. */
+export function playableFromTop(g: GameState, player: PlayerId): string[] {
+  const top = g.zones.library[player]?.[0];
+  const o = top ? g.objects[top] : undefined;
+  return o && (fromTop(g, player, o, 'land') || fromTop(g, player, o, 'spell')) ? [o.id] : [];
 }
 
 /** Cards in exile a player may play right now. */
