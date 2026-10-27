@@ -254,6 +254,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // (Otherwise, put it into your hand.)" — one card, maybe taken.
       const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
       const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      // Chaos Warp: "The owner of target permanent shuffles it into their library, then reveals the top card of their
+      // library. If it's a permanent card, they put it onto the battlefield."
+      const warp = /^(.+?), then reveals the top card of their library$/.exec(s);
+      const warpThen = warp && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card, they put it onto the battlefield$/.exec(sentences[i + 1]!) : null;
+      if (warp && warpThen) {
+        const r = attempt(b, (b) => {
+          const first = parseSentence(warp[1]!, b);
+          const shuffled = first?.length === 1 && first[0]!.type === 'move' && first[0]!.position === 'shuffle' ? (first[0]!.what as Ref) : null;
+          const pf = shuffled ? parseFilter(`${warpThen[1]} card in your library`, b) : null;
+          if (!first || !shuffled || !pf) return null;
+          const { zone: _z, owner: _o, ...filter } = pf.filter;
+          return [...first, { type: 'dig', amount: 1, take: 1, to: 'battlefield', filter, rest: 'top', reveal: true, who: { ref: 'owner_of', of: shuffled } }];
+        });
+        if (!r) return null;
+        out.push(...r);
+        i += 1;
+        continue;
+      }
       // "Look at the top card of your library. You may put that card into your graveyard." (a one-card surveil)
       const mayPut = topCard && sentences[i + 1] ? /^You may put (?:that card|it) (into your graveyard|into your hand)$/.exec(sentences[i + 1]!) : null;
       if (topCard && mayPut) {
@@ -1067,6 +1085,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // The One Ring: "you gain protection from everything until your next turn"; Teferi's Protection: "Until your next
+  // turn, your life total can't change and you gain protection from everything." (CR 702.16j, CR 119.8)
+  const lasting = /^(?:Until your next turn, )?(you gain protection from everything|your life total can't change)(?: until your next turn)?(?: and (you gain protection from everything|your life total can't change))?$/i.exec(s);
+  if (lasting && (/^Until your next turn/i.test(s) || / until your next turn$/.test(s))) {
+    const rule = (t: string) => (/protection/.test(t) ? 'protection_everything' : 'life_cant_change');
+    return [lasting[1]!, lasting[2]].filter(Boolean).map((t) => ({ type: 'player_effect', who: { ref: 'you' }, rule: rule(t!), until: 'your_next_turn' }));
+  }
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
   // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
@@ -1092,6 +1117,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         { type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount: back, then: 'library_top' },
       ];
     }
+  }
+  // Tireless Provisioner: "create a Food token or a Treasure token" — one of them, chosen as it resolves.
+  const tokenOr = /^((?:[Yy]ou )?[Cc]reate) (a|an) ([A-Z]\w+) token or (a|an) ([A-Z]\w+) token$/.exec(s);
+  if (tokenOr) {
+    const r = attempt(b, (b) => {
+      const one = parseSentence(`${tokenOr[1]} ${tokenOr[2]} ${tokenOr[3]} token`, b);
+      const two = one ? parseSentence(`${tokenOr[1]} ${tokenOr[4]} ${tokenOr[5]} token`, b) : null;
+      return one && two ? [{ type: 'choose_one', labels: [tokenOr[3]!, tokenOr[5]!], options: [one, two] }] : null;
+    });
+    if (r) return r;
   }
   // Loran of the Third Path: "You and target opponent each draw a card."
   const youAnd = /^You and (target opponent|target player|that player|defending player) each (.+)$/.exec(s);
@@ -1451,9 +1486,11 @@ const VERBS: Record<string, VerbHandler> = {
       const what = each ? parseObjectRef(`${each[1]} from all graveyards`, b) : null;
       return what && what.ref.ref === 'all' ? [{ type: 'move', what: what.ref, to: each![2] === 'the battlefield' ? 'battlefield' : 'hand' }] : null;
     }
-    const hand = /^(.+?) to (?:its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
+    const hand = /^(.+?) to (its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {
       const what = parseObjectRef(hand[1]!, b);
+      // "Return target permanent to its owner's hand. Then that player discards a card." — its owner.
+      if (what && !what.plural && hand[2] === "its owner's" && !b.player) b.player = { ref: 'owner_of', of: what.ref };
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
     const field = /^(.+?) to the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);

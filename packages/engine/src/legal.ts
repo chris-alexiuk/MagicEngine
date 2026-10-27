@@ -197,6 +197,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (activationProhibited(g, player, o, false)) continue;
     activatedAbilities(g, o).forEach((ab, ability) => {
       const mana = parseManaCost(ab.cost.mana ?? '');
+      applyPowerUp(g, o, ab, mana, player);
       if (mana.unsupported.length || mana.x > 0 || (ab.cost.mana && !planAutoTap(g, player, mana, 0, [], { kind: 'ability', source: o }))) return;
       if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
       // "Activate only during your upkeep." (CR 602.5b)
@@ -252,7 +253,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < Number(c.amount))) return;
       const mana = parseManaCost(cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0) return;
-      applyPowerUp(g, o, ab, mana);
+      applyPowerUp(g, o, ab, mana, player);
       const costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
       if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])], { kind: 'ability', source: o })) return;

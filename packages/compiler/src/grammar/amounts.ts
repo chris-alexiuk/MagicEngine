@@ -127,6 +127,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
   // CR 706.2: "equal to the result", "where X is the result"
   if (t === 'the result') return { kind: 'die_result' };
+  // Windfall: "the greatest number of cards a player discarded this way"; "the number of cards discarded this way"
+  if (t === 'the greatest number of cards a player discarded this way') return { kind: 'discarded_this_way', max: true };
+  if (t === 'the number of cards discarded this way') return { kind: 'discarded_this_way' };
   // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
   const greatest = /^the greatest (power|toughness|mana value) among (.+)$/.exec(t);
   if (greatest) {

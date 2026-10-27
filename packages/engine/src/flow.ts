@@ -490,6 +490,14 @@ export function untapStep(g: GameState, events: GameEvent[], keep: readonly stri
     if (keep.includes(id)) continue;
     if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
   }
+  // Seedborn Muse: "Untap all permanents you control during each other player's untap step."
+  for (const p of g.order) {
+    if (p === g.active || !playerRule(g, p, 'untap_during_others')) continue;
+    for (const id of g.zones.battlefield) {
+      const o = g.objects[id]!;
+      if (o.controller === p && o.tapped) setTapped(g, id, false, events);
+    }
+  }
   pruneDurations(g, events);
   // CR 502.4: no priority in the untap step.
   beginStep(g, 'upkeep', events);

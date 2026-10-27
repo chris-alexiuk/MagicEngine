@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { GameState } from '../src/index.js';
-import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
+import type { GameEvent, GameState } from '../src/index.js';
+import { act, actWithEvents, give, illegal, makeCard, start, toStep } from './helpers.js';
 
 const CARDS = [
   makeCard({ name: 'Sentinel', type_line: 'Artifact Creature — Human Soldier', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever an opponent casts their first noncreature spell each turn, draw a card unless that player pays {X}, where X is this creature's power." }),
@@ -12,6 +12,9 @@ const CARDS = [
   makeCard({ name: 'Dryad', type_line: 'Enchantment Creature — Dryad', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: 'Lands you control are every basic land type in addition to their other types.' }),
   makeCard({ name: 'Loran', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: You and target opponent each draw a card.' }),
   makeCard({ name: 'Seek Kin', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Look at the top three cards of your library. You may reveal a creature card from among them and put it into your hand. Put the rest on the bottom of your library in a random order. If you didn't put a card into your hand this way, draw a card." }),
+  makeCard({ name: 'Muse', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: "Untap all permanents you control during each other player's untap step." }),
+  makeCard({ name: 'Windfall', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player discards their hand, then draws cards equal to the greatest number of cards a player discarded this way.' }),
+  makeCard({ name: 'Warp', type_line: 'Instant', mana_cost: '{0}', oracle_text: "The owner of target permanent shuffles it into their library, then reveals the top card of their library. If it's a permanent card, they put it onto the battlefield." }),
   makeCard({ name: 'Make Clue', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create a Clue token.' }),
 ];
 
@@ -111,5 +114,37 @@ describe('staples (slices 100–103)', () => {
     // A deck of Forests: no creature card among them, so nothing is chosen — and a card is drawn instead.
     if (g.pending?.kind === 'choose_objects') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [] } });
     expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it("Seedborn Muse: untap during each other player's untap step", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Muse', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    g.objects[forest]!.tapped = true;
+    g = toStep(g, 'upkeep', 'bob');
+    expect(g.objects[forest]!.tapped).toBe(false);
+  });
+
+  it('Windfall: everyone draws as many as the most anyone discarded', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 3; i++) give(g, 'bob', 'Ping', 'hand');
+    const bob = g.zones.hand.bob!.length;
+    g = passBoth(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Windfall', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(bob);
+    expect(g.zones.hand.bob!.length).toBe(bob);
+  });
+
+  it('Chaos Warp: shuffled in, then the top card onto the battlefield if it\'s a permanent card', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'bob', 'Grizzly Cub', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Warp', 'hand'), targets: [[{ kind: 'object', object: cub }]] });
+    g = act(g, { type: 'pass', player: 'alice' });
+    const r = actWithEvents(g, { type: 'pass', player: 'bob' });
+    g = r.state;
+    const revealed = r.events.find((e): e is Extract<GameEvent, { type: 'revealed' }> => e.type === 'revealed')!.objects[0]!;
+    const types = g.cards[g.objects[revealed]!.card]!.faces[0]!.types;
+    const permanent = types.some((t) => ['Artifact', 'Creature', 'Enchantment', 'Land', 'Planeswalker', 'Battle'].includes(t));
+    expect(g.objects[revealed]!.zone).toBe(permanent ? 'battlefield' : 'library');
+    if (permanent) expect(g.objects[revealed]!.controller).toBe('bob');
   });
 });

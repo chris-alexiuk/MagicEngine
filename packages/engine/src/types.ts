@@ -1,3 +1,4 @@
+import type { PlayerRule } from '@mtg/schema';
 import type { AbilityNode, AsEntersNode, ManaSpend, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
@@ -443,6 +444,8 @@ export interface Resolution {
   votes?: Record<string, number>;
   /** CR 701.38: the objects with the most votes or tied for most votes. */
   voted?: ObjectRef[];
+  /** Cards each player discarded as this resolved ("the greatest number of cards a player discarded this way"). */
+  discarded?: Record<PlayerId, number>;
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
   chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
@@ -822,6 +825,8 @@ export interface GameState {
   prevention: PreventionShield[];
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
+  /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
+  playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */

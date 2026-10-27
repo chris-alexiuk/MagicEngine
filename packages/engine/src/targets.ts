@@ -51,6 +51,8 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   // CR 702.11c: a player with hexproof can't be the target of spells or abilities their opponents control;
   // CR 702.18: with shroud, of any spell or ability.
   if (playerRule(g, player, 'shroud')) return false;
+  // CR 702.16j: a player with protection from everything can't be the target of spells or abilities.
+  if (playerRule(g, player, 'protection_everything')) return false;
   if (player !== controller && playerRule(g, player, 'hexproof')) return false;
   return true;
 }

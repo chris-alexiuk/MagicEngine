@@ -1296,3 +1296,26 @@ describe('staples (slices 100–108)', () => {
     expect(parse("{T}: Add X mana of any one color, where X is this creature's power.", 'Creature — Spirit', 'Kami').abilities[0]).toMatchObject({ mana: true, effects: [{ type: 'add_mana', anyColor: 1, times: { kind: 'stat' } }] });
   });
 });
+
+describe('staples (slices 113–117)', () => {
+  it('reads them', () => {
+    expect(parse("Untap all permanents you control during each other player's untap step.", 'Creature — Spirit', 'Muse').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'untap_during_others' } });
+    expect(parse('Each player discards their hand, then draws cards equal to the greatest number of cards a player discarded this way.', 'Sorcery', 'Windfall').abilities[0]).toMatchObject({
+      effects: [{ type: 'discard', all: true }, { type: 'draw', amount: { kind: 'discarded_this_way', max: true } }],
+    });
+    expect(parse("The owner of target permanent shuffles it into their library, then reveals the top card of their library. If it's a permanent card, they put it onto the battlefield.", 'Instant', 'Warp').abilities[0]).toMatchObject({
+      effects: [{ type: 'move', position: 'shuffle' }, { type: 'dig', to: 'battlefield', who: { ref: 'owner_of' } }],
+    });
+    expect(parse("Until your next turn, your life total can't change and you gain protection from everything.", 'Instant', 'Protection').abilities[0]).toMatchObject({
+      effects: [{ type: 'player_effect', rule: 'life_cant_change', until: 'your_next_turn' }, { type: 'player_effect', rule: 'protection_everything' }],
+    });
+    expect(parse("Creature spells you control can't be countered.", 'Enchantment', 'Rhythm').abilities[0]).toMatchObject({ effect: { type: 'uncounterable', filter: { types: ['Creature'] } } });
+    expect(parse('Channel — {3}{U}, Discard this card: Return target creature to its owner\'s hand. This ability costs {1} less to activate for each legendary creature you control.', 'Legendary Land', 'Otawara').abilities[0]).toMatchObject({
+      zone: 'hand', costReduction: { amount: 1, per: { kind: 'count', filter: { supertypes: ['Legendary'] } } },
+    });
+    expect(parse('Destroy target artifact an opponent controls. That player may search their library for a land card with a basic land type, put it onto the battlefield, then shuffle.', 'Instant', 'Boseiju').abilities[0]).toMatchObject({
+      effects: [{ type: 'destroy' }, { type: 'may', who: { ref: 'controller_of', of: { ref: 'target', index: 0 } } }],
+    });
+    expect(parse('Create a Food token or a Treasure token.', 'Sorcery', 'Provisions').abilities[0]).toMatchObject({ effects: [{ type: 'choose_one', labels: ['Food', 'Treasure'] }] });
+  });
+});

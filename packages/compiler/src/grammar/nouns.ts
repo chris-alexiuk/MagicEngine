@@ -39,6 +39,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  // "a land card with a basic land type" (Boseiju)
+  [/ with a basic land type$/, (f) => !f.subtypes && ((f.subtypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']), true)],
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
   [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
@@ -429,6 +431,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     b.player = ref;
     return ref;
   }
+  // "Destroy target artifact an opponent controls. That player may search …": its controller.
+  if (t === 'that player' && !b.player && b.it?.ref === 'target') return { ref: 'controller_of', of: b.it };
   if (t === 'that player' || t === 'they') return b.player;
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };

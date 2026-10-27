@@ -1,5 +1,5 @@
 import { copyChoicePending } from './as-enters.js';
-import type { Amount, TriggeredAbility, TriggerNode } from '@mtg/schema';
+import type { Amount, TargetSpec, TriggeredAbility, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, matchesFilter, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
@@ -251,11 +251,22 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     const modal = Boolean(ability.modes);
     const candidates = specs.map((s) => targetCandidates(g, t.controller, s, source));
     // CR 603.3d (via CR 601.2c): with too few legal targets the ability is removed from the stack.
-    if (!modal && specs.some((s, i) => candidates[i]!.length < targetsRequired(g, t.controller, s, candidates[i]!))) {
+    // "from a single graveyard": what one graveyard has.
+    const available = (s: TargetSpec, c: Target[]) => {
+      if (!s.sameOwner) return c.length;
+      const by = new Map<string | undefined, number>();
+      for (const x of c) {
+        const owner = x.kind === 'object' ? g.objects[x.object]?.owner : undefined;
+        by.set(owner, (by.get(owner) ?? 0) + 1);
+      }
+      return Math.max(0, ...by.values());
+    };
+    if (!modal && specs.some((s, i) => available(s, candidates[i]!) < targetsRequired(g, t.controller, s, candidates[i]!))) {
       g.triggers = g.triggers.filter((x) => x !== t);
       return;
     }
-    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && candidates[i]!.length === (s.count ?? 1)));
+    // Only one legal choice: made automatically ("from a single graveyard" can still leave a choice).
+    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && !s.sameOwner && candidates[i]!.length === (s.count ?? 1)));
     if (!forced) {
       const prompts = targetPrompts(g, t.controller, specs, source);
       // "X damage divided as you choose among any number of targets, where X is …": no more targets than X.

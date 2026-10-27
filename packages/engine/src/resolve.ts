@@ -194,7 +194,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -272,6 +272,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
         if (c.types.includes('Land')) for (const t of ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']) if (c.subtypes.includes(t)) types.add(t);
       }
       return types.size;
+    }
+    case 'discarded_this_way': {
+      // Windfall: "the greatest number of cards a player discarded this way"
+      const counts = Object.values(ctx.resolution?.discarded ?? {});
+      return e.max ? Math.max(0, ...counts) : counts.reduce((a, b) => a + b, 0);
     }
     case 'greatest': {
       // "the greatest power among creatures you control" — 0 when there are none.

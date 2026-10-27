@@ -3,12 +3,12 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode } from '@mtg/schema';
 import { CORE_NODES, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { playerRule } from './player-rules.js';
 import { replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness } from './characteristics.js';
+import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities } from './characteristics.js';
 import { dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -27,7 +27,7 @@ import { amountOf, apnap, refEntries, refObjects, refPlayers, refRecipients } fr
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
-import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList } from './zones.js';
+import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
 /**
@@ -188,6 +188,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const n = amountOf(ctx, node.amount);
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       const ps = ctx.g.players[p]!;
+      // CR 119.8: "your life total can't change" — no life is lost.
+      if (n > 0 && playerRule(ctx.g, p, 'life_cant_change')) continue;
       ps.life -= n;
       ctx.events.push({ type: 'life', player: p, delta: -n, life: ps.life });
       if (ctx.resolution && n > 0) ctx.resolution.lifeLost = (ctx.resolution.lifeLost ?? 0) + n;
@@ -269,8 +271,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'stack') continue;
-      // CR 101.2 / "can't be countered": the spell stays on the stack.
-      if (hasRule(ctx.g, o, 'cant_be_countered')) continue;
+      // CR 101.2 / "can't be countered": the spell stays on the stack — its own ability, or "Creature spells you
+      // control can't be countered" (Rhythm of the Wild).
+      if (hasRule(ctx.g, o, 'cant_be_countered') || uncounterable(ctx.g, o)) continue;
       // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so.
       moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
       ctx.events.push({ type: 'countered', object: o.id });
@@ -369,6 +372,26 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const most = Math.max(0, ...Object.values(counts));
       ctx.resolution.voted = most > 0 ? Object.keys(counts).filter((id) => counts[id] === most && g.objects[id]).map((id) => ({ id, zcc: g.objects[id]!.zcc })) : [];
     }
+    return true;
+  },
+
+  // "Create a Food token or a Treasure token." — the controller picks one as it resolves.
+  choose_one(node, ctx) {
+    const labels = node.labels as string[];
+    const options = node.options as EffectNode[][];
+    const answer = answerOf(ctx, 'choose_option');
+    if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: labels, text: `Choose: ${labels.join(' or ')}.`, sourceName: sourceName(ctx) } };
+    const i = labels.indexOf(answer.choice);
+    if (i < 0) throw new RulesError('Choose one of the options.');
+    return { expand: options[i]! };
+  },
+
+  // "you gain protection from everything until your next turn" (The One Ring), "your life total can't change" (CR 119.8).
+  player_effect(node, ctx) {
+    const g = ctx.g;
+    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : g.turn;
+    const players = refPlayers(ctx, ref(node, 'who'));
+    g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn }))];
     return true;
   },
 
@@ -539,7 +562,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     if (node.all) {
       // "discards their hand": nothing to choose.
-      for (const p of players) for (const id of [...zoneList(ctx.g, 'hand', p)]) discardCard(ctx.g, id, ctx.events);
+      for (const p of players) {
+        const hand = [...zoneList(ctx.g, 'hand', p)];
+        for (const id of hand) discardCard(ctx.g, id, ctx.events);
+        if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + hand.length;
+      }
       return true;
     }
     const n = amountOf(ctx, node.amount);
@@ -552,6 +579,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         throw new RulesError(`Choose ${Math.min(n, hand.length)} card(s) from your hand to discard.`);
       }
       for (const id of answer.objects) discardCard(ctx.g, id, ctx.events);
+      if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + answer.objects.length;
       done.push(p);
     }
     for (const p of players) {
@@ -694,7 +722,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const memo = ctx.memo as { looked?: string[]; chosen?: string[] };
     // "If you didn't put a card into your hand this way, draw a card."
     const done = (): EffectResult => (node.ifNone && !memo.chosen?.length ? { expand: node.ifNone as EffectNode[] } : true);
-    const library = zoneList(g, 'library', ctx.controller);
+    // Chaos Warp: "… reveals the top card of their library" — another player's library, and they put it onto the battlefield.
+    const who = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
+    if (!who) return true;
+    const library = zoneList(g, 'library', who);
     const looked = (memo.looked ??= library.slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
     if (!looked.length) return done();
     const take = amountOf(ctx, node.take ?? 1);
@@ -712,11 +743,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       } else if (min === max && (max === 0 || candidates.length === max)) {
         memo.chosen = candidates.slice(0, max);
       } else {
-        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards.`, seen: looked } };
+        return { ask: { kind: 'choose_objects', player: who, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards.`, seen: looked } };
       }
       // The chosen cards go where the text says.
       const chosen = memo.chosen;
-      if (node.reveal && chosen.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...chosen] });
+      if (node.reveal && (chosen.length || node.who)) ctx.events.push({ type: 'revealed', player: who, objects: [...(node.who ? looked : chosen)] });
       const to = String(node.to);
       if (to === 'top') {
         // Kept on top, in the order chosen; the rest of the library follows.
@@ -724,7 +755,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         library.length = 0;
         library.push(...chosen, ...others);
       } else {
-        for (const id of chosen) moveObject(g, id, to as 'hand' | 'battlefield' | 'graveyard', ctx.events, to === 'battlefield' ? { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) } : {});
+        for (const id of chosen) moveObject(g, id, to as 'hand' | 'battlefield' | 'graveyard', ctx.events, to === 'battlefield' ? { controller: who, ...(node.tapped ? { tapped: true } : {}) } : {});
       }
       const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
       if (node.rest === 'graveyard' || node.rest === 'hand') {
@@ -2047,9 +2078,22 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   return true;
 }
 
+/** "Creature spells you control can't be countered." */
+function uncounterable(g: GameState, spell: GameObject): boolean {
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    if (src.controller !== spell.controller) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'uncounterable') continue;
+      if (matchesFilter(g, spell, { ...((a.effect.filter ?? {}) as ObjectFilter), zone: 'stack' }, { controller: src.controller, source: src })) return true;
+    }
+  }
+  return false;
+}
+
 function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
   // "Players can't gain life."
-  if (n <= 0 || playerRule(ctx.g, p, 'cant_gain_life')) return;
+  if (n <= 0 || playerRule(ctx.g, p, 'cant_gain_life') || playerRule(ctx.g, p, 'life_cant_change')) return;
   // CR 614.1a: "If you would gain life, you gain twice that much life instead."
   n = replaceQuantity(ctx.g, 'gain_life', n, { player: p });
   const ps = ctx.g.players[p]!;
@@ -2714,7 +2758,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others'],
+  statics: ['continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

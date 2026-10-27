@@ -757,7 +757,7 @@ function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent
   }
   for (const [player, dealt] of lifeGain) {
     const ps = g.players[player]!;
-    if (playerRule(g, player, 'cant_gain_life')) continue;
+    if (playerRule(g, player, 'cant_gain_life') || playerRule(g, player, 'life_cant_change')) continue;
     const amount = replaceQuantity(g, 'gain_life', dealt, { player });
     ps.life += amount;
     events.push({ type: 'life', player, delta: amount, life: ps.life });
@@ -778,6 +778,11 @@ export function dealDamage(
   // CR 615.12: "Damage can't be prevented this turn."
   const unpreventable = g.unpreventableTurn === g.turn;
   if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
+  // CR 702.16j: damage to a player with protection from everything is prevented.
+  if (!unpreventable && amount > 0 && to.kind === 'player' && playerRule(g, to.player, 'protection_everything')) {
+    events.push({ type: 'prevented', source: source.id, amount });
+    return 0;
+  }
   if (amount <= 0) return 0;
   const infect = hasKeyword(g, source, 'infect');
   if (to.kind === 'player') {
@@ -788,9 +793,11 @@ export function dealDamage(
       // CR 120.3b: damage from a source with infect gives poison counters instead.
       ps.poison += amount;
     } else {
-      // CR 120.3a: damage to a player makes them lose that much life.
-      ps.life -= amount;
-      events.push({ type: 'life', player: to.player, delta: -amount, life: ps.life });
+      // CR 120.3a: damage to a player makes them lose that much life (CR 119.8: unless their life total can't change).
+      if (!playerRule(g, to.player, 'life_cant_change')) {
+        ps.life -= amount;
+        events.push({ type: 'life', player: to.player, delta: -amount, life: ps.life });
+      }
     }
     if (combat) {
       // CR 120.3g / CR 702.164c: toxic adds poison counters on combat damage to a player.

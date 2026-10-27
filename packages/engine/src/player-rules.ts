@@ -11,6 +11,8 @@ import { faceOf, abilitySources } from './zones.js';
  */
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
+  // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.
+  for (const e of g.playerEffects ?? []) if (e.player === player && e.rule === rule && e.lastTurn >= g.turn) n++;
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {

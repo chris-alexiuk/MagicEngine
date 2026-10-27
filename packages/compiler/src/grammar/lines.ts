@@ -323,6 +323,17 @@ export const activatedRule: GrammarRule = {
           changed = true;
         }
       }
+      // "This ability costs {1} less to activate for each legendary creature you control." (channel lands)
+      const reduce = / This ability costs \{(\d+)\} less to activate (?:for each ([^.]+?)|if ([^.]+?)|(during your turn))\.$/.exec(effectText);
+      if (reduce) {
+        const rb = new Binder(env);
+        const per = reduce[2] ? parseForEach(reduce[2], rb) : undefined;
+        const condition = reduce[3] ? parseCondition(reduce[3], rb) : undefined;
+        if ((reduce[2] && !per) || (reduce[3] && !condition) || node.costReduction) return null;
+        node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}) };
+        effectText = effectText.slice(0, reduce.index) + (effectText.endsWith('.') && !effectText.slice(0, reduce.index).endsWith('.') ? '.' : '');
+        changed = true;
+      }
       // "Activate only if you control an Island." (CR 602.5b)
       const onlyIf = / Activate only if ([^.]+)\.$/.exec(effectText);
       if (onlyIf) {
@@ -1160,6 +1171,16 @@ export const continuousRule: GrammarRule = {
 /** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
 /** CR 614.1d: "Creatures your opponents control enter tapped.", "Artifacts and creatures your opponents control enter tapped." */
 function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
+  // Rhythm of the Wild: "Creature spells you control can't be countered." (CR 101.2)
+  const uncounterable = /^(.*?)\bspells you (?:control|cast) can't be countered$/i.exec(body);
+  if (uncounterable) {
+    const words = uncounterable[1]!.trim();
+    if (!words) return { type: 'uncounterable', filter: {} };
+    const pf = parseFilter(`${words.replace(/ and /g, ' or ').replace(/^\w/, (c) => c.toLowerCase())} spells`, b);
+    if (!pf) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return { type: 'uncounterable', filter };
+  }
   const m = /^(.+?) enter(?: the battlefield)? tapped$/.exec(body);
   if (!m || /^(?:~|It|This)\b/.test(m[1]!)) return null;
   const pf = parseFilter(m[1]!.replace(/, and /, ', or ').replace(/^(\w+) and (\w+)/, '$1 or $2').replace(/^\w/, (c) => c.toLowerCase()), b);
@@ -1249,6 +1270,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (/^Play with the top card of your library revealed$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'top_revealed' };
   // CR 701.38d: "While voting, you get an additional vote." / "While voting, you may vote an additional time."
   if (/^While voting, you get an additional vote$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'extra_vote' };
+  // Seedborn Muse (CR 502.3 lets an effect untap permanents in another player's untap step).
+  if (/^Untap all permanents you control during each other player's untap step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'untap_during_others' };
   if (/^While voting, you may vote an additional time$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'may_extra_vote' };
   return null;
 }

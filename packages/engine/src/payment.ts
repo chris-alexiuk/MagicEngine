@@ -1,5 +1,6 @@
 import { activationProhibited } from './cast-bans.js';
 import { evalCondition } from './conditions.js';
+import { playerRule } from './player-rules.js';
 import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canUseTapAbilities, hasType, manaAbilities, matchesFilter, power, toughness } from './characteristics.js';
@@ -110,8 +111,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     if (c.type === 'sacrifice_self') {
       if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t sacrifice ${nameOf(g, o)}.`);
     } else if (c.type === 'pay_life') {
-      // CR 119.4: a player can pay life only if their life total is at least that much.
+      // CR 119.4: a player can pay life only if their life total is at least that much; CR 119.8: not if it can't change.
       if (g.players[player]!.life < Number(c.amount)) throw new RulesError(`You don’t have ${c.amount} life to pay.`);
+      if (Number(c.amount) > 0 && playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
     } else if (c.type === 'discard_self') {
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {

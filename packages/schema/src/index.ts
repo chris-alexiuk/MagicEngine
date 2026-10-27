@@ -166,6 +166,11 @@ export interface ActivatedAbility extends AbilityBase, Program {
   oncePerGame?: true;
   /** CR 702.193a (power-up): reduced by the permanent's mana cost if it entered this turn. */
   powerUp?: true;
+  /**
+   * "This ability costs {1} less to activate for each legendary creature you control" (channel lands), "… if you're
+   * the monarch", "… during your turn": generic mana off its cost (CR 601.2f via CR 602.2b).
+   */
+  costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true };
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
   /** CR 602.2: "Any player may activate this ability." */
@@ -417,6 +422,8 @@ export type AmountExpr = (
   | { kind: 'die_result' }
   /** CR 701.38: "for each death vote" — votes for that option as this resolves. */
   | { kind: 'votes'; option: string }
+  /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
+  | { kind: 'discarded_this_way'; max?: true }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
   | { kind: 'greatest'; stat: 'power' | 'toughness' | 'mana_value'; filter: ObjectFilter }
   /** CR 702.23a (rampage): "for each creature blocking it beyond the first" — creatures blocking it, less `beyond`. */
@@ -751,7 +758,7 @@ export interface QuantityReplacementNode extends EffectNode {
  */
 export const PLAYER_RULES = [
   'no_max_hand_size', 'extra_lands', 'lands_from_graveyard', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
-  'no_lose_for_life', 'cant_lose', 'flash', 'extra_vote', 'may_extra_vote',
+  'no_lose_for_life', 'cant_lose', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -784,7 +791,7 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -793,7 +800,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'uncounterable',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',
@@ -804,7 +811,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
