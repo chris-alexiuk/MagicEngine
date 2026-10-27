@@ -699,6 +699,7 @@ export function matchesFilter(
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
   // "a card named …" (CR 201.2)
   if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
+  if (f.manaCostIs && !f.manaCostIs.includes(faceOf(g, o).manaCost)) return false;
   // "with a +1/+1 counter on it" (CR 122.1)
   if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
   if (f.notCounter && (f.notCounter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.notCounter] ?? 0) > 0)) return false;

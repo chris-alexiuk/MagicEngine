@@ -739,6 +739,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (youAttack[1] && !min) return null;
     return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
   }
+  // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures"; Mangara: "Whenever an opponent
+  // attacks with creatures, if two or more of those creatures are attacking you and/or planeswalkers you control".
+  const oppAttacks =
+    /^an opponent attacks you with (\w+) or more creatures$/.exec(t) ??
+    /^an opponent attacks with creatures, if (\w+) or more of those creatures are attacking you(?: and\/or| or) (planeswalkers you control)$/.exec(t);
+  if (oppAttacks) {
+    const min = NUMBER_WORDS[oppAttacks[1]!] ?? Number(oppAttacks[1]);
+    if (!min) return null;
+    return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacks[2] ? 'or_planeswalkers' : 'you', min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   // Duelist's Heritage: "Whenever one or more creatures attack" — whoever attacks (once per declaration, CR 508.3d).
   if (t === 'one or more creatures attack') return { trigger: { type: 'you_attack', anyone: true }, it: { ref: 'self' }, player: null };
   // CR 508.3e: "Whenever you attack a player" — "that player" is the one attacked.
@@ -2037,6 +2047,15 @@ export const quantityReplacementRule: GrammarRule = {
     if (tokens) {
       const op = quantityOp(tokens[1]!);
       return op ? make({ event: 'tokens', who: 'you', ...op }) : null;
+    }
+    // Academy Manufactor: "If you would create a Clue, Food, or Treasure token, instead create one of each."
+    if (/^If you would create a Clue, Food, or Treasure token, instead create one of each\.$/.test(line)) {
+      const faces = ['Clue', 'Food', 'Treasure'].map((kind) => {
+        const made = parseEffectText(`Create a ${kind} token.`, new Binder(env));
+        return made?.length === 1 && made[0]!.type === 'create_token' ? (made[0]!.token as FaceDef | undefined) : undefined;
+      });
+      if (faces.some((f) => !f)) return null;
+      return { kind: 'static', text: original, effect: { type: 'token_one_of_each', tokens: faces } };
     }
     // Primal Vigor: "If one or more tokens would be created, twice that many of those tokens are created instead." — anyone's.
     const anyTokens = /^If one or more tokens would be created, (.+?) of those tokens are created instead\.$/.exec(line);

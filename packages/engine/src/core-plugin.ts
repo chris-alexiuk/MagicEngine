@@ -25,7 +25,7 @@ import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, apnap, bindFilter, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
-import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type AttackTarget, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
@@ -602,6 +602,40 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   create_token(node, ctx) {
     const n = amountOf(ctx, node.amount);
     const face = node.token as FaceDef | undefined;
+    // Adeline: "for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a
+    // planeswalker they control" (CR 508.4) — for each opponent in turn, attacking them or one of their planeswalkers.
+    if (node.attackingEach && face) {
+      const g = ctx.g;
+      const memo = ctx.memo as { i?: number; created?: ObjectRef[] };
+      const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
+      memo.created ??= [];
+      let answer = answerOf(ctx, 'choose_option');
+      for (let i = memo.i ?? 0; i < opponents.length; i++) {
+        const q = opponents[i]!;
+        let at: AttackTarget = { kind: 'player', player: q };
+        const walkers = node.orPlaneswalker && g.combat?.attackersDeclared ? g.zones.battlefield.filter((id) => g.objects[id]!.controller === q && hasType(g, g.objects[id]!, 'Planeswalker')) : [];
+        if (walkers.length) {
+          const options = [g.players[q]!.name ?? q, ...walkers.map((id) => `${nameOf(g, g.objects[id]!)} (${id})`)];
+          if (!answer) {
+            memo.i = i;
+            return { ask: { kind: 'choose_option', player: ctx.controller, options, text: `The token attacks ${g.players[q]!.name ?? q} or one of their planeswalkers:`, sourceName: sourceName(ctx) } };
+          }
+          const k = options.indexOf(answer.choice);
+          if (k < 0) throw new RulesError('Choose that player or one of their planeswalkers.');
+          answer = null;
+          if (k > 0) at = { kind: 'planeswalker', object: walkers[k - 1]! };
+        }
+        const count = replaceQuantity(g, 'tokens', n, { player: ctx.controller });
+        for (let j = 0; j < count; j++) {
+          const t = createToken(g, face, ctx.controller, ctx.events, { tapped: true });
+          enterAttacking(g, t, ctx.source, at);
+          memo.created.push({ id: t.id, zcc: t.zcc });
+        }
+        memo.i = i + 1;
+      }
+      if (ctx.resolution) ctx.resolution.created = memo.created;
+      return true;
+    }
     // Curse of the Swine: "For each creature exiled this way, its controller creates a 2/2 green Boar creature token."
     const perMoved = node.forEachMoved ? movedThisWay(ctx, node.forEachMoved as { how: string; types?: string[] }).map((m) => m.controller) : null;
     const players = perMoved ?? (node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller]);
@@ -617,9 +651,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const copy of copies) for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
       const count = replaceQuantity(ctx.g, 'tokens', n, { player: p });
-      for (let i = 0; i < count; i++) {
+      // Academy Manufactor: "If you would create a Clue, Food, or Treasure token, instead create one of each."
+      const each = copy ? null : oneOfEach(ctx.g, face!, p);
+      const kinds = each ? each.faces.flatMap((f) => Array.from({ length: count * each.times }, () => f)) : Array.from({ length: count }, () => face);
+      for (const kind of kinds) {
         const opts = { tapped: Boolean(node.tapped) };
-        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, face!, p, ctx.events, opts);
+        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, kind!, p, ctx.events, opts);
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
         if (node.attacking) enterAttacking(ctx.g, t, ctx.source);
         created.push({ id: t.id, zcc: t.zcc });
@@ -1239,8 +1276,29 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // CR 702.58a (graft): "move a +1/+1 counter from this permanent onto that creature" (CR 122.5).
+  // The Ozolith: "put those counters on ~" — the counters the object had as it last existed (CR 603.10a).
+  put_lki_counters(node, ctx) {
+    const [to] = refObjects(ctx, ref(node, 'to')).filter((o) => o.zone === 'battlefield');
+    if (!to) return true;
+    for (const [counter, n] of Object.entries(ctx.trigger?.lki?.counters ?? {})) if (n > 0) addCounters(ctx, to, counter, n);
+    return true;
+  },
+
   move_counters(node, ctx) {
     const [from] = refObjects(ctx, ref(node, 'from'));
+    // "move all counters from ~ onto target creature" — every kind.
+    if (node.counter === 'all') {
+      if (!from || from.zone !== 'battlefield') return true;
+      const [to] = refObjects(ctx, ref(node, 'to')).filter((o) => o.zone === 'battlefield' && o.id !== from.id);
+      if (!to) return true;
+      for (const [counter, n] of Object.entries({ ...from.counters })) {
+        if (!(n > 0)) continue;
+        delete from.counters[counter];
+        ctx.events.push({ type: 'counters', object: from.id, counter, delta: -n });
+        addCounters(ctx, to, counter, n);
+      }
+      return true;
+    }
     const counter = String(node.counter);
     if (!from || from.zone !== 'battlefield' || !(from.counters[counter] ?? 0)) return true;
     const to = refObjects(ctx, ref(node, 'to')).filter((o) => o.zone === 'battlefield' && o.id !== from.id);
@@ -1596,6 +1654,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
         moveObject(g, id, 'exile', ctx.events);
         const o = g.objects[id]!;
+        // "Exile the top card of your library face down." — no one may look at it (CR 406.3a).
+        if (node.faceDown) o.hiddenFor = '';
+        // CR 607.2a: "cards exiled with ~" — linked to the object whose ability exiled them.
+        const src = ctx.source;
+        if (src && src.id !== id && src.zone !== 'stack') o.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
         exiled.push({ id, zcc: o.zcc });
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
@@ -2728,6 +2791,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
 function uncounterable(g: GameState, spell: GameObject): boolean {
   // Cast with mana that said "that spell can't be countered".
   if (spell.cast?.uncounterable) return true;
+  // Veil of Summer: "Spells you control can't be countered this turn."
+  if ((g.playerEffects ?? []).some((e) => e.player === spell.controller && e.rule === 'spells_uncounterable' && e.lastTurn >= g.turn && (!e.filter || matchesFilter(g, spell, e.filter, { controller: spell.controller, anyZone: true })))) return true;
   for (const id of abilitySources(g)) {
     const src = g.objects[id]!;
     for (const a of objectAbilities(g, src)) {
@@ -2755,11 +2820,31 @@ function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
  * or else the next defending player (the controller's choice in the rules; the engine picks for now).
  * CR 506.3b: only under an attacking player's control, and only once attackers have been declared.
  */
-function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefined): void {
+/**
+ * Academy Manufactor (CR 614.1a, 616.1): each one turns a Clue, Food or Treasure token into one of each, so with k of
+ * them every such token becomes 3^(k-1) of each kind.
+ */
+function oneOfEach(g: GameState, face: FaceDef, player: PlayerId): { faces: FaceDef[]; times: number } | null {
+  if (!face.subtypes.some((t) => t === 'Clue' || t === 'Food' || t === 'Treasure')) return null;
+  let faces: FaceDef[] | null = null;
+  let k = 0;
+  for (const id of abilitySources(g)) {
+    const o = g.objects[id]!;
+    if (o.controller !== player) continue;
+    for (const a of objectAbilities(g, o)) {
+      if (a.kind !== 'static' || a.effect.type !== 'token_one_of_each') continue;
+      faces ??= a.effect.tokens as FaceDef[];
+      k++;
+    }
+  }
+  return faces && k ? { faces, times: 3 ** (k - 1) } : null;
+}
+
+function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefined, at?: AttackTarget): void {
   const c = g.combat;
   if (!c || !c.attackersDeclared || o.controller !== g.active || !chars(g, o).types.includes('Creature')) return;
   const fromSource = source ? c.attackers[source.id] : undefined;
-  const target = fromSource?.target ?? (() => {
+  const target = at ?? fromSource?.target ?? (() => {
     const p = livePlayers(g).find((x) => x !== o.controller);
     return p ? { kind: 'player' as const, player: p } : undefined;
   })();
@@ -3152,7 +3237,15 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 508.3e: "Whenever you attack a player" — once for each player attacked.
   you_attack(t, check) {
     const e = check.event;
-    if (e.type !== 'attacks_declared' || check.sourceLeft || (!t.anyone && check.g.active !== check.controller) || !e.attacks.length) return [];
+    if (e.type !== 'attacks_declared' || check.sourceLeft || !e.attacks.length) return [];
+    // Mangara, Trouble in Pairs: an opponent attacks you (and/or your planeswalkers) with N or more creatures.
+    if (t.opponent) {
+      const g = check.g;
+      if (g.active === check.controller) return [];
+      const atYou = e.attacks.filter(({ target }) => (target.kind === 'player' ? target.player === check.controller : t.atYou === 'or_planeswalkers' && g.objects[target.object]?.controller === check.controller));
+      return atYou.length >= Number(t.min ?? 1) ? [{ player: g.active }] : [];
+    }
+    if (!t.anyone && check.g.active !== check.controller) return [];
     if (typeof t.min === 'number' && e.attacks.length < t.min) return [];
     if (t.perPlayer) {
       const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
@@ -3459,7 +3552,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

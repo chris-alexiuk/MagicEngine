@@ -526,13 +526,28 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // Impulse draw: "Exile the top card of your library. Until the end of your next turn, you may play that card."
-      const top = /^[Ee]xile the top (card|(\w+) cards) of your library$/.exec(s);
+      // Ragavan: "create a Treasure token and exile the top card of that player's library. Until end of turn, you may
+      // cast that card." — from another player's library too; the permission is yours.
+      const topAny = /^(?:(.+?) and )?[Ee]xile the top (card|(\w+) cards) of (your|that player's|target opponent's|target player's|defending player's|each opponent's) library$/.exec(s);
+      const top = topAny ? [topAny[0], topAny[2], topAny[3]] as const : null;
+      let topWho: Ref | null = topAny && topAny[4] !== 'your' ? null : { ref: 'you' };
+      let topFirst: EffectNode[] = [];
+      if (topAny && (topAny[1] || topAny[4] !== 'your') && /you may (?:play|cast) /i.test(sentences[i + 1] ?? '')) {
+        const r = attempt(b, (b) => {
+          const first = topAny[1] ? parseSentence(capitalise(topAny[1]), b) : [];
+          const who = topAny[4] === 'your' ? { ref: 'you' as const } : topAny[4] === "each opponent's" ? { ref: 'players' as const, who: 'opponents' as const } : parsePlayerRef(topAny[4]!.replace(/'s$/, ''), b);
+          return first && who ? { first, who } : null;
+        });
+        topWho = r?.who ?? null;
+        topFirst = r?.first ?? [];
+      }
       const next = sentences[i + 1] ?? '';
       const duringNext = /^During your next turn, you may (play|cast) (?:that card|those cards|them|it)$/.exec(next);
       if (top && duringNext) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
-        out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode: duringNext[1], until: 'during_next_turn' } });
+        if (!topWho) return null;
+        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode: duringNext[1], until: 'during_next_turn' } });
         i++;
         continue;
       }
@@ -546,7 +561,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (amount === null) return null;
         const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
-        out.push({ type: 'exile_top', amount, who: { ref: 'you' }, play: { mode, until } });
+        if (!topWho) return null;
+        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until } });
         i++;
         continue;
       }
@@ -645,11 +661,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 603.7: "At the beginning of your next upkeep, pay {3}{U}{U}. If you don't, you lose the game." (the pacts),
       // "At the beginning of your next main phase, add …" (Mana Drain) — a following "If you do/don't" goes with it.
-      const yourNext = /^At the beginning of your next (upkeep|end step|main phase|precombat main phase), (.+)$/.exec(s);
+      // Necropotence: "Put that card into your hand at the beginning of your next end step." — the same, at the end.
+      const yourNextAfter = /^(.+) at the beginning of your next (upkeep|end step)$/.exec(s);
+      const yourNext = /^At the beginning of your next (upkeep|end step|main phase|precombat main phase), (.+)$/.exec(s) ?? (yourNextAfter ? [s, yourNextAfter[2]!, yourNextAfter[1]!] : null);
       if (yourNext) {
-        const follow = sentences[i + 1] && /^If you (?:do|don't), /.test(sentences[i + 1]!) ? sentences[i + 1]! : null;
+        const follow = !yourNextAfter && sentences[i + 1] && /^If you (?:do|don't), /.test(sentences[i + 1]!) ? sentences[i + 1]! : null;
         const inner = parseEffectText(`${capitalise(yourNext[2]!)}.${follow ? ` ${follow}.` : ''}`, b);
-        if (!inner) return null;
+        if (!inner || delayedOnZone(inner)) return null;
         const step = yourNext[1] === 'upkeep' ? 'upkeep' : yourNext[1] === 'end step' ? 'end' : yourNext[1] === 'main phase' ? 'main' : 'main1';
         out.push({ type: 'delayed', step, whose: 'you', effects: inner });
         if (follow) i++;
@@ -1201,6 +1219,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // The Ozolith: "put those counters on ~" — the counters the creature that left had (CR 603.10a).
+  if (/^[Pp]ut those counters on (?:~|this \w+)$/.test(s) && b.it?.ref === 'trigger_object') return [{ type: 'put_lki_counters', to: { ref: 'self' } }];
+  // The Ozolith: "move all counters from ~ onto target creature"
+  const moveAll = /^[Mm]ove all counters from (.+?) onto (.+)$/.exec(s);
+  if (moveAll) {
+    const r = attempt(b, (b) => {
+      const from = parseObjectRef(moveAll[1]!, b);
+      const to = from ? parseObjectRef(moveAll[2]!, b) : null;
+      return from && to && !from.plural && !to.plural ? [{ type: 'move_counters', from: from.ref, to: to.ref, counter: 'all' }] : null;
+    });
+    if (r) return r;
+  }
   // CR 702.58a (graft): "move a +1/+1 counter from ~ onto that creature"
   const moveCounter = /^[Mm]ove (a|an|one) (\S+) counter from (.+?) onto (.+)$/.exec(s);
   if (moveCounter) {
@@ -1239,6 +1269,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       if (!who || (wheel[3] && typeof upTo !== 'number')) return null;
       const mode = wheel[2]!.startsWith('all') ? 'all' : wheel[3] ? 'up_to' : 'any';
       return [{ type: 'wheel', who, mode, ...(typeof upTo === 'number' ? { upTo } : {}), ...(wheel[4] ? { delta: wheel[4] === ' plus one' ? 1 : -1 } : {}) }];
+    });
+    if (r) return r;
+  }
+  // Veil of Summer: "Spells you control can't be countered this turn."; "Creature spells you control can't be countered
+  // this turn."
+  const noCounter = /^(?:(.+?) )?[Ss]pells you control can't be countered this turn$/.exec(s);
+  if (noCounter) {
+    const pf = noCounter[1] ? parseFilter(`${noCounter[1].toLowerCase()} spell`, b) : null;
+    if (noCounter[1] && (!pf || pf.plural)) return null;
+    const filter = pf ? (({ zone: _z, ...f }) => f)(pf.filter) : null;
+    return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'spells_uncounterable', until: 'eot', ...(filter ? { filter } : {}) }];
+  }
+  // Veil of Summer: "You and permanents you control gain hexproof from blue and from black until end of turn."
+  const youAndFrom = /^You and (.+?) gain hexproof from (white|blue|black|red|green)(?: and from (white|blue|black|red|green))? until end of turn$/.exec(s);
+  if (youAndFrom) {
+    const r = attempt(b, (b) => {
+      const words = [youAndFrom[2]!, youAndFrom[3]].filter(Boolean) as string[];
+      const rest = parseSentence(`${capitalise(youAndFrom[1]!)} gain ${words.map((w) => `hexproof from ${w}`).join(' and ')} until end of turn`, b);
+      return rest ? [{ type: 'player_effect', who: { ref: 'you' }, rule: 'hexproof_from', until: 'eot', filter: { colors: words.map((w) => COLOR_WORDS[w]!) } }, ...rest] : null;
     });
     if (r) return r;
   }
@@ -1576,6 +1625,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (!pf || pf.plural || pf.filter.zone) return null;
     createdTokens(b);
     return [{ type: 'create_token', amount: 1, copyOf: { ref: 'all', filter: pf.filter }, copyEach: true, who: { ref: 'you' } }];
+  }
+  // Adeline: "for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a
+  // planeswalker they control" (CR 508.4).
+  const eachAttacking = /^[Ff]or each opponent, create (.+?) (?:that's|that is|that are) tapped and attacking that player( or a planeswalker they control)?$/.exec(s);
+  if (eachAttacking) {
+    const r = attempt(b, (b) => {
+      const made = parseSentence(`Create ${eachAttacking[1]} that's tapped and attacking`, b);
+      const node = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.token && made[0]!.attacking ? made[0]! : null;
+      if (!node) return null;
+      delete node.attacking;
+      return [{ ...node, attackingEach: true, ...(eachAttacking[2] ? { orPlaneswalker: true } : {}) }];
+    });
+    if (r) return r;
   }
   // "For each opponent, exile up to one target creature that player controls": a target for each of them (CR 601.2c).
   const perPlayer = /^[Ff]or each (opponent|player), (.+)$/.exec(s);
@@ -1972,7 +2034,8 @@ const VERBS: Record<string, VerbHandler> = {
   destroy: objectVerb('destroy'),
   exile(args, who, b, imperative) {
     // "that player exiles the top card of their library" (ingest), "Exile the top two cards of target player's library".
-    const top = /^the top (card|(\w+) cards) of (your|their|(.+?)'s) library$/.exec(args);
+    // Necropotence: "Exile the top card of your library face down." (only you may look at it)
+    const top = /^the top (card|(\w+) cards) of (your|their|(.+?)'s) library( face down)?$/.exec(args);
     if (top) {
       const amount = top[2] ? parseAmount(top[2]) : 1;
       if (amount === null || amount === undefined) return null;
@@ -1982,7 +2045,7 @@ const VERBS: Record<string, VerbHandler> = {
       if (!owner) return null;
       // "it", "that card", "those cards" afterward: the exiled cards.
       b.it = { ref: 'created' };
-      return [{ type: 'exile_top', amount, who: owner }];
+      return [{ type: 'exile_top', amount, who: owner, ...(top[5] ? { faceDown: true } : {}) }];
     }
     if (!imperative) return null;
     // Imprint (Chrome Mox, Isochron Scepter): "exile a nonartifact, nonland card from your hand" — chosen as it resolves.
@@ -2590,6 +2653,15 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     }
     return out;
   });
+}
+
+/**
+ * Rally the Ancestors: "Return each creature card … from your graveyard to the battlefield. Exile those creatures at the
+ * beginning of your next upkeep." — "those creatures" would be read again later as cards in the graveyard, not the
+ * permanents returned; such a delayed effect stays unread.
+ */
+function delayedOnZone(effects: EffectNode[]): boolean {
+  return JSON.stringify(effects).includes('"ref":"all","filter":{"zone":');
 }
 
 /** "Target creature gets +2/+2 and gains trample until end of turn." (CR 611.2a: lasts as stated.) */

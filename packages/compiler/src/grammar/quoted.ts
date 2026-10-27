@@ -36,7 +36,9 @@ export function parseQuotedAbility(item: string, b: Binder, printed: boolean): K
   const quoted = quotedText(item, b);
   if (!quoted || !b.env.parseAbilities) return null;
   // 'has "Equipped creature gets +2/+0" and equip {2}' — a quote inside a list has no period of its own.
-  const text = /[.:]$/.test(quoted) ? quoted : `${quoted}.`;
+  // Urza's Saga: a quote inside a quote ("… token with 'This token gets +1/+1 for each artifact you control.'") is a
+  // quoted ability one level down.
+  const text = (/[.:]['’]?$/.test(quoted) ? quoted : `${quoted}.`).replace(/(^|\s)'([^']+?[.,])'(?=\s|$|[.,])/g, '$1"$2"');
   const names = [b.env.cardName, b.env.faceName].filter((n) => n && n.length > 1);
   if (names.some((n) => text.includes(n)) || SOURCE_WORDS.test(text)) return null;
   const r = b.env.parseAbilities(text, '\u0001', 'Creature');

@@ -156,7 +156,7 @@ export interface GameObject {
   activatedOnce?: Record<number, true>;
   /** CR 702.143a: foretold (exiled face down from hand) on this turn. */
   foretold?: number;
-  /** CR 702.75a (hideaway): exiled face down; only this player may look at it. */
+  /** CR 406.3a: exiled face down; only this player may look at it (hideaway, CR 702.75a) — '' for no one (Necropotence). */
   hiddenFor?: PlayerId;
   /** CR 702.170a: plotted on this turn. */
   plotted?: number;

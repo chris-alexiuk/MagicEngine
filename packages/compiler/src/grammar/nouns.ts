@@ -84,6 +84,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
+  // Urza's Saga: "an artifact card with mana cost {0} or {1}"
+  [/ with mana cost ((?:\{[^}]+\})+)(?: or ((?:\{[^}]+\})+))?$/, (f, m) => !f.manaCostIs && ((f.manaCostIs = [m[1]!, ...(m[2] ? [m[2]] : [])]), true)],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],

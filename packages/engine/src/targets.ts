@@ -66,7 +66,7 @@ function canTargetAbility(g: GameState, controller: PlayerId, spec: TargetSpec, 
   return true;
 }
 
-function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, player: PlayerId): boolean {
+function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, player: PlayerId, source: GameObject | null): boolean {
   if (!livePlayers(g).includes(player)) return false;
   if (spec.player === 'opponent' && player === controller) return false;
   if (spec.player === 'you' && player !== controller) return false;
@@ -76,6 +76,8 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   // CR 702.16j: a player with protection from everything can't be the target of spells or abilities.
   if (playerRule(g, player, 'protection_everything')) return false;
   if (player !== controller && playerRule(g, player, 'hexproof')) return false;
+  // Veil of Summer: "hexproof from blue and from black" — not by sources of those colors their opponents control.
+  if (player !== controller && source && (g.playerEffects ?? []).some((e) => e.player === player && e.rule === 'hexproof_from' && e.lastTurn >= g.turn && e.filter && matchesFilter(g, source, e.filter, { controller: player, anyZone: true }))) return false;
   return true;
 }
 
@@ -86,7 +88,7 @@ export function isLegalTarget(
   t: TargetRef | Target,
   source: GameObject | null,
 ): boolean {
-  if (t.kind === 'player') return spec.what !== 'object' && spec.what !== 'ability' && canTargetPlayer(g, controller, spec, t.player);
+  if (t.kind === 'player') return spec.what !== 'object' && spec.what !== 'ability' && canTargetPlayer(g, controller, spec, t.player, source);
   if (t.kind === 'ability') return spec.what === 'ability' && canTargetAbility(g, controller, spec, t.entry);
   if (spec.what === 'player') return false;
   if (spec.what === 'ability' && !spec.spells) return false;
@@ -113,7 +115,7 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
     return out;
   }
   if (spec.what !== 'object') {
-    for (const p of livePlayers(g)) if (canTargetPlayer(g, controller, spec, p)) out.push({ kind: 'player', player: p });
+    for (const p of livePlayers(g)) if (canTargetPlayer(g, controller, spec, p, source)) out.push({ kind: 'player', player: p });
   }
   if (spec.what !== 'player') {
     const zone = spec.filter?.zone ?? 'battlefield';

@@ -83,6 +83,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
+  // Guardian Project: "if it doesn't have the same name as another creature you control or a creature card in your graveyard"
+  if (/^it doesn't have the same name as another creature you control or a creature card in your graveyard$/.test(t) && b.it) return { type: 'unique_name', of: b.it };
   // Howltooth Hollow: "if each player has no cards in hand"; Shelldock Isle: "if a library has twenty or fewer cards in it"
   if (/^each player has no cards in hand$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'hand', who: 'each' }, op: 'eq', n: 0 };
   const aLibrary = /^a library has (\w+) or fewer cards in it$/.exec(t);
@@ -365,7 +367,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
-  const oppCast = /^an opponent cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
+  const oppCast = /^an opponent (?:has )?cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
   if (oppCast) {
     const c = count(oppCast[1]!);
     const words = oppCast[2]!.trim();
@@ -407,6 +409,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "if it had no -1/-1 counters on it" (persist, CR 702.79a) — about the object as it last existed.
   const counters = /^it had no (\S+) counters on it$/.exec(t);
   if (counters && b.it) return { type: 'counters', of: b.it, counter: counters[1]!, max: 0 };
+  // The Ozolith: "if it had counters on it" (as it last existed), "if ~ has counters on it".
+  if (t === 'it had counters on it' && b.it) return { type: 'counters', of: b.it, min: 1 };
+  if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
   const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);
   if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] ?? none[2]!, max: 0 };

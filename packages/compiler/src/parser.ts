@@ -503,7 +503,8 @@ export class ParserRegistry {
       l.replace(/"([^"]*)"|“([^”]*)”/g, (_m, a: string | undefined, b: string | undefined, at: number, all: string) => {
         let inner = (a ?? b)!;
         const after = all.slice(at + _m.length);
-        const ends = inner.endsWith('.') && (after === '' || /^\s+[A-Z]/.test(after));
+        // Urza's Saga: '… with 'This token gets +1/+1 for each artifact you control.'"' — a quote inside ends it too.
+        const ends = /\.['’]?$/.test(inner) && (after === '' || /^\s+[A-Z]/.test(after));
         // 'has "Whenever this creature attacks, untap target creature," and is a Cleric' — the comma is the outer sentence's.
         const comma = inner.endsWith(',');
         if (comma) inner = `${inner.slice(0, -1)}.`;

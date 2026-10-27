@@ -1837,3 +1837,36 @@ describe('slice 160', () => {
     expect(parse('Search your library for a Dinosaur creature card, put it onto the battlefield, then shuffle. It gains indestructible until your next turn.', 'Sorcery', 'S').unparsed).toHaveLength(1);
   });
 });
+
+describe('slice 161', () => {
+  it("reads impulse draw from another player's library, face-down exile, and tokens attacking each opponent", () => {
+    expect(parse("Whenever ~ deals combat damage to a player, create a Treasure token and exile the top card of that player's library. Until end of turn, you may cast that card.", 'Legendary Creature — Monkey Pirate', 'Ragavan, Nimble Pilferer').abilities[0]).toMatchObject({ effects: [{ type: 'create_token' }, { type: 'exile_top', who: { ref: 'trigger_player' }, play: { mode: 'cast', until: 'eot' } }] });
+    expect(parse('Pay 1 life: Exile the top card of your library face down. Put that card into your hand at the beginning of your next end step.', 'Enchantment', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', faceDown: true }, { type: 'delayed', step: 'end', whose: 'you', effects: [{ type: 'move', what: { ref: 'created' }, to: 'hand' }] }] });
+    expect(parse("Whenever you attack, for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a planeswalker they control.", 'Legendary Creature — Human Knight', 'A').abilities[0]).toMatchObject({ trigger: { type: 'you_attack' }, effects: [{ type: 'create_token', attackingEach: true, orPlaneswalker: true, tapped: true }] });
+    expect(parse('Exile the top card of target opponent\'s library.', 'Sorcery', 'X').abilities[0]).toMatchObject({ targets: [{ what: 'player' }] });
+    expect(parse("III — Exile the top three cards of target opponent's library. You may play those cards this turn.", 'Enchantment — Saga', 'K').abilities[0]).toMatchObject({ targets: [{ what: 'player' }], effects: [{ type: 'exile_top', amount: 3, who: { ref: 'target', index: 0 } }] });
+    expect(parse('Return each creature card with mana value X or less from your graveyard to the battlefield. Exile those creatures at the beginning of your next upkeep.', 'Sorcery', 'R').unparsed).toHaveLength(1);
+  });
+  it('reads Academy Manufactor, Guardian Project, Mangara, Veil of Summer and The Ozolith', () => {
+    expect(parse('If you would create a Clue, Food, or Treasure token, instead create one of each.', 'Artifact Creature — Assembly-Worker', 'M').abilities[0]).toMatchObject({ effect: { type: 'token_one_of_each', tokens: [{ name: 'Clue' }, { name: 'Food' }, { name: 'Treasure' }] } });
+    expect(parse("Whenever a nontoken creature you control enters, if it doesn't have the same name as another creature you control or a creature card in your graveyard, draw a card.", 'Enchantment', 'G').abilities[0]).toMatchObject({ condition: { type: 'unique_name', of: { ref: 'trigger_object' } } });
+    expect(parse('Whenever an opponent attacks with creatures, if two or more of those creatures are attacking you and/or planeswalkers you control, draw a card.', 'Legendary Creature — Human Cleric', 'M').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', opponent: true, atYou: 'or_planeswalkers', min: 2 } });
+    expect(parse("Draw a card if an opponent has cast a blue or black spell this turn. Spells you control can't be countered this turn. You and permanents you control gain hexproof from blue and from black until end of turn.", 'Instant', 'V').abilities[0]).toMatchObject({
+      effects: [
+        { type: 'if', cond: { type: 'this_turn', event: 'opponent_cast', filter: { colors: ['U', 'B'] } } },
+        { type: 'player_effect', rule: 'spells_uncounterable', until: 'eot' },
+        { type: 'player_effect', rule: 'hexproof_from', filter: { colors: ['U', 'B'] } },
+        { type: 'modify', keywords: [{ id: 'hexproof_from', text: 'blue' }, { id: 'hexproof_from', text: 'black' }] },
+      ],
+    });
+    const oz = parse('Whenever a creature you control leaves the battlefield, if it had counters on it, put those counters on ~.\nAt the beginning of combat on your turn, if ~ has counters on it, you may move all counters from ~ onto target creature.', 'Legendary Artifact', 'O');
+    expect(oz.abilities[0]).toMatchObject({ condition: { type: 'counters', of: { ref: 'trigger_object' }, min: 1 }, effects: [{ type: 'put_lki_counters' }] });
+    expect(oz.abilities[1]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'move_counters', counter: 'all' }] }] });
+  });
+  it("reads Urza's Saga: a quote inside a quote, and \"mana cost {0} or {1}\"", () => {
+    const saga = parse("(As this Saga enters and after your draw step, add a lore counter. Sacrifice after III.)\nI — This Saga gains \"{T}: Add {C}.\"\nII — This Saga gains \"{2}, {T}: Create a 0/0 colorless Construct artifact creature token with 'This token gets +1/+1 for each artifact you control.'\"\nIII — Search your library for an artifact card with mana cost {0} or {1}, put it onto the battlefield, then shuffle.", "Enchantment Land — Urza's Saga", "Urza's Saga");
+    expect(saga.unparsed).toHaveLength(0);
+    expect(JSON.stringify(saga.abilities[1])).toContain('"kind":"count"');
+    expect(saga.abilities[2]).toMatchObject({ effects: [{ type: 'search', filter: { types: ['Artifact'], manaCostIs: ['{0}', '{1}'] } }] });
+  });
+});

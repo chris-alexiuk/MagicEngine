@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -351,6 +351,18 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'or':
       return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
     // Field of the Dead: "you control seven or more lands with different names" (CR 201.2)
+    // Guardian Project: "if it doesn't have the same name as another creature you control or a creature card in your
+    // graveyard" (a face-down creature has no name, CR 708.2).
+    case 'unique_name': {
+      const [o] = refObjects(ctx, cond.of as Ref);
+      if (!o) return false;
+      const name = nameOf(g, o);
+      const others = [
+        ...g.zones.battlefield.map((id) => g.objects[id]!).filter((x) => x.id !== o.id && x.controller === controller && !x.faceDown && chars(g, x).types.includes('Creature')),
+        ...zoneList(g, 'graveyard', controller).map((id) => g.objects[id]!).filter((x) => faceOf(g, x).types.includes('Creature')),
+      ];
+      return !others.some((x) => nameOf(g, x) === name);
+    }
     case 'distinct_names': {
       const names = new Set(
         g.zones.battlefield
