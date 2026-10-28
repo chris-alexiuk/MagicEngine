@@ -102,6 +102,24 @@ const CARDS = [
   makeCard({ name: 'Sarah Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'As long as an artifact entered the battlefield under your control this turn, creatures you control get +2/+2.' }),
   makeCard({ name: 'Lamia Lite', type_line: 'Creature — Snake Lamia', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Spells you cast from your graveyard cost {1} less to cast.' }),
   makeCard({ name: 'Grave Spell', type_line: 'Sorcery', mana_cost: '{2}', cmc: 2, oracle_text: 'You gain 2 life.\nFlashback {2}' }),
+  makeCard({ name: 'Technician Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever this creature deals combat damage to a player, you may put an artifact card with mana value less than or equal to that damage from your hand onto the battlefield.' }),
+  makeCard({ name: 'Two Relic', type_line: 'Artifact', mana_cost: '{2}', cmc: 2, oracle_text: '' }),
+  makeCard({ name: 'Three Relic', type_line: 'Artifact', mana_cost: '{3}', cmc: 3, oracle_text: '' }),
+  makeCard({ name: 'Production Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your upkeep, if you control eight or more artifacts with the same name as one another, you win the game.' }),
+  makeCard({ name: 'Horn Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Whenever two or more creatures you control attack a player, draw a card.' }),
+  makeCard({ name: 'Lightbringer Lite', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Whenever you attack a player, create a 1/1 white Glimmer enchantment creature token that's tapped and attacking that player." }),
+  makeCard({ name: 'Camellia Lite', type_line: 'Creature — Squirrel', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever you sacrifice one or more Foods, create a 1/1 green Squirrel creature token.' }),
+  makeCard({ name: 'Food Card', type_line: 'Artifact — Food', mana_cost: '{0}', oracle_text: '' }),
+  makeCard({ name: 'Feast Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Sacrifice two Foods: You gain 1 life.' }),
+  makeCard({ name: 'Endstone Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Whenever you play a land or cast a spell, draw a card.' }),
+  makeCard({ name: 'Ezuri Lite', type_line: 'Creature — Phyrexian', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever you proliferate, draw a card.' }),
+  makeCard({ name: 'Proliferate Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Proliferate.' }),
+  makeCard({ name: 'Patron Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever you put one or more counters on a creature you don't control, draw a card." }),
+  makeCard({ name: 'Grow Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Put a +1/+1 counter on target creature.' }),
+  makeCard({ name: 'Tergrid Lite', type_line: 'Legendary Creature — God', mana_cost: '{0}', power: '4', toughness: '5', oracle_text: 'Whenever an opponent sacrifices a nontoken permanent or discards a permanent card, you may put that card from a graveyard onto the battlefield under your control.' }),
+  makeCard({ name: 'Edict Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent sacrifices a creature of their choice.' }),
+  makeCard({ name: 'Merfolk Lord', type_line: 'Creature — Merfolk', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Other Merfolk you control get +1/+1.' }),
+  makeCard({ name: 'Merfolk Grunt', type_line: 'Creature — Merfolk', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1118,5 +1136,127 @@ describe('staples (slice 196): spells cast from a graveyard', () => {
     expect(illegal(g, { type: 'cast', player: 'alice', object: inHand })).toBeTruthy();
     g = settle(act(g, { type: 'cast', player: 'alice', object: inYard }));
     expect(g.objects[inYard]!.zone).toBe('exile');
+  });
+});
+
+describe('staples (slice 196): "that damage" and same names', () => {
+  it('Covert Technician: an artifact card with mana value up to the damage dealt', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const tech = give(g, 'alice', 'Technician Lite', 'battlefield');
+    const [two, three] = [give(g, 'alice', 'Two Relic', 'hand'), give(g, 'alice', 'Three Relic', 'hand')];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: tech, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } });
+      else if (p?.kind === 'choose_objects') {
+        expect(p.candidates.includes(two) && !p.candidates.includes(three)).toBe(true);
+        g = act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_objects', objects: [two] } });
+      } else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.objects[two]!.zone, g.objects[three]!.zone]).toEqual(['battlefield', 'hand']);
+  });
+
+  it('Mechanized Production: eight artifacts with the same name', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Production Lite', 'battlefield');
+    for (let i = 0; i < 7; i++) give(g, 'alice', 'Trinket', 'battlefield');
+    give(g, 'alice', 'Two Relic', 'battlefield');
+    let h = settle(toStep(structuredClone(g), 'upkeep', 'alice'));
+    expect(h.over).toBeFalsy();
+    give(g, 'alice', 'Trinket', 'battlefield');
+    g = settle(toStep(g, 'upkeep', 'alice'));
+    expect(g.over).toBeTruthy();
+  });
+});
+
+describe('staples (slice 197): attacking a player, batches of sacrifices, counters', () => {
+  const declare = (g: GameState, attacks: { attacker: string; player: string }[]) =>
+    act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: attacks.map(({ attacker, player }) => ({ attacker, target: { kind: 'player', player } })) } });
+
+  it('Horn of the Mark: only for a player attacked by two or more creatures', () => {
+    for (const split of [false, true]) {
+      let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+      give(g, 'alice', 'Horn Lite', 'battlefield');
+      const [a, b] = [give(g, 'alice', 'Cub', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+      const hand = g.zones.hand.alice!.length;
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      g = settle(declare(g, [{ attacker: a, player: 'bob' }, { attacker: b, player: split ? 'carol' : 'bob' }]));
+      expect(g.zones.hand.alice!.length).toBe(hand + (split ? 0 : 1));
+    }
+  });
+
+  it('Soaring Lightbringer: the token attacks the player that was attacked', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const lb = give(g, 'alice', 'Lightbringer Lite', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = settle(declare(g, [{ attacker: lb, player: 'carol' }]));
+    const tokens = Object.entries(g.combat!.attackers).filter(([id]) => g.objects[id]!.token);
+    expect(tokens.length).toBe(1);
+    expect(tokens[0]![1].target).toEqual({ kind: 'player', player: 'carol' });
+  });
+
+  it('Camellia: one trigger for Foods sacrificed together', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Camellia Lite', 'battlefield');
+    const feast = give(g, 'alice', 'Feast Lite', 'battlefield');
+    const foods = [give(g, 'alice', 'Food Card', 'battlefield'), give(g, 'alice', 'Food Card', 'battlefield')];
+    const before = g.zones.battlefield.filter((id) => g.objects[id]!.token).length;
+    g = settle(act(g, kitActions(g, feast)[0]!));
+    expect(foods.every((id) => g.objects[id]!.zone === 'graveyard')).toBe(true);
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(before + 1);
+  });
+
+  it('The Endstone: a land played or a spell cast', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Endstone Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 2);
+  });
+
+  it('Ezuri: whenever you proliferate, even choosing nothing', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Ezuri Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Proliferate Lite', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Generous Patron: counters you put on a creature you don\'t control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Patron Lite', 'battlefield');
+    const [mine, theirs] = [give(g, 'alice', 'Cub', 'battlefield'), give(g, 'bob', 'Cub', 'battlefield')];
+    const hand = g.zones.hand.alice!.length;
+    for (const target of [mine, theirs]) {
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Grow Lite', 'hand'), targets: [[{ kind: 'object', object: target }]] }));
+    }
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Tergrid: what an opponent sacrifices comes back under your control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Tergrid Lite', 'battlefield');
+    const cub = give(g, 'bob', 'Cub', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Edict Lite', 'hand') });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } });
+      else if (p?.kind === 'choose_objects') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_objects', objects: [cub] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    const back = g.zones.battlefield.find((id) => g.objects[id]!.card === g.objects[cub]!.card && g.objects[id]!.controller === 'alice' && !g.objects[id]!.token);
+    expect(back).toBeTruthy();
+  });
+
+  it('Merfolk: the same word in the plural', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Merfolk Lord', 'battlefield');
+    const grunt = give(g, 'alice', 'Merfolk Grunt', 'battlefield');
+    expect(chars(g, g.objects[grunt]!).power).toBe(2);
   });
 });

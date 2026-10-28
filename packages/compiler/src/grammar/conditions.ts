@@ -152,6 +152,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === 'you control your commander') return { type: 'count', who: 'you', filter: { commander: true, owner: 'you' }, min: 1 };
   // Jace, Wielder of Mysteries: "if your library has no cards in it"
   if (/^your library has no cards in it$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'library', who: 'you' }, op: 'eq', n: 0 };
+  // Mechanized Production: "you control eight or more artifacts with the same name as one another"; Sceptre of Eternal
+  // Glory: "you control three or more lands with the same name".
+  const sameName = /^you control (\w+) or more (.+?) with the same name(?: as one another)?$/.exec(t);
+  if (sameName) {
+    const n = parseAmount(sameName[1]!);
+    const pf = parseFilter(sameName[2]!, b.clone());
+    if (typeof n === 'number' && pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'same_name', filter: pf.filter, min: n };
+  }
   // Field of the Dead: "you control seven or more lands with different names"
   const names = /^you control (\w+ or more) (.+?) with different names$/.exec(t);
   if (names) {

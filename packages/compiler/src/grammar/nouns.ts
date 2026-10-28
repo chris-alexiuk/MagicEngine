@@ -12,7 +12,12 @@ import { capitalise, COLOR_WORDS, parseAmount, SUPERTYPE_WORDS, subtypeOf, TYPE_
 export interface ParsedFilter {
   filter: ObjectFilter;
   plural: boolean;
+  /** "Merfolk", "Samurai", "Equipment": the same word in the singular and the plural — either, by context. */
+  invariant?: boolean;
 }
+
+/** Subtypes whose plural is the same word ("Other Merfolk you control get +1/+1"). */
+const INVARIANT_PLURALS = new Set(['Merfolk', 'Kithkin', 'Moonfolk', 'Kor', 'Samurai', 'Fish', 'Sheep', 'Djinn', 'Efreet', 'Aetherborn', 'Viashino', 'Vedalken', 'Eldrazi', 'Myr', 'Nephilim', 'Surrakar', 'Jellyfish', 'Starfish', 'Equipment']);
 
 const PLURAL_HEADS = new Set(['permanents', 'spells', 'cards', 'tokens']);
 /** CR 110.4: the permanent card types. */
@@ -27,12 +32,14 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Mockingbird: "with mana value less than or equal to the amount of mana spent to cast this creature".
   // Vedalken Shackles: "target creature with power less than or equal to the number of Islands you control".
   // (A power compared with this creature's own stays powerBelowSource, below.)
-  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature))$/, (f, m, b) => {
+  // Buster Sword: "with mana value less than or equal to that damage" — how much the trigger event was.
+  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature)|that damage)$/, (f, m, b) => {
     const key = m[1] === 'mana value' ? 'manaValue' : (m[1] as 'power' | 'toughness');
     if (key !== 'manaValue' && !/^the number of /.test(m[3]!)) return false;
     // "… in your library" is the card's zone: peeled first.
     if (f[key] || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[3]!)) return false;
-    const n = parseCount(m[3]!, b);
+    if (m[3] === 'that damage' && !b.eventAmount) return false;
+    const n = m[3] === 'that damage' ? ({ kind: 'event' } as const) : parseCount(m[3]!, b);
     if (!n) return false;
     const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt', 'equal to': 'eq' } as const)[m[2] as 'less than'];
     f[key] = { op, n };
@@ -290,7 +297,7 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
       return { filter: { ...base, ...(f.zone && !base.zone ? { zone: f.zone } : {}), anyOf }, plural: head.plural };
     }
   }
-  return { filter: f, plural: head.plural };
+  return { filter: f, plural: head.plural, ...(head.invariant ? { invariant: true } : {}) };
 }
 
 function addAlternative(f: ObjectFilter, cat: Category, alt: string, replaced: string): boolean {
@@ -320,11 +327,12 @@ function addAlternative(f: ObjectFilter, cat: Category, alt: string, replaced: s
 }
 
 /** Adjectives + head noun: "tapped nonblack Zombie creature". */
-function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | null {
+function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; invariant?: boolean } | null {
   const words = text.trim().split(/\s+/);
   const headWord = words[words.length - 1]!;
   const adjectives = words.slice(0, -1);
   let plural = false;
+  let invariant = false;
   let headType: string | null = null;
 
   const lower = headWord.toLowerCase();
@@ -350,6 +358,7 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
   } else if (subtypeOf(headWord)) {
     f.subtypes = [subtypeOf(headWord)!];
     plural = subtypeOf(headWord) !== headWord;
+    if (INVARIANT_PLURALS.has(headWord)) invariant = true;
   } else return null;
   if (PLURAL_HEADS.has(lower)) plural = true;
 
@@ -408,7 +417,7 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     f.types = [adjTypes[adjTypes.length - 1]!];
     if (adjTypes.length > 1) f.allTypes = adjTypes.slice(0, -1);
   }
-  return { plural };
+  return { plural, ...(invariant ? { invariant: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -509,7 +518,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
-    if (/^(?:it|that card) from (?:your|its owner's|their) graveyard$/i.test(t) && b.it && b.it.ref !== 'self') return { ref: b.it, plural: false, targeted: false };
+    if (/^(?:it|that card) from (?:your|its owner's|their|a) graveyard$/i.test(t) && b.it && b.it.ref !== 'self') return { ref: b.it, plural: false, targeted: false };
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
       return set(b, { ref: { ref: 'attached' }, plural: false, targeted: false });
     }
@@ -617,7 +626,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       if (x && y && x.plural && y.plural && !x.filter.zone && !y.filter.zone) pf = { filter: { anyOf: [x.filter, { ...y.filter, ...(pair[2] ? { other: true } : {}) }] }, plural: true };
     }
     // "Equipment you control have equip {1}" — the same word in the plural, without an article.
-    if (!pf || (!pf.plural && !/^Equipment\b/.test(bare[2]!))) return null;
+    if (!pf || (!pf.plural && !pf.invariant && !/^Equipment\b/.test(bare[2]!))) return null;
     if (bare[1]) pf.filter.other = true;
     return set(b, { ref: { ref: 'all', filter: pf.filter }, plural: true, targeted: false });
   });

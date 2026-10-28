@@ -820,7 +820,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const opts = { tapped: Boolean(node.tapped) };
         const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, kind!, p, ctx.events, opts);
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
-        if (node.attacking) enterAttacking(ctx.g, t, ctx.source);
+        // Soaring Lightbringer: "… tapped and attacking that player" (CR 508.4).
+        const at = node.attackingPlayer ? refPlayers(ctx, node.attackingPlayer as Ref)[0] : undefined;
+        if (node.attacking) enterAttacking(ctx.g, t, ctx.source, at ? { kind: 'player', player: at } : undefined);
         created.push({ id: t.id, zcc: t.zcc });
       }
       // Peregrin Took, Xorn: "those tokens plus an additional Food token" (CR 614.1a; doubled too, CR 616.1).
@@ -2044,10 +2046,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const objects = g.zones.battlefield.filter((id) => Object.values(g.objects[id]!.counters).some((n) => n > 0));
     const players = livePlayers(g).filter((p) => g.players[p]!.poison > 0 || Object.values(g.players[p]!.counters ?? {}).some((n) => n > 0));
     const answer = answerOf(ctx, 'proliferate');
-    if (!answer) {
-      if (!objects.length && !players.length) return true;
-      return { ask: { kind: 'proliferate', player: ctx.controller, objects, players } };
+    // Ezuri, Stalker of Spheres: "Whenever you proliferate" — even choosing nothing (CR 701.34a).
+    if (!answer && !objects.length && !players.length) {
+      ctx.events.push({ type: 'proliferated', player: ctx.controller });
+      return true;
     }
+    if (!answer) return { ask: { kind: 'proliferate', player: ctx.controller, objects, players } };
+    ctx.events.push({ type: 'proliferated', player: ctx.controller });
     if (!answer.objects.every((id) => objects.includes(id)) || !answer.players.every((p) => players.includes(p))) {
       throw new RulesError('Choose only permanents and players that have counters.');
     }
@@ -2810,8 +2815,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Play ${nameOf(g, o)}?`, sourceName: sourceName(ctx) } };
     if (!answer.yes) return true;
     ps.landsPlayedThisTurn++;
+    const from = o.zone;
     moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller });
-    ctx.events.push({ type: 'land_played', player: ctx.controller, object: o.id });
+    ctx.events.push({ type: 'land_played', player: ctx.controller, object: o.id, from });
     return true;
   },
 
@@ -4196,11 +4202,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // General Kreat: "Whenever one or more Goblins you control attack" — only those count.
     const attacks = t.filter ? e.attacks.filter(({ attacker }) => check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.filter as ObjectFilter, { controller: check.controller, source: check.source ?? null })) : e.attacks;
     if (!attacks.length) return [];
-    if (typeof t.min === 'number' && attacks.length < t.min) return [];
+    // CR 508.3e: "Whenever you attack a player [with one or more …]", "two or more creatures you control attack a
+    // player" — once for each player attacked by enough of the matching creatures.
     if (t.perPlayer) {
-      const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
-      return players.map((player) => ({ player }));
+      const count = new Map<PlayerId, number>();
+      for (const { target } of attacks) if (target.kind === 'player') count.set(target.player, (count.get(target.player) ?? 0) + 1);
+      return [...count].filter(([, n]) => n >= Number(t.min ?? 1)).map(([player]) => ({ player }));
     }
+    if (typeof t.min === 'number' && attacks.length < t.min) return [];
     // "Whenever a player attacks …": that player is the attacker.
     return t.anyone ? [{ player: check.g.active }] : [{}];
   },
@@ -4351,12 +4360,15 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
   counters_put(t, check) {
     const e = check.event;
-    if (e.type !== 'counters' || e.delta <= 0 || check.sourceLeft || e.counter !== t.counter) return [];
+    // Generous Patron: "one or more counters" — of any kind.
+    if (e.type !== 'counters' || e.delta <= 0 || check.sourceLeft || (t.counter !== undefined && e.counter !== t.counter)) return [];
     // "Whenever you put one or more +1/+1 counters on …"
     if (t.byYou && e.by !== check.controller) return [];
     const o = check.g.objects[e.object];
     if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
-    const together = (check.batch ?? [e]).filter((x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && x.counter === e.counter && (!t.byYou || x.by === check.controller));
+    const together = (check.batch ?? [e]).filter(
+      (x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && (t.counter === undefined || x.counter === e.counter) && (!t.byYou || x.by === check.controller),
+    );
     if (together[0] !== e) return [];
     const amount = together.reduce((n, x) => n + (x.type === 'counters' ? x.delta : 0), 0);
     // Midnight Clock: "When the twelfth hour counter is put on this artifact" — these counters took it to that many.
@@ -4382,6 +4394,17 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // CR 702.110b: "When ~ exploits a creature" — sacrificed as its exploit ability resolved.
     if (t.exploit && e.exploitedBy !== check.source.id) return [];
     if (t.filter && !matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true, lastController: e.player })) return [];
+    // "Whenever you sacrifice one or more Foods": once for those sacrificed at the same time (CR 603.2c).
+    if (t.batch) {
+      const first = (check.batch ?? [e]).find((x) => {
+        if (x.type !== 'sacrificed') return false;
+        if (t.who === 'opponent' ? x.player === check.controller : t.who !== 'any' && x.player !== check.controller) return false;
+        const xo = check.g.objects[x.object];
+        if (!xo || (t.other && xo.id === check.source.id)) return false;
+        return !t.filter || matchesFilter(check.g, xo, t.filter as ObjectFilter, { controller: check.controller, anyZone: true, lastController: x.player });
+      });
+      return first === e ? [{}] : [];
+    }
     return [{ object: refTo(o), player: e.player }];
   },
   // CR 701.43d: "When you do" (linked to "You may exert ~ as it attacks"), "Whenever you exert a creature".
@@ -4395,6 +4418,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 305.1: "Whenever you play a land", "Whenever an opponent plays a land" (Burgeoning) — playing it, not putting it
   // onto the battlefield.
   // Archivist of Oghma: "Whenever an opponent searches their library"
+  // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34).
+  proliferated(t, check) {
+    const e = check.event;
+    if (e.type !== 'proliferated' || check.sourceLeft || e.player !== check.controller) return [];
+    return [{ player: e.player }];
+  },
   searched(t, check) {
     const e = check.event;
     if (e.type !== 'searched' || check.sourceLeft || e.owner !== e.player) return [];
@@ -4405,7 +4434,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'land_played' || check.sourceLeft || (t.other && e.object === check.source.id)) return [];
     if (t.who === 'you' ? e.player !== check.controller : t.who === 'opponent' ? e.player === check.controller : false) return [];
+    // Pia Nalaar, Consul of Revival: "Whenever you play a land from exile"; Shanid: "… a legendary land".
+    if (t.from && e.from !== t.from) return [];
     const o = check.g.objects[e.object];
+    if (t.filter && (!o || !matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true }))) return [];
     return [{ ...(o ? { object: refTo(o) } : {}), player: e.player }];
   },
   put_into_graveyard(t, check) {

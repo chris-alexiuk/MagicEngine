@@ -816,9 +816,10 @@ export type GameEvent =
   | { type: 'explored'; object: ObjectId; land: boolean }
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
   | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
-  | { type: 'land_played'; player: PlayerId; object: ObjectId }
+  | { type: 'land_played'; player: PlayerId; object: ObjectId; from?: ZoneName }
   /** CR 701.23: a player searched a library (`owner`'s). */
   | { type: 'searched'; player: PlayerId; owner: PlayerId }
+  | { type: 'proliferated'; player: PlayerId }
   /** `nth`: which spell this is for its caster this turn (1 = their first). */
   | { type: 'cast'; player: PlayerId; object: ObjectId; nth?: number; manaBefore?: number; manaSpent?: number }
   /** CR 700.13: a player committed a crime (a spell or ability of theirs targets an opponent or what they have). */

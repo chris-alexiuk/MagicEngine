@@ -953,7 +953,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const someAttack = /^one or more (.+? you control) attack$/.exec(t);
   if (someAttack && someAttack[1] !== 'creatures you control') {
     const pf = parseFilter(someAttack[1]!, b);
-    if (!pf || !pf.plural || pf.filter.controller !== 'you') return null;
+    if (!pf || !(pf.plural || pf.invariant) || pf.filter.controller !== 'you') return null;
     const { controller: _c, ...filter } = pf.filter;
     b.named['those creatures'] = { ref: 'all', filter: { ...filter, types: [...new Set([...(filter.types ?? []), 'Creature'])], controller: 'you', combat: 'attacking' } };
     return { trigger: { type: 'you_attack', filter }, it: { ref: 'self' }, player: null };
@@ -962,6 +962,23 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'one or more creatures attack') return { trigger: { type: 'you_attack', anyone: true }, it: { ref: 'self' }, player: null };
   // CR 508.3e: "Whenever you attack a player" — "that player" is the one attacked.
   if (t === 'you attack a player') return { trigger: { type: 'you_attack', perPlayer: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  // Akiri, Fearless Voyager: "Whenever you attack a player with one or more equipped creatures"; Dollmaker's Shop:
+  // "Whenever one or more non-Toy creatures you control attack a player"; Horn of the Mark: "Whenever two or more
+  // creatures you control attack a player" — once for each player attacked by enough of them (CR 508.3e).
+  const attackPlayer =
+    /^you attack a player with (one) or more (.+)$/.exec(t) ?? /^(one|two|three) or more (.+? you control(?: that .+)?) attack a player$/.exec(t);
+  if (attackPlayer) {
+    const pf = parseFilter(attackPlayer[2]!, b);
+    if (!pf || !(pf.plural || pf.invariant) || (pf.filter.controller && pf.filter.controller !== 'you')) return null;
+    const { controller: _c, ...filter } = pf.filter;
+    const min = NUMBER_WORDS[attackPlayer[1]!]!;
+    const isCreatures = JSON.stringify(filter) === JSON.stringify({ types: ['Creature'] });
+    return {
+      trigger: { type: 'you_attack', perPlayer: true, ...(isCreatures ? {} : { filter }), ...(min > 1 ? { min } : {}) },
+      it: { ref: 'self' },
+      player: { ref: 'trigger_player' },
+    };
+  }
   // CR 509.3g: "Whenever ~ attacks and isn't blocked"
   const unblocked = /^(~|(?:enchanted|equipped) creature|(?:a|an) (.+?)) attacks and isn't blocked$/.exec(t);
   if (unblocked) {
@@ -1013,15 +1030,24 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
+  // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34)
+  if (t === 'you proliferate' && word === 'Whenever') return { trigger: { type: 'proliferated' }, it: null, player: null };
   // Archivist of Oghma: "Whenever an opponent searches their library" (CR 701.23)
   const searches = /^(an opponent|a player) searches their library$/.exec(t);
   if (searches) return { trigger: { type: 'searched', who: searches[1] === 'an opponent' ? 'opponent' : 'any' }, it: null, player: { ref: 'trigger_player' } };
   // Burgeoning: "Whenever an opponent plays a land", Fastbond-style "Whenever you play a land"
   // City of Traitors: "When you play another land" (any land played, other than this one).
-  const plays = /^(you|an opponent|a player) plays? (a|another) land$/.exec(t);
+  // Shanid: "Whenever you play a legendary land"; Pia Nalaar, Consul of Revival: "… a land from exile".
+  const plays = /^(you|an opponent|a player) plays? (a|another) (?:(legendary|basic|nonbasic) )?land(?: from (exile|your graveyard|a graveyard))?$/.exec(t);
   if (plays && (word === 'Whenever' || plays[2] === 'another')) {
     const who = plays[1] === 'you' ? 'you' : plays[1] === 'an opponent' ? 'opponent' : 'any';
-    return { trigger: { type: 'land_played', who, ...(plays[2] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
+    const filter: ObjectFilter | null =
+      plays[3] === 'legendary' ? { supertypes: ['Legendary'] } : plays[3] === 'basic' ? { supertypes: ['Basic'] } : plays[3] === 'nonbasic' ? { notSupertypes: ['Basic'] } : null;
+    return {
+      trigger: { type: 'land_played', who, ...(plays[2] === 'another' ? { other: true } : {}), ...(filter ? { filter } : {}), ...(plays[4] ? { from: plays[4] === 'exile' ? 'exile' : 'graveyard' } : {}) },
+      it: { ref: 'trigger_object' },
+      player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' },
+    };
   }
   // Mirkwood Bats: "Whenever you create or sacrifice a token"; "Whenever you create a token", "… one or more creature
   // tokens" — tokens are created on the battlefield (CR 111.1), so as they enter under your control.
@@ -1210,6 +1236,27 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: null, player: parsed[0]!.player };
     }
   }
+  // The Endstone: "Whenever you play a land or cast a spell"; Rocco: "Whenever a player plays a land from exile or casts a
+  // spell from exile" — either event by the same player (CR 603.2).
+  const twoEvents =
+    word === 'Whenever'
+      ? /^(an opponent|a player|you) ((?:plays?|casts?|draws?|discards?|sacrifices?|gains?|loses?|commits?) .+?) or ((?:plays?|casts?|draws?|discards?|sacrifices?|gains?|loses?|commits?) .+)$/.exec(t)
+      : null;
+  if (twoEvents) {
+    const ok = [twoEvents[2]!, twoEvents[3]!].every((p) => parseTrigger('Whenever', `${twoEvents[1]} ${p}`, b.clone()));
+    // Tergrid: "… sacrifices a nontoken permanent or discards a permanent card, you may put that card …" — what either
+    // part names.
+    const parsed = ok ? [twoEvents[2]!, twoEvents[3]!].map((p) => parseTrigger('Whenever', `${twoEvents[1]} ${p}`, b)) : [];
+    if (ok && parsed.every(Boolean)) {
+      // Cemetery Gatekeeper: "if it shares a card type with …" — the land or spell.
+      const its = parsed.map((p) => JSON.stringify(p!.it));
+      return {
+        trigger: { type: 'either', of: parsed.map((p) => p!.trigger) },
+        it: its[0] === its[1] ? parsed[0]!.it : null,
+        player: twoEvents[1] === 'you' ? null : { ref: 'trigger_player' },
+      };
+    }
+  }
   // Syr Konrad: "Whenever another creature dies, or a creature card is put into a graveyard from anywhere other than the
   // battlefield, or a creature card leaves your graveyard" — any of the events (CR 603.2).
   if (word === 'Whenever' && / or (?:a|an|another|one) /.test(t) && t.includes(', or ')) {
@@ -1315,8 +1362,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
   // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
   // Exemplar of Light: "Whenever you put one or more +1/+1 counters on this creature" — counters you put on (CR 122.6).
-  const youPut = /^you put one or more ([+-]\d+\/[+-]\d+|\w+) counters on (~|(?:a|an|another) (.+?))$/.exec(t);
-  const countersOn = /^one or more ([+-]\d+\/[+-]\d+|\w+) counters are put on (~|(?:a|an|another) (.+?))$/.exec(t) ?? youPut;
+  // Generous Patron: "Whenever you put one or more counters on a creature you don't control" — of any kind.
+  const youPut = /^you put one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters on (~|(?:a|an|another) (.+?))$/.exec(t);
+  const countersOn = /^one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters are put on (~|(?:a|an|another) (.+?))$/.exec(t) ?? youPut;
   if (countersOn) {
     let subject: Ref = { ref: 'self' };
     if (countersOn[3]) {
@@ -1326,11 +1374,30 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       subject = { ref: 'all', filter: pf.filter };
     }
     b.eventAmount = true;
-    return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject, ...(youPut ? { byYou: true } : {}) }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+    if (subject.ref !== 'self') {
+      b.named['that creature'] = { ref: 'trigger_object' };
+      b.named['that permanent'] = { ref: 'trigger_object' };
+    }
+    return {
+      trigger: { type: 'counters_put', ...(countersOn[1] ? { counter: countersOn[1] } : {}), subject, ...(youPut ? { byYou: true } : {}) },
+      it: subject.ref === 'self' ? subject : { ref: 'trigger_object' },
+      player: null,
+    };
   }
   // Fathom Mage: "Whenever a +1/+1 counter is put on this creature" — once for each counter.
-  const aCounter = /^an? ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
-  if (aCounter) return { trigger: { type: 'counters_put', counter: aCounter[1]!, subject: { ref: 'self' }, each: true }, it: { ref: 'self' }, player: null };
+  // Flourishing Defenses: "Whenever a -1/-1 counter is put on a creature".
+  const aCounter = /^an? ([+-]\d+\/[+-]\d+|\w+) counter is put on (~|(?:a|an|another) (.+))$/.exec(t);
+  if (aCounter) {
+    let subject: Ref = { ref: 'self' };
+    if (aCounter[3]) {
+      const pf = parseFilter(aCounter[3], b);
+      if (!pf || pf.plural) return null;
+      if (/^another /.test(aCounter[2]!)) pf.filter.other = true;
+      subject = { ref: 'all', filter: pf.filter };
+      b.named['that creature'] = { ref: 'trigger_object' };
+    }
+    return { trigger: { type: 'counters_put', counter: aCounter[1]!, subject, each: true }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+  }
   // Midnight Clock: "When the twelfth hour counter is put on this artifact" — as its count of them reaches twelve.
   const nthCounter = /^the (first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth) ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
   if (nthCounter) {
@@ -1339,16 +1406,26 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
   // Mayhem Devil: "Whenever a player sacrifices a permanent"
-  const sacrificed = /^(you|a player|an opponent) sacrifices? (a|an|another) (.+)$/.exec(t);
+  // Camellia, the Seedmiser: "Whenever you sacrifice one or more Foods" — once for those sacrificed together (CR 603.2c).
+  const sacrificed = /^(you|a player|an opponent|one or more players) sacrifices? (a|an|another|one or more(?: other)?) (.+)$/.exec(t);
   if (sacrificed) {
+    const batch = sacrificed[2]!.startsWith('one or more');
+    if (sacrificed[1] === 'one or more players' && !batch) return null;
     const pf = parseFilter(sacrificed[3]!, b);
-    if (!pf || pf.plural || (pf.filter.controller && pf.filter.controller !== 'you')) return null;
+    if (!pf || pf.plural !== batch || (pf.filter.controller && pf.filter.controller !== 'you')) return null;
     if (sacrificed[1] !== 'you' && pf.filter.controller) return null;
     const { controller: _c, ...filter } = pf.filter;
-    b.named['that creature'] = { ref: 'trigger_object' };
-    b.named['that permanent'] = { ref: 'trigger_object' };
-    const who = sacrificed[1] === 'you' ? {} : { who: sacrificed[1] === 'a player' ? 'any' : 'opponent' };
-    return { trigger: { type: 'sacrificed', filter, ...who, ...(sacrificed[2] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: sacrificed[1] === 'you' ? null : { ref: 'trigger_player' } };
+    if (!batch) {
+      b.named['that creature'] = { ref: 'trigger_object' };
+      b.named['that permanent'] = { ref: 'trigger_object' };
+    }
+    const who = sacrificed[1] === 'you' ? {} : { who: sacrificed[1] === 'an opponent' ? 'opponent' : 'any' };
+    const other = sacrificed[2] === 'another' || sacrificed[2] === 'one or more other';
+    return {
+      trigger: { type: 'sacrificed', filter, ...who, ...(other ? { other: true } : {}), ...(batch ? { batch: true } : {}) },
+      it: batch ? null : { ref: 'trigger_object' },
+      player: sacrificed[1] === 'you' || batch ? null : { ref: 'trigger_player' },
+    };
   }
   const life = /^(you) gain life( for the first time each turn)?$/.exec(t);
   if (life) {

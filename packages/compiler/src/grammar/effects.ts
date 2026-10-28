@@ -1594,7 +1594,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const extraLand = /^(You|Each player) may play (an|two) additional lands? this turn$/.exec(s);
   if (extraLand) return [{ type: 'extra_land', who: { ref: extraLand[1] === 'You' ? 'you' : 'players' }, ...(extraLand[2] === 'two' ? { amount: 2 } : {}) }];
   // Rishkar's Expertise: "You may cast a spell with mana value 5 or less from your hand without paying its mana cost."
-  const fromHand = /^[Yy]ou may cast (?:a|an) (.+? )?spell( with mana value (?:\d+|X) or less)? from your hand without paying its mana cost$/.exec(s);
+  // Buster Sword: "you may cast a spell from your hand with mana value less than or equal to that damage without paying its
+  // mana cost" — the same, with the quality after "from your hand".
+  const fromHand =
+    /^[Yy]ou may cast (?:a|an) (.+? )?spell( with mana value (?:\d+|X) or less)? from your hand without paying its mana cost$/.exec(s) ??
+    /^[Yy]ou may cast (?:a|an) (.+? )?spell from your hand( with mana value (?:\d+ or less|less than or equal to .+?))? without paying its mana cost$/.exec(s);
   if (fromHand) {
     const r = attempt(b, (b) => {
       const noun = `${(fromHand[1] ?? '').trim() ? `${fromHand[1]!.trim()} card` : 'card'}${fromHand[2] ?? ''} in your hand`;
@@ -2450,7 +2454,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // in order, where the first is a sentence of its own kind.
   for (const j of joints) {
     // "… shuffles it into their library, then draws two cards": the subject goes on — not this.
-    if (j[0] !== ', then ' || /^\w+s\b/.test(s.slice(j.index! + j[0].length).replace(/^amass\b/, 'amass_'))) continue;
+    // Karazikar: "tap target creature that player controls and goad it" — an instruction of its own kind after "and".
+    const andImperative = j[0] === ' and ' && /^goad (?:it|them)$/.test(s.slice(j.index! + j[0].length));
+    if ((j[0] !== ', then ' && !andImperative) || /^\w+s\b/.test(s.slice(j.index! + j[0].length).replace(/^amass\b/, 'amass_'))) continue;
     const r = attempt(b, (b) => {
       const l = parseSentence(s.slice(0, j.index), b);
       const rest = l ? parseSentence(capitalise(s.slice(j.index! + j[0].length)), b) : null;
@@ -2654,6 +2660,9 @@ const VERBS: Record<string, VerbHandler> = {
       return [node];
     }
     // CR 508.4: "… tokens that are tapped and attacking"
+    // Soaring Lightbringer: "… token that's tapped and attacking that player" — the player the trigger is about.
+    const attackingPlayer = / (?:that are|that's|that is) tapped and attacking that player$/.test(args) ? parsePlayerRef('that player', b) : null;
+    if (attackingPlayer) args = args.replace(/ that player$/, '');
     const attackingSuffix = / (?:that are|that's|that is) tapped and attacking$|,? tapped and attacking$/;
     const attacking = attackingSuffix.test(args);
     if (attacking) args = args.replace(attackingSuffix, '');
@@ -2693,6 +2702,7 @@ const VERBS: Record<string, VerbHandler> = {
     if (attacking) {
       node.tapped = true;
       node.attacking = true;
+      if (attackingPlayer) node.attackingPlayer = attackingPlayer;
     }
     createdTokens(b);
     if (attached) {
@@ -2770,7 +2780,7 @@ const VERBS: Record<string, VerbHandler> = {
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (onto[1] === 'that card' && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -3256,11 +3266,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
   const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);
-  const experience = /^(.+?) gets? (an?|one|two|three|four|five|six|seven|eight|nine|ten) (experience|rad|poison) counters?$/i.exec(c);
+  const experience = /^(.+?) gets? (an?|one|two|three|four|five|six|seven|eight|nine|ten|that many) (experience|rad|poison) counters?$/i.exec(c);
   if (energy || experience) {
     const who = parsePlayerRef((energy ?? experience)![1]!, b);
-    const amount = energy ? energy[2]!.length / 3 : parseAmount(experience![2]!);
-    return who && typeof amount === 'number' ? [{ type: 'get_counters', who, counter: energy ? 'energy' : experience![3]!, amount }] : null;
+    // Etali, Primal Sickness: "they get that many poison counters" — how much the trigger event was.
+    if (experience?.[2] === 'that many' && !b.eventAmount) return null;
+    const amount = energy ? energy[2]!.length / 3 : experience![2] === 'that many' ? { kind: 'event' as const } : parseAmount(experience![2]!);
+    return who && (typeof amount === 'number' || typeof amount === 'object') && amount !== null ? [{ type: 'get_counters', who, counter: energy ? 'energy' : experience![3]!, amount }] : null;
   }
   // CR 701.34a
   if (/^proliferate$/i.test(c)) return [{ type: 'proliferate' }];

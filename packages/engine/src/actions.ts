@@ -332,9 +332,10 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   if (g.players[player]!.landsPlayedThisTurn >= landsAllowed(g, player)) throw new RulesError('You’ve already played a land this turn.');
 
   g.players[player]!.landsPlayedThisTurn++;
+  const from = o.zone;
   // CR 116.2a: playing a land is a special action — it goes straight onto the battlefield.
   moveObject(g, id, 'battlefield', events, { controller: player, face: faceIndex });
-  events.push({ type: 'land_played', player, object: id });
+  events.push({ type: 'land_played', player, object: id, from });
   // CR 116.3: a player who takes a special action receives priority afterward.
   givePriority(g, player);
 }

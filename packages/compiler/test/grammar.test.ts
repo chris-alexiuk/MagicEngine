@@ -2473,3 +2473,29 @@ describe('slice 196 (more)', () => {
     expect(parse('During your turn, creatures and planeswalkers you control have lifelink.', 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { types: ['Creature', 'Planeswalker'] } }, condition: { type: 'your_turn' } } });
   });
 });
+
+describe('slice 197', () => {
+  it('reads "that damage" limits, poison for that many and same-name counts', () => {
+    expect(parse('Whenever equipped creature deals combat damage to a player, draw a card, then you may cast a spell from your hand with mana value less than or equal to that damage without paying its mana cost.', 'Artifact — Equipment').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'cast_from_hand', filter: { manaValue: { op: 'le', n: { kind: 'event' } } } }] });
+    expect(parse('Whenever ~ deals combat damage to a player, they get that many poison counters.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'get_counters', counter: 'poison', amount: { kind: 'event' } }] });
+    expect(parse('At the beginning of your upkeep, if you control eight or more artifacts with the same name as one another, you win the game.', 'Enchantment').abilities[0]).toMatchObject({ condition: { type: 'same_name', filter: { types: ['Artifact'] }, min: 8 } });
+    // Not as a target's limit: it's the event's.
+    expect(parse('Destroy target creature with mana value less than or equal to that damage.', 'Instant').unparsed).toHaveLength(1);
+  });
+});
+
+describe('slice 197 (more)', () => {
+  it('reads attacks on a player, batches of sacrifices, either-event triggers and counters of any kind', () => {
+    expect(parse('Whenever you attack a player with one or more equipped creatures, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', perPlayer: true, filter: { equipped: true } } });
+    expect(parse('Whenever two or more creatures you control attack a player, draw a card.', 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', perPlayer: true, min: 2 } });
+    expect(parse('Whenever one or more Merfolk you control attack a player, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', perPlayer: true, filter: { subtypes: ['Merfolk'] } } });
+    expect(parse('Whenever you sacrifice one or more Foods, create a 1/1 green Squirrel creature token.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'sacrificed', batch: true, filter: { subtypes: ['Food'] } } });
+    expect(parse('Whenever you play a legendary land or cast a legendary spell, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'land_played', filter: { supertypes: ['Legendary'] } }, { type: 'cast' }] } });
+    expect(parse('Whenever you proliferate, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'proliferated' } });
+    expect(parse("Whenever you put one or more counters on a creature you don't control, draw a card.", 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'counters_put', byYou: true } });
+    expect(parse("Whenever you attack a player, create a 1/1 white Glimmer enchantment creature token that's tapped and attacking that player.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', attacking: true, attackingPlayer: { ref: 'trigger_player' } }] });
+    expect(parse('Other Merfolk you control get +1/+1.', 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { subtypes: ['Merfolk'], other: true } } } });
+    // A single Merfolk is still a single one.
+    expect(parse('Sacrifice a Merfolk: Draw a card.', 'Creature').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 1 }] } });
+  });
+});
