@@ -2039,7 +2039,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // Baleful Mastery: "an opponent draws a card" — the controller chooses one of their opponents as it resolves.
   choose_opponent(node, ctx) {
     const g = ctx.g;
-    const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
+    // The Black Gate: "Choose a player with the most life or tied for most life."
+    const live = livePlayers(g);
+    const most = Math.max(...live.map((p) => g.players[p]!.life));
+    const opponents = live.filter((p) => (node.anyPlayer || p !== ctx.controller) && (!node.mostLife || g.players[p]!.life === most));
     if (!opponents.length || !ctx.resolution) return true;
     const answer = answerOf(ctx, 'choose_option');
     if (opponents.length === 1) ctx.resolution.chosenOpponent = opponents[0]!;
@@ -2047,13 +2050,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const p = opponents.find((x) => g.players[x]!.name === answer.choice || x === answer.choice);
       if (!p) throw new RulesError('Choose an opponent.');
       ctx.resolution.chosenOpponent = p;
-    } else return { ask: { kind: 'choose_option', player: ctx.controller, options: opponents.map((p) => g.players[p]!.name), text: 'Choose an opponent.', sourceName: sourceName(ctx) } };
+    } else return { ask: { kind: 'choose_option', player: ctx.controller, options: opponents.map((p) => g.players[p]!.name), text: node.anyPlayer ? 'Choose a player.' : 'Choose an opponent.', sourceName: sourceName(ctx) } };
     return true;
   },
 
   // CR 702.112a: "it becomes renowned".
   become_renowned(node, ctx) {
     for (const o of refObjects(ctx, { ref: 'self' })) if (o.zone === 'battlefield') o.renowned = true;
+    return true;
+  },
+
+  // CR 701.64a: "Harness [this permanent]" — if it isn't harnessed, it becomes harnessed.
+  harness(_node, ctx) {
+    const s = ctx.source;
+    if (s && s.zone === 'battlefield' && (ctx.sourceZcc === undefined || s.zcc === ctx.sourceZcc)) s.harnessed = true;
     return true;
   },
 

@@ -58,6 +58,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Fable of the Mirror-Breaker: "You may discard up to two cards. If you do, draw that many cards." — discarding none is
   // not doing it, so it's "Discard up to two cards, then draw that many cards".
   text = text.replace(/\bYou may discard up to (\w+) cards\. If you do, draw that many cards\./, 'Discard up to $1 cards, then draw that many cards.');
+  // Odric, Lunarch Marshal: "creatures you control gain first strike until end of turn if a creature you control has first
+  // strike. The same is true for flying, deathtouch, …, and vigilance." — one check for each keyword, as it resolves.
+  const sameFor = /^([Cc]reatures you control) gain ([a-z ]+) until end of turn if a creature you control has \2\. The same is true for ([a-z ,]+)\.$/.exec(text.trim());
+  if (sameFor) {
+    const kws = [sameFor[2]!, ...sameFor[3]!.split(/, (?:and )?| and /)];
+    text = kws.map((k) => `If you control a creature with ${k}, creatures you control gain ${k} until end of turn.`).join(' ');
+  }
   // Primal Amulet, Treasure Map: "Then if there are four or more charge counters on it, remove those counters and transform
   // it."; Replicating Ring: "if it has eight or more night counters on it, remove all of them and …" — that kind of counter.
   text = text.replace(
@@ -2134,6 +2141,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 701.30b: "Clash with an opponent."
   if (/^[Cc]lash with an opponent$/.test(s)) return [{ type: 'clash' }];
+  // CR 701.64a: "Harness The Soul Stone."
+  if (/^[Hh]arness ~$/.test(s)) return [{ type: 'harness' }];
   // "Discard all the cards in your hand, then draw that many cards", "discard up to two cards, then draw that many cards",
   // Flux: "Each player discards any number of cards, then draws that many cards." (CR 701.9, 121.1)
   // Valakut Awakening: "Put any number of cards from your hand on the bottom of your library, then draw that many cards plus one."
@@ -2713,6 +2722,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     b.player = who;
     b.named = { ...b.named, 'the chosen player': who, 'that opponent': who };
     return [{ type: 'choose_opponent' }];
+  }
+  // The Black Gate: "Choose a player with the most life or tied for most life." — any player, you included.
+  if (/^[Cc]hoose a player with the most life or tied for most life$/.test(s)) {
+    const who: Ref = { ref: 'chosen_opponent' };
+    b.player = who;
+    b.named = { ...b.named, 'the chosen player': who, 'that player': who };
+    return [{ type: 'choose_opponent', anyPlayer: true, mostLife: true }];
   }
   // Call the Coppercoats: "Choose any number of target opponents." — those players, for what follows.
   const choosePlayers = /^[Cc]hoose ((?:any number of|two|three|up to (?:one|two|three)) target (?:opponents|players))$/.exec(s);
@@ -4178,7 +4194,10 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   if (!m) return null;
   return attempt(b, (b) => {
     const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
-    if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object') && !fromIt) return null;
+    // Super State: "Whenever enchanted creature deals combat damage to an opponent, it deals that much damage to each other
+    // opponent." — the enchanted creature is the source.
+    const fromAttached = m[1] !== '~' && b.it?.ref === 'attached';
+    if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object') && !fromIt && !fromAttached) return null;
     const timesX = /^(twice|three times|four times|five times) X$/.exec(m[2]!);
     const amount = timesX ? { kind: 'x' as const, times: { twice: 2, 'three times': 3, 'four times': 4, 'five times': 5 }[timesX[1] as 'twice'] } : parseAmount(m[2]!);
     if (amount === null) return null;
@@ -4187,14 +4206,14 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     // Stuffy Doll: "~ deals 1 damage to itself."
     const first = m[3] === 'itself' && m[1] === '~' ? [{ ref: 'self' } as Ref] : parseRecipients(second ? second[1]! : m[3]!, b);
     if (!first) return null;
-    for (const to of first) out.push({ type: 'deal_damage', amount, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : {}) });
+    for (const to of first) out.push({ type: 'deal_damage', amount, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : fromAttached ? { from: { ref: 'attached' } } : {}) });
     // "If a creature dealt damage this way would die this turn, …"
     if (first.length === 1) b.damaged = first[0]!;
     if (second) {
       const amount2 = parseAmount(second[2]!);
       const rest = amount2 !== null ? parseRecipients(second[3]!, b) : null;
       if (!rest || amount2 === null) return null;
-      for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : {}) });
+      for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : fromAttached ? { from: { ref: 'attached' } } : {}) });
     }
     return out;
   });

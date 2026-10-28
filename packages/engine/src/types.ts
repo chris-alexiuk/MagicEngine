@@ -123,6 +123,8 @@ export interface LKIStats {
 export interface CostLKI {
   sacrificed?: LKIStats[];
   discarded?: LKIStats[];
+  /** Food Chain: "Exile a creature you control" — what was exiled, as it last existed on the battlefield. */
+  exiled?: LKIStats[];
   /** The creature tapped for a station ability. */
   tapped?: LKIStats[];
   /** What the creature returned for ninjutsu or sneak was attacking (CR 702.49c, 702.190b). */
@@ -211,6 +213,8 @@ export interface GameObject {
   ringBearer?: PlayerId;
   /** CR 701.37b: monstrous until it leaves the battlefield. */
   monstrous?: true;
+  /** CR 701.64b: harnessed (until it leaves the battlefield). */
+  harnessed?: true;
   /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. */
   exileOnLeave?: true;
   /** How it was cast, kept as the spell becomes a permanent ("if it was kicked", "if you cast it"). */

@@ -309,6 +309,7 @@ export function moveObject(
   delete o.activatedTurn;
   delete o.triggeredTurn;
   delete o.monstrous;
+  delete o.harnessed;
   delete o.chosen;
   delete o.exiledBy;
   delete o.skipUntap;

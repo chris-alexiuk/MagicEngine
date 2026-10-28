@@ -107,11 +107,14 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // A token without subtypes needs a name (CR 111.4).
   if ((!subtypes.length && !m[6]) || !types.length) return null;
   const isCreature = types.includes('Creature');
-  if (isCreature !== Boolean(m[3])) return null; // creature tokens state P/T; others don't
   const extra = m[7] ? withText(m[7], b) : { text: '', quoted: [] };
   if (!extra) return null;
+  // Wrenn and Seven: "a green Treefolk creature token with reach and "This token's power and toughness are each equal to
+  // the number of lands you control."" — no stated size; it's defined by the ability (CR 604.3).
+  const cda = isCreature && !m[3] && /^This (?:token|creature)'s power and toughness are each equal to /m.test(extra.text);
+  if (isCreature !== Boolean(m[3]) && !cda) return null; // creature tokens state P/T; others don't
   const typeLine = subtypes.length ? `${types.join(' ')} — ${subtypes.join(' ')}` : types.join(' ');
-  const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? [m[3]!, m[4]!] : undefined);
+  const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? (cda ? ['*', '*'] : [m[3]!, m[4]!]) : undefined);
   // CR 205.4a: a legendary token is a legendary permanent (the legend rule applies to it).
   if (legendary) {
     face.supertypes = ['Legendary'];

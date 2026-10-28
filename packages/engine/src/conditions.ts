@@ -9,7 +9,7 @@ import { isRingBearer } from './ring.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
 ];
 
@@ -612,6 +612,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'monstrous':
       // CR 701.37b
       return Boolean(source?.monstrous && source.zone === 'battlefield');
+    case 'harnessed':
+      // CR 702.186b: "∞ — [Ability]" — as long as this permanent is harnessed (CR 701.64b).
+      return Boolean(source?.harnessed && source.zone === 'battlefield');
     case 'class_level': {
       // CR 716.2d: a permanent with no level is level 1.
       const level = source?.classLevel ?? 1;

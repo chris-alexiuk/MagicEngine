@@ -308,6 +308,16 @@ const CARDS = [
   makeCard({ name: 'Shepherd Lite', type_line: 'Creature — Angel', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Landfall — Whenever a land you control enters, you may return target nonland permanent card from your graveyard to your hand. If that land is a Plains, you may return that nonland permanent card to the battlefield instead.' }),
   makeCard({ name: 'Shinobi Lite', type_line: 'Creature — Zombie Ninja', mana_cost: '{0}', power: '5', toughness: '4', oracle_text: 'Whenever this creature deals combat damage to a player, that player exiles the top two cards of their library. Until end of turn, you may play those cards without paying their mana costs.' }),
   makeCard({ name: 'Symmetry Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Choose two target players. Each of them searches their library for a card, then shuffles and puts that card on top.' }),
+  makeCard({ name: 'Chain Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Exile a creature you control: Add X mana of any one color, where X is 1 plus the exiled creature's mana value. Spend this mana only to cast creature spells." }),
+  makeCard({ name: 'Soul Stone Lite', type_line: 'Legendary Artifact — Infinity Stone', mana_cost: '{0}', oracle_text: 'Indestructible\n{T}, Exile a creature you control: Harness Soul Stone Lite.\n∞ — At the beginning of your upkeep, return target creature card from your graveyard to the battlefield.' }),
+  makeCard({ name: 'Wrenn Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create a green Treefolk creature token with reach and "This token\'s power and toughness are each equal to the number of lands you control."' }),
+  makeCard({ name: 'Dark Realms Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target creature gets +X/+X or -X/-X until end of turn, where X is the number of Plains you control.' }),
+  makeCard({ name: 'Phantom Lite', type_line: 'Creature — Illusion', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'When this creature becomes the target of a spell or ability, sacrifice it.' }),
+  makeCard({ name: 'Skitterspike Lite', type_line: 'Artifact Creature — Toy', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: 'Whenever this creature attacks, blocks, or becomes the target of a spell, it deals damage equal to its power to each opponent.' }),
+  makeCard({ name: 'Abduction Lite', type_line: 'Enchantment Creature — Nightmare', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "As an additional cost to cast this spell, exile a creature you control.\nWhen this creature enters, exile target creature an opponent controls.\nWhen this creature leaves the battlefield, put each card exiled with it into its owner's hand." }),
+  makeCard({ name: 'Gate Lite', type_line: 'Legendary Land — Gate', mana_cost: '', oracle_text: '{T}: Add {B}.\n{T}: Choose a player with the most life or tied for most life. Target creature can\'t be blocked by creatures that player controls this turn.' }),
+  makeCard({ name: 'Odric Lite', type_line: 'Legendary Creature — Human Soldier', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'At the beginning of each combat, creatures you control gain first strike until end of turn if a creature you control has first strike. The same is true for flying, deathtouch, double strike, haste, hexproof, indestructible, lifelink, menace, reach, skulk, trample, and vigilance.' }),
+  makeCard({ name: 'Flier', type_line: 'Creature — Bird', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flying' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -3451,6 +3461,116 @@ describe('staples (slice 210): more', () => {
       g = settle(act(g, { type: 'choose', player: p.player, answer: { kind: 'search', objects: [p.player === 'alice' ? a : b2] } }));
     }
     expect([g.zones.library.alice![0], g.zones.library.bob![0]]).toEqual([a, b2]);
+  });
+});
+
+describe('staples (slice 211)', () => {
+  const obj = (id: string) => ({ kind: 'object' as const, object: id });
+
+  it('Phantasmal Image: "sacrifice it" — the creature, not the spell targeting it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ph = give(g, 'alice', 'Phantom Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[obj(ph)]] });
+    g = settle(g);
+    expect(g.objects[ph]!.zone).toBe('graveyard');
+  });
+
+  it('Giggling Skitterspike: damage equal to its power when a spell targets it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const s = give(g, 'alice', 'Skitterspike Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[obj(s)]] }));
+    expect(g.players.bob!.life).toBe(life - 1);
+  });
+
+  it('Fear of Abduction: the creature exiled to cast it comes back too (CR 607.2a)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    const fear = give(g, 'alice', 'Abduction Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: fear, costs: { exile: [cub] } });
+    expect(g.objects[cub]!.zone).toBe('exile');
+    g = settle(g);
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(ogre)]] } }));
+    expect(g.objects[ogre]!.zone).toBe('exile');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[obj(fear)]] }));
+    expect([g.objects[cub]!.zone, g.objects[ogre]!.zone]).toEqual(['hand', 'hand']);
+  });
+
+  it('The Black Gate: unblockable by the creatures of the player with the most life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const gate = give(g, 'alice', 'Gate Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    g.objects[ogre]!.sick = false;
+    const wall = give(g, 'bob', 'Ogre', 'battlefield');
+    g.players.bob!.life = g.players.alice!.life + 5;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: gate, ability: 0, targets: [[obj(ogre)]] }));
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: ogre, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 10 && g.pending?.kind !== 'declare_blockers'; i++) if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    expect(illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: wall, attacker: ogre }] } })).toBeTruthy();
+  });
+
+  it('Odric, Lunarch Marshal: creatures share the keywords any of them has', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Odric Lite', 'battlefield');
+    give(g, 'alice', 'Flier', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    g = settle(toStep(g, 'beginning_of_combat'));
+    expect(chars(g, g.objects[ogre]!).keywords.map((k) => k.id)).toContain('flying');
+    expect(chars(g, g.objects[ogre]!).keywords.map((k) => k.id)).not.toContain('trample');
+  });
+
+  it('Food Chain: exile a creature for one more mana than its mana value, for creature spells only', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const chain = give(g, 'alice', 'Chain Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: chain, ability: 0, choice: 'G', costs: { exile: [bear] } });
+    expect(g.objects[bear]!.zone).toBe('exile');
+    const pool = g.players.alice!.restricted ?? [];
+    expect(pool.filter((r) => r.color === 'G').reduce((n, r) => n + r.amount, 0)).toBe(3);
+  });
+
+  it('The Soul Stone: once harnessed, its upkeep ability returns a creature', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const stone = give(g, 'alice', 'Soul Stone Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'graveyard');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: stone, ability: 0, costs: { exile: [cub] } } as never));
+    expect(g.objects[stone]!.harnessed).toBe(true);
+    g = toStep(g, 'upkeep', 'alice');
+    if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(ogre)]] } });
+    g = settle(g);
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+  });
+
+  it("The Soul Stone: not harnessed, no upkeep trigger", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Soul Stone Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'graveyard');
+    g = settle(toStep(g, 'upkeep', 'alice'));
+    expect(g.pending).toBeFalsy();
+    expect(g.objects[ogre]!.zone).toBe('graveyard');
+  });
+
+  it("Wrenn and Seven: the Treefolk's power and toughness are the number of lands you control", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 3; i++) give(g, 'alice', 'Forest', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Wrenn Lite', 'hand') }));
+    const tree = g.zones.battlefield.find((id) => g.cards[g.objects[id]!.card]!.faces[0]!.name === 'Treefolk Token')!;
+    const lands = g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'alice' && chars(g, g.objects[id]!).types.includes('Land')).length;
+    expect([chars(g, g.objects[tree]!).power, chars(g, g.objects[tree]!).toughness]).toEqual([lands, lands]);
+  });
+
+  it('Liliana of the Dark Realms: +X/+X or -X/-X, chosen as it resolves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 2; i++) give(g, 'alice', 'Plains', 'battlefield');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Dark Realms Lite', 'hand'), targets: [[obj(ogre)]] }));
+    expect(g.pending?.kind).toBe('choose_option');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: '-X/-X' } }));
+    expect(chars(g, g.objects[ogre]!).power).toBe(5 - 2);
   });
 });
 

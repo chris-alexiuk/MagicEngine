@@ -208,10 +208,11 @@ export class ParserRegistry {
       }
       // CR 702.178a: "Max speed — [Ability]" means "As long as your speed is 4, this object has '[Ability].'"
       // CR 721.2a: "{N+} | [abilities]" means "As long as this permanent has N or more charge counters on it, it has [abilities]."
-      const maxSpeed = /^Max speed — (.+)$/.exec(line);
+      // CR 702.186b: "∞ — [Ability]" means "As long as this permanent is harnessed, it has [ability]."
+      const maxSpeed = /^Max speed — (.+)$/.exec(line) ?? /^∞ — (.+)$/.exec(line);
       const stationSymbol = /^(\d+)\+ \| (.+)$/.exec(line);
       if (maxSpeed || stationSymbol) {
-        const speedGate: ConditionNode = maxSpeed ? { type: 'max_speed' } : { type: 'counters', of: { ref: 'self' }, counter: 'charge', min: Number(stationSymbol![1]) };
+        const speedGate: ConditionNode = maxSpeed ? (line.startsWith('∞') ? { type: 'harnessed' } : { type: 'max_speed' }) : { type: 'counters', of: { ref: 'self' }, counter: 'charge', min: Number(stationSymbol![1]) };
         const rest = maxSpeed ? maxSpeed[1]! : stationSymbol![2]!;
         const inner = this.keywords.parseLine(rest);
         if (inner) {
@@ -572,7 +573,7 @@ export class ParserRegistry {
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {
       const node = rule.parse(normalised, original, ctx);
-      if (node) return node;
+      if (node && !exiledCostMissing(node)) return node;
     }
     return null;
   }
@@ -732,3 +733,9 @@ function escapeRegExp(s: string): string {
 
 /** Shared default registry; plugins can construct their own and add rules/keywords. */
 export const defaultRegistry = new ParserRegistry();
+
+/** Food Chain: "the exiled creature's mana value" is about an exile cost — an ability without one can't read it. */
+function exiledCostMissing(node: AbilityNode): boolean {
+  if (!JSON.stringify(node).includes('"cost":"exiled"')) return false;
+  return !(node.kind === 'activated' && node.cost.other?.some((c) => c.type === 'exile_cards' && c.from === 'battlefield'));
+}

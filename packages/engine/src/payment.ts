@@ -82,6 +82,8 @@ export function craftCandidates(g: GameState, player: PlayerId, o: GameObject, c
 
 export function exileCostCandidates(g: GameState, player: PlayerId, o: GameObject, c?: EffectNode): ObjectId[] {
   const filter = c?.filter as ObjectFilter | undefined;
+  // Food Chain: "Exile a creature you control".
+  if (c?.from === 'battlefield') return g.zones.battlefield.filter((id) => g.objects[id]!.controller === player && (!filter || matchesFilter(g, g.objects[id]!, filter, { controller: player, source: o })));
   // "Exile a creature card from your graveyard"; "exile a blue card from your hand" (Force of Will).
   const zone = c?.from === 'hand' ? 'hand' : 'graveyard';
   return zoneList(g, zone, player).filter((id) => id !== o.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone }, { controller: player, source: o })));
@@ -243,7 +245,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const n = Number(c.amount ?? 1);
       const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
-      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} other card(s) in your ${c.from === 'hand' ? 'hand' : 'graveyard'} to exile.`);
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(c.from === 'battlefield' ? `Choose ${n} permanent(s) you control to exile.` : `Choose ${n} other card(s) in your ${c.from === 'hand' ? 'hand' : 'graveyard'} to exile.`);
     } else if (c.type === 'blight') {
       // CR 701.68b: with no creature to put the counters on, you can't blight.
       const chosen = choices.blighted ?? [];
@@ -309,15 +311,17 @@ export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}): Co
   const stats = (id: string) => lkiStats(g, g.objects[id]!);
   const sacrificed = (cost.other ?? []).some((c) => c.type === 'sacrifice') ? (choices.sacrifice ?? []).map(stats) : [];
   const discarded = (cost.other ?? []).some((c) => c.type === 'discard') ? (choices.discard ?? []).map(stats) : [];
+  const exiled = (cost.other ?? []).some((c) => c.type === 'exile_cards' && c.from === 'battlefield') ? (choices.exile ?? []).map(stats) : [];
   // Station: "equal to the tapped creature's power" (CR 702.184a).
   const tapped = (cost.other ?? []).some((c) => c.type === 'station') ? (choices.crew ?? []).map(stats) : [];
   // Ninjutsu, sneak: what the returned creature was attacking.
   const returned = (cost.other ?? []).some((c) => c.type === 'return_unblocked') ? choices.returned?.[0] : undefined;
   const attackTarget = returned ? g.combat?.attackers[returned]?.target : undefined;
-  if (!sacrificed.length && !discarded.length && !tapped.length && !attackTarget) return undefined;
+  if (!sacrificed.length && !discarded.length && !exiled.length && !tapped.length && !attackTarget) return undefined;
   return {
     ...(sacrificed.length ? { sacrificed } : {}),
     ...(discarded.length ? { discarded } : {}),
+    ...(exiled.length ? { exiled } : {}),
     ...(tapped.length ? { tapped } : {}),
     ...(attackTarget ? { attackTarget: { ...attackTarget } } : {}),
   };
@@ -400,7 +404,14 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'return_unblocked' || c.type === 'return_permanents') {
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
-      for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
+      // CR 607.2a: what a cost exiles is "exiled with" its source — Fear of Abduction's "each card exiled with it" includes
+      // the creature exiled to cast it (the permanent the spell becomes).
+      for (const id of choices.exile ?? []) {
+        moveObject(g, id, 'exile', events);
+        const x = g.objects[id];
+        // A spell's costs are paid before it moves to the stack (then onto the battlefield): two zone changes on.
+        if (x?.zone === 'exile' && c.from === 'battlefield') x.exiledBy = { id: o.id, zcc: o.zone === 'battlefield' ? o.zcc : o.zone === 'stack' ? o.zcc + 1 : o.zcc + 2 };
+      }
     } else if (c.type === 'blight') {
       const target = choices.blighted?.[0] ? g.objects[choices.blighted[0]] : undefined;
       if (target) blight(g, player, target, Number(c.amount ?? 1), events);
@@ -471,6 +482,8 @@ export function runManaAbility(
   }
   if (ability.cost.tap) setTapped(g, id, true, events);
   if (ability.cost.untap) setTapped(g, id, false, events);
+  // CR 608.2h: "1 plus the exiled creature's mana value" — what the cost moved, as it was.
+  const lki = costLKI(g, ability.cost, costChoices);
   payOtherCosts(g, player, o, ability.cost, events, costChoices);
 
   // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
@@ -480,8 +493,8 @@ export function runManaAbility(
   const times = ability.cost.tap && o.zone === 'battlefield' ? manaMultiplier(g, player) : 1;
   while (queue.length) {
     const e = queue.shift()!;
-    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {} });
-    if (ok === true && e.type === 'add_mana') for (let k = 1; k < times; k++) runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {} });
+    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}) });
+    if (ok === true && e.type === 'add_mana') for (let k = 1; k < times; k++) runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}) });
     // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
     if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
     else if (ok !== true) throw new RulesError(e.type === 'add_mana' ? 'Choose which mana to add.' : 'That mana ability can’t be resolved automatically.');

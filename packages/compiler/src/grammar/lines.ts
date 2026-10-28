@@ -357,6 +357,13 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1 || pf.filter.zone) return null;
     return { type: 'return_permanents', amount, filter: pf.filter };
   }
+  // Food Chain: "Exile a creature you control"; The Soul Stone, Altar of Bhaal.
+  const exileOwn = /^[Ee]xile (a|an|another) (.+? you control)$/.exec(item);
+  if (exileOwn && b && !/ from /.test(exileOwn[2]!)) {
+    const pf = parseFilter(exileOwn[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    return { type: 'exile_cards', amount: 1, from: 'battlefield', filter: { ...pf.filter, ...(exileOwn[1] === 'another' ? { other: true } : {}) } };
+  }
   // "Exile a creature card from your graveyard", "Exile two cards from your graveyard" (CR 118.3).
   const exile = /^[Ee]xile (a|an|one|two|three|four|five) (.+?) from your graveyard$/.exec(item);
   if (exile && b) {
@@ -501,6 +508,8 @@ export const activatedRule: GrammarRule = {
     const cost = parseCost(line.slice(0, colon), /\bPlaneswalker\b/.test(ctx.typeLine), new Binder(env));
     if (!cost) return null;
     let effectText = line.slice(colon + 2);
+    // "the exiled creature's mana value" is about an exile cost — the ability needs one.
+    if (/\bthe exiled (?:creature|artifact|permanent)'s\b/.test(effectText) && !cost.other?.some((c) => c.type === 'exile_cards' && c.from === 'battlefield')) return null;
     const node: ActivatedAbility = { kind: 'activated', text: original, cost, effects: [] };
     // A cost of discarding this card means it's activated from the hand (channel, cycling);
     // exiling it from your graveyard, from the graveyard (CR 113.6m).
@@ -801,9 +810,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
     // Goldspan Dragon: "becomes the target of a spell" — not an ability.
     const of = targeted[2] === 'a spell' ? { targetedBy: 'spell' } : targeted[2] === 'an ability' ? { targetedBy: 'ability' } : {};
+    // Phantasmal Image: "When this creature becomes the target of a spell or ability, sacrifice it." — "it" is this
+    // creature; "that spell" (Bonecrusher Giant's "that spell's controller") is the spell.
+    // Frost Titan, Kira: "counter that spell or ability".
+    for (const n of ['that spell or ability', 'that spell', 'that ability']) b.named[n] ??= { ref: 'trigger_object' };
     return {
       trigger: { type: 'becomes_target', subject, ...of, ...(targeted[3] ? { by: targeted[3] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[4] ? { first: true } : {}) },
-      it: subject.ref === 'self' ? { ref: 'trigger_object' } : null,
+      it: subject.ref === 'self' ? { ref: 'self' } : null,
       player: { ref: 'trigger_player' },
     };
   }
@@ -1239,8 +1252,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const one = parseTrigger(word, `${either[1]} ${either[2]}`, b);
     const two = one ? parseTrigger(word, `${either[1]} ${either[3]}`, b) : null;
     if (!one || !two) return null;
-    // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies").
-    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
+    // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies"); a spell that
+    // targets it is "that spell".
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: /becomes the target/.test(either[3]!) && either[1] === '~' ? { ref: 'self' } : { ref: 'trigger_object' }, player: one.player ?? two.player };
+  }
+  // Giggling Skitterspike: "Whenever this creature attacks, blocks, or becomes the target of a spell".
+  const three = /^~ (enters|attacks|blocks|dies), (attacks|blocks|dies|becomes tapped), or (attacks|blocks|dies|becomes the target of a spell(?: or ability)?)$/.exec(t);
+  if (three && new Set(three.slice(1)).size === 3) {
+    const parsed = three.slice(1).map((e) => parseTrigger(word, `~ ${e}`, b));
+    if (!parsed.every(Boolean)) return null;
+    return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: { ref: 'self' }, player: null };
   }
   // Up the Beanstalk: "When this enchantment enters and whenever you cast a spell with mana value 5 or greater" — two
   // unrelated events (CR 603.2), so there's no "it" or "that player" to speak of.

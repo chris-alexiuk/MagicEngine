@@ -322,11 +322,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     return inner && !inner.half && !inner.times && !inner.plus ? { ...inner, half: dir } : null;
   }
   // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
-  const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t);
+  // Food Chain: "1 plus the exiled creature's mana value" (an exile cost; see the activated rule).
+  const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t) ?? /^the (exiled) (?:creature|artifact|permanent)'s (power|toughness|mana value)$/.exec(t);
   if (lki) {
     // Momentous Fall: "… equal to the sacrificed creature's power, then you gain life equal to its toughness."
     if (lki[1] === 'sacrificed' && (!b.it || b.it.ref === 'self')) b.it = { ref: 'sacrificed_this_way' };
-    return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
+    return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded' | 'exiled', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
   }
   // Skyclave Apparition: "the mana value of the exiled card"
   const statOfThe = /^the (power|toughness|mana value) of (.+)$/.exec(t);
