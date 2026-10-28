@@ -209,6 +209,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       return { type: 'is', of, filter: { [key]: { op: /greater|more/.test(statIs[4]!) ? 'ge' : 'le', n } } };
     }
   }
+  // Massacre Girl, Known Killer: "if its toughness was less than 1" — the creature that died, as it last existed.
+  const statWas = /^its (power|toughness) was (less than|greater than) (\w+)$/.exec(t);
+  if (statWas && b.it?.ref === 'trigger_object') {
+    const n = parseAmount(statWas[3]!);
+    if (typeof n === 'number') return { type: 'is', of: b.it, filter: { [statWas[1]!]: { op: statWas[2] === 'less than' ? 'lt' : 'gt', n } }, was: true };
+  }
   // Selvala: "if its power is greater than each other creature's power"
   if (t === "its power is greater than each other creature's power" && b.it) return { type: 'is', of: b.it, filter: { powerAboveOthers: true } };
   // Tezzeret: "If it's an artifact creature, put a +1/+1 counter on it." — what it is now (the sentence loop makes sure an
@@ -478,6 +484,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
   const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);
   if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] ?? none[2]!, max: 0 };
+  // Runaway Steam-Kin: "if this creature has fewer than three +1/+1 counters on it".
+  const fewer = /^(?:~|it) has fewer than (\w+) (\S+) counters on (?:it|him|her)$/.exec(t);
+  if (fewer) {
+    const n = parseAmount(fewer[1]!);
+    const of: Ref = /^it /.test(t) ? (b.it ?? { ref: 'self' }) : { ref: 'self' };
+    return typeof n === 'number' ? { type: 'counters', of, counter: fewer[2]!, max: n - 1 } : null;
+  }
   // "~ has a +1/+1 counter on it", "~ has three or more +1/+1 counters on it", "~ has a counter on it".
   const has =
     /^(?:~|it) has (a|an|one or more|\w+ or more) (?:(\S+) )?counters? on (?:it|him|her|them)$/.exec(t) ??

@@ -469,7 +469,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human".
       const [o] = refObjects(ctx, cond.of as never);
       // "Counter target spell if it's blue": the object wherever it is.
-      return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: o.zone !== 'battlefield' }));
+      // "if its toughness was less than 1": as it last existed on the battlefield — a token that died has ceased to
+      // exist (CR 704.5d), so only what was remembered of it.
+      if (!o && cond.was && (cond.of as Ref).ref === 'trigger_object' && ctx.trigger?.object) {
+        const lk = g.lastKnown?.[ctx.trigger.object.id];
+        const f = cond.filter as ObjectFilter;
+        const ok = (v: number, c?: { op: string; n: unknown }) => !c || (c.op === 'lt' ? v < Number(c.n) : c.op === 'gt' ? v > Number(c.n) : c.op === 'le' ? v <= Number(c.n) : c.op === 'ge' ? v >= Number(c.n) : v === Number(c.n));
+        return Boolean(lk && Object.keys(f).every((k) => k === 'power' || k === 'toughness') && ok(lk.power, f.power) && ok(lk.toughness, f.toughness));
+      }
+      return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: o.zone !== 'battlefield', ...(cond.was ? { lookBack: true } : {}) }));
     }
     case 'has_attached': {
       // "~ is equipped" (CR 301.5) / "~ is enchanted" (CR 303.4): an Equipment or Aura is attached to it.

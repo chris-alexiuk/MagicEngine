@@ -73,8 +73,9 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   const pf = parseFilter(noun, b.clone());
   if (!pf) return null;
   const f = pf.filter;
-  if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes')) return null;
-  return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}) };
+  if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes' && k !== 'token')) return null;
+  // Blood Money: "each nontoken creature destroyed this way".
+  return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}), ...(f.token !== undefined ? { token: f.token } : {}) };
 }
 
 /** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
@@ -97,6 +98,13 @@ function diedThisTurn(text: string, b: Binder): AmountExpr | null {
 /** What follows "for each": a singular noun phrase. */
 export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // Multani: "for each land you control and each land card in your graveyard" — the two counts added.
+  const added = /^(.+?) and each (.+)$/.exec(t);
+  if (added) {
+    const one = parseForEach(added[1]!, b.clone());
+    const two = one ? parseForEach(added[2]!, b.clone()) : null;
+    if (one && two && !one.times && !two.times && !one.plus && !two.plus) return { kind: 'sum', parts: [one, two] };
+  }
   const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"

@@ -2141,3 +2141,14 @@ describe('slice 176', () => {
     expect(parse("Whenever you cast a spell, if the amount of mana spent to cast that spell is greater than ~'s power, put a +1/+1 counter on ~.", 'Legendary Artifact Creature — Thopter', 'Liberator').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'mana_spent' }, op: 'gt' } });
   });
 });
+
+describe('slice 177', () => {
+  it('reads three kinds of counters, legendary/enchanted filters, per-source damage, summed counts, Song of the Dryads', () => {
+    expect(parse('Put a +1/+1 counter, a reach counter, and a deathtouch counter on target creature.', 'Instant', 'Gift of the Viper').abilities[0]).toMatchObject({ effects: [{ counter: '+1/+1' }, { counter: 'reach' }, { counter: 'deathtouch' }] });
+    expect(parse("Destroy all creatures that aren't enchanted.", 'Sorcery', 'Winds of Rath').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { filter: { enchanted: false } } }] });
+    expect(parse("Whenever a source deals damage to ~, that source's controller sacrifices that many permanents of their choice.", 'Creature — Phyrexian Horror', 'Phyrexian Obliterator').abilities[0]).toMatchObject({ trigger: { perSource: true }, effects: [{ type: 'sacrifice_choice', who: { ref: 'trigger_player' }, amount: { kind: 'event' } }] });
+    expect(parse('~ gets +1/+1 for each land you control and each land card in your graveyard.', 'Legendary Creature — Elemental Avatar', 'Multani').abilities[0]).toMatchObject({ effect: { power: { kind: 'sum' } } });
+    expect(parse('Enchanted permanent is a colorless Forest land.', 'Enchantment — Aura', 'Song of the Dryads').abilities[0]).toMatchObject({ effect: { setTypes: { types: ['Land'] }, colors: [], landTypes: ['Forest'] } });
+    expect(parse("Whenever a creature an opponent controls attacks, if you're the defending player, create a 3/3 red Ogre creature token unless that creature's controller pays {3}.", 'Legendary Creature — Ogre Warrior', 'Kazuul, Tyrant of the Cliffs').abilities[0]).toMatchObject({ trigger: { defender: 'you' }, effects: [{ type: 'unless_pays', payer: { ref: 'controller_of', of: { ref: 'trigger_object' } } }] });
+  });
+});

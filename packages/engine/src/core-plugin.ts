@@ -26,7 +26,7 @@ import { installPlugin, matchTrigger, runEffect, type EffectContext, type Effect
 import { amountOf, apnap, bindFilter, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
-import { playerLoses } from './flow.js';
+import { cantLose, playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
@@ -1294,8 +1294,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // CR 104.2a / 104.3a: a player wins (everyone else loses) or loses the game.
   game_result(node, ctx) {
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
-      if (node.result === 'lose') playerLoses(ctx.g, p, 'an effect says so', ctx.events);
-      else for (const q of livePlayers(ctx.g)) if (q !== p) playerLoses(ctx.g, q, `${p} won the game`, ctx.events);
+      // "You can't lose the game" / "your opponents can't win the game" (Platinum Angel).
+      if (node.result === 'lose') {
+        if (!cantLose(ctx.g, p)) playerLoses(ctx.g, p, 'an effect says so', ctx.events);
+      } else if (!livePlayers(ctx.g).some((q) => q !== p && playerRule(ctx.g, q, 'opponents_cant_win'))) {
+        for (const q of livePlayers(ctx.g)) if (q !== p && !cantLose(ctx.g, q)) playerLoses(ctx.g, q, `${p} won the game`, ctx.events);
+      }
     }
     return true;
   },
@@ -3456,12 +3460,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.tapped && !o.tapped) return [];
     // "Whenever one or more tokens you control enter": once for the batch.
     if (t.batch) {
-      const first = (check.batch ?? [e]).find((x) => {
+      const all = (check.batch ?? [e]).filter((x) => {
         const xid = x.type === 'created' ? x.object : x.type === 'moved' && x.to === 'battlefield' ? x.object : null;
         const xo = xid ? check.g.objects[xid] : undefined;
         return Boolean(xo && xo.zone === 'battlefield' && subjectMatches(check, t.subject as Ref, xo));
       });
-      return first === e ? [{}] : [];
+      // "that much": how many of them entered together.
+      return all[0] === e ? [{ amount: all.length }] : [];
     }
     return [{ object: refTo(o), player: o.controller }];
   },
@@ -3714,11 +3719,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'damage' || e.to.kind !== 'permanent' || check.sourceLeft) return [];
     const to = e.to.object;
-    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to);
+    // "Whenever a source deals damage to ~": once for each source, "that source's controller" its controller.
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to && (!t.perSource || x.source === e.source));
     if (together[0] !== e) return [];
     const o = check.g.objects[to];
     const amount = together.reduce((n, x) => n + x.amount, 0);
-    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), amount }] : [];
+    const src = check.g.objects[e.source];
+    const by = t.perSource && src ? { player: src.controller } : {};
+    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), amount, ...by }] : [];
   },
   // "Whenever you're dealt damage"
   player_dealt_damage(t, check) {
@@ -3964,6 +3972,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const after = o.counters[e.counter] ?? 0;
       if (!(after - amount < t.reaches && after >= t.reaches)) return [];
     }
+    // Fathom Mage: "Whenever a +1/+1 counter is put on this creature" — once for each counter.
+    if (t.each) return Array.from({ length: amount }, () => ({ object: refTo(o), amount: 1 }));
     return [{ object: refTo(o), amount }];
   },
   // "Whenever you sacrifice a Clue", "Whenever you sacrifice another permanent" (CR 701.21a).

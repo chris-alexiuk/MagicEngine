@@ -99,6 +99,9 @@ interface ActiveEffect {
   combat?: CombatRules;
   /** Layer 7d: switch power and toughness. */
   switchPT?: true;
+  /** Tetsuko Umezawa: "Creatures you control with power or toughness 1 or less can't be blocked" — which creatures is
+   * decided by their power and toughness after layer 7, so these rules and keywords are applied last. */
+  ptGated?: true;
   /** Does it apply to `o`, whose characteristics so far are `c`? */
   applies(o: GameObject, c: Characteristics): boolean;
 }
@@ -318,7 +321,7 @@ function staticAmount(g: GameState, a: Amount | undefined, source: GameObject): 
     counting.pop();
   }
   // Counts of objects, cards and players don't depend on power and toughness, so they can be reused.
-  if (amountMemo && typeof a === 'object' && a.kind !== 'stat') {
+  if (amountMemo && typeof a === 'object' && a.kind !== 'stat' && a.kind !== 'sum') {
     let m = amountMemo.get(a);
     if (!m) amountMemo.set(a, (m = new Map()));
     m.set(key, n);
@@ -383,6 +386,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.colors ? { colors: e.colors } : {}),
         ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
         ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
+        ...(ptGated(e) ? { ptGated: true as const } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
         ...(e.affected.ref === 'all' && (e.affected.filter as ObjectFilter | undefined)?.zone === 'stack' ? { spells: true as const } : {}),
@@ -390,6 +394,16 @@ function staticEffects(g: GameState): ActiveEffect[] {
     }
   }
   return out;
+}
+
+/** A static ability granting only rules, combat rules or plain keywords to permanents chosen by power or toughness. */
+function ptGated(e: ContinuousEffectNode): boolean {
+  if (e.affected.ref !== 'all') return false;
+  const f = e.affected.filter as ObjectFilter;
+  const byPT = (x: ObjectFilter): boolean => Boolean(x.power || x.toughness || x.anyOf?.some(byPT));
+  if (!byPT(f)) return false;
+  if (e.power !== undefined || e.toughness !== undefined || e.setPower !== undefined || e.addTypes || e.setTypes || e.loseTypes || e.colors || e.loseAbilities || e.loseKeywords || e.creatureTypes || e.landTypes) return false;
+  return !(e.keywords ?? []).some((k) => k.id === 'ability' || k.abilities?.some((a) => a.kind === 'static'));
 }
 
 /** Static abilities that give spells keywords — looked up once per state. */
@@ -539,7 +553,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     for (const [k, n] of Object.entries(o.counters)) if (n > 0 && KEYWORD_COUNTERS.has(k)) c.keywords.push({ id: k });
   }
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
-  const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
+  const inLayer6 = effects.filter((e) => !e.ptGated && (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
   for (const e of inLayer6) {
     // "loses all abilities": what it has so far goes (its own static abilities aren't applying, see lostAbilities);
     // later effects can still grant it more (CR 613.7).
@@ -579,6 +593,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
     if (!e.switchPT || !e.applies(o, out)) continue;
     [out.power, out.toughness] = [out.toughness, out.power];
   }
+  // Layer 6 effects for creatures chosen by their power or toughness: by the values just worked out.
+  for (const e of effects) {
+    if (!e.ptGated || !e.applies(o, out)) continue;
+    if (e.keywords) out.keywords.push(...e.keywords);
+    for (const r of e.rules ?? []) out.rules.add(r);
+    if (e.combat) out.combat.push(e.combat);
+  }
   return out;
 }
 
@@ -609,6 +630,8 @@ function applyOwnCDA(g: GameState, o: GameObject, c: Characteristics): void {
   for (const a of printedAbilities(faceOf(g, o))) {
     if (a.kind !== 'static' || a.effect.type !== 'continuous') continue;
     const e = a.effect as ContinuousEffectNode;
+    // Transguild Courier: "~ is all colors" — its color in every zone (layer 5 on the battlefield).
+    if (e.affected.ref === 'self' && e.colors && !e.condition && o.zone !== 'battlefield') c.colors = [...e.colors];
     if (e.setLayer !== '7a' || e.affected.ref !== 'self') continue;
     if (e.setPower !== undefined) c.power = staticAmount(g, e.setPower, o);
     if (e.setToughness !== undefined) c.toughness = staticAmount(g, e.setToughness, o);
@@ -744,8 +767,11 @@ export function matchesFilter(
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power" — in a trigger or static
   // ability, counted now from its source (as an effect resolves, bindFilter has counted it already).
   const counted = (k: { op: string; n: unknown }) => (typeof k.n === 'object' && k.n && ctx.source ? { op: k.op, n: staticAmount(g, k.n as Amount, ctx.source) } : k);
-  if (f.power && !compare(c.power, counted(f.power))) return false;
-  if (f.toughness && !compare(c.toughness, counted(f.toughness))) return false;
+  // Massacre Girl, Known Killer: "if its toughness was less than 1" — looking back, as it last existed (CR 603.10a).
+  const lastPT = ctx.lookBack && o.zone !== 'battlefield' ? g.lastKnown?.[o.id] : undefined;
+  const thenPT = lastPT && lastPT.zcc === o.zcc - 1 ? lastPT : undefined;
+  if (f.power && !compare(thenPT ? thenPT.power : c.power, counted(f.power))) return false;
+  if (f.toughness && !compare(thenPT ? thenPT.toughness : c.toughness, counted(f.toughness))) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), counted(f.manaValue))) return false;
   if (f.manaValueParity && manaValueOf(g, o) % 2 !== (f.manaValueParity === 'even' ? 0 : 1)) return false;
   // "that was dealt damage this turn"
@@ -767,9 +793,21 @@ export function matchesFilter(
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
   if (f.modified && !(then ? then.modified : isModified(g, o))) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;
+  // "creatures that aren't enchanted" — no Aura attached to it.
+  if (f.enchanted !== undefined) {
+    const enchanted = g.zones.battlefield.some((id) => {
+      const a = g.objects[id]!;
+      return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && chars(g, a).subtypes.includes('Aura');
+    });
+    if (enchanted !== f.enchanted) return false;
+  }
   if (f.attachedTo) {
     const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;
     if (!host || o.attachedTo?.id !== host.id || o.attachedTo.zcc !== host.zcc) return false;
+  }
+  if (f.attachedToType) {
+    const host = o.attachedTo ? g.objects[o.attachedTo.id] : undefined;
+    if (!host || host.zcc !== o.attachedTo!.zcc || host.zone !== 'battlefield' || !chars(g, host).types.includes(f.attachedToType)) return false;
   }
   if (f.sharesColorWithSource) {
     const theirs = ctx.source ? chars(g, ctx.source).colors : [];

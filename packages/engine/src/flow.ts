@@ -599,12 +599,15 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       const winner = livePlayers(g).find((p) => g.players[p]!.wonByEffect);
       if (winner) {
         delete g.players[winner]!.wonByEffect;
-        for (const q of livePlayers(g)) if (q !== winner && !playerRule(g, q, 'cant_lose')) losers.push({ player: q, reason: `${g.players[winner]!.name} won the game` });
+        // Platinum Angel: "your opponents can't win the game".
+        if (!livePlayers(g).some((q) => q !== winner && playerRule(g, q, 'opponents_cant_win'))) {
+          for (const q of livePlayers(g)) if (q !== winner && !cantLose(g, q)) losers.push({ player: q, reason: `${g.players[winner]!.name} won the game` });
+        }
       }
       for (const p of livePlayers(g)) {
         const ps = g.players[p]!;
         // "You can't lose the game." (CR 104.3a: conceding still works.)
-        if (playerRule(g, p, 'cant_lose')) {
+        if (cantLose(g, p)) {
           ps.drewFromEmptyLibrary = false;
           continue;
         }
@@ -738,6 +741,11 @@ function removeObjectEntirely(g: GameState, id: string): void {
 // ---------------------------------------------------------------------------
 // Leaving the game
 // ---------------------------------------------------------------------------
+
+/** "You can't lose the game" (Angel's Grace; Platinum Angel's too). */
+export function cantLose(g: GameState, p: PlayerId): boolean {
+  return Boolean(playerRule(g, p, 'cant_lose') || playerRule(g, p, 'opponents_cant_win'));
+}
 
 /** A player loses and leaves the game (CR 104.3a / CR 800.4a). */
 export function playerLoses(g: GameState, player: PlayerId, reason: string, events: GameEvent[]): void {

@@ -1297,12 +1297,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner && expr ? bindX(inner, expr) : null;
     });
   }
+  // Kazuul: "create a 3/3 red Ogre creature token unless that creature's controller pays {3}" — whoever pays, it's never
+  // about what the effect would make (that doesn't exist yet): "that creature" is the one named before.
+  const payerOf = (text: string, before: Binder, b: Binder): Ref | null => {
+    const after = parsePlayerRef(text, b);
+    return after && JSON.stringify(after).includes('"ref":"created"') ? parsePlayerRef(text, before) : after;
+  };
   // CR 118.12a / CR 119.4: "… unless that player pays 3 life" (or "{2} and 2 life").
   const unlessLife = /^(.+) unless (.+?) (?:pays|pay) (?:((?:\{(?:\d+|[WUBRGC])\})+) and )?(\d+) life$/.exec(s);
   if (unlessLife) {
     return attempt(b, (b) => {
+      const before = b.clone();
       const inner = parseSentence(unlessLife[1]!, b);
-      const payer = inner ? parsePlayerRef(unlessLife[2]!, b) : null;
+      const payer = inner ? payerOf(unlessLife[2]!, before, b) : null;
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unlessLife[3] ?? '', life: Number(unlessLife[4]), effects: inner }] : null;
     });
   }
@@ -1328,8 +1335,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         if (!players || !inner || actions.some((a) => !a)) return null;
         return [{ type: 'unless_does', perPlayer: players, actions: actions.map((a) => a!.effects), effects: inner }];
       }
+      const before = b.clone();
       const inner = parseSentence(unlessDoes[1]!, b);
-      const payer = inner ? parsePlayerRef(unlessDoes[2]!, b) : null;
+      const payer = inner ? payerOf(unlessDoes[2]!, before, b) : null;
       if (!inner || !payer || payer.ref === 'players') return null;
       // "unless you return an untapped Island you control to its owner's hand" — one you choose (move_chosen).
       const actions = parts.map(([v, o]) =>
@@ -1344,8 +1352,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
   if (unless) {
     return attempt(b, (b) => {
+      const before = b.clone();
       const inner = parseSentence(unless[1]!, b);
-      const payer = inner ? parsePlayerRef(unless[2]!, b) : null;
+      const payer = inner ? payerOf(unless[2]!, before, b) : null;
       // "unless that player pays {X}, where X is …" (Esper Sentinel): X generic mana, counted as it resolves.
       if (unless[3] === '{X}') return inner && payer ? [{ type: 'unless_pays', payer, cost: '', costX: 'X', effects: inner }] : null;
       if (/\{X\}/.test(unless[3]!)) return null;
@@ -1975,11 +1984,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Priest of Forgotten Gods: "Any number of target players each lose 2 life and sacrifice a creature of their choice."
-  const anyEach = /^Any number of target (players|opponents) each (.+)$/.exec(s);
+  const anyEach = /^(Any number of|Two|Three) target (players|opponents) each (.+)$/.exec(s);
   if (anyEach) {
     const r = attempt(b, (b) => {
-      const who = parsePlayerRef(`any number of target ${anyEach[1]}`, b);
-      return who ? parseSentenceWithSubject(anyEach[2]!, b, who) : null;
+      const who = parsePlayerRef(`${anyEach[1]!.toLowerCase()} target ${anyEach[2]}`, b);
+      return who ? parseSentenceWithSubject(anyEach[3]!, b, who) : null;
     });
     if (r) return r;
   }
@@ -2023,6 +2032,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const { who: _who, ...node } = made[0]!;
     const e = each as { how: string; types?: string[]; notTypes?: string[] };
     return [{ ...node, type: 'create_token', forEachMoved: { how: e.how, ...(e.types ? { types: e.types } : {}), ...(e.notTypes ? { notTypes: e.notTypes } : {}) } }];
+  }
+  // Blood Money: "For each nontoken creature destroyed this way, you create a tapped Treasure token."
+  const youEach = /^For each (.+? (?:destroyed|exiled|sacrificed|put into a graveyard) this way), you create (a|an|one|two) (.+? tokens?)$/.exec(s);
+  if (youEach) {
+    const r = attempt(b, (b) => parseSentence(`Create ${youEach[2]} ${youEach[3]} for each ${youEach[1]}`, b));
+    if (r) return r;
   }
   // Brass's Bounty: "For each land you control, create a Treasure token." — the same as "Create … for each …".
   const eachCreate = /^For each (.+?), create (a|an|one|two) (.+? tokens?)$/.exec(s);
@@ -2404,6 +2419,13 @@ const VERBS: Record<string, VerbHandler> = {
       if (pf.filter.types?.includes('Creature')) b.it = { ref: 'sacrificed_this_way' };
       return [{ type: 'sacrifice_choice', who, filter: pf.filter, amount: 1, greatest: greatest[3] === 'power' ? 'power' : 'mana_value' }];
     }
+    // Phyrexian Obliterator: "sacrifices that many permanents of their choice" — the damage dealt.
+    const thatMany = /^that many (.+?)(?: of (?:their|your) choice)?$/.exec(args);
+    if (thatMany && b.eventAmount) {
+      const pf = parseFilter(thatMany[1]!, b);
+      if (!pf || !pf.plural || pf.filter.zone) return null;
+      return [{ type: 'sacrifice_choice', who, filter: pf.filter, amount: { kind: 'event' } }];
+    }
     // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
     // "sacrifices a creature of their choice" (the 2024 wording; CR 701.21a: the player chooses either way).
     const choice = /^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|thirteen|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
@@ -2456,6 +2478,14 @@ const VERBS: Record<string, VerbHandler> = {
       return amount && what ? [{ type: 'add_counters', what: what.ref, counter: counted[1]!.replace(/−/g, '-'), amount }] : null;
     }
     // Guide of Souls: "put two +1/+1 counters and a flying counter on target attacking creature" — both on it.
+    // Gift of the Viper: "a +1/+1 counter, a reach counter, and a deathtouch counter on target creature".
+    const threeKinds = /^(a|an|one|two|three) (\S+) counters?, (a|an|one|two|three) (\S+) counters?, and (a|an|one|two|three) (\S+) counters? on (.+)$/.exec(args);
+    if (threeKinds) {
+      const ns = [threeKinds[1], threeKinds[3], threeKinds[5]].map((x) => parseAmount(x!));
+      const what = ns.every((n) => typeof n === 'number') ? parseObjectRef(threeKinds[7]!, b) : null;
+      if (!what) return null;
+      return [0, 1, 2].map((i) => ({ type: 'add_counters', what: what.ref, counter: threeKinds[2 + i * 2]!.replace(/−/g, '-'), amount: ns[i] as number }));
+    }
     const twoKinds = /^(a|an|one|two|three|four|five) (\S+) counters? and (a|an|one|two|three|four|five) (\S+) counters? on (.+)$/.exec(args);
     if (twoKinds) {
       const [n1, n2] = [parseAmount(twoKinds[1]!), parseAmount(twoKinds[3]!)];

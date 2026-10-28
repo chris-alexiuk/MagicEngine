@@ -764,9 +764,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'deals_combat_damage', subject, to: `player_or_${hitsOr[2]}` }, it: subject, player: { ref: 'trigger_player' } };
   }
   // "Whenever a source deals damage to ~"
+  // Once for each source (Phyrexian Obliterator: "that source's controller sacrifices that many permanents").
   if (t === 'a source deals damage to ~') {
     b.eventAmount = true;
-    return { trigger: { type: 'dealt_damage', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+    b.named["that source's controller"] = { ref: 'trigger_player' };
+    return { trigger: { type: 'dealt_damage', subject: { ref: 'self' }, perSource: true }, it: { ref: 'self' }, player: null };
   }
   // CR 701.37: "When ~ becomes monstrous"; CR 702.110b: "When ~ exploits a creature"; "When you sacrifice ~".
   if (t === '~ becomes monstrous') {
@@ -1055,6 +1057,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (pf.filter.controller) return null;
       pf.filter.controller = 'you';
     }
+    // Ingenious Artillerist: "… deals that much damage" — how many entered.
+    b.eventAmount = true;
     return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
   const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents))$/.exec(t);
@@ -1215,6 +1219,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject, ...(youPut ? { byYou: true } : {}) }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
   }
+  // Fathom Mage: "Whenever a +1/+1 counter is put on this creature" — once for each counter.
+  const aCounter = /^an? ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
+  if (aCounter) return { trigger: { type: 'counters_put', counter: aCounter[1]!, subject: { ref: 'self' }, each: true }, it: { ref: 'self' }, player: null };
   // Midnight Clock: "When the twelfth hour counter is put on this artifact" — as its count of them reaches twelve.
   const nthCounter = /^the (first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth) ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
   if (nthCounter) {
@@ -1295,6 +1302,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // CR 309.4c: a room ability's trigger (the dungeon parser fills in the room).
   if (t === 'you move your venture marker into this room' || t === 'you move your venture marker into ~') return { trigger: { type: 'room' }, it: { ref: 'self' }, player: null };
+  // Soulherder: "Whenever a creature is exiled from the battlefield" (CR 603.6c: it leaves for exile).
+  const exiledFrom = /^(a|an|another) (.+?) is exiled from the battlefield$/.exec(t);
+  if (exiledFrom) {
+    const pf = parseFilter(exiledFrom[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    if (exiledFrom[1] === 'another') pf.filter.other = true;
+    return { trigger: { type: 'leaves', subject: { ref: 'all', filter: pf.filter }, toZones: ['exile'] }, it: { ref: 'trigger_object' }, player: null };
+  }
   // Dour Port-Mage: "Whenever one or more other creatures you control leave the battlefield without dying" (once per
   // batch); "Whenever another creature you control leaves the battlefield without dying".
   const manyLeave = /^(?:one or more (other )?(.+?) leave|(another|a|an) (.+?) leaves) the battlefield( without dying)?$/.exec(t);
@@ -1457,6 +1472,11 @@ export const triggeredRule: GrammarRule = {
         // spent can't change, so it's checked with the cast (CR 603.4).
         if (iff && iff[1] === 'no mana was spent to cast it' && trig.trigger.type === 'cast') {
           trig.trigger = { ...trig.trigger, noManaSpent: true };
+          effectText = iff[2]!;
+        } else if (iff && iff[1] === "you're the defending player" && trig.trigger.type === 'attacks' && !trig.trigger.defender) {
+          // Kazuul: "Whenever a creature an opponent controls attacks, if you're the defending player" — it attacks you or a
+          // planeswalker you control (CR 506.2); that can't change before it resolves.
+          trig.trigger = { ...trig.trigger, defender: 'you' };
           effectText = iff[2]!;
         } else if (iff) {
           condition = parseCondition(iff[1]!, b);
@@ -1770,6 +1790,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
     'may cast spells from your hand without paying their mana costs': 'free_from_hand',
   };
   if (subject && simple[subject[2]!] && who(subject[1]!)) return { type: 'player_rule', who: who(subject[1]!)!, rule: simple[subject[2]!]! };
+  // Platinum Angel: "You can't lose the game and your opponents can't win the game." (CR 104.3a: conceding still works.)
+  if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
   // Narset, Parter of Veils
   const oneDraw = /^(Each opponent|Each player|You) can't draw more than one card each turn$/.exec(body);
   if (oneDraw) return { type: 'player_rule', who: who(oneDraw[1]!)!, rule: 'max_one_draw' };
@@ -1865,7 +1887,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1950,13 +1972,21 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       continue;
     }
     // Imprisoned in the Moon: "is a colorless land" (layers 4 and 5; its subtypes go with its other types).
-    const isLandType = /^is an? (colorless )?land$/.exec(part);
+    // Song of the Dryads: "is a colorless Forest land" — only a Forest land, with a Forest's mana ability and not its
+    // own (CR 305.7).
+    const isLandType = /^is an? (colorless )?(?:(Plains|Island|Swamp|Mountain|Forest) )?land$/.exec(part);
     if (isLandType && !effect.setTypes) {
       effect.setTypes = { types: ['Land'], subtypes: [] };
       if (isLandType[1]) effect.colors = [];
+      if (isLandType[2]) effect.landTypes = [isLandType[2]];
       continue;
     }
     // Layer 5: "is blue"; layer 4 (CR 305.7): "Enchanted land is an Island"
+    // Leyline of the Guildpact: "Each nonland permanent you control is all colors." (CR 105.2)
+    if (/^(?:is|are) all colors$/.test(part) && !effect.colors) {
+      effect.colors = ['W', 'U', 'B', 'R', 'G'];
+      continue;
+    }
     const isColor = /^is (white|blue|black|red|green|colorless)$/.exec(part);
     if (isColor && !effect.colors) {
       effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];

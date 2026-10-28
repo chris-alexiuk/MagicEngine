@@ -207,7 +207,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -268,6 +268,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return statOf(ctx, e.of, e.stat);
     case 'mana_spent':
       return refObjects(ctx, e.of)[0]?.cast?.manaSpent ?? 0;
+    case 'sum':
+      return e.parts.reduce((n, p) => n + amountOf(ctx, p), 0);
     case 'life':
       return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
     case 'counters': {
@@ -471,7 +473,7 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
 }
 
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
-export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[] }): NonNullable<Resolution['moves']> {
+export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean }): NonNullable<Resolution['moves']> {
   const how = e.how;
   return (ctx.resolution?.moves ?? []).filter((m) => {
     const right =
@@ -484,7 +486,7 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
             : how === 'graveyard'
               ? m.to === 'graveyard'
               : m.effect === 'mill' && m.from === 'library';
-    return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t));
+    return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t)) && (e.token === undefined || Boolean(m.token) === e.token);
   });
 }
 

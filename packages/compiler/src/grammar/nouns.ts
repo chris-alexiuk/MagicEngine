@@ -100,6 +100,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
   [/ named ~$/, (f, _m, b) => !f.name && ((f.name = b.env.cardName), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
+  // Tetsuko Umezawa: "Creatures you control with power or toughness 1 or less" — either.
+  [/ with power or toughness (\d+) or (less|greater)$/, (f, m) => {
+    if (f.anyOf || f.power || f.toughness) return false;
+    const c = { op: m[2] === 'less' ? 'le' : 'ge', n: Number(m[1]) } as const;
+    f.anyOf = [{ power: c }, { toughness: c }];
+    return true;
+  }],
   // Fell the Mighty: "with power greater than target creature's power" — counted as the effect applies.
   [/ with (power|toughness) (greater|less) than (target creature|that creature)'s \1$/, (f, m, b) => {
     const key = m[1] === 'power' ? 'power' : 'toughness';
@@ -114,6 +121,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Gyruda, Void Winnower: "with an even mana value", "with even mana values" (CR 202.3: 0 is even).
   // Desynchronization: "each nonland permanent that's not historic"
   [/ that's not historic$/, (f) => !f.notHistoric && ((f.notHistoric = true), true)],
+  // Sage's Reverie: "each Aura you control that's attached to a creature".
+  [/ (?:that's|that are) attached to an? (creature|land|artifact|permanent)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1] === 'permanent' ? '' : m[1]!.replace(/^\w/, (c) => c.toUpperCase())), m[1] !== 'permanent')],
+  // Urza's Ruinous Blast: "all nonland permanents that aren't legendary"
+  [/ (?:that aren't|that isn't|that's not) legendary$/, (f) => !f.notSupertypes && ((f.notSupertypes = ['Legendary']), true)],
+  // Winds of Rath: "all creatures that aren't enchanted"
+  [/ (?:that aren't|that isn't|that's not) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = false), true)],
+  [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
@@ -585,10 +599,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.
   // Priest of Forgotten Gods: "Any number of target players each lose 2 life …" (CR 115.1d).
-  const anyPlayers = /^any number of target (players|opponents)$/.exec(t);
+  // Gleaming Splendor: "Two target players each draw a card."
+  const anyPlayers = /^(any number of|two|three) target (players|opponents)$/.exec(t);
   if (anyPlayers) {
     // Not "that player" / "their" later: each of them would need counting for themselves.
-    const spec: TargetSpec = { what: 'player', text: t, count: 100, upTo: true, ...(anyPlayers[1] === 'opponents' ? { player: 'opponent' as const } : {}) };
+    const count = anyPlayers[1] === 'two' ? { count: 2 } : anyPlayers[1] === 'three' ? { count: 3 } : { count: 100, upTo: true as const };
+    const spec: TargetSpec = { what: 'player', text: t, ...count, ...(anyPlayers[2] === 'opponents' ? { player: 'opponent' as const } : {}) };
     return b.addTarget(spec);
   }
   const playerTarget = /^(up to one )?target (player|opponent)$/.exec(t);

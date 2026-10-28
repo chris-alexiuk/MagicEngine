@@ -357,6 +357,8 @@ export interface ObjectFilter {
   sharesColorWithSource?: true;
   /** Attached to a permanent ("if this permanent is attached to a creature", reconfigure). */
   attached?: true;
+  /** Winds of Rath: "creatures that aren't enchanted" (false); "that's enchanted" (true) — by an Aura (CR 303.4). */
+  enchanted?: boolean;
   /** "all creatures target player controls": controlled by the player(s) this refers to (as an effect resolves). */
   controlledBy?: Ref;
   /** "all cards from target player's graveyard": owned by the player(s) this refers to (as an effect resolves). */
@@ -365,6 +367,8 @@ export interface ObjectFilter {
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
   attachedTo?: 'self' | 'attached';
+  /** Sage's Reverie: "each Aura you control that's attached to a creature". */
+  attachedToType?: string;
   /** CR 903.3: a commander. */
   commander?: true;
   /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
@@ -469,6 +473,8 @@ export type AmountExpr = (
   | { kind: 'stat'; stat: 'power' | 'toughness' | 'mana_value'; of: Ref }
   /** "the amount of mana spent to cast that spell" (CR 601.2h). */
   | { kind: 'mana_spent'; of: Ref }
+  /** Multani: "for each land you control and each land card in your graveyard" — counts added together. */
+  | { kind: 'sum'; parts: AmountExpr[] }
   | { kind: 'life'; who: Ref }
   | { kind: 'counters'; of: Ref; counter?: string }
   /** Players: "for each opponent". */
@@ -505,7 +511,7 @@ export type AmountExpr = (
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
   | { kind: 'discarded_this_way'; max?: true }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
-  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard'; types?: string[]; notTypes?: string[] }
+  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard'; types?: string[]; notTypes?: string[]; token?: boolean }
   /** "You gain life equal to the damage dealt this way": what this resolution's damage effects dealt. */
   | { kind: 'damage_this_way' }
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
@@ -962,7 +968,7 @@ export interface QuantityReplacementNode extends EffectNode {
  */
 export const PLAYER_RULES = [
   'no_max_hand_size', 'extra_lands', 'lands_from_graveyard', 'skip_draw', 'look_at_top', 'top_revealed', 'hexproof', 'shroud', 'cant_gain_life',
-  'no_lose_for_life', 'cant_lose', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
+  'no_lose_for_life', 'cant_lose', 'opponents_cant_win', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
   /** Omniscience: "You may cast spells from your hand without paying their mana costs." */
   'free_from_hand',
   /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." (CR 121.2) */
@@ -1033,7 +1039,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
