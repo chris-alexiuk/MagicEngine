@@ -9,7 +9,7 @@ import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
-import { craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
+import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -18,7 +18,7 @@ import { evalCondition } from './conditions.js';
 import { freePermission, mayPlayFrom, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { activationsThisTurn, targetLifeTax } from './actions.js';
-import { bestowedFace, manaValueOf } from './zones.js';
+import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
 
 /**
@@ -275,6 +275,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         costs = picked;
       }
       const extra = withCosts(costs);
+      const from = out.length;
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color"); with "If …, add … instead" (Urza's
       // Tower, Incubation Druid), the ways the usual mana can be made.
       const first = ab.effects[0];
@@ -291,6 +292,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
           if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
         });
       } else if (!effect?.options || manaOption(effect.options[0]!, o)) out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
+      // Fertile Ground: "… adds an additional one mana of any color" — each color it could add, too.
+      const bonus = ab.cost.tap ? bonusManaChoices(g, o) : [];
+      if (bonus.length) out.splice(from, out.length - from, ...out.slice(from).flatMap((a) => bonus.map((b) => ({ ...a, bonus: [b] }) as Action)));
     });
     if (!banned) activatedAbilities(g, o).forEach((ab, ability) => {
       if (!mine && !ab.anyPlayer) return;
@@ -357,6 +361,10 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
     // CR 702.190a: sneak only during your declare blockers step.
     if (opt.id === 'sneak') {
       if (fromGraveyard || g.active !== player || g.step !== 'declare_blockers') continue;
+    } else if (opt.id === 'fuse') {
+      // CR 702.102: a fused spell with a sorcery half is cast as a sorcery.
+      const both = fusedFace(g.cards[o.card]!);
+      if (!sorcerySpeed && (playerRule(g, player, 'sorcery_timing') || (!both.types.every((t) => t === 'Instant') && !flashPermission(g, player, o)))) continue;
     } else if (!instantSpeed && !sorcerySpeed) continue;
     if ((opt.zone === 'graveyard') !== fromGraveyard) continue;
     if (opt.kind === 'additional' && fromGraveyard) continue;
@@ -388,7 +396,9 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
         ? (g.cards[o.card]!.faces[1] ?? face)
         : opt.id === 'bestow'
           ? bestowedFace(face)
-          : face;
+          : opt.id === 'fuse'
+            ? fusedFace(g.cards[o.card]!)
+            : face;
     const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast, [opt.id]);
     const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])]);
     if (!choice || !costs) continue;

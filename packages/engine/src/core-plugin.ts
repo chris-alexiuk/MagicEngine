@@ -342,7 +342,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
-        moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : 'top' });
+        moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : 'top' });
       } else if (to === 'battlefield') {
         // Unless it says otherwise, a permanent is put onto the battlefield under its owner's control.
         const controller = node.under === 'you' ? ctx.controller : o.owner;
@@ -602,7 +602,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 611.2c: the affected set is determined now and doesn't change later.
     // "… card in your graveyard gains flashback until end of turn" works on cards in graveyards.
     const flashback = Array.isArray(node.keywords) && (node.keywords as KeywordInstance[]).every((k) => k.id === 'flashback');
-    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard'));
+    // "Target spell or permanent becomes white" (Purelace): a spell's color, while it's on the stack.
+    const spellColor = Array.isArray(node.colors) && node.power === undefined && node.types === undefined && node.keywords === undefined;
+    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard') || (spellColor && o.zone === 'stack'));
     if (!objects.length) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
@@ -2950,6 +2952,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} for its madness cost?` } };
     if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { alt: 'madness' });
     else moveObject(ctx.g, o.id, 'graveyard', ctx.events);
+    return true;
+  },
+
+  // Chandra, Torch of Defiance: "You may cast that card. If you don't, …" — cast now, paying its costs (CR 608.2g).
+  cast_paid(node, ctx) {
+    const o = refObjects(ctx, ref(node, 'what'))[0];
+    const otherwise = { expand: (node.else as EffectNode[] | undefined) ?? [] };
+    if (!o || !castableCard(ctx.g, o)) return otherwise;
+    const answer = answerOf(ctx, 'cast_free');
+    if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)}, paying its costs?` } };
+    if (!answer.cast) return otherwise;
+    castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { pay: true });
     return true;
   },
 

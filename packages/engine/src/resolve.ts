@@ -1,5 +1,5 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
-import { chars, colorsAmong, creatureTypesOf, matchesFilter, power, toughness } from './characteristics.js';
+import { chars, colorsAmong, creatureTypesOf, filterZones, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -90,15 +90,15 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       return o && r && o.zcc === r.zcc ? [o] : [];
     }
     case 'all': {
-      const zone = ref.filter.zone ?? 'battlefield';
-      const ids =
+      const ids = filterZones(ref.filter).flatMap((zone) =>
         zone === 'battlefield'
           ? g.zones.battlefield
           : zone === 'stack'
             ? g.stack.flatMap((e) => (e.kind === 'spell' ? [e.object] : []))
             : zone === 'exile' || zone === 'command'
               ? g.zones[zone]
-              : g.order.flatMap((p) => g.zones[zone][p] ?? []);
+              : g.order.flatMap((p) => g.zones[zone][p] ?? []),
+      );
       // "all creatures target player controls"
       const owners = ref.filter.controlledBy ? refPlayers(ctx, ref.filter.controlledBy as Ref) : null;
       // "all cards from target player's graveyard"

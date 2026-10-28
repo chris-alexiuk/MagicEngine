@@ -223,6 +223,8 @@ export interface GameObject {
   prepared?: true;
   /** CR 702.103b: cast bestowed — an Aura with enchant creature, not a creature, until it ceases to be bestowed. */
   bestowed?: true;
+  /** CR 702.102: a fused split spell — both halves cast together (on the stack only). */
+  fused?: true;
   /** CR 718.3b: cast prototyped — it has the inset mana cost, power and toughness (and that cost's colors). */
   prototyped?: true;
   /** CR 701.43a: exerted — it won't untap during its controller's next untap step. */
@@ -683,7 +685,8 @@ export type Action =
   /** Special actions that exile a card from hand to cast later: foretell (CR 702.143a), plot (CR 702.170a), suspend (CR 702.62a). */
   | { type: 'foretell' | 'plot' | 'suspend'; player: PlayerId; object: ObjectId; autoTap?: boolean }
   /** `choice`: which option or color — or, for "any combination of colors", the mix ("GGU"). */
-  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor | ManaMix; costs?: CostChoices }
+  /** `bonus`: for "whenever … is tapped for mana, its controller adds an additional one mana of any color" (Fertile Ground), each such trigger's color (or option). */
+  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor | ManaMix; costs?: CostChoices; bonus?: (number | ManaColor)[] }
   | {
       type: 'cast';
       player: PlayerId;
@@ -929,6 +932,8 @@ export interface GameState {
   heldEvents?: GameEvent[];
   /** What happened this turn, and how many spells each player cast last turn. */
   turnLog: TurnLog;
+  /** Approach of the Second Sun: the names of the spells each player has cast this game (CR 601.2i), in order. */
+  castNames?: Record<PlayerId, string[]>;
   /** CR 726.1: the player who has the initiative. */
   initiative?: PlayerId;
   /** CR 702.26b: phased-out permanents — still on the battlefield, but not in its list (they're treated as though they don't exist). */

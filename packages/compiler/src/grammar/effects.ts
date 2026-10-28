@@ -670,6 +670,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Chandra, Torch of Defiance: "Exile the top card of your library. You may cast that card. If you don't, …" — cast now,
+      // paying its costs (CR 608.2g).
+      const castNow = top && !top[2] && topWho?.ref === 'you' && !topFirst.length ? /^You may cast (?:that card|it)$/.exec(next) : null;
+      if (castNow) {
+        const dont = sentences[i + 2] ? /^If you don't, (.+)$/.exec(sentences[i + 2]!) : null;
+        const no = dont ? parseSentence(capitalise(dont[1]!), b) : null;
+        if (dont && !no) return null;
+        out.push({ type: 'exile_top', amount: 1, who: { ref: 'you' } }, { type: 'cast_paid', what: { ref: 'created' }, ...(no ? { else: no } : {}) });
+        i += dont ? 2 : 1;
+        continue;
+      }
       // CR 118.9: "Until end of turn, you may play that card without paying its mana cost."
       const freeSuffix = / without paying (?:its|their) mana costs?$/;
       const free = freeSuffix.test(next);
@@ -2232,6 +2243,16 @@ function countedClause(s: string, b: Binder, subject: Ref | null): Clause | null
 function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
   const whole = countedClause(s, b, subject);
   if (whole) return whole.effects;
+  // Tataru Taru: "you draw a card and target opponent may draw a card" — another player's choice (CR 603.5).
+  const theyMay = /^(.+?) may (.+)$/.exec(s);
+  if (theyMay && theyMay[1] !== 'you') {
+    const r = attempt(b, (b) => {
+      const who = singlePlayer(theyMay[1]!, b);
+      const inner = who ? parseClause(theyMay[2]!, b, who) : null;
+      return who && inner ? [{ type: 'may', who, effects: inner.effects }] : null;
+    });
+    if (r) return r;
+  }
   const joints = [...s.matchAll(/, then | and then |, and | and |, /g)];
   for (const j of joints) {
     const r = attempt(b, (b) => {
@@ -2286,6 +2307,8 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(control[1]!, b);
       return what ? [{ type: 'gain_control', what: what.ref, ...(control[2] ? { until: 'eot' } : {}) }] : null;
     }
+    // Heliod's Intervention: "Target player gains twice X life."
+    if (args === 'twice X life') return [{ type: 'gain_life', amount: { kind: 'x', times: 2 }, who }];
     const m = /^(\S+) life$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
@@ -2469,6 +2492,13 @@ const VERBS: Record<string, VerbHandler> = {
     if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (onto[1] === 'that card' && b.it?.ref === 'trigger_object'))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
+    }
+    // Approach of the Second Sun: "put ~ into its owner's library seventh from the top" (CR 401.4).
+    const nth = /^(.+?) into (?:its|their) owner's library (second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) from the top$/.exec(args);
+    if (nth && imperative) {
+      const what = parseObjectRef(nth[1]!, b);
+      const n = ['second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'].indexOf(nth[2]!) + 2;
+      return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: n }] : null;
     }
     // "Put a number of +1/+1 counters equal to the power of the card you exiled on target creature." (scavenge)
     const counted = /^a number of (\S+) counters equal to (.+?) on (.+)$/.exec(args);
@@ -3306,6 +3336,13 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
       return [{ type: 'must_block', what: what.ref, attacker: attacker.ref }];
     });
     if (r) return r;
+  }
+  // CR 602.5: "Its activated abilities can't be activated this turn" (Koma), "Target creature's activated abilities
+  // can't be activated this turn" — mana abilities too.
+  const locked = /^(?:(.+?)'s|[Ii]ts) activated abilities can't be activated (?:this turn|until end of turn)$/.exec(c);
+  if (locked) {
+    const what = parseObjectRef(locked[1] ?? 'it', b);
+    return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: 'eot' }] : null;
   }
   const lure = /^All creatures able to block (.+?) this turn do so$/.exec(c);
   if (lure) {

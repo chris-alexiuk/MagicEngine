@@ -11,6 +11,7 @@ import type {
   FaceDef,
   KeywordInstance,
   ObjectFilter,
+  ZoneWord,
   Ref,
   RuleFlag,
   StaticAbility,
@@ -494,6 +495,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
     // Layer 6 on spells (CR 613.1f): "Instant and sorcery spells you control have lifelink" (Heartflame Duelist).
     for (const e of spellGrants(g)) if (e.applies(o, c)) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
     applyOwnCDA(g, o, c);
+    // Effects locked to this spell (CR 611.2c) — "Target spell or permanent becomes white" (Purelace):
+    // colors (layer 5) and abilities (layer 6). They end when it leaves the stack (CR 400.7).
+    if (g.effects.length) {
+      const locked = resolvedEffects(g).filter((e) => e.applies(o, c)).sort((a, b) => a.timestamp - b.timestamp);
+      for (const e of locked) if (e.colors) c.colors = [...e.colors];
+      for (const e of locked) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
+    }
     return c;
   }
   if (o.zone !== 'battlefield') {
@@ -705,6 +713,16 @@ export interface FilterContext {
 const compare = (v: number, c: { op: string; n: unknown }) =>
   typeof c.n !== 'number' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : c.op === 'lt' ? v < c.n : c.op === 'gt' ? v > c.n : v === c.n;
 
+/**
+ * The zones a filter looks in: its own, or — "target spell or permanent" (Venser, Commit) — each of its
+ * alternatives' (CR 115.2: a permanent unless the text says otherwise).
+ */
+export function filterZones(f: ObjectFilter | undefined): ZoneWord[] {
+  if (f?.zone) return [f.zone];
+  if (f?.anyOf?.some((a) => a.zone)) return [...new Set(f.anyOf.map((a) => a.zone ?? 'battlefield'))];
+  return ['battlefield'];
+}
+
 /** Whether an object matches a filter from the compiled AST. */
 export function matchesFilter(
   g: GameState,
@@ -713,7 +731,9 @@ export function matchesFilter(
   ctx: FilterContext,
   c: Characteristics = chars(g, o),
 ): boolean {
-  if (!ctx.anyZone && o.zone !== (f.zone ?? 'battlefield')) return false;
+  // "target spell or permanent": each alternative names its own zone.
+  const altZones = !f.zone && Boolean(f.anyOf?.some((a) => a.zone));
+  if (!ctx.anyZone && !altZones && o.zone !== (f.zone ?? 'battlefield')) return false;
   // "~ or another Ally you control": the source itself always matches.
   if (f.orSource && ctx.source && o.id === ctx.source.id) return true;
   const controller = ctx.lastController ?? o.controller;
@@ -750,7 +770,7 @@ export function matchesFilter(
   if (f.tapped !== undefined && o.tapped !== f.tapped) return false;
   if (f.token !== undefined && Boolean(o.token) !== f.token) return false;
   if (f.commander && !o.commander) return false;
-  if (f.anyOf && !f.anyOf.some((alt) => matchesFilter(g, o, alt, { ...ctx, anyZone: true }, c))) return false;
+  if (f.anyOf && !f.anyOf.some((alt) => matchesFilter(g, o, altZones ? { zone: 'battlefield', ...alt } : alt, { ...ctx, anyZone: altZones ? ctx.anyZone : true }, c))) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);

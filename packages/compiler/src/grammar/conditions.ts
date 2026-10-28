@@ -58,7 +58,7 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
   const single = parseOne(t, b);
   if (single) return single;
   // "you have 30 or more life and an opponent has 10 or less life"
-  const parts = t.split(/ and (?=you |an opponent |~ |there |it's )/);
+  const parts = t.split(/ and (?=you |you've |an opponent |~ |there |it's )/);
   if (parts.length > 1) {
     const all = parts.map((p) => parseOne(p, b));
     if (all.every(Boolean)) return { type: 'and', all: all as ConditionNode[] };
@@ -180,6 +180,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // cast, CR 707.10).
   const castFrom = /^~ was cast from (your hand|a graveyard|exile)$/.exec(t);
   if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
+  // Approach of the Second Sun: "you've cast another spell named ~ this game".
+  if (t === "you've cast another spell named ~ this game") return { type: 'cast_named_before' };
   const cast = /^you cast it( from your hand)?$/.exec(t);
   // "Whenever a creature you control enters, if you cast it, …": "it" is the entering creature.
   if (cast) return { type: 'cast_by_you', ...(cast[1] ? { fromHand: true } : {}), ...(b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
@@ -247,6 +249,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you're the monarch$|^you are the monarch$/.test(t)) return { type: 'monarch' };
   if (/^there is no monarch$/.test(t)) return { type: 'monarch', none: true };
   if (/^it's not your turn$|^it isn't your turn$/.test(t)) return { type: 'your_turn', value: false };
+  // Tataru Taru: "if it isn't that player's turn" — the player the trigger is about.
+  if (/^it(?:'s not| isn't) that player's turn$/.test(t)) return { type: 'your_turn', value: false, who: { ref: 'trigger_player' } };
+  if (/^it's that player's turn$/.test(t)) return { type: 'your_turn', value: true, who: { ref: 'trigger_player' } };
 
   // Coven: "you control three or more creatures with different powers"
   const coven = /^you control (\w+ or more) creatures with different powers$/.exec(t);

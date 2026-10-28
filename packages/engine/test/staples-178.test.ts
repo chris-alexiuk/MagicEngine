@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chars, legalActions } from '../src/index.js';
+import type { Action } from '../src/index.js';
 import type { GameState } from '../src/index.js';
 import { act, give, makeCard, start, toStep } from './helpers.js';
 
@@ -19,12 +20,35 @@ const CARDS = [
   makeCard({ name: 'Bolt', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Bolt deals 3 damage to any target.' }),
   makeCard({ name: 'Murder', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target creature.' }),
   makeCard({ name: 'Bauble', type_line: 'Artifact', mana_cost: '{1}', cmc: 1, oracle_text: '' }),
+  makeCard({ name: 'Chandra, Torch of Defiance', type_line: 'Legendary Planeswalker — Chandra', mana_cost: '{0}', loyalty: '4', oracle_text: "+1: Exile the top card of your library. You may cast that card. If you don't, Chandra deals 2 damage to each opponent.\n−7: You get an emblem with \"Whenever you cast a spell, this emblem deals 5 damage to any target.\"" }),
+  makeCard({ name: 'Divination', type_line: 'Sorcery', mana_cost: '{2}{U}', cmc: 3, oracle_text: 'Draw two cards.' }),
   makeCard({ name: 'Angel', type_line: 'Creature — Angel', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Bear', type_line: 'Creature — Bear', mana_cost: '{1}{G}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
   makeCard({ name: 'Relic', type_line: 'Artifact', mana_cost: '{2}', cmc: 2, oracle_text: '' }),
   makeCard({ name: 'Idol', type_line: 'Legendary Artifact', mana_cost: '{5}', cmc: 5, oracle_text: '' }),
   makeCard({ name: 'Quickling', type_line: 'Creature — Faerie', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Haste' }),
   makeCard({ name: 'Think', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Draw a card.' }),
+  makeCard({ name: 'Commit', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Put target spell or nonland permanent into its owner's library second from the top." }),
+  makeCard({ name: 'Oust', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Put target creature into its owner's library second from the top. Its controller gains 3 life." }),
+  makeCard({ name: 'Venser, Shaper Savant', type_line: 'Legendary Creature — Human Wizard', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Flash\nWhen Venser enters, return target spell or permanent to its owner's hand." }),
+  makeCard({ name: 'Purelace', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target spell or permanent becomes white. (Mana symbols on that permanent remain unchanged.)' }),
+  makeCard({ name: 'Fertile Ground', type_line: 'Enchantment — Aura', mana_cost: '{1}{G}', oracle_text: 'Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional one mana of any color.' }),
+  makeCard({ name: 'Market Festival', type_line: 'Enchantment — Aura', mana_cost: '{3}{G}', oracle_text: 'Enchant land\nWhenever enchanted land is tapped for mana, its controller adds an additional two mana in any combination of colors.' }),
+  makeCard({
+    name: 'Wear // Tear', layout: 'split', type_line: 'Instant // Instant', oracle_text: '', mana_cost: '{1}{R} // {W}',
+    card_faces: [
+      { object: 'card_face', name: 'Wear', type_line: 'Instant', mana_cost: '{1}{R}', oracle_text: 'Destroy target artifact.\nFuse (You may cast one or both halves of this card from your hand.)' },
+      { object: 'card_face', name: 'Tear', type_line: 'Instant', mana_cost: '{W}', oracle_text: 'Destroy target enchantment.\nFuse (You may cast one or both halves of this card from your hand.)' },
+    ],
+  } as never),
+  makeCard({ name: 'Pacifism', type_line: 'Enchantment', mana_cost: '{1}{W}', oracle_text: '' }),
+  makeCard({ name: 'Shark Typhoon', type_line: 'Enchantment', mana_cost: '{5}{U}', oracle_text: "Whenever you cast a noncreature spell, create an X/X blue Shark creature token with flying, where X is that spell's mana value.\nCycling {X}{1}{U} ({X}{1}{U}, Discard this card: Draw a card.)\nWhen you cycle this card, create an X/X blue Shark creature token with flying." }),
+  makeCard({ name: 'Gift of Words', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent draws a card.' }),
+  makeCard({ name: 'Tataru Taru', type_line: 'Legendary Creature — Dwarf Advisor', mana_cost: '{0}', power: '0', toughness: '3', oracle_text: "When Tataru Taru enters, you draw a card and target opponent may draw a card.\nScions' Secretary — Whenever an opponent draws a card, if it isn't that player's turn, create a tapped Treasure token. This ability triggers only once each turn." }),
+  makeCard({ name: "Heliod's Intervention", type_line: 'Instant', mana_cost: '{X}{W}{W}', oracle_text: 'Choose one —\n• Destroy X target artifacts and/or enchantments.\n• Target player gains twice X life.' }),
+  makeCard({ name: 'Koma, Cosmos Serpent', type_line: 'Legendary Creature — Serpent', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "This spell can't be countered.\nAt the beginning of each upkeep, create a 3/3 blue Serpent creature token named Koma's Coil.\nSacrifice another Serpent: Choose one —\n• Tap target permanent. Its activated abilities can't be activated this turn.\n• Koma gains indestructible until end of turn." }),
+  makeCard({ name: 'Pump Knight', type_line: 'Creature — Human Knight', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{0}: This creature gets +1/+1 until end of turn.' }),
+  makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
 function settle(g: GameState): GameState {
@@ -187,5 +211,242 @@ describe('staples (slice 178): shield counters and counted mana values', () => {
     g = settle(g);
     expect(g.objects[bear]!.zone).toBe('battlefield');
     expect(g.zones.hand.alice!.some((id) => g.cards[g.objects[id]!.card]?.name === 'Angel')).toBe(true);
+  });
+});
+
+describe('staples (slice 178): Chandra, Torch of Defiance', () => {
+  const top = (g: GameState, name: string) => {
+    const id = give(g, 'alice', name, 'library');
+    const lib = g.zones.library.alice!;
+    lib.splice(lib.indexOf(id), 1);
+    lib.unshift(id);
+    return id;
+  };
+  it('+1: cast the exiled card paying its cost, or 2 damage to each opponent', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const chandra = give(g, 'alice', 'Chandra, Torch of Defiance', 'battlefield');
+    g.objects[chandra]!.counters.loyalty = 4;
+    const div = top(g, 'Divination');
+    g.players.alice!.pool.U = 1;
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: chandra, ability: 0 }));
+    expect(g.pending).toMatchObject({ kind: 'cast_free', object: div });
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: true } }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 2);
+    expect(g.players.bob!.life).toBe(20);
+    // A land can't be cast: 2 damage instead.
+    g = toStep(toStep(g, 'main1', 'bob'), 'main1', 'alice');
+    top(g, 'Forest');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: chandra, ability: 0 }));
+    expect(g.players.bob!.life).toBe(18);
+  });
+
+  it('−7: an emblem that deals 5 damage whenever you cast a spell', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const chandra = give(g, 'alice', 'Chandra, Torch of Defiance', 'battlefield');
+    g.objects[chandra]!.counters.loyalty = 7;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: chandra, ability: 1 }));
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Think', 'hand') });
+    if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } });
+    g = settle(g);
+    expect(g.players.bob!.life).toBe(15);
+  });
+});
+
+describe('staples (slice 179): Approach of the Second Sun', () => {
+  it('first cast goes seventh from the top for 7 life; the second cast from hand wins', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const approach = give(g, 'alice', 'Approach of the Second Sun', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: approach }));
+    expect(g.players.alice!.life).toBe(27);
+    const lib = g.zones.library.alice!;
+    const moved = lib.find((id) => g.cards[g.objects[id]!.card]?.name === 'Approach of the Second Sun')!;
+    expect(lib.indexOf(moved)).toBe(6);
+    expect(g.winner ?? null).toBe(null);
+    // Dig it back out and cast it again from hand.
+    lib.splice(lib.indexOf(moved), 1);
+    g.zones.hand.alice!.push(moved);
+    g.objects[moved]!.zone = 'hand';
+    g = settle(act(g, { type: 'cast', player: 'alice', object: moved }));
+    expect(g.winner).toBe('alice');
+  });
+});
+
+describe('staples (slice 179): target spell or permanent', () => {
+  const nameAt = (g: GameState, p: string, i: number) => g.cards[g.objects[g.zones.library[p]![i]!]!.card]?.name;
+  it('Commit puts a spell second from the top; a nonland permanent too', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Think', 'hand') });
+    const think = g.stack[0]!.kind === 'spell' ? g.stack[0]!.object : '';
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(think)]] }));
+    expect(g.stack.length).toBe(0);
+    expect(nameAt(g, 'alice', 1)).toBe('Think');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(bear)]] }));
+    expect(nameAt(g, 'bob', 1)).toBe('Bear');
+    // A land isn't a legal target.
+    const forest = give(g, 'bob', 'Forest', 'battlefield');
+    expect(() => act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(forest)]] })).toThrow();
+  });
+
+  it('Venser returns a spell to its owner\'s hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Think', 'hand') });
+    const think = g.stack[0]!.kind === 'spell' ? g.stack[0]!.object : '';
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Venser, Shaper Savant', 'hand') });
+    g = settle(g);
+    if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(think)]] } });
+    g = settle(g);
+    expect(g.stack.length).toBe(0);
+    expect(g.zones.hand.bob!.some((id) => g.cards[g.objects[id]!.card]?.name === 'Think')).toBe(true);
+  });
+
+  it('Purelace: a spell is white while on the stack; the permanent it becomes is a new object', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.alice!.pool.G = 1;
+    g.players.alice!.pool.C = 1;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') });
+    const bear = g.stack[0]!.kind === 'spell' ? g.stack[0]!.object : '';
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Purelace', 'hand'), targets: [[obj(bear)]] });
+    g = act(act(g, { type: 'pass', player: 'alice' }), { type: 'pass', player: 'bob' });
+    expect(g.stack.length).toBe(1);
+    expect(chars(g, g.objects[bear]!).colors).toEqual(['W']);
+    g = settle(g);
+    const onField = g.zones.battlefield.find((id) => g.cards[g.objects[id]!.card]?.name === 'Bear')!;
+    expect(chars(g, g.objects[onField]!).colors).toEqual(['G']);
+  });
+
+  it('Oust: the creature\'s controller gains 3 life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Oust', 'hand'), targets: [[obj(bear)]] }));
+    expect(g.players.bob!.life).toBe(23);
+    expect(nameAt(g, 'bob', 1)).toBe('Bear');
+  });
+});
+
+describe('staples (slice 179): additional mana of any color', () => {
+  const enchant = (g: GameState, aura: string, land: string) => {
+    const a = give(g, 'alice', aura, 'battlefield');
+    g.objects[a]!.attachedTo = { id: land, zcc: g.objects[land]!.zcc };
+    return a;
+  };
+  it('Fertile Ground: the color named as the land is tapped', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    enchant(g, 'Fertile Ground', forest);
+    const taps = legalActions(g, 'alice').filter((a): a is Extract<Action, { type: 'activate_mana' }> => a.type === 'activate_mana' && a.object === forest);
+    expect(taps.map((a) => a.bonus?.[0]).sort()).toEqual(['B', 'G', 'R', 'U', 'W']);
+    g = act(g, { type: 'activate_mana', player: 'alice', object: forest, ability: 0, bonus: ['U'] });
+    expect(g.players.alice!.pool).toMatchObject({ G: 1, U: 1 });
+  });
+
+  it('Market Festival: two mana in any combination', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    enchant(g, 'Market Festival', forest);
+    const taps = legalActions(g, 'alice').filter((a) => a.type === 'activate_mana' && a.object === forest);
+    expect(taps.length).toBe(15);
+    g = act(g, { type: 'activate_mana', player: 'alice', object: forest, ability: 0, bonus: [10] });
+    expect(g.players.alice!.pool).toMatchObject({ G: 1, B: 1, R: 1 });
+  });
+});
+
+describe('staples (slice 179): fuse', () => {
+  it('Wear // Tear: both halves from the hand, paying both costs, left half then right', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const relic = give(g, 'bob', 'Relic', 'battlefield');
+    const pacifism = give(g, 'bob', 'Pacifism', 'battlefield');
+    const wt = give(g, 'alice', 'Wear // Tear', 'hand');
+    Object.assign(g.players.alice!.pool, { R: 1, C: 1, W: 1 });
+    const fused = legalActions(g, 'alice').find((a) => a.type === 'cast' && a.object === wt && (a as { extras?: string[] }).extras?.includes('fuse'));
+    expect(fused).toMatchObject({ targets: [[obj(relic)], [obj(pacifism)]] });
+    g = act(g, { type: 'cast', player: 'alice', object: wt, extras: ['fuse'], targets: [[obj(relic)], [obj(pacifism)]] });
+    expect(g.players.alice!.pool).toMatchObject({ R: 0, C: 0, W: 0 });
+    const top = g.objects[wt]!;
+    expect(chars(g, top).colors.sort()).toEqual(['R', 'W']);
+    g = settle(g);
+    expect(g.objects[relic]!.zone).toBe('graveyard');
+    expect(g.objects[pacifism]!.zone).toBe('graveyard');
+    expect(g.objects[wt]!.zone).toBe('graveyard');
+    expect(g.objects[wt]!.fused).toBeUndefined();
+  });
+
+  it('each half needs its own legal target; one half alone still works', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const relic = give(g, 'bob', 'Relic', 'battlefield');
+    const wt = give(g, 'alice', 'Wear // Tear', 'hand');
+    g.players.alice!.pool.R = 1;
+    g.players.alice!.pool.C = 1;
+    expect(() => act(structuredClone(g), { type: 'cast', player: 'alice', object: wt, extras: ['fuse'], targets: [[obj(relic)], [obj(relic)]] })).toThrow();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: wt, targets: [[obj(relic)]] }));
+    expect(g.objects[relic]!.zone).toBe('graveyard');
+  });
+});
+
+describe('staples (slice 179): Shark Typhoon', () => {
+  it('cycled for X: an X/X Shark and a card', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const shark = give(g, 'alice', 'Shark Typhoon', 'hand');
+    Object.assign(g.players.alice!.pool, { U: 1, C: 4 });
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: shark, ability: 0, x: 3 }));
+    expect(g.objects[shark]!.zone).toBe('graveyard');
+    expect(g.zones.hand.alice!.length).toBe(hand);
+    const token = g.zones.battlefield.map((id) => g.objects[id]!).find((o) => o.token && g.cards[o.card]?.name === 'Shark Token')!;
+    expect(token).toBeTruthy();
+    expect(chars(g, token).power).toBe(3);
+    expect(chars(g, token).keywords.some((k) => k.id === 'flying')).toBe(true);
+  });
+});
+
+describe('staples (slice 179): Tataru Taru', () => {
+  const treasures = (g: GameState) => g.zones.battlefield.filter((id) => g.cards[g.objects[id]!.card]?.name === 'Treasure').length;
+  it('an opponent who draws off their turn makes a tapped Treasure, once each turn', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const hands = { alice: g.zones.hand.alice!.length, bob: g.zones.hand.bob!.length };
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tataru Taru', 'hand') });
+    g = settle(g);
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }));
+    expect(g.pending).toMatchObject({ kind: 'may', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'may', yes: true } }));
+    expect(g.zones.hand.alice!.length).toBe(hands.alice + 1);
+    expect(g.zones.hand.bob!.length).toBe(hands.bob + 1);
+    // Bob drew on Alice's turn: one tapped Treasure — and only one this turn.
+    g = settle(g);
+    expect(treasures(g)).toBe(1);
+    const t = g.zones.battlefield.find((id) => g.cards[g.objects[id]!.card]?.name === 'Treasure')!;
+    expect(g.objects[t]!.tapped).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Gift of Words', 'hand') }));
+    expect(treasures(g)).toBe(1);
+    // Bob's own draw step doesn't count (or use up the turn's trigger): Carol's draw on Bob's turn does.
+    g = toStep(g, 'main1', 'bob');
+    expect(treasures(g)).toBe(1);
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Gift of Words', 'hand') }));
+    expect(treasures(g)).toBe(2);
+  });
+});
+
+describe('staples (slice 179): Heliod\'s Intervention, Koma', () => {
+  it('Heliod\'s Intervention: twice X life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    Object.assign(g.players.alice!.pool, { W: 2, C: 3 });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', "Heliod's Intervention", 'hand'), x: 3, modes: [1], targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(26);
+  });
+
+  it('Koma: tap target permanent; its activated abilities can\'t be activated this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const koma = give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    const coil = give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    const knight = give(g, 'bob', 'Pump Knight', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: koma, ability: 0, modes: [0], targets: [[obj(knight)]], costs: { sacrifice: [coil] } }));
+    expect(g.objects[knight]!.tapped).toBe(true);
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(legalActions(g, 'bob').some((a) => a.type === 'activate' && a.object === knight)).toBe(false);
+    g = toStep(g, 'main1', 'bob');
+    expect(legalActions(g, 'bob').some((a) => a.type === 'activate' && a.object === knight)).toBe(true);
   });
 });

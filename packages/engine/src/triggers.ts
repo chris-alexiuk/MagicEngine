@@ -137,15 +137,17 @@ function collect(g: GameState, events: GameEvent[]): void {
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
         // CR 603.2h: "Do this only once each turn." — not once its controller took that action this turn.
         if (ability.doOnce && c.o.doneOnce?.[`${c.o.zcc}:${ability.text}`] === g.turn) return;
-        const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch });
+        // CR 603.4: an intervening "if" must be true for it to trigger at all.
+        const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch }).filter(
+          (info) => !ability.condition || evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability)),
+        );
         if (ability.oncePerTurn && infos.length) {
-          // "This ability triggers only once each turn."
+          // "This ability triggers only once each turn." — once it has triggered (Tataru Taru: not an opponent's draw
+          // on their own turn).
           (c.o.triggeredTurn ??= {})[index] = g.turn;
           infos.splice(1);
         }
         for (const info of infos) {
-          // CR 603.4: an intervening "if" must be true for it to trigger at all.
-          if (ability.condition && !evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability))) continue;
           // CR 603.2d: Panharmonicon & co. — it may trigger additional times (or, under Torpor Orb, not at all).
           const times = extras.length && !info.state ? triggerTimes(g, extras, event, info, c) : 1;
           // CR 603.3a: controlled by whoever controlled the source when it triggered.
@@ -495,6 +497,11 @@ function entersX(ability: TriggeredAbility, source: GameObject | null, info: Tri
   if (source && ability.trigger.type === 'enters' && info.object?.id === source.id) return source.x ?? 0;
   if (source && g && ability.trigger.type === 'cast' && (ability.trigger as { self?: boolean }).self && source.zone === 'stack') {
     const entry = g.stack.find((e) => e.kind === 'spell' && e.object === source.id);
+    return entry?.x ?? 0;
+  }
+  // Shark Typhoon: "When you cycle this card" — the X paid for that cycling ability.
+  if (g && ability.trigger.type === 'activate' && (ability.trigger as { self?: boolean }).self && info.entry) {
+    const entry = g.stack.find((e) => e.kind === 'ability' && e.id === info.entry);
     return entry?.x ?? 0;
   }
   return 0;

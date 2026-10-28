@@ -1541,7 +1541,9 @@ export const triggeredRule: GrammarRule = {
         const ownEnters = node.trigger.type === 'enters' && (node.trigger as { subject?: { ref?: string } }).subject?.ref === 'self';
         // CR 107.3i: "When you cast this spell" sees the spell's own X (Hydroid Krasis).
         const ownCast = node.trigger.type === 'cast' && Boolean((node.trigger as { self?: boolean }).self);
-        if (!ownEnters && !ownCast && hasFreeX([node.effects, node.modes, node.condition])) return null;
+        // Shark Typhoon: "When you cycle this card, create an X/X …" — the X paid for cycling it.
+        const ownCycle = node.trigger.type === 'activate' && Boolean((node.trigger as { self?: boolean }).self) && (node.trigger as { keyword?: string }).keyword === 'cycling';
+        if (!ownEnters && !ownCast && !ownCycle && hasFreeX([node.effects, node.modes, node.condition])) return null;
         return node;
       }
     }
@@ -2950,6 +2952,9 @@ export const manaTriggerRule: GrammarRule = {
     if (/^one mana of any type that (?:land|permanent|creature) produced$/.test(manaText)) effect = { type: 'add_mana', produced: true };
     else if (manaText === 'one mana of the chosen color') effect = { type: 'add_mana', options: [['chosen']] };
     else if (MANA_RUN.test(manaText) && !/[X\/]/.test(manaText)) effect = parseManaProduction(manaText) as AddManaEffect | null;
+    // Fertile Ground: "one mana of any color"; Market Festival: "two mana in any combination of colors" (chosen as the
+    // mana ability resolves, CR 605.3b).
+    else if (/^(?:one mana of any color|two mana in any combination of colors)$/.test(manaText)) effect = parseManaProduction(manaText) as AddManaEffect | null;
     if (!effect) return null;
     return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }), ...(producedColor ? { producedColor } : {}) }, effects: [effect] } as TriggeredAbility;
   },

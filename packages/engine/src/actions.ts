@@ -52,7 +52,7 @@ import {
 } from './types.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { preparedSource, unprepare } from './prepare.js';
-import { bestowedFace, manaValueOf } from './zones.js';
+import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { freePermission, mayPlayFrom, topLifeOnly } from './permissions.js';
@@ -91,7 +91,7 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'choose':
       return choose(g, a.player, a.answer, events);
     case 'activate_mana':
-      return activateMana(g, a.player, a.object, a.ability, a.choice, events, a.costs);
+      return activateMana(g, a.player, a.object, a.ability, a.choice, events, a.costs, a.bonus);
     case 'manual':
       return manual(g, a.player, a.op, events);
   }
@@ -351,6 +351,7 @@ function activateMana(
   choice: number | ManaColor | ManaMix | undefined,
   events: GameEvent[],
   costs: CostChoices = {},
+  bonus: (number | ManaColor)[] = [],
 ): void {
   // CR 605.3a: mana abilities can be activated with priority, or while something asks for a mana payment.
   const paying = (g.pending?.kind === 'manual_resolution' || g.pending?.kind === 'pay') && g.pending.player === player;
@@ -361,7 +362,7 @@ function activateMana(
     if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose.`);
     if (g.priority !== player) throw new RulesError('You don’t have priority.');
   }
-  runManaAbility(g, player, id, index, choice, events, costs);
+  runManaAbility(g, player, id, index, choice, events, costs, bonus);
   // CR 117.3c: a player who activates an ability receives priority afterward.
   if (!paying) givePriority(g, player);
 }
@@ -456,6 +457,11 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
       base.push({ type: 'cast_option', id: 'retrace', kind: 'alternative', zone: 'graveyard', withManaCost: true, cost: { other: [{ type: 'discard', amount: 1, filter: { types: ['Land'] } }] } });
       break;
     }
+  }
+  // CR 702.102a: fuse — both halves of a split card from your hand, paying both mana costs (CR 702.102c).
+  const def = g.cards[o.card];
+  if (o.zone === 'hand' && def?.layout === 'split' && def.faces.length === 2 && def.faces[0] === face && def.faces.every((f) => f.keywords.some((k) => k.id === 'fuse'))) {
+    base.push({ type: 'cast_option', id: 'fuse', kind: 'additional', cost: { mana: def.faces[1]!.manaCost } });
   }
   if (o.zone === 'hand' && !face.types.includes('Land') && playerRule(g, player, 'free_from_hand')) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
   return base;
@@ -581,8 +587,12 @@ function cast(
     if (def.faces.length < 2) throw new RulesError(`${face.name} has no back face.`);
     faceIndex = 1;
   }
+  // CR 702.102: fused — the spell is both halves.
+  const fused = extras.includes('fuse');
   const castFace = faceDown
     ? faceDownFace({ ...o, faceDown })
+    : fused
+      ? fusedFace(def)
     : alt?.id === 'bestow'
       ? bestowedFace(face)
       : alt?.transformed
@@ -756,6 +766,7 @@ function cast(
   // CR 702.103b: it becomes an Aura spell as it's put on the stack.
   if (alt?.id === 'bestow') o.bestowed = true;
   if (alt?.prototype) o.prototyped = true;
+  if (fused) o.fused = true;
   if (splices.length) events.push({ type: 'revealed', player, objects: splices.map((s) => s.id) });
   // CR 722.3c: the permanent loses the prepared designation as the spell becomes cast; the copy is a spell copy now.
   if (prepared) {
@@ -935,13 +946,14 @@ export function castDuringResolution(
   targets: Target[][] | undefined,
   modes: number[] | undefined,
   events: GameEvent[],
-  opts: { alt?: string; suspended?: true; exileOnLeave?: true } = {},
+  opts: { alt?: string; suspended?: true; exileOnLeave?: true; pay?: true } = {},
 ): void {
   // With an alternative cost (madness) it's paid, tapping for mana as needed; otherwise it's free.
   // A required choice of additional costs (CR 118.8): one that needs nothing chosen (life, mana) if there is one.
   const choices = castOptions(g.cards[g.objects[id]!.card]!.faces[0]!).filter((x) => x.required);
   const pick = choices.find((x) => (x.cost.other ?? []).every((c) => c.type === 'pay_life')) ?? choices[0];
-  cast(g, player, id, 0, 0, Boolean(opts.alt) || Boolean(pick?.cost.mana), targets, modes, events, {}, false, opts.alt, pick ? [pick.id] : [], { free: !opts.alt, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
+  // Chandra, Torch of Defiance: "You may cast that card." — paying its mana cost (CR 608.2g), tapping for mana as needed.
+  cast(g, player, id, 0, 0, Boolean(opts.alt) || Boolean(opts.pay) || Boolean(pick?.cost.mana), targets, modes, events, {}, false, opts.alt, pick ? [pick.id] : [], { free: !opts.alt && !opts.pay, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
 }
 
 /** Whether a card could be cast right now for free: not a land (CR 305.9). */

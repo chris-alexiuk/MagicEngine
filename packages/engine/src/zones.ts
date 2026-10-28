@@ -1,6 +1,6 @@
 import { isRoom, roomFace } from './rooms.js';
 import { faceDownFace } from './face-down.js';
-import type { CastOptionNode, ExileInsteadNode, FaceDef } from '@mtg/schema';
+import type { CardDef, CastOptionNode, ExileInsteadNode, FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
@@ -24,10 +24,42 @@ export function faceOf(g: GameState, o: GameObject): FaceDef {
   if (!def) throw new RulesError(`no card definition for ${at.card}`);
   // CR 709.5: a Room on the battlefield has only its unlocked doors' name, mana cost and rules text.
   if (o.unlocked && o.zone === 'battlefield' && !o.copyOf) return roomFace(def, o.unlocked);
+  // CR 702.102b / 709.4d: a fused split spell has the combined characteristics of its two halves.
+  if (o.fused && o.zone === 'stack' && !o.copyOf) return fusedFace(def);
   const face = def.faces[at.face] ?? def.faces[0]!;
   // CR 718.3b / 718.3d: a prototyped spell or permanent (or a copy of one) has the prototype characteristics.
   if (o.prototyped && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return prototypedFace(face);
   return o.bestowed && (o.zone === 'battlefield' || o.zone === 'stack') ? bestowedFace(face) : face;
+}
+
+const FUSED = new WeakMap<CardDef, FaceDef>();
+/**
+ * CR 702.102b / 709.4d: both halves of a split card at once — both names, the two mana costs together, every color
+ * and type, and the left half's text followed by the right half's (CR 702.102d).
+ */
+export function fusedFace(def: CardDef): FaceDef {
+  let out = FUSED.get(def);
+  if (!out) {
+    const [l, r] = [def.faces[0]!, def.faces[1] ?? def.faces[0]!];
+    const union = <T>(a: T[], b: T[]) => [...new Set([...a, ...b])];
+    out = {
+      ...l,
+      name: `${l.name} // ${r.name}`,
+      manaCost: `${l.manaCost}${r.manaCost}`,
+      typeLine: l.typeLine === r.typeLine ? l.typeLine : `${l.typeLine} // ${r.typeLine}`,
+      supertypes: union(l.supertypes, r.supertypes),
+      types: union(l.types, r.types),
+      subtypes: union(l.subtypes, r.subtypes),
+      oracle: `${l.oracle}\n${r.oracle}`,
+      colors: union(l.colors, r.colors),
+      keywords: union(l.keywords, r.keywords),
+      abilities: [...l.abilities, ...r.abilities],
+      unparsed: [...l.unparsed, ...r.unparsed],
+      ...(l.manualKeywords || r.manualKeywords ? { manualKeywords: [...(l.manualKeywords ?? []), ...(r.manualKeywords ?? [])] } : {}),
+    };
+    FUSED.set(def, out);
+  }
+  return out;
 }
 
 const PROTOTYPED = new WeakMap<FaceDef, FaceDef>();
@@ -81,6 +113,8 @@ export function manaValueOf(g: GameState, o: GameObject): number {
   // CR 718.3b: a prototyped spell or permanent; CR 709.5c: a Room's unlocked doors.
   if ((o.prototyped || o.unlocked) && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return costManaValue(faceOf(g, o).manaCost);
   const def = g.cards[(o.copyOf ?? o).card];
+  // CR 709.4d: a fused split spell — both halves' mana costs.
+  if (o.fused && o.zone === 'stack' && def && !o.copyOf) return costManaValue(fusedFace(def).manaCost);
   // CR 709.3b / 715.3b / 712.8f: a split half, an adventure or a modal double-faced card's face being cast (or, for a
   // modal double-faced card, on the battlefield) has only that face's mana cost.
   if (def && !o.copyOf && def.faces.length > 1 && ((o.zone === 'stack' && ['split', 'adventure', 'modal_dfc'].includes(def.layout)) || (o.zone === 'battlefield' && def.layout === 'modal_dfc'))) {
@@ -156,7 +190,7 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom'; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean } = {},
+  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
@@ -248,6 +282,8 @@ export function moveObject(
   delete o.unlocked;
   // CR 702.103b: bestowed only on the stack and the battlefield it resolves onto.
   if (!(from === 'stack' && to === 'battlefield')) delete o.bestowed;
+  // CR 702.102: fused only while it's a spell.
+  delete o.fused;
   // CR 718.4: prototyped only on the stack and the battlefield it resolves onto.
   if (!(from === 'stack' && to === 'battlefield')) delete o.prototyped;
   delete o.exerted;
@@ -292,6 +328,8 @@ export function moveObject(
     // Libraries are top-first; graveyards and other zones append (last = most recent / top).
     if (to === 'library') {
       if (opts.position === 'bottom') list.push(id);
+      // Approach of the Second Sun: "seventh from the top" (at the bottom if there are fewer cards, CR 401.4).
+      else if (typeof opts.position === 'number') list.splice(Math.min(list.length, opts.position - 1), 0, id);
       else list.unshift(id);
     } else list.push(id);
   }

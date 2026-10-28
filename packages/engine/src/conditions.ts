@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -149,6 +149,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
         (log.castSpells ??= []).push({ player: e.player, id: e.object });
         const o = g.objects[e.object];
+        if (o) ((g.castNames ??= {})[e.player] ??= []).push(nameOf(g, o));
         const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
         if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);
         if (o?.cast?.paid?.includes('warp')) log.warped = true;
@@ -233,6 +234,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         (!f.multicolored || (s.colors?.length ?? 0) > 1);
       return list.some(fits) !== Boolean(cond.not);
     }
+    // Approach of the Second Sun: "you've cast another spell named ~ this game" — this one and at least one more.
+    case 'cast_named_before': {
+      const name = source ? nameOf(g, source) : '';
+      return (g.castNames?.[controller] ?? []).filter((n) => n === name).length >= 2;
+    }
     case 'was_type': {
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;
@@ -306,8 +312,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'self_tapped':
       return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);
-    case 'your_turn':
-      return (g.active === controller) === Boolean(cond.value);
+    case 'your_turn': {
+      // Tataru Taru: "if it isn't that player's turn" — whose turn it is, for another player.
+      const whose = cond.who ? refPlayers(ctx, cond.who as Ref)[0] : controller;
+      return (whose !== undefined && g.active === whose) === Boolean(cond.value);
+    }
     case 'count': {
       // "three or more creatures are attacking": everyone's (who 'all').
       const players =

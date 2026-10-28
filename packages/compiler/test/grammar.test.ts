@@ -2162,3 +2162,29 @@ describe('slice 178', () => {
     expect(parse('Each other Angel you control enters with an additional +1/+1 counter on it for each Angel you already control.', 'Legendary Creature — Angel', 'Giada').abilities[0]).toMatchObject({ effect: { type: 'enter_counters_others', notEntering: true } });
   });
 });
+
+describe('slice 179', () => {
+  it('reads casting the exiled card now and emblems that deal damage', () => {
+    expect(parse("+1: Exile the top card of your library. You may cast that card. If you don't, ~ deals 2 damage to each opponent.", 'Legendary Planeswalker — Chandra', 'Chandra, Torch of Defiance').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top' }, { type: 'cast_paid', what: { ref: 'created' }, else: [{ type: 'deal_damage' }] }] });
+    expect(parse('−7: You get an emblem with "Whenever you cast a spell, this emblem deals 5 damage to any target."', 'Legendary Planeswalker — Chandra', 'Chandra, Torch of Defiance').unparsed).toEqual([]);
+  });
+
+  it('reads bonus mana of any color, the cycling X, "that player\'s turn" and "its activated abilities can\'t be activated"', () => {
+    expect(parse('Whenever enchanted land is tapped for mana, its controller adds an additional one mana of any color.', 'Enchantment — Aura').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana' }, effects: [{ type: 'add_mana', anyColor: 1 }] });
+    expect(parse('When you cycle this card, create an X/X blue Shark creature token with flying.', 'Enchantment', 'Shark Typhoon').unparsed).toEqual([]);
+    expect(parse("Whenever an opponent draws a card, if it isn't that player's turn, create a tapped Treasure token. This ability triggers only once each turn.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'your_turn', value: false, who: { ref: 'trigger_player' } }, oncePerTurn: true });
+    expect(parse('When ~ enters, you draw a card and target opponent may draw a card.', 'Creature', 'Tataru Taru').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'may', who: { ref: 'target', index: 0 } }] });
+    expect(parse("Tap target permanent. Its activated abilities can't be activated this turn.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'modify', rules: ['cant_activate'], until: 'eot' }] });
+    expect(parse('Target player gains twice X life.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life', amount: { kind: 'x', times: 2 } }] });
+  });
+
+  it('keeps each zone of "target spell or permanent"', () => {
+    expect(parse("When Venser enters, return target spell or permanent to its owner's hand.", 'Legendary Creature — Human Wizard', 'Venser, Shaper Savant').abilities[0]).toMatchObject({ targets: [{ filter: { anyOf: [{ zone: 'stack' }, { zone: 'battlefield' }] } }] });
+    expect(parse('Destroy target artifact or creature.', 'Instant').abilities[0]).not.toMatchObject({ targets: [{ filter: { anyOf: [{ zone: 'battlefield' }] } }] });
+  });
+
+  it("reads Approach of the Second Sun: a prior cast by name and a library position", () => {
+    const p = parse("If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life.", 'Sorcery', 'Approach of the Second Sun');
+    expect(p.abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'and', all: [{ type: 'cast_by_you', fromHand: true }, { type: 'cast_named_before' }] }, else: [{ type: 'move', to: 'library', position: 7 }, { type: 'gain_life' }] }] });
+  });
+});

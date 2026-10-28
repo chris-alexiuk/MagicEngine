@@ -254,9 +254,18 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
       for (const part of parts) {
         const alt: ObjectFilter = base.zone ? { zone: base.zone } : {};
         if (!parseHeadPhrase(part, alt)) return null;
-        delete alt.zone;
         anyOf.push(alt);
       }
+      // "target spell or permanent" (Venser, Commit): each alternative in its own zone (CR 115.2).
+      // A zone word on the last part only ("instant or Aura spell") is shared by every alternative.
+      const lastZone = anyOf[anyOf.length - 1]!.zone ?? 'battlefield';
+      // A bare "spell" last ("other target creature or spell", Aang) isn't.
+      const bare = /^spells?$/.test(last) && anyOf.some((a) => !a.zone);
+      if (!base.zone && (bare || anyOf.slice(0, -1).some((a) => a.zone && a.zone !== lastZone))) {
+        for (const alt of anyOf) alt.zone ??= 'battlefield';
+        return { filter: { ...base, anyOf }, plural: head.plural };
+      }
+      for (const alt of anyOf) delete alt.zone;
       return { filter: { ...base, ...(f.zone && !base.zone ? { zone: f.zone } : {}), anyOf }, plural: head.plural };
     }
   }

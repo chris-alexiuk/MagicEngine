@@ -1,5 +1,5 @@
 import type { EffectNode, TargetSpec } from '@mtg/schema';
-import { hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
+import { filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef } from './types.js';
 import { playerRule } from './player-rules.js';
 import { livePlayers, nameOf } from './zones.js';
@@ -118,15 +118,15 @@ export function targetCandidates(g: GameState, controller: PlayerId, spec: Targe
     for (const p of livePlayers(g)) if (canTargetPlayer(g, controller, spec, p, source)) out.push({ kind: 'player', player: p });
   }
   if (spec.what !== 'player') {
-    const zone = spec.filter?.zone ?? 'battlefield';
-    const ids =
+    const ids = filterZones(spec.filter).flatMap((zone) =>
       zone === 'battlefield'
         ? g.zones.battlefield
         : zone === 'stack'
           ? g.stack.flatMap((e) => (e.kind === 'spell' ? [e.object] : []))
           : zone === 'exile' || zone === 'command'
             ? g.zones[zone]
-            : g.order.flatMap((p) => g.zones[zone][p] ?? []);
+            : g.order.flatMap((p) => g.zones[zone][p] ?? []),
+    );
     // "For each opponent, … target creature that player controls": only those players' objects.
     const players = spec.perPlayer ? perPlayerSet(g, controller, spec) : null;
     for (const id of ids) {

@@ -1,11 +1,11 @@
 import { activationProhibited } from './cast-bans.js';
 import { evalCondition } from './conditions.js';
 import { playerRule } from './player-rules.js';
-import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
+import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planAutoTap } from './autotap.js';
 import { canActivateTapAbilities, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
-import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
+import { anyColorChoices, parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
@@ -360,6 +360,7 @@ export function runManaAbility(
   choice: number | ManaColor | ManaMix | undefined,
   events: GameEvent[],
   costChoices: CostChoices = {},
+  bonus: readonly (number | ManaColor)[] = [],
 ): void {
   const o = obj(g, id);
   // CR 602.2: only an object's controller can activate its abilities.
@@ -410,11 +411,13 @@ export function runManaAbility(
   // CR 106.12a / 605.1b: "Whenever … is tapped for mana" — triggered mana abilities, resolved now too.
   if (ability.cost.tap) {
     const produced = events.slice(before).flatMap((ev) => (ev.type === 'mana_added' ? ev.mana : []));
-    if (produced.length) tappedForMana(g, o, produced, events);
+    if (produced.length) tappedForMana(g, o, produced, events, bonus);
   }
 }
 
-function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], events: GameEvent[]): void {
+/** The "whenever … is tapped for mana" abilities a permanent being tapped for mana triggers. */
+function manaTriggersOf(g: GameState, tapped: GameObject): { src: GameObject; a: TriggeredAbility }[] {
+  const out: { src: GameObject; a: TriggeredAbility }[] = [];
   for (const sid of abilitySources(g)) {
     const src = g.objects[sid];
     if (!src || src.zone !== 'battlefield') continue;
@@ -425,22 +428,59 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
         subject.ref === 'attached'
           ? src.attachedTo?.id === tapped.id && src.attachedTo.zcc === tapped.zcc
           : subject.ref === 'all' && tapped.zone === 'battlefield' && matchesFilter(g, tapped, subject.filter, { controller: src.controller, source: src });
-      if (!hit && !(subject.ref === 'self' && src.id === tapped.id)) continue;
-      // Forsaken Monument: "Whenever you tap a permanent for {C}" — only when that mana was made.
-      // Caged Sun: "mana of the chosen color" — the color chosen as it entered.
-      const wanted = a.trigger.producedColor === 'chosen' ? src.chosen?.color : a.trigger.producedColor;
-      if (a.trigger.producedColor && (!wanted || !produced.includes(wanted as ManaColor))) continue;
-      // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
-      if (!a.effects.every((x) => x.type === 'add_mana')) {
-        g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });
-        continue;
+      if (hit || (subject.ref === 'self' && src.id === tapped.id)) out.push({ src, a });
+    }
+  }
+  return out;
+}
+
+/** Whether additional mana from a trigger asks for a choice: "one mana of any color", "two mana in any combination of colors". */
+const bonusChoice = (e: AddManaEffect): boolean => e.type === 'add_mana' && (Boolean(e.anyColor) || (e.options?.length ?? 0) > 1);
+
+/**
+ * Fertile Ground: "its controller adds an additional one mana of any color" — the ways the first such trigger can add its
+ * mana as `tapped` is tapped for mana (an `activate_mana` action's `bonus`); empty when no trigger asks.
+ */
+export function bonusManaChoices(g: GameState, tapped: GameObject): (number | ManaColor)[] {
+  for (const { src, a } of manaTriggersOf(g, tapped)) {
+    if (a.trigger.producedColor) continue;
+    const e = a.effects.find((x) => bonusChoice(x as AddManaEffect)) as AddManaEffect | undefined;
+    if (!e) continue;
+    if (e.anyColor) return anyColorChoices(g, a.trigger.its ? tapped.controller : src.controller, e.identity, e, src);
+    return (e.options ?? []).map((_, i) => i);
+  }
+  return [];
+}
+
+function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], events: GameEvent[], bonus: readonly (number | ManaColor)[] = []): void {
+  let asked = 0;
+  for (const { src, a } of manaTriggersOf(g, tapped)) {
+    // Forsaken Monument: "Whenever you tap a permanent for {C}" — only when that mana was made.
+    // Caged Sun: "mana of the chosen color" — the color chosen as it entered.
+    const wanted = a.trigger.producedColor === 'chosen' ? src.chosen?.color : a.trigger.producedColor;
+    if (a.trigger.producedColor && (!wanted || !produced.includes(wanted as ManaColor))) continue;
+    // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
+    if (!a.effects.every((x) => x.type === 'add_mana')) {
+      g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });
+      continue;
+    }
+    // "its controller adds …"; "add …" — the trigger's controller.
+    const controller = a.trigger.its ? tapped.controller : src.controller;
+    for (const effect of a.effects) {
+      const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
+      // "one mana of any color": the color the action named (CR 605.3b — chosen as the mana ability resolves); tapped
+      // automatically, the color the permanent itself made, if it made one.
+      let choice: number | ManaColor | undefined;
+      if (bonusChoice(run as AddManaEffect)) {
+        const e = run as AddManaEffect;
+        const named = bonus[asked++];
+        if (e.anyColor) {
+          const legal = anyColorChoices(g, controller, e.identity, e, src);
+          choice = typeof named === 'string' && legal.includes(named) ? named : (legal.find((c) => produced.includes(c)) ?? legal[0]);
+          if (choice === undefined) continue;
+        } else choice = typeof named === 'number' && named >= 0 && named < e.options!.length ? named : 0;
       }
-      // "its controller adds …"; "add …" — the trigger's controller.
-      const controller = a.trigger.its ? tapped.controller : src.controller;
-      for (const effect of a.effects) {
-        const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
-        runEffect(run, { g, controller, source: src, events, targets: [], x: 0, memo: {} });
-      }
+      runEffect(run, { g, controller, source: src, events, targets: [], x: 0, memo: {}, ...(choice !== undefined ? { choice } : {}) });
     }
   }
   // High Tide: "Until end of turn, whenever a player taps an Island for mana, that player adds an additional {U}." (CR 514.2)
