@@ -328,6 +328,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     return of && !of.plural && of.ref.ref !== 'all' ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
+  // Heartless Hidetsugu: "half that player's life total, rounded down" — each player's own (perPlayerCount).
+  const lifeOf = /^(that player|that opponent|target player|target opponent|their)(?:'s)? life total$/.exec(t);
+  if (lifeOf) {
+    const who = parsePlayerRef(lifeOf[1] === 'their' ? 'that player' : lifeOf[1]!, b);
+    if (who) return { kind: 'life', who };
+  }
   // CR 706.2: "equal to the result", "where X is the result"
   if (t === 'the result') return { kind: 'die_result' };
   // Windfall: "the greatest number of cards a player discarded this way"; "the number of cards discarded this way"
@@ -338,11 +344,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // "that excess damage" (after "If excess damage was dealt this way").
   if (/^(?:the amount of excess damage|the excess damage|that excess damage)(?: dealt(?: to (?:that|the) (?:creature|permanent))?(?: this way)?)?$/.test(t)) return { kind: 'excess_this_way' };
   // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
-  const greatest = /^the greatest (power|toughness|mana value) among (.+)$/.exec(t);
+  // Prime Speaker Zegana, Arbor Adherent: "… among other creatures you control" — other than the source.
+  const greatest = /^the greatest (power|toughness|mana value) among (other )?(.+)$/.exec(t);
   if (greatest) {
-    const pf = parseFilter(greatest[2]!.replace(/ or an? /g, ' or '), b);
-    if (!pf || !pf.plural) return null;
-    return { kind: 'greatest', stat: greatest[1] === 'mana value' ? 'mana_value' : (greatest[1] as 'power' | 'toughness'), filter: pf.filter };
+    const pf = parseFilter(greatest[3]!.replace(/ or an? /g, ' or '), b);
+    if (!pf || !pf.plural || (greatest[2] && pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
+    return { kind: 'greatest', stat: greatest[1] === 'mana value' ? 'mana_value' : (greatest[1] as 'power' | 'toughness'), filter: { ...pf.filter, ...(greatest[2] ? { other: true } : {}) } };
   }
   // CR 702.101a (extort): "the total life lost this way"
   if (t === 'the total life lost this way' || t === 'the life lost this way') return { kind: 'life_lost' };

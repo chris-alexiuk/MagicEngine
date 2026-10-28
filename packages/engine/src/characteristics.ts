@@ -677,12 +677,17 @@ function applyOwnCDA(g: GameState, o: GameObject, c: Characteristics): void {
   }
 }
 
+const PT_COUNTER = /^([+-])(\d+)\/([+-])(\d+)$/;
+
 function withCounters(c: Characteristics, o: GameObject): Characteristics {
-  // CR 122.1a / CR 613.4c: +1/+1 and -1/-1 counters.
-  const plus = o.counters['+1/+1'] ?? 0;
-  const minus = o.counters['-1/-1'] ?? 0;
-  c.power += plus - minus;
-  c.toughness += plus - minus;
+  // CR 122.1a / CR 613.4c: +1/+1 and -1/-1 counters — and any other +X/+Y kind (Wall of Roots' -0/-1, Fungus Elemental's
+  // +2/+2).
+  for (const [kind, n] of Object.entries(o.counters)) {
+    const m = n ? PT_COUNTER.exec(kind) : null;
+    if (!m) continue;
+    c.power += n * (m[1] === '-' ? -1 : 1) * Number(m[2]);
+    c.toughness += n * (m[3] === '-' ? -1 : 1) * Number(m[4]);
+  }
   return c;
 }
 
@@ -756,6 +761,12 @@ export function filterZones(f: ObjectFilter | undefined): ZoneWord[] {
   return ['battlefield'];
 }
 
+/** A keyword filter word: an id, or "landwalk:island" for one kind of landwalk (CR 702.14). */
+function keywordIs(k: { id: string; text?: string }, word: string): boolean {
+  if (k.id === word) return true;
+  return word.startsWith('landwalk:') && k.id === 'landwalk' && (k.text ?? '').toLowerCase() === word.slice(9);
+}
+
 /** Whether an object matches a filter from the compiled AST. */
 export function matchesFilter(
   g: GameState,
@@ -819,9 +830,13 @@ export function matchesFilter(
       const t = g.combat?.attackers[o.id]?.target;
       if (t?.kind !== 'player' || t.player !== ctx.controller) return false;
     }
+    if (f.attackingOpponent) {
+      const t = g.combat?.attackers[o.id]?.target;
+      if (t?.kind !== 'player' || t.player === ctx.controller) return false;
+    }
   }
-  if (f.keywords && !f.keywords.some((k) => c.keywords.some((x) => x.id === k))) return false;
-  if (f.notKeywords?.some((k) => c.keywords.some((x) => x.id === k))) return false;
+  if (f.keywords && !f.keywords.some((k) => c.keywords.some((x) => keywordIs(x, k)))) return false;
+  if (f.notKeywords?.some((k) => c.keywords.some((x) => keywordIs(x, k)))) return false;
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power" — in a trigger or static
   // ability, counted now from its source (as an effect resolves, bindFilter has counted it already).
   const counted = (k: { op: string; n: unknown }) => (typeof k.n === 'object' && k.n && ctx.source ? { op: k.op, n: staticAmount(g, k.n as Amount, ctx.source) } : k);

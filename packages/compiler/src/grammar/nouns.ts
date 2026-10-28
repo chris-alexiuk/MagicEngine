@@ -51,6 +51,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
+  // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
+  [/ (?:that's|that are) attacking (?:one of your opponents|an opponent)$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingOpponent = true), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   // Aku Djinn: "each creature each opponent controls"
@@ -192,8 +194,9 @@ function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge'
 
 function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: string, b: Binder): boolean {
   const kws = parseKeywordList(text, b);
-  if (!kws || f[key] || kws.some((k) => k.text || k.cost || k.n !== undefined)) return false;
-  f[key] = kws.map((k) => k.id);
+  // Stormtide Leviathan: "without flying or islandwalk" — a landwalk is its kind ("landwalk:island").
+  if (!kws || f[key] || kws.some((k) => (k.text && k.id !== 'landwalk') || k.cost || k.n !== undefined)) return false;
+  f[key] = kws.map((k) => (k.id === 'landwalk' ? `landwalk:${k.text!.toLowerCase()}` : k.id));
   return true;
 }
 

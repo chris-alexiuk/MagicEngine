@@ -1,5 +1,5 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, StaticAbility, StaticPreventionNode } from '@mtg/schema';
+import type { AttackTaxNode, ObjectFilter, StaticAbility, StaticPreventionNode } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
 import {
@@ -859,10 +859,15 @@ export function damageBeforeExcess(g: GameState, source: GameObject, o: GameObje
 }
 
 /** CR 615.12: a static ability saying damage (or combat damage) can't be prevented. */
-function staticUnpreventable(g: GameState, combat: boolean): boolean {
+function staticUnpreventable(g: GameState, combat: boolean, source: GameObject): boolean {
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    for (const a of objectAbilities(g, o)) if (a.kind === 'static' && a.effect.type === 'unpreventable' && (combat || !a.effect.combat)) return true;
+    for (const a of objectAbilities(g, o)) {
+      if (a.kind !== 'static' || a.effect.type !== 'unpreventable' || (!combat && a.effect.combat)) continue;
+      // Questing Beast: "… dealt by creatures you control …" — only from those sources.
+      if (a.effect.from && !matchesFilter(g, source, a.effect.from as ObjectFilter, { controller: o.controller, source: o })) continue;
+      return true;
+    }
   }
   return false;
 }
@@ -878,7 +883,7 @@ export function dealDamage(
   // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
   amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).
-  const unpreventable = g.unpreventableTurn === g.turn || staticUnpreventable(g, combat);
+  const unpreventable = g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
   if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
   // CR 702.16j: damage to a player with protection from everything is prevented.
   if (!unpreventable && amount > 0 && to.kind === 'player' && playerRule(g, to.player, 'protection_everything')) {

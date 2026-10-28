@@ -228,7 +228,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!source) return true;
     if (node.from && source.zone !== 'battlefield') return true;
     // CR 107.1b: "X damage, where X is … minus 4" — a negative amount is no damage.
-    const n = Math.max(0, amountOf(ctx, node.amount));
+    const nAll = Math.max(0, amountOf(ctx, node.amount));
     let dealt = 0;
     if (node.divided) {
       // CR 601.2d: as divided when it was cast; a target that's no longer legal doesn't get its share.
@@ -246,8 +246,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
       return true;
     }
+    // Price of Progress: "deals damage to each player equal to twice the number of nonbasic lands that player controls" —
+    // counted for each of them (Ref 'each_player').
+    const perPlayer = JSON.stringify(node.amount ?? null).includes('"each_player"');
     for (const to of refRecipients(ctx, ref(node, 'to'))) {
       const o = to.kind === 'permanent' ? ctx.g.objects[to.object] : undefined;
+      const n = perPlayer ? Math.max(0, amountOf({ ...ctx, eachPlayer: to.kind === 'player' ? to.player : o?.controller }, node.amount)) : nAll;
       const before = o && o.zone === 'battlefield' ? damageBeforeExcess(ctx.g, source, o) : Infinity;
       // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
       // instead." (CR 120.4a: the damage event is modified first)
@@ -389,7 +393,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     const start = ctx.g.config.startingLife;
     const value = node.value === 'starting' ? start : node.value === 'half_starting_up' ? Math.ceil(start / 2) : node.value === 'half_starting_down' ? Math.floor(start / 2) : undefined;
-    const each = value === undefined ? perPlayerAmounts(ctx, node.amount, players) : players.map(() => value);
+    // Beacon of Immortality: "Double target player's life total." (CR 701.10d)
+    const each = node.value === 'double' ? players.map((p) => ctx.g.players[p]!.life * 2) : value === undefined ? perPlayerAmounts(ctx, node.amount, players) : players.map(() => value);
     const out: EffectNode[] = [];
     for (const [i, p] of players.entries()) {
       const delta = each[i]! - ctx.g.players[p]!.life;
@@ -1486,7 +1491,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 500.7: "Take an extra turn after this one."
   extra_turn(node, ctx) {
-    for (const p of refPlayers(ctx, ref(node, 'who'))) (ctx.g.extraTurns ??= []).unshift(p);
+    // CR 500.7: the most recently created extra turn is taken first (two at once: one after the other).
+    const n = Number(node.count ?? 1);
+    for (const p of refPlayers(ctx, ref(node, 'who'))) for (let i = 0; i < n; i++) (ctx.g.extraTurns ??= []).unshift(p);
     return true;
   },
 

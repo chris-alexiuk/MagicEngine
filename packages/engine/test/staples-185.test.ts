@@ -211,6 +211,16 @@ const CARDS = [
   makeCard({ name: 'Glare Lite', type_line: 'Sorcery', mana_cost: '{X}', oracle_text: 'Destroy target creature with power X or less.' }),
   makeCard({ name: 'Lyre Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{X}, {T}: Tap target creature with power X or less.' }),
   makeCard({ name: 'Sprite Lite', type_line: 'Creature — Faerie Wizard', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flash\nWhen this creature enters, counter target spell with mana value X or less, where X is the number of Faeries you control.' }),
+  makeCard({ name: 'Progress Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Progress Lite deals damage to each player equal to twice the number of nonbasic lands that player controls.' }),
+  makeCard({ name: 'Beast Lite', type_line: 'Legendary Creature — Beast', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Haste\nCombat damage that would be dealt by creatures you control can't be prevented." }),
+  makeCard({ name: 'Stormtide Lite', type_line: 'Creature — Leviathan', mana_cost: '{0}', power: '8', toughness: '8', oracle_text: "Islandwalk\nCreatures without flying or islandwalk can't attack." }),
+  makeCard({ name: 'Roots Lite', type_line: 'Creature — Plant Wall', mana_cost: '{0}', power: '0', toughness: '5', oracle_text: 'Defender\nPut a -0/-1 counter on this creature: Add {G}. Activate only once each turn.' }),
+  makeCard({ name: 'Push Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target creature if it has mana value 2 or less.\nRevolt — Destroy that creature if it has mana value 4 or less instead if a permanent left the battlefield under your control this turn.' }),
+  makeCard({ name: 'Hidetsugu Lite', type_line: 'Legendary Creature — Ogre Shaman', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: "{T}: Hidetsugu Lite deals damage to each player equal to half that player's life total, rounded down." }),
+  makeCard({ name: 'Oven Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "{T}, Sacrifice a creature: Create a Food token. If the sacrificed creature's toughness was 4 or greater, create two Food tokens instead." }),
+  makeCard({ name: 'Den Lite', type_line: 'Land', mana_cost: '', oracle_text: 'If you control two or more other lands, this land enters tapped.\n{T}: Add {R}.' }),
+  makeCard({ name: 'Stretch Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Target player takes two extra turns after this one.' }),
+  makeCard({ name: 'Bloom Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'You may play up to three additional lands this turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -2275,5 +2285,117 @@ describe('staples (slice 202): targets "with mana value X or less" (CR 601.2b–
     g = settle(g);
     expect(g.objects[spell]!.zone).toBe('graveyard');
     expect(g.players.bob!.life).toBe(20);
+  });
+});
+
+describe('staples (slice 202): damage counted for each player', () => {
+  it('Price of Progress: twice the nonbasic lands each player controls', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Arena of Glory', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'bob', 'Arena of Glory', 'battlefield');
+    give(g, 'bob', 'Desert Lite', 'battlefield');
+    const [a, b] = [g.players.alice!.life, g.players.bob!.life];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Progress Lite', 'hand') }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([a - 2, b - 4]);
+  });
+});
+
+describe('staples (slice 202): Questing Beast and Stormtide Leviathan', () => {
+  it("Questing Beast: your creatures' combat damage can't be prevented; other damage still is", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const beast = give(g, 'alice', 'Beast Lite', 'battlefield');
+    give(g, 'bob', 'Chasm Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(life);
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: beast, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 30 && g.step !== 'end'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect(g.players.bob!.life).toBe(life - 4);
+  });
+
+  it("Stormtide Leviathan: creatures without flying or islandwalk can't attack", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lev = give(g, 'alice', 'Stormtide Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    for (const id of [lev, bear]) g.objects[id]!.sick = false;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } })).toBeTruthy();
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: lev, target: { kind: 'player', player: 'bob' } }] } });
+    expect(g.combat?.attackers[lev]).toBeDefined();
+  });
+});
+
+describe('staples (slice 203): counters other than +1/+1 and -1/-1 (CR 122.1a)', () => {
+  it('Wall of Roots: a -0/-1 counter lowers its toughness', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const wall = give(g, 'alice', 'Roots Lite', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: wall, ability: 0 });
+    expect(g.players.alice!.pool.G).toBe(1);
+    expect(chars(g, g.objects[wall]!).toughness).toBe(4);
+    g.objects[wall]!.counters['+2/+2'] = 1;
+    expect([chars(g, g.objects[wall]!).power, chars(g, g.objects[wall]!).toughness]).toEqual([2, 6]);
+  });
+});
+
+describe('staples (slice 203): Fatal Push and friends', () => {
+  for (const [revolt, ogre] of [[false, 'battlefield'], [true, 'graveyard']] as const) {
+    it(`Fatal Push: a 3-mana creature ${revolt ? 'is' : "isn't"} destroyed ${revolt ? 'with' : 'without'} revolt`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const three = give(g, 'bob', 'Ogre Three', 'battlefield');
+      if (revolt) g.turnLog.left = ['alice'];
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Push Lite', 'hand'), targets: [[{ kind: 'object', object: three }]] }));
+      expect(g.objects[three]!.zone).toBe(ogre);
+    });
+  }
+
+  it('Heartless Hidetsugu: half of each player\'s own life total', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const hid = give(g, 'alice', 'Hidetsugu Lite', 'battlefield');
+    g.objects[hid]!.sick = false;
+    g.players.alice!.life = 21;
+    g.players.bob!.life = 10;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: hid, ability: 0 }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([11, 5]);
+  });
+
+  it("Witch's Oven: two Foods for a creature with toughness 4 or greater", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const oven = give(g, 'alice', 'Oven Lite', 'battlefield');
+    const big = give(g, 'alice', 'Stormtide Lite', 'battlefield');
+    const foods = () => g.zones.battlefield.filter((id) => g.objects[id]!.token).length;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: oven, ability: 0, costs: { sacrifice: [big] } } as never));
+    expect(foods()).toBe(2);
+  });
+
+  it('Den of the Bugbear: tapped with two or more other lands', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const one = give(g, 'alice', 'Den Lite', 'hand');
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: one }));
+    expect(g.objects[one]!.tapped).toBe(false);
+    give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    g.players.alice!.landsPlayedThisTurn = 0;
+    const two = give(g, 'alice', 'Den Lite', 'hand');
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: two }));
+    expect(g.objects[two]!.tapped).toBe(true);
+  });
+
+  it('Time Stretch: two extra turns', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Stretch Lite', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(g.extraTurns).toEqual(['alice', 'alice']);
+  });
+
+  it('Summer Bloom: three more land plays this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bloom Lite', 'hand') }));
+    for (let i = 0; i < 4; i++) g = settle(act(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') }));
+    expect(illegal(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') })).toBeTruthy();
   });
 });

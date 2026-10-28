@@ -2606,3 +2606,34 @@ describe('slice 202', () => {
     expect(parse("Exile target creature you control and return it to the battlefield under its owner's control at the beginning of the next end step.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile' }, { type: 'delayed', step: 'end', effects: [{ type: 'move', to: 'battlefield' }] }] });
   });
 });
+
+describe('slice 203', () => {
+  it('reads damage counted for each player, life totals doubled, and conditions on the target', () => {
+    expect(parse('Price of Progress deals damage to each player equal to twice the number of nonbasic lands that player controls.', 'Instant', 'Price of Progress').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'count', filter: { controlledBy: { ref: 'each_player' } }, times: 2 }, to: { ref: 'players', who: 'each' } }] });
+    expect(parse("{T}: Hidetsugu deals damage to each player equal to half that player's life total, rounded down.", 'Legendary Creature', 'Hidetsugu').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'life', who: { ref: 'each_player' }, half: 'down' } }] });
+    expect(parse("Double target player's life total.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'set_life', value: 'double' }] });
+    expect(parse('Destroy target creature if it has mana value 2 or less.\nRevolt — Destroy that creature if it has mana value 4 or less instead if a permanent left the battlefield under your control this turn.', 'Instant', 'Push').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'this_turn', event: 'your_permanent_left' }, effects: [{ type: 'if', cond: { filter: { manaValue: { n: 4 } } } }], else: [{ type: 'if', cond: { filter: { manaValue: { n: 2 } } } }] }] });
+    expect(parse("{T}, Sacrifice a creature: Create a Food token. If the sacrificed creature's toughness was 4 or greater, create two Food tokens instead.", 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { amount: { kind: 'cost_lki', stat: 'toughness' }, op: 'ge', n: 4 } }] });
+    expect(parse("Exile target creature you control, then return it to the battlefield under its owner's control. If that creature is a Bird, Frog, Otter, or Rat, draw a card.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'move' }, { type: 'if', cond: { type: 'is', filter: { subtypes: expect.arrayContaining(['Bird', 'Rat']) } } }] });
+  });
+
+  it('reads either-triggers about the source, attacks with Birds, lands that enter tapped, extra turns and land plays', () => {
+    expect(parse('Whenever this creature enters or attacks, it deals 3 damage divided as you choose among one, two, or three targets.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'either' }, effects: [{ type: 'deal_damage', divided: true }] });
+    expect(parse('Whenever you attack with one or more Birds, scry 2.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', filter: { subtypes: ['Bird'] } } });
+    expect(parse('If you control two or more other lands, this land enters tapped.', 'Land').abilities[0]).toMatchObject({ effect: { type: 'enters_tapped', unless: { type: 'not' } } });
+    expect(parse('Target player takes two extra turns after this one.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'extra_turn', count: 2 }] });
+    expect(parse('You may play up to three additional lands this turn.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'extra_land', amount: 3 }] });
+    expect(parse("Each creature that's attacking one of your opponents has trample.", 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { attackingOpponent: true } } } });
+    expect(parse("Exile any number of target players' graveyards.", 'Instant').abilities[0]).toMatchObject({ targets: [{ what: 'player', count: 99, upTo: true }] });
+  });
+
+  it('reads mana by condition, statics on damage and life, keyword kinds and flavor words', () => {
+    expect(parse('{T}: Add {U}. If you played a land this turn, add {B} instead.', 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { event: 'you_played_land' } }] });
+    expect(parse('{T}: Add one mana of any color. Activate only if this land entered this turn.', 'Land').abilities[0]).toMatchObject({ activateIf: { type: 'is', filter: { enteredThisTurn: true } } });
+    expect(parse("Creatures without flying or islandwalk can't attack.", 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { notKeywords: ['flying', 'landwalk:island'] } } } });
+    expect(parse('If a player would gain life, that player gains no life instead.', 'Enchantment').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'cant_gain_life', who: 'each' } });
+    expect(parse("Combat damage that would be dealt by creatures you control can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', combat: true, from: { controller: 'you' } } });
+    expect(parse('This creature enters with X +1/+1 counters on it, where X is the greatest power among other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { perEach: { kind: 'greatest', filter: { other: true } } } });
+    expect(parse('10,000 Needles — Whenever this creature attacks, it gets +9999/+0 until end of turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'modify', power: 9999 }] });
+  });
+});

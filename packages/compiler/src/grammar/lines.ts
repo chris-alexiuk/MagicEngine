@@ -993,6 +993,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacks[2] ? 'or_planeswalkers' : 'you', min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // General Kreat: "Whenever one or more Goblins you control attack" — once per declaration, if any of them attack.
+  // Hermes, Overseer of Elpis: "Whenever you attack with one or more Birds" — the same.
+  const attackWith = /^you attack with one or more (.+)$/.exec(t);
+  if (attackWith && !/ you control$/.test(attackWith[1]!) && attackWith[1] !== 'creatures') return parseTrigger(word, `one or more ${attackWith[1]} you control attack`, b);
   const someAttack = /^one or more (.+? you control) attack$/.exec(t);
   if (someAttack && someAttack[1] !== 'creatures you control') {
     const pf = parseFilter(someAttack[1]!, b);
@@ -1740,6 +1743,9 @@ export const triggeredRule: GrammarRule = {
           b.named['~ from your graveyard'] = { ref: 'trigger_object' };
           b.itIsSource = true;
         }
+        // Inferno Titan: "Whenever this creature enters or attacks, it deals 3 damage …" — either way "it" is the source.
+        const ofs = trig.trigger.type === 'either' ? (trig.trigger.of as { subject?: Ref }[]) : [];
+        if (ofs.length && ofs.every((o) => o.subject?.ref === 'self')) b.itIsSource = true;
         let effectText = body.slice(comma.index! + 2);
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
@@ -2149,6 +2155,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
   if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
+  // Sulfuric Vortex: "If a player would gain life, that player gains no life instead." (CR 614.1a: no life is gained.)
+  const noGain = /^If (a player|an opponent|you) would gain life, (?:that player gains|you gain) no life instead$/.exec(body);
+  if (noGain) return { type: 'player_rule', who: noGain[1] === 'a player' ? 'each' : noGain[1] === 'you' ? 'you' : 'opponents', rule: 'cant_gain_life' };
   // Aven Mindcensor (CR 614.1a).
   if (/^If an opponent would search a library, that player searches the top four cards of that library instead$/.test(body)) return { type: 'player_rule', who: 'opponents', rule: 'search_top_four' };
   // Trouble in Pairs (CR 614.10: skipping is a replacement).
@@ -2815,6 +2824,12 @@ export const staticPreventionRule: GrammarRule = {
     // CR 615.12: Frenzied Baloth: "Combat damage can't be prevented."; "Damage can't be prevented."
     const cant = /^(Combat damage|Damage) can't be prevented\.$/.exec(line);
     if (cant) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(cant[1] === 'Combat damage' ? { combat: true } : {}) } } as StaticAbility;
+    // Questing Beast: "Combat damage that would be dealt by creatures you control can't be prevented."
+    const by = /^(Combat damage|Damage) that would be dealt by (.+?) can't be prevented\.$/.exec(line);
+    if (by && env) {
+      const pf = parseFilter(by[2]!, new Binder(env));
+      if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(by[1] === 'Combat damage' ? { combat: true } : {}), from: pf.filter } } as StaticAbility;
+    }
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to) (.+?)( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
@@ -2889,9 +2904,12 @@ export const entersTappedUnlessRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     const m = /^~ enters(?: the battlefield)? tapped unless (.+)\.$/.exec(line);
-    if (!env || !m) return null;
-    const unless = parseCondition(m[1]!, new Binder(env));
-    if (!unless) return null;
+    // Den of the Bugbear: "If you control two or more other lands, this land enters tapped." — unless it's false.
+    const iff = !m ? /^If (.+), ~ enters(?: the battlefield)? tapped\.$/.exec(line) : null;
+    if (!env || (!m && !iff)) return null;
+    const cond = parseCondition((m ?? iff)![1]!, new Binder(env));
+    if (!cond) return null;
+    const unless: ConditionNode = m ? cond : { type: 'not', cond };
     const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_tapped', unless } };
     return node;
   },

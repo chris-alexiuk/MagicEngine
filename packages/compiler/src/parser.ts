@@ -671,10 +671,12 @@ export { stripReminder };
 
 /** "Landfall — Whenever…" → "Whenever…". Ability words have no rules meaning (CR 207.2c). */
 export function stripAbilityWord(line: string): string {
-  const m = /^([A-Z][A-Za-z' ]*?(?: \d+)?) — (.+)$/.exec(line);
+  // Flavor words too: "10,000 Needles —", "Brand-new Sky —", "Exterminate! —".
+  const m = /^((?:\d[\d,]* )?[A-Z][A-Za-z'’\-! ]{0,40}?(?: \d+)?) — (.+)$/.exec(line);
   if (!m) return line;
-  // "Choose one —" is a modal spell, not an ability word; "II —" is a Saga's chapter symbol (CR 714.2).
-  if (/^Choose\b/.test(m[1]!) || /^[IVX]+(?:, [IVX]+)*$/.test(m[1]!)) return line;
+  // "Choose one —" is a modal spell, not an ability word; "II —" is a Saga's chapter symbol (CR 714.2); exhaust and
+  // power-up are keywords (CR 702.177a, 702.193a).
+  if (/^Choose\b/.test(m[1]!) || /^[IVX]+(?:, [IVX]+)*$/.test(m[1]!) || /^(?:Exhaust|Power-up)$/.test(m[1]!)) return line;
   return m[2]!;
 }
 

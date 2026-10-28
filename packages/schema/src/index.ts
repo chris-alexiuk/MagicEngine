@@ -353,6 +353,8 @@ export interface ObjectFilter {
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
   /** "creatures attacking you" — the player whose point of view this is (not their planeswalkers). */
   attackingYou?: true;
+  /** Oviya: "Each creature that's attacking one of your opponents" — the player attacked is an opponent. */
+  attackingOpponent?: true;
   token?: boolean;
   /** "with flying" (any of). */
   keywords?: string[];

@@ -288,6 +288,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       return { type: 'is', of, filter: { [key]: { op: /greater|more/.test(statIs[4]!) ? 'ge' : 'le', n } } };
     }
   }
+  // Witch's Oven: "If the sacrificed creature's toughness was 4 or greater" — as it last existed (CR 608.2h).
+  const sacStat = /^the sacrificed (?:creature|artifact|permanent)'s (power|toughness|mana value) (?:was|is) (\w+) or (greater|more|less)$/.exec(t);
+  if (sacStat) {
+    const n = parseAmount(sacStat[2]!);
+    const stat = sacStat[1] === 'mana value' ? 'mana_value' : sacStat[1];
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'cost_lki', cost: 'sacrificed', stat }, op: /greater|more/.test(sacStat[3]!) ? 'ge' : 'le', n };
+  }
   // Massacre Girl, Known Killer: "if its toughness was less than 1" — the creature that died, as it last existed.
   const statWas = /^its (power|toughness) was (less than|greater than) (\w+)$/.exec(t);
   if (statWas && b.it?.ref === 'trigger_object') {
@@ -306,6 +313,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       const cond: ConditionNode = { type: 'is', of: b.it, filter: pf.filter };
       return itsA[1] ? { type: 'not', cond } : cond;
     }
+  }
+  // Fatal Push: "if it has mana value 2 or less" — the object the instruction is about.
+  const itHas = /^(?:it|that creature|that permanent) has (mana value|power|toughness) (\d+) or (less|greater)$/.exec(t);
+  if (itHas && b.it && b.it.ref !== 'self') {
+    const key = itHas[1] === 'mana value' ? 'manaValue' : (itHas[1] as 'power' | 'toughness');
+    return { type: 'is', of: b.it, filter: { [key]: { op: itHas[3] === 'less' ? 'le' : 'ge', n: Number(itHas[2]) } } };
   }
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
@@ -516,6 +529,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'a creature you controlled died this turn': 'your_creature_died',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
+  // River of Tears: "If you played a land this turn" (CR 305.1: played, not just put onto the battlefield).
+  if (/^you(?:'ve)? played a land this turn$/.test(t)) return { type: 'this_turn', event: 'you_played_land' };
+  // Mirrex: "Activate only if this land entered this turn."
+  if (/^(?:~|this (?:land|creature|artifact|permanent|enchantment)) entered (?:the battlefield )?this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } };
   // Fortune Teller's Talent: "you've cast a spell this turn"; Essence Channeler: "you've lost life this turn".
   if (/^you(?:'ve)? cast a spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
   if (/^you(?:'ve)? lost life this turn$/.test(t)) return { type: 'this_turn', event: 'you_lost_life' };

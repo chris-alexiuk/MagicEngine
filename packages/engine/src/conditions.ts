@@ -541,6 +541,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (log.castSpells ?? []).filter((c) => c.player === controller && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
         case 'you_lost_life':
           return log.lostLife.includes(controller);
+        case 'you_played_land':
+          return (g.players[controller]?.landsPlayedThisTurn ?? 0) > 0;
         // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
         case 'entered_yours':
           return (log.entered?.[controller] ?? []).some((id) => {

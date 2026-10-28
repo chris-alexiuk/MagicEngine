@@ -132,7 +132,9 @@ function targetCountable(n: unknown): boolean {
   // Scrap Trawler: "with lesser mana value" than the object the trigger is about — known as targets are chosen.
   if (e.kind === 'stat' && e.of?.ref === 'trigger_object' && json === JSON.stringify({ kind: 'stat', stat: (n as { stat: string }).stat, of: { ref: 'trigger_object' } })) return true;
   if (/"ref":"(?!self"|you")/.test(json)) return false;
-  return e.kind === 'count' || e.kind === 'cards' || ((e.kind === 'stat' || e.kind === 'counters') && e.of?.ref === 'self');
+  // Celestine: "where X is the amount of life you gained this turn" — the game's state, known as targets are chosen.
+  const STATE = ['count', 'cards', 'life_this_turn', 'devotion', 'domain', 'party', 'drawn_this_turn', 'spells_cast_this_turn', 'died_this_turn', 'tokens_created_this_turn'];
+  return STATE.includes(e.kind ?? '') || ((e.kind === 'stat' || e.kind === 'counters') && e.of?.ref === 'self');
 }
 
 /** Runs `fn` on a copy of the binder and keeps its changes only if it succeeds. */

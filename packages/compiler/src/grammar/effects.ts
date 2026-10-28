@@ -735,7 +735,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const backOnField = lastMove?.type === 'move' && lastMove.to === 'battlefield' && JSON.stringify(lastMove.what) === JSON.stringify(b.it);
       if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
-      const iff = /^If ([^,]+), (.+)$/.exec(s);
+      // Splash Portal: "If that creature is a Bird, Frog, Otter, or Rat, draw a card." — a list in the condition.
+      const listed = /^If ([^,]+(?:, [A-Z][\w-]*)+,? or [A-Z][\w-]*), (.+)$/.exec(s);
+      const listCond = listed ? parseCondition(listed[1]!, b.clone()) : null;
+      const iff = listed && listCond ? listed : /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
       // "If this spell was kicked, that creature gets -5/-5 until end of turn instead." — the earlier
       // sentence's effect, replaced when the condition holds.
@@ -1422,7 +1425,8 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
           ? attempt(b, (b) => {
               const inner = parseInner(s.slice(0, at) + rest, b);
               // "Each opponent loses 1 life for each creature that player controls": each of them (perPlayerCount).
-              const who = inner?.length === 1 ? (inner[0] as { who?: Ref }).who : undefined;
+              // Price of Progress: "deals damage to each player equal to … that player controls" — each of them too.
+              const who = inner?.length === 1 ? ((inner[0] as { who?: Ref }).who ?? (inner[0]!.type === 'deal_damage' ? (inner[0] as { to?: Ref }).to : undefined)) : undefined;
               const saved = b.player;
               if (who?.ref === 'players') b.player = who;
               const counted = inner && parseForEach(what, b);
@@ -1470,7 +1474,7 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         ? attempt(b, (b) => {
             const inner = parseInner(text, b);
             // "Each opponent loses life equal to the life that player lost this turn": "that player" is each of them.
-            const who = inner?.length === 1 ? (inner[0] as { who?: Ref }).who : undefined;
+            const who = inner?.length === 1 ? ((inner[0] as { who?: Ref }).who ?? (inner[0]!.type === 'deal_damage' ? (inner[0] as { to?: Ref }).to : undefined)) : undefined;
             const saved = b.player;
             if (who?.ref === 'players') b.player = who;
             const counted = inner && parseCount(what, b);
@@ -1715,8 +1719,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 608.2g: "You may cast it without paying its mana cost" — cast during resolution, timing ignored.
   // CR 305.2: "You may play an additional land this turn."
-  const extraLand = /^(You|Each player) may play (an|two) additional lands? this turn$/.exec(s);
-  if (extraLand) return [{ type: 'extra_land', who: { ref: extraLand[1] === 'You' ? 'you' : 'players' }, ...(extraLand[2] === 'two' ? { amount: 2 } : {}) }];
+  // Summer Bloom: "You may play up to three additional lands this turn." (the same: up to that many more).
+  const extraLand = /^(You|Each player) may play (?:up to )?(an|two|three) additional lands? this turn$/.exec(s);
+  if (extraLand) return [{ type: 'extra_land', who: { ref: extraLand[1] === 'You' ? 'you' : 'players' }, ...(extraLand[2] !== 'an' ? { amount: extraLand[2] === 'two' ? 2 : 3 } : {}) }];
   // Rishkar's Expertise: "You may cast a spell with mana value 5 or less from your hand without paying its mana cost."
   // Buster Sword: "you may cast a spell from your hand with mana value less than or equal to that damage without paying its
   // mana cost" — the same, with the quality after "from your hand".
@@ -1865,11 +1870,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // CR 500.7: "Take an extra turn after this one." / "Target player takes an extra turn after this one."
-  const extraTurn = /^(?:(.+?) takes?|[Tt]ake) an extra turn after this one$/.exec(s);
-  if (extraTurn) {
+  // Time Stretch: "Target player takes two extra turns after this one."
+  const extraTurn = /^(?:(.+?) takes?|[Tt]ake) (an|two|three) extra turns? after this one$/.exec(s);
+  if (extraTurn && (extraTurn[2] === 'an') === !/turns after/.test(s)) {
     const r = attempt(b, (b) => {
       const who = extraTurn[1] ? parsePlayerRef(extraTurn[1], b) : { ref: 'you' as const };
-      return who ? [{ type: 'extra_turn', who }] : null;
+      const n = extraTurn[2] === 'an' ? 1 : (parseAmount(extraTurn[2]!) as number);
+      return who ? [{ type: 'extra_turn', who, ...(n > 1 ? { count: n } : {}) }] : null;
     });
     if (r) return r;
   }
@@ -2079,6 +2086,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // "Exile target player's graveyard."
   const exileYard = /^[Ee]xile (target player's|target opponent's|each opponent's|your) graveyard$/.exec(s);
   if (exileYard) return parseSentence(`Exile all cards from ${exileYard[1]} graveyard`, b);
+  // Thraben Charm, Stonespeaker Crystal: "Exile any number of target players' graveyards."
+  if (/^[Ee]xile any number of target players' graveyards$/.test(s)) {
+    const who = b.addTarget({ what: 'player', count: 99, upTo: true, text: "any number of target players" });
+    return [{ type: 'move', what: { ref: 'all', filter: { zone: 'graveyard', ownedBy: who } }, to: 'exile' }];
+  }
   // "You may tap or untap target creature." / "Tap or untap target permanent."
   const tapOr = /^(You may )?[Tt]ap or untap (.+)$/.exec(s);
   if (tapOr) {
@@ -2286,6 +2298,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       out.push(...rest);
     }
     return out;
+  }
+  // Fatal Push: "Destroy that creature if it has mana value 4 or less" (after "instead if …", below the rule above).
+  const ifHas = /^(.+) if (it has (?:mana value|power|toughness) \d+ or (?:less|greater))$/.exec(s);
+  if (ifHas) {
+    const r = attempt(b, (b) => {
+      const inner = parseSentence(ifHas[1]!, b);
+      const cond = inner && b.it ? parseCondition(ifHas[2]!, b) : null;
+      return inner && cond ? [{ type: 'if', cond, effects: inner } as EffectNode] : null;
+    });
+    if (r) return r;
   }
   // Pyroblast: "Counter target spell if it's blue.", "Destroy target permanent if it's blue." (CR 608.2c)
   const ifIts = /^(.+) if it's (white|blue|black|red|green|(?:a|an) [a-z]+)$/.exec(s);
@@ -2540,6 +2562,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const value = Number.isFinite(n) ? null : lifeBecomes[3] ? (lifeBecomes[3] === 'up' ? 'half_starting_up' : 'half_starting_down') : 'starting';
       return [{ type: 'set_life', who, ...(value ? { value } : { amount: n }) }];
     }
+  }
+  // Beacon of Immortality: "Double target player's life total." (CR 701.10d: they gain or lose the life needed).
+  const doubleLife = /^[Dd]ouble (.+?)(?:'s?)? life total$/.exec(s);
+  if (doubleLife) {
+    const who = attempt(b, (b) => parsePlayerRef(doubleLife[1]!.replace(/^your$/i, 'you'), b));
+    if (who) return [{ type: 'set_life', who, value: 'double' }];
   }
   // Monstrous Vortex: "discover X, where X is that spell's mana value" (the X bound below).
   const discover = /^[Dd]iscover (\d+|X)$/.exec(s);
@@ -3767,7 +3795,7 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
 }
 
 /** Effects the engine counts separately for each player they're for (Ref 'each_player'). */
-const PER_PLAYER = ['lose_life', 'gain_life', 'draw', 'mill'];
+const PER_PLAYER = ['lose_life', 'gain_life', 'draw', 'mill', 'deal_damage'];
 
 /**
  * Archfiend of Despair: "each opponent loses life equal to the life that player lost this turn" — a count that names the
@@ -3775,7 +3803,7 @@ const PER_PLAYER = ['lose_life', 'gain_life', 'draw', 'mill'];
  * the effects the engine counts that way; null for any other.
  */
 function perPlayerCount(inner: EffectNode[], expr: AmountExpr): AmountExpr | null {
-  const who = inner.length === 1 ? ((inner[0] as { who?: Ref }).who) : undefined;
+  const who = inner.length === 1 ? ((inner[0] as { who?: Ref }).who ?? (inner[0]!.type === 'deal_damage' ? (inner[0] as { to?: Ref }).to : undefined)) : undefined;
   if (!who || who.ref !== 'players') return expr;
   const w = JSON.stringify(who);
   const js = JSON.stringify(expr);
@@ -3790,7 +3818,7 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   const divided = /^(~|[Ii]t) deals (\S+) damage divided as you choose among (any number of|one or two|one, two, or three|up to (\w+)) (targets|target .+)$/.exec(c);
   if (divided) {
     return attempt(b, (b) => {
-      if (divided[1] !== '~' && b.it?.ref !== 'self') return null;
+      if (divided[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object')) return null;
       const amount = parseAmount(divided[2]!);
       if (amount === null) return null;
       const most = divided[3] === 'any number of' ? 100 : divided[3] === 'one or two' ? 2 : divided[3] === 'one, two, or three' ? 3 : parseAmount(divided[4]!);
