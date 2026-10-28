@@ -249,6 +249,24 @@ const CARDS = [
   makeCard({ name: 'Vanity Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Choose a creature or planeswalker, then destroy all other creatures and planeswalkers.' }),
   makeCard({ name: 'Scry Command', type_line: 'Instant', mana_cost: '{X}', oracle_text: 'Target player scries X, then draws a card.' }),
   makeCard({ name: 'Feed Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target opponent loses life equal to the amount of life they lost this turn.' }),
+  makeCard({ name: 'Punk Lite', type_line: 'Legendary Creature — Spider Human Hero', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "Spells and abilities can't be countered." }),
+  makeCard({ name: 'Squelch Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Counter target activated ability.' }),
+  makeCard({ name: 'Pinger', type_line: 'Creature — Goblin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{0}: You gain 1 life.' }),
+  makeCard({ name: 'Charix Lite', type_line: 'Legendary Creature — Leviathan Crab', mana_cost: '{0}', power: '0', toughness: '17', oracle_text: 'Spells your opponents cast that target Charix Lite cost {2} more to cast.' }),
+  makeCard({ name: 'Alisaie Lite', type_line: 'Legendary Creature — Elf Wizard', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: 'The second spell you cast each turn costs {2} less to cast.' }),
+  makeCard({ name: 'Reactor Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'When this artifact has twenty or more charge counters on it, you win the game.' }),
+  makeCard({ name: 'Octopus Lite', type_line: 'Artifact Creature — Equipment Octopus', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever this creature or equipped creature deals combat damage to a player, draw a card.' }),
+  makeCard({ name: 'Horrigan Lite', type_line: 'Legendary Creature — Mutant Warrior', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Horrigan Lite has indestructible as long as it attacked this turn.' }),
+  makeCard({ name: 'Deathmantle Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +2/+2, has intimidate, and is a black Zombie.\nEquip {4}' }),
+  makeCard({ name: 'Visions Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Draw a card. If a graveyard has twenty or more cards in it, draw three cards instead.' }),
+  makeCard({ name: 'Teeg Lite', type_line: 'Legendary Creature — Kithkin Advisor', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Noncreature spells with {X} in their mana costs can't be cast." }),
+  makeCard({ name: 'X Burn', type_line: 'Instant', mana_cost: '{X}', oracle_text: 'X Burn deals X damage to any target.' }),
+  makeCard({ name: 'Tortoise Lite', type_line: 'Creature — Turtle', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Each creature you control with toughness greater than its power assigns combat damage equal to its toughness rather than its power.' }),
+  makeCard({ name: 'Wall Guy', type_line: 'Creature — Wall', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: '' }),
+  makeCard({ name: 'Kaalia Lite', type_line: 'Legendary Creature — Human Cleric', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever Kaalia Lite attacks an opponent, you may put an Angel, Demon, or Dragon creature card from your hand onto the battlefield tapped and attacking that opponent.' }),
+  makeCard({ name: 'Dragon Lite', type_line: 'Creature — Dragon', mana_cost: '{6}', cmc: 6, power: '6', toughness: '6', oracle_text: 'Flying' }),
+  makeCard({ name: 'Teachings Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Search your library for an instant card or a card with flash, reveal it, put it into your hand, then shuffle.' }),
+  makeCard({ name: 'Flash Bear', type_line: 'Creature — Bear', mana_cost: '{1}{G}', cmc: 2, power: '2', toughness: '2', oracle_text: 'Flash' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -2797,5 +2815,160 @@ describe('staples (slice 207): each player may', () => {
     const life = g.players.bob!.life;
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Feed Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
     expect(g.players.bob!.life).toBe(life - 3);
+  });
+});
+
+describe('staples (slice 208)', () => {
+  const obj = (id: string) => ({ kind: 'object' as const, object: id });
+  const ply = (p: string) => ({ kind: 'player' as const, player: p });
+  const combat = (g: GameState, attacks: { attacker: string; target: { kind: 'player'; player: string } }[], blocks: { blocker: string; attacker: string }[] = []) => {
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks } });
+    for (let i = 0; i < 40 && g.step !== 'end'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks } });
+      else if (g.pending) break;
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    return g;
+  };
+
+  it("Spider-Punk: abilities can't be countered either", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'bob', 'Punk Lite', 'battlefield');
+    const pinger = give(g, 'alice', 'Pinger', 'battlefield');
+    const life = g.players.alice!.life;
+    g = act(g, { type: 'activate', player: 'alice', object: pinger, ability: 0 });
+    const entry = g.stack[g.stack.length - 1]!;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Squelch Lite', 'hand'), targets: [[{ kind: 'ability', entry: entry.kind === 'ability' ? entry.id : '' }]] } as never);
+    g = settle(g);
+    expect(g.players.alice!.life).toBe(life + 1);
+  });
+
+  it('Charix: spells your opponents cast that target it cost {2} more', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const charix = give(g, 'bob', 'Charix Lite', 'battlefield');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const bolt = give(g, 'alice', 'Bolt', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bolt, targets: [[obj(charix)]] })).toBeTruthy();
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bolt, targets: [[obj(charix)]] }));
+    expect(g.players.alice!.pool.C ?? 0).toBe(0);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[obj(bear)]] }));
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+  });
+
+  it('Alisaie: the second spell each turn costs {2} less', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Alisaie Lite', 'battlefield');
+    const first = give(g, 'alice', 'Ogre Spell', 'hand');
+    const second = give(g, 'alice', 'Ogre Spell', 'hand');
+    g.players.alice!.pool.C = 3;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: first }));
+    expect(g.players.alice!.pool.C ?? 0).toBe(0);
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: second }));
+    expect(g.objects[second]!.zone).toBe('graveyard');
+  });
+
+  it('Darksteel Reactor: twenty charge counters win the game', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const reactor = give(g, 'alice', 'Reactor Lite', 'battlefield');
+    g.objects[reactor]!.counters.charge = 19;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    expect(g.over).toBeFalsy();
+    g.objects[reactor]!.counters.charge = 20;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') });
+    for (let i = 0; i < 20 && !g.over && g.priority; i++) g = act(g, { type: 'pass', player: g.priority });
+    expect(g.over).toBeTruthy();
+  });
+
+  it('Acquisition Octopus: this creature or the equipped one dealing combat damage', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const oct = give(g, 'alice', 'Octopus Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g.objects[oct]!.sick = false;
+    g.objects[bear]!.sick = false;
+    const hand = g.zones.hand.alice!.length;
+    g = combat(g, [{ attacker: oct, target: ply('bob') }]);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Agent Frank Horrigan: indestructible once it has attacked this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const frank = give(g, 'alice', 'Horrigan Lite', 'battlefield');
+    g.objects[frank]!.sick = false;
+    expect(chars(g, g.objects[frank]!).keywords.some((k) => k.id === 'indestructible')).toBe(false);
+    g = combat(g, [{ attacker: frank, target: ply('bob') }]);
+    expect(chars(g, g.objects[frank]!).keywords.some((k) => k.id === 'indestructible')).toBe(true);
+  });
+
+  it('Nim Deathmantle: the equipped creature is a black Zombie (its creature types replaced)', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const mantle = give(g, 'alice', 'Deathmantle Lite', 'battlefield');
+    g.objects[mantle]!.attachedTo = { id: bear, zcc: g.objects[bear]!.zcc };
+    const c = chars(g, g.objects[bear]!);
+    expect([c.power, c.toughness, c.colors, c.subtypes]).toEqual([4, 4, ['B'], ['Zombie']]);
+  });
+
+  it('Visions of Beyond: three cards if any graveyard has twenty or more', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    let hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Visions Lite', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+    for (let i = 0; i < 20; i++) give(g, 'bob', 'Cub', 'graveyard');
+    hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Visions Lite', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 3);
+  });
+
+  it("Gaddock Teeg: noncreature spells with {X} in their mana costs can't be cast", () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'bob', 'Teeg Lite', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'X Burn', 'hand'), x: 1, targets: [[ply('bob')]] })).toBeTruthy();
+  });
+
+  it('Bedrock Tortoise: only creatures with toughness greater than power assign damage by toughness', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Tortoise Lite', 'battlefield');
+    const wall = give(g, 'alice', 'Wall Guy', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    g.objects[wall]!.sick = false;
+    g.objects[ogre]!.sick = false;
+    const life = g.players.bob!.life;
+    g = combat(g, [{ attacker: wall, target: ply('bob') }, { attacker: ogre, target: ply('bob') }]);
+    expect(g.players.bob!.life).toBe(life - 4 - 5);
+  });
+
+  it('Kaalia: a Dragon from your hand enters tapped and attacking that opponent', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const kaalia = give(g, 'alice', 'Kaalia Lite', 'battlefield');
+    g.objects[kaalia]!.sick = false;
+    const dragon = give(g, 'alice', 'Dragon Lite', 'hand');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: kaalia, target: ply('bob') }] } });
+    for (let i = 0; i < 10 && g.pending?.kind !== 'may'; i++) {
+      if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [] } });
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    }
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    if (g.pending?.kind === 'choose_objects') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [dragon] } });
+    expect(g.objects[dragon]!.zone).toBe('battlefield');
+    expect(g.objects[dragon]!.tapped).toBe(true);
+    expect(g.combat?.attackers[dragon]?.target).toEqual(ply('bob'));
+  });
+
+  it('Mystical Teachings: an instant card or a card with flash', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const fb = give(g, 'alice', 'Flash Bear', 'library');
+    const bolt = give(g, 'alice', 'Bolt', 'library');
+    const bear = give(g, 'alice', 'Bear', 'library');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Teachings Lite', 'hand') }));
+    const p = g.pending as { kind: string; candidates?: string[] };
+    expect(p.kind).toBe('search');
+    expect(p.candidates).toEqual(expect.arrayContaining([fb, bolt]));
+    expect(p.candidates).not.toContain(bear);
   });
 });

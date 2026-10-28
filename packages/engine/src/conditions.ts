@@ -423,6 +423,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'graveyard': {
       // "an opponent has eight or more cards in their graveyard"
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(zoneList(g, 'graveyard', p).length, cond));
+      // Visions of Beyond: "a graveyard has twenty or more cards in it".
+      if (cond.who === 'any_player') return g.order.some((p) => cmp(zoneList(g, 'graveyard', p).length, cond));
       const cards = zoneList(g, 'graveyard', controller).map((id) => g.objects[id]!);
       // Delirium: "four or more card types among cards in your graveyard" (CR 300.1's card types).
       if (cond.cardTypes) return cmp(new Set(cards.flatMap((o) => faceOf(g, o).types)).size, cond);

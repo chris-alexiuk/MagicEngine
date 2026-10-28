@@ -216,6 +216,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
   // "if ~ attacked this turn" (as this object, CR 400.7).
   if (/^~ attacked this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
+  // Agent Frank Horrigan: "~ has indestructible as long as it attacked this turn" — "it" being this object.
+  if (/^it attacked this turn$/.test(t) && (!b.it || b.it.ref === 'self')) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
   // Vaultborn Tyrant: "When this creature dies, if it's not a token, …" — a token that died has ceased to exist.
   if (/^(?:it's not|it isn't|it wasn't|it was not|~ isn't|~ wasn't|~ is not|~ was not) a token$/.test(t)) return { type: 'is', of: b.it ?? { ref: 'self' }, filter: { token: false } };
   // CR 702.194b: "if this spell was cast using teamwork"
@@ -481,6 +483,19 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (oppGy) {
     const c = compare(oppGy[1]!);
     return c ? { type: 'graveyard', ...c, who: 'any_opponent' } : null;
+  }
+  // Lux Artillery: "there are thirty or more counters among artifacts and creatures you control".
+  const countersAmong = /^there are (\w+) or more counters among (.+)$/.exec(t);
+  if (countersAmong) {
+    const n = parseAmount(countersAmong[1]!);
+    const amount = typeof n === 'number' ? parseCount(`the number of counters among ${countersAmong[2]!}`, b) : null;
+    return amount ? { type: 'amount', amount, op: 'ge', n: n as number } : null;
+  }
+  // Visions of Beyond: "a graveyard has twenty or more cards in it" — any player's.
+  const anyGy = /^a graveyard has (\w+ or more) cards in it$/.exec(t);
+  if (anyGy) {
+    const c = compare(anyGy[1]!);
+    return c ? { type: 'graveyard', ...c, who: 'any_player' } : null;
   }
   // The Warring Triad: "there are fewer than eight cards in your graveyard"
   const fewerGy = /^there are fewer than (\w+) cards in your graveyard$/.exec(t);

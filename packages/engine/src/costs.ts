@@ -54,7 +54,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       // Conduit of Ruin: "The first creature spell you cast each turn" — none like it cast before this one this turn.
       if (e.firstEachTurn) {
         const before = (g.turnLog.castSpells ?? []).filter((c) => c.player === player && c.id !== spell.id && g.objects[c.id] && (!e.filter || matchesFilter(g, g.objects[c.id]!, e.filter, { controller: source.controller, source, anyZone: true })));
-        if (before.length) continue;
+        // Alisaie Leveilleur: "The second spell you cast each turn" — exactly one cast before it.
+        if (before.length !== (e.nthEachTurn ?? 1) - 1) continue;
       }
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
       // Killian: "Spells you cast that target a creature cost {2} less to cast."

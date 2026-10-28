@@ -3146,7 +3146,9 @@ const VERBS: Record<string, VerbHandler> = {
     // "Put a land card from your hand onto the battlefield (tapped)." — chosen as it resolves.
     // Ghalta, Last March of the Ents: "put any number of creature cards from your hand onto the battlefield".
     // Ugin, the Spirit Dragon: "put up to seven permanent cards from your hand onto the battlefield".
-    const fromHand = /^(a|an|up to (?:one|two|three|four|five|six|seven)|any number of) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
+    // Kaalia of the Vast: "… onto the battlefield tapped and attacking that opponent" — attacking what the source attacks.
+    const fromHand = /^(a|an|up to (?:one|two|three|four|five|six|seven)|any number of) (.+?) from your hand onto the battlefield( tapped)?( and attacking(?: that opponent| that player)?)?$/.exec(args);
+    if (fromHand && fromHand[4] && !fromHand[3]) return null;
     if (fromHand) {
       const n = fromHand[1] === 'any number of' ? 99 : /^up to /.test(fromHand[1]!) ? (parseAmount(fromHand[1]!.slice(6)) as number) : 1;
       const pf = parseFilter(`${fromHand[2]} in your hand`, b);
@@ -3154,7 +3156,7 @@ const VERBS: Record<string, VerbHandler> = {
       const { zone: _z, owner: _o, ...filter } = pf.filter;
       // "That creature gains haste": the one put onto the battlefield.
       if (n === 1) b.it = { ref: 'created' };
-      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(/^(?:up to|any number)/.test(fromHand[1]!) ? { optional: true } : {}) }];
+      return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(fromHand[4] ? { attacking: / that (?:opponent|player)$/.test(fromHand[4]) ? 'that_player' : true } : {}), ...(/^(?:up to|any number)/.test(fromHand[1]!) ? { optional: true } : {}) }];
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two

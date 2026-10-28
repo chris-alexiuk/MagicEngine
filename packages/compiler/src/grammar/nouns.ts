@@ -76,6 +76,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   // Agent of Treachery: "permanents you don't own" (CR 108.3: the other players own them).
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
+  // Bedrock Tortoise: "Each creature you control with toughness greater than its power".
+  [/ with toughness greater than its power$/, (f) => !f.toughnessAbovePower && ((f.toughnessAbovePower = true), true)],
+  // Frontline Medic, Zaxara: "a spell with {X} in its mana cost" (CR 107.3); Titans' Nest: "without {X} in its mana cost".
+  [/ with \{X\} in (?:its|their) mana costs?$/, (f) => f.xInCost === undefined && ((f.xInCost = true), true)],
+  [/ without \{X\} in (?:its|their) mana costs?$/, (f) => f.xInCost === undefined && ((f.xInCost = false), true)],
   // Moonsilver Key: "an artifact card with a mana ability"; Midnight Arsonist: "artifacts without mana abilities" (CR 605.1a).
   [/ with (?:a mana ability|mana abilities)$/, (f) => f.manaAbility === undefined && ((f.manaAbility = true), true)],
   [/ without mana abilities$/, (f) => f.manaAbility === undefined && ((f.manaAbility = false), true)],
@@ -162,6 +167,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
   // Halvar, God of Battle: "Creatures you control that are enchanted or equipped"
   [/ (?:that are|that's) enchanted or equipped$/, (f) => !f.anyOf && ((f.anyOf = [{ enchanted: true }, { equipped: true }]), true)],
+  // On Wings of Gold: "Creatures you control that are Zombies and/or tokens".
+  [/ that are ([A-Z][\w-]*s) and\/or tokens$/, (f, m) => {
+    const st = subtypeOf(m[1]!);
+    return Boolean(st && !f.anyOf && ((f.anyOf = [{ subtypes: [st] }, { token: true }]), true));
+  }],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
@@ -246,6 +256,28 @@ function categoryOf(word: string): Category | null {
 /** Parses the noun phrase after a determiner: "nonblack creature an opponent controls". */
 export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   let rest = text.trim();
+  // Paradox Surveyor: "a land card or a card with {X} in its mana cost" — a quality after a bare "card" is that
+  // alternative's only (each alternative read on its own).
+  // (Only "… or a card with …": in "target spell or permanent with mana value 1 or greater" it's both.)
+  const bare = /^(.+?) or an? (card (?:with|without|that) .+)$/.exec(rest);
+  if (bare && !/ or /.test(bare[2]!.replace(/ (?:\d+|X) or (?:less|greater|more|fewer)\b/g, ''))) {
+    // "… in your library" at the end is where both are.
+    const tail = / (?:in|from) (?:your|a|an opponent's|target player's|their) (?:library|graveyard|hand)$/.exec(bare[2]!)?.[0] ?? '';
+    const r = attempt(b, (b) => {
+      const one = parseFilter(`${bare[1]!}${tail && !/ (?:in|from) /.test(bare[1]!) ? tail : ''}`, b);
+      const two = one ? parseFilter(bare[2]!, b) : null;
+      if (!one || !two || one.plural || two.plural || one.filter.anyOf || two.filter.anyOf) return null;
+      const zone = one.filter.zone ?? two.filter.zone;
+      if ((one.filter.zone && two.filter.zone && one.filter.zone !== two.filter.zone)) return null;
+      const strip = (f: ObjectFilter) => {
+        const { zone: _z, owner: _o, controller: _c, ...rest } = f;
+        return rest;
+      };
+      const shared: ObjectFilter = { ...(zone ? { zone } : {}), ...(one.filter.owner ?? two.filter.owner ? { owner: one.filter.owner ?? two.filter.owner } : {}) };
+      return { filter: { ...shared, anyOf: [strip(one.filter), strip(two.filter)] }, plural: false } as ParsedFilter;
+    });
+    if (r) return r;
+  }
   const f: ObjectFilter = {};
   for (let guard = 0; guard < 8; guard++) {
     let matched = false;
@@ -264,6 +296,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/,\s+(?=non)/g, ' ');
   // "each instant and sorcery card": each card that's either (as with "or").
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
+  // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
+  rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
   // "each Fungus and Saproling you control": either subtype.
   // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
   rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) && subtypeOf(z) && (subtypeOf(a) === a) === (subtypeOf(z) === z) ? `${a} or ` : m));
@@ -607,7 +641,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, upTo: true, min: 1 };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
-      const tm = /^(?:(up to )?((?!another\b|other\b)\w+) )?(another |other )?target (.+)$/i.exec(t);
+      const tm = /^(?:(up to )?((?!another\b|other\b)(?:one hundred|\w+)) )?(another |other )?target (.+)$/i.exec(t);
       // Curse of the Swine: "Exile X target creatures." — as many targets as the X announced (CR 601.2b–c).
       if (tm && tm[2] === 'X') {
         const pf = parseFilter(tm[4]!, b);

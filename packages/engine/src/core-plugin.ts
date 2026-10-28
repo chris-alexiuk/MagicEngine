@@ -498,6 +498,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // from the stack (CR 701.6a).
     for (const entry of refEntries(ctx, ref(node, 'what'))) {
       if (entry.kind !== 'ability') continue;
+      // Spider-Punk: "Spells and abilities can't be countered."
+      if (abilitiesUncounterable(ctx.g)) continue;
       ctx.g.stack = ctx.g.stack.filter((e) => !(e.kind === 'ability' && e.id === entry.id));
       ctx.events.push({ type: 'countered', object: entry.id });
     }
@@ -1154,7 +1156,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const src = ctx.source;
         if (src && src.id !== id && g.objects[id]!.zone === 'exile') g.objects[id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
       }
-      else if (node.then === 'battlefield') moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+      else if (node.then === 'battlefield') {
+        moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+        // Kaalia of the Vast: "tapped and attacking that opponent" (CR 508.4: it attacks what the source attacks).
+        const at = node.attacking === 'that_player' && ctx.trigger?.player ? { kind: 'player' as const, player: ctx.trigger.player } : undefined;
+        if (node.attacking && g.objects[id]?.zone === 'battlefield') enterAttacking(g, g.objects[id]!, ctx.source ?? undefined, at);
+      }
       else discardCard(g, id, ctx.events);
     }
     // Through the Breach: "That creature gains haste." — the permanent put onto the battlefield this way.
@@ -3977,6 +3984,11 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     );
   }
   return true;
+}
+
+/** Spider-Punk: "Spells and abilities can't be countered." */
+function abilitiesUncounterable(g: GameState): boolean {
+  return abilitySources(g).some((id) => objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'uncounterable' && Boolean(a.effect.abilitiesToo)));
 }
 
 /** "Creature spells you control can't be countered." */

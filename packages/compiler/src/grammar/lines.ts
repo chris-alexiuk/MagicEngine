@@ -436,6 +436,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     }
     // CR 107.14: "Pay {E}{E}" removes energy counters from you.
     else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
+    // Gonti's Aether Heart: "Pay eight {E}".
+    else if (/^[Pp]ay (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) \{E\}$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: parseAmount(/^[Pp]ay (\w+)/.exec(item)![1]!) as number });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
     // Jarad: "Sacrifice a Swamp and a Forest"; Mount Doom: "Sacrifice Mount Doom and a legendary artifact" — each its own.
     else if (/^[Ss]acrifice (?:~|(?:a|an) [^,]+?) and (?:a|an) [^,]+$/.test(item)) {
@@ -810,6 +812,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'blocks', subject: { ref: 'self' }, blocked: pf.filter }, it: { ref: 'self' }, player: null };
   }
   // CR 509.3c: "blocks or becomes blocked", "becomes blocked", "becomes blocked by a creature without flanking".
+  // Infiltration Lens: "Whenever equipped creature becomes blocked by a creature".
+  const attachedBlocked = /^(equipped|enchanted) creature becomes blocked(?: by (?:a|an) (.+))?$/.exec(t);
+  if (attachedBlocked) {
+    const by = attachedBlocked[2] ? parseFilter(attachedBlocked[2], b) : null;
+    if (attachedBlocked[2] && (!by || by.plural)) return null;
+    if (by) b.named['the blocking creature'] = b.named['that creature'] = { ref: 'trigger_object' };
+    b.named['defending player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'becomes_blocked', subject: { ref: 'attached' }, ...(by ? { by: by.filter } : {}) }, it: by ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
+  }
   const blocked = /^~ (blocks or becomes blocked|becomes blocked)(?: by (?:a|an) (.+))?$/.exec(t);
   if (blocked) {
     const by = blocked[2] ? parseFilter(blocked[2], b) : null;
@@ -951,8 +962,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
 
   // Guild Artisan: "Whenever this creature attacks a player, if no opponent has more life than that player, …" — a player,
   // not a planeswalker or battle; "that player" is the one attacked.
-  if (t === '~ attacks a player') {
-    b.named['that player'] = { ref: 'trigger_player' };
+  // Kaalia of the Vast: "Whenever Kaalia attacks an opponent" — the same, since only opponents can be attacked (CR 506.2).
+  if (t === '~ attacks a player' || t === '~ attacks an opponent') {
+    b.named['that player'] = b.named['that opponent'] = { ref: 'trigger_player' };
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, defender: 'player' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // CR 702.105a (dethrone): "Whenever ~ attacks the player with the most life or tied for most life"
@@ -1184,7 +1196,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 603.8: a state trigger — "When you control no Islands, sacrifice ~."
   // Dark Depths: "When Dark Depths has no ice counters on it, …"
   // Endrek Sahr: "When you control seven or more Thrulls, sacrifice Endrek Sahr."
-  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t))) {
+  // Darksteel Reactor: "When this artifact has twenty or more charge counters on it, you win the game."
+  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t) || /^~ has (?:\w+) or more \S+ counters on it$/.test(t))) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
   }
@@ -1202,6 +1215,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const one = parseTrigger(word, selfOrOther[1]!, b);
     const two = one ? parseTrigger(word, selfOrOther[2]!, b) : null;
     if (one && two) return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // Acquisition Octopus, Thassa's Emissary: "Whenever this creature or equipped creature deals combat damage to a player"
+  // — either object's event; "it" could be either (Ogre-Head Helm's "sacrifice it" is the Equipment), so it isn't read.
+  const selfOrAttached = /^~ or (equipped|enchanted) creature (deals combat damage to a player|attacks|becomes blocked)$/.exec(t);
+  if (selfOrAttached) {
+    const one = parseTrigger(word, `~ ${selfOrAttached[2]}`, b);
+    const two = one ? parseTrigger(word, `${selfOrAttached[1]} creature ${selfOrAttached[2]}`, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: one.player ?? two.player };
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
@@ -2004,6 +2026,8 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   // Rhythm of the Wild: "Creature spells you control can't be countered." (CR 101.2)
   // Lier, Prowling Pyromancer: "Spells can't be countered." — anyone's.
   if (/^Spells can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true };
+  // Spider-Punk: "Spells and abilities can't be countered." — activated and triggered abilities too.
+  if (/^Spells and abilities can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true, abilitiesToo: true };
   const uncounterable = /^(.*?)\bspells you (?:control|cast) can't be countered$/i.exec(body);
   if (uncounterable) {
     const words = uncounterable[1]!.trim();
@@ -2073,7 +2097,8 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
 function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | null {
   // After a condition ("During your turn, your opponents can't …") the subject starts lower-case.
   body = body.replace(/^\w/, (c) => c.toUpperCase());
-  const passive = /^(Spells .+|.+ spells) can't be cast$/.exec(body);
+  // Gaddock Teeg: "Noncreature spells with mana value 4 or greater can't be cast."
+  const passive = /^(Spells .+|.+ spells|[A-Z]\w* spells with .+) can't be cast$/.exec(body);
   if (passive) {
     const ban = parseCastBan(passive[1]!.replace(/^S/, 's'), b);
     return ban && !ban.maxPerTurn ? { type: 'cast_prohibition', who: 'each', ...ban } : null;
@@ -2282,7 +2307,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2405,6 +2430,13 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const isColor = /^is (white|blue|black|red|green|colorless)$/.exec(part);
     if (isColor && !effect.colors) {
       effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];
+      continue;
+    }
+    // Nim Deathmantle: "… and is a black Zombie" — its color and creature types replaced (layers 4 and 5).
+    const isCreatureKind = /^is an? (?:(white|blue|black|red|green) )?([A-Z][\w’'-]*)$/.exec(part);
+    if (isCreatureKind && (SUBTYPES.creature as readonly string[]).includes(isCreatureKind[2]!) && !effect.creatureTypes && !(isCreatureKind[1] && effect.colors)) {
+      effect.creatureTypes = [isCreatureKind[2]!];
+      if (isCreatureKind[1]) effect.colors = [COLOR_WORDS[isCreatureKind[1]]! as Color];
       continue;
     }
     // Blood Moon: "Nonbasic lands are Mountains." (CR 305.7)
@@ -2603,12 +2635,14 @@ export const costModifierRule: GrammarRule = {
       return ability;
     }
     // Killian, Ink Duelist: "Spells you cast that target a creature cost {2} less to cast." (CR 601.2f: targets first)
-    const thatTarget = /^Spells you cast that target (?:a|an) (.+?) cost (\{\d+\}) (less|more) to cast$/.exec(body);
+    // Charix: "Spells your opponents cast that target Charix cost {2} more to cast."
+    const thatTarget = /^Spells (you|your opponents) cast that target (?:(?:a|an) (.+?)|(~)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
     if (thatTarget) {
-      const a = amountOf(thatTarget[2]!);
-      const pf = a ? parseFilter(thatTarget[1]!, b) : null;
-      if (!a || !pf || pf.plural) return null;
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', change: thatTarget[3] as 'less' | 'more', ifTargets: pf.filter, ...a } as CostModifierNode };
+      const a = amountOf(thatTarget[4]!);
+      const pf = a && !thatTarget[3] ? parseFilter(thatTarget[2]!, b) : null;
+      if (!a || (!thatTarget[3] && (!pf || pf.plural))) return null;
+      const ifTargets: ObjectFilter = thatTarget[3] ? { isSource: true } : pf!.filter;
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[5] as 'less' | 'more', ifTargets, ...a } as CostModifierNode };
     }
     // Herald's Horn, Urza's Incubator: "Creature spells you cast of the chosen type cost {1} less to cast."
     // Goblin Anarchomancer: "Each spell you cast that's red or green costs {1} less to cast."
@@ -2631,13 +2665,14 @@ export const costModifierRule: GrammarRule = {
       return { kind: 'static', text: original, effect: node };
     }
     // Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast."
-    const firstEach = /^The first ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}) less to cast$/.exec(body);
+    // Alisaie Leveilleur: "The second spell you cast each turn costs {2} less to cast."
+    const firstEach = /^The (first|second) ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}) less to cast$/.exec(body);
     if (firstEach) {
-      const a = amountOf(firstEach[2]!);
-      const pf = firstEach[1] ? parseFilter(`${firstEach[1]}spells`, b) : null;
-      if (!a || (firstEach[1] && !pf)) return null;
+      const a = amountOf(firstEach[3]!);
+      const pf = firstEach[2] ? parseFilter(`${firstEach[2]}spells`, b) : null;
+      if (!a || (firstEach[2] && !pf)) return null;
       const { zone: _z, ...filter } = pf?.filter ?? {};
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...a } as CostModifierNode };
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...(firstEach[1] === 'second' ? { nthEachTurn: 2 } : {}), ...a } as CostModifierNode };
     }
     // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
     // Temur Battlecrier: "During your turn, spells you cast cost {1} less to cast for each creature you control with power
@@ -2647,7 +2682,9 @@ export const costModifierRule: GrammarRule = {
     if (duringYours) rest = rest.replace(/^During your turn, /, '').replace(/^\w/, (c) => c.toUpperCase());
     const perEach = / to cast for each (.+)$/.exec(rest);
     if (perEach) rest = `${rest.slice(0, perEach.index)} to cast`;
-    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
+    // Warden of Evos Isle: "Creature spells with flying you cast cost {1} less to cast." — the quality before "you cast".
+    rest = rest.replace(/^(.*?\bspells) (with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender)) (you cast) /i, '$1 $3 $2 ');
+    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater|with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender)) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
     if (others && (duringYours || perEach) && others[2] !== 'you') return null;
     if (others) {
       const suffix = others[3] ? ` ${others[3].trim()}` : '';

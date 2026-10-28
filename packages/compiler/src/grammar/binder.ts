@@ -133,7 +133,7 @@ function targetCountable(n: unknown): boolean {
   if (e.kind === 'stat' && e.of?.ref === 'trigger_object' && json === JSON.stringify({ kind: 'stat', stat: (n as { stat: string }).stat, of: { ref: 'trigger_object' } })) return true;
   if (/"ref":"(?!self"|you")/.test(json)) return false;
   // Celestine: "where X is the amount of life you gained this turn" — the game's state, known as targets are chosen.
-  const STATE = ['count', 'cards', 'life_this_turn', 'devotion', 'domain', 'party', 'drawn_this_turn', 'spells_cast_this_turn', 'died_this_turn', 'tokens_created_this_turn'];
+  const STATE = ['count', 'counters_among', 'cards', 'life_this_turn', 'devotion', 'domain', 'party', 'drawn_this_turn', 'spells_cast_this_turn', 'died_this_turn', 'tokens_created_this_turn'];
   return STATE.includes(e.kind ?? '') || ((e.kind === 'stat' || e.kind === 'counters') && e.of?.ref === 'self');
 }
 

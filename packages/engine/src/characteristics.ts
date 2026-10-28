@@ -803,6 +803,8 @@ export function matchesFilter(
   if (!ctx.anyZone && !altZones && o.zone !== (f.zone ?? 'battlefield')) return false;
   // "~ or another Ally you control": the source itself always matches.
   if (f.orSource && ctx.source && o.id === ctx.source.id) return true;
+  // Charix: "that target Charix" — only the source.
+  if (f.isSource && (!ctx.source || o.id !== ctx.source.id)) return false;
   const controller = ctx.lastController ?? o.controller;
   if (f.types && !f.types.some((t) => c.types.includes(t))) return false;
   if (f.allTypes && !f.allTypes.every((t) => c.types.includes(t))) return false;
@@ -884,6 +886,10 @@ export function matchesFilter(
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
+  // Bedrock Tortoise: "with toughness greater than its power".
+  if (f.toughnessAbovePower && !(c.toughness > c.power)) return false;
+  // CR 107.3: "with {X} in its mana cost".
+  if (f.xInCost !== undefined && faceOf(g, o).manaCost.includes('{X}') !== f.xInCost) return false;
   // CR 605.1a: "with a mana ability" — the abilities it has where it is (printed ones off the battlefield).
   if (f.manaAbility !== undefined) {
     const abilities = o.zone === 'battlefield' ? abilitiesOf(g, o) : printedAbilities(faceOf(g, o));

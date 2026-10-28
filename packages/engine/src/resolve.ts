@@ -285,6 +285,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       if (e.most) return Math.max(0, ...livePlayers(g).filter((p) => p !== ctx.controller).map((p) => matching.filter((id) => g.objects[id]!.controller === p).length));
       return matching.length;
     }
+    case 'counters_among': {
+      const filter = bindFilter(ctx, e.filter);
+      return g.zones.battlefield
+        .filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source }))
+        .reduce((n, id) => n + Object.values(g.objects[id]!.counters).reduce((a, b) => a + (b ?? 0), 0), 0);
+    }
     case 'cards': {
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
       const zone = e.zone;

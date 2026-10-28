@@ -374,6 +374,12 @@ export interface ObjectFilter {
   manaValue?: Compare;
   /** CR 702.134a (mentor): power less than the source's. */
   powerBelowSource?: true;
+  /** Bedrock Tortoise: "with toughness greater than its power". */
+  toughnessAbovePower?: true;
+  /** Zaxara: "a spell with {X} in its mana cost" (false: "without {X} …"). */
+  xInCost?: boolean;
+  /** Charix: "Spells your opponents cast that target Charix" — the source itself. */
+  isSource?: true;
   /** Moonsilver Key: "an artifact card with a mana ability" (false: "without mana abilities"). */
   manaAbility?: boolean;
   /** Selvala: "its power is greater than each other creature's power" — the greatest, not tied. */
@@ -519,6 +525,8 @@ export type AmountExpr = (
   /** Permanents on the battlefield matching a filter (from the controller's point of view). */
   // Cavern-Hoard Dragon: `most` — the greatest number any one opponent controls.
   | { kind: 'count'; filter: ObjectFilter; most?: true }
+  /** Maester Seymour, Lux Artillery: "the number of counters among creatures you control" — every counter on them. */
+  | { kind: 'counters_among'; filter: ObjectFilter }
   /** Cards in hands, graveyards or libraries. */
   /** `player`: "in target opponent's hand" — that player's cards (`who` is then ignored). */
   /** `least`: the fewest any one of those players has (Shelldock Isle: "a library has twenty or fewer cards in it"). */
@@ -1004,6 +1012,8 @@ export interface CostModifierNode extends EffectNode {
   notFromHand?: true;
   /** Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast." */
   firstEachTurn?: true;
+  /** Alisaie Leveilleur: "The second spell you cast each turn" (with `firstEachTurn`). */
+  nthEachTurn?: number;
 }
 
 /**
