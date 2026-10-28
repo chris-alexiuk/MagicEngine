@@ -1964,3 +1964,22 @@ describe('slice 166', () => {
     expect(parse('{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type or activate an ability of a creature source of the chosen type.', 'Land', 'S').unparsed).toHaveLength(0);
   });
 });
+
+describe('slice 167', () => {
+  it('reads mana multipliers, Caged Sun, combat limits, connive X and X targets', () => {
+    expect(parse('If you tap a permanent for mana, it produces three times as much of that mana instead.', 'Creature — Elemental', 'N').abilities[0]).toMatchObject({ effect: { type: 'mana_multiplier', factor: 3 } });
+    expect(parse("Whenever a land's ability causes you to add one or more mana of the chosen color, add an additional one mana of that color.", 'Artifact', 'C').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', producedColor: 'chosen' }, effects: [{ type: 'add_mana', options: [['chosen']] }] });
+    expect(parse('No more than one creature can block each combat.', 'Artifact Creature — Construct', 'S').abilities[0]).toMatchObject({ effect: { type: 'combat_limit', what: 'block', amount: 1 } });
+    expect(parse('No more than two creatures can attack you each combat.', 'Artifact', 'C').abilities[0]).toMatchObject({ effect: { type: 'combat_limit', what: 'attack', amount: 2, you: true } });
+    expect(parse('{B}, {T}: Target creature you control connives X, where X is the number of creatures that died this turn.', 'Artifact', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'connive', amount: { kind: 'died_this_turn' } }] });
+    expect(parse('~ deals five times X damage to each of up to X targets.', 'Sorcery', 'C').abilities[0]).toMatchObject({ targets: [{ what: 'any', countX: true, upTo: true }], effects: [{ type: 'deal_damage', amount: { kind: 'x', times: 5 } }] });
+  });
+  it('reads halves, rounded up or down', () => {
+    expect(parse('When ~ enters, put X +1/+1 counters on him. Then draw half X cards, rounded down.', 'Legendary Creature — Bird Spirit', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'self' } }, { type: 'draw', amount: { kind: 'x', half: 'down' } }] });
+    expect(parse('When you cast this spell, you gain half X life and draw half X cards. Round down each time.', 'Creature — Jellyfish Hydra Beast', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life', amount: { kind: 'x', half: 'down' } }, { type: 'draw', amount: { kind: 'x', half: 'down' } }] });
+    expect(parse('Whenever equipped creature deals combat damage to a player, that player loses half their life, rounded up.', 'Artifact — Equipment', 'Q').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', amount: { kind: 'life', half: 'up' } }] });
+    expect(parse('Target player mills half their library, rounded down.', 'Sorcery', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'mill', amount: { kind: 'cards', zone: 'library', half: 'down' } }] });
+    expect(parse('At the beginning of your upkeep, create X 2/2 black Zombie creature tokens, where X is half the number of Zombies you control, rounded down.', 'Enchantment', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'count', half: 'down' } }] });
+    expect(parse('Each opponent loses half their life, rounded up.', 'Sorcery', 'E').unparsed).toHaveLength(1);
+  });
+});

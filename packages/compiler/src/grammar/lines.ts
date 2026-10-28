@@ -1383,7 +1383,9 @@ export const triggeredRule: GrammarRule = {
         if (node.trigger.type === 'becomes_monstrous' && node.effects) node.effects = bindX(node.effects, { kind: 'event' });
         // CR 107.3m: otherwise X is the X this permanent entered with, which only its own "enters" trigger sees.
         const ownEnters = node.trigger.type === 'enters' && (node.trigger as { subject?: { ref?: string } }).subject?.ref === 'self';
-        if (!ownEnters && hasFreeX([node.effects, node.modes, node.condition])) return null;
+        // CR 107.3i: "When you cast this spell" sees the spell's own X (Hydroid Krasis).
+        const ownCast = node.trigger.type === 'cast' && Boolean((node.trigger as { self?: boolean }).self);
+        if (!ownEnters && !ownCast && hasFreeX([node.effects, node.modes, node.condition])) return null;
         return node;
       }
     }
@@ -2626,6 +2628,26 @@ export const entersDayRule: GrammarRule = {
  * "Whenever a Forest is tapped for mana, its controller adds an additional {G}", "… add one mana of any type that
  * land produced" (Mirari's Wake). They resolve at once, as the mana ability does.
  */
+/** Silent Arbiter: "No more than one creature can attack each combat."; Crawlspace: "No more than two creatures can attack you each combat." */
+export const combatLimitRule: GrammarRule = {
+  id: 'combat_limit',
+  parse(line, original) {
+    const m = /^No more than (one|two|three) creatures? can (attack|block)( you)? each combat\.$/.exec(line);
+    if (!m || (m[3] && m[2] === 'block')) return null;
+    const amount = { one: 1, two: 2, three: 3 }[m[1] as 'one' | 'two' | 'three'];
+    return { kind: 'static', text: original, effect: { type: 'combat_limit', what: m[2], amount, ...(m[3] ? { you: true } : {}) } } as StaticAbility;
+  },
+};
+
+/** CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of that mana instead." */
+export const manaMultiplierRule: GrammarRule = {
+  id: 'mana_multiplier',
+  parse(line, original) {
+    const m = /^If you tap a permanent for mana, it produces (twice|three times) as much of that mana instead\.$/.exec(line);
+    return m ? ({ kind: 'static', text: original, effect: { type: 'mana_multiplier', factor: m[1] === 'twice' ? 2 : 3 } } as StaticAbility) : null;
+  },
+};
+
 export const manaTriggerRule: GrammarRule = {
   id: 'mana_trigger',
   parse(line, original, ctx) {
@@ -2644,6 +2666,19 @@ export const manaTriggerRule: GrammarRule = {
     const anyone =
       /^Whenever (?:a|an) (.+?) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line) ??
       /^Whenever a player taps (?:a|an) (.+?) for mana, that player adds (?:an additional )?(.+)\.$/.exec(line);
+    // Caged Sun: "Whenever a land's ability causes you to add one or more mana of the chosen color, add an additional one
+    // mana of that color." (CR 106.12a)
+    if (/^Whenever a land's ability causes you to add one or more mana of the chosen color, add an additional one mana of that color\.$/.test(line)) {
+      return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: { types: ['Land'], controller: 'you' } }, producedColor: 'chosen' }, effects: [{ type: 'add_mana', options: [['chosen']] }] } as TriggeredAbility;
+    }
+    // Gauntlet of Power: "Whenever a basic land is tapped for mana of the chosen color, its controller adds an additional one
+    // mana of that color."
+    const ofChosen = /^Whenever a (basic land|land) is tapped for mana of the chosen color, its controller adds an additional one mana of that color\.$/.exec(line);
+    if (ofChosen) {
+      const pf = parseFilter(ofChosen[1]!, new Binder(env));
+      if (!pf) return null;
+      return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: pf.filter }, its: true, producedColor: 'chosen' }, effects: [{ type: 'add_mana', options: [['chosen']] }] } as TriggeredAbility;
+    }
     const m = enchanted ?? yours ?? anyone;
     if (!m) return null;
     const producedColor = yours?.[2];
@@ -2867,6 +2902,8 @@ export const triggerExtraRule: GrammarRule = {
 export const GRAMMAR_RULES: GrammarRule[] = [
   topPermissionRule,
   manaTriggerRule,
+  manaMultiplierRule,
+  combatLimitRule,
   grantedFlashbackRule,
   grantedEscapeRule,
   grantedRetraceRule,

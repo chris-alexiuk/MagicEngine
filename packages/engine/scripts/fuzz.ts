@@ -21,6 +21,7 @@ import {
   activatedAbilities,
   attackRestriction,
   attackTax,
+  combatLimits,
   mustAttack,
   apply,
   blockDeclarationProblem,
@@ -251,6 +252,15 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           const ok = p.targets.filter((t) => !attackRestriction(g, g.objects[attacker]!, t));
           return ok.length ? [{ attacker, target: pick(ok) }] : [];
         });
+      // Silent Arbiter / Crawlspace: no more than so many attackers (those that must attack first).
+      const limits = combatLimits(g);
+      attacks.sort((a, b) => Number(mustAttack(g, g.objects[b.attacker]!)) - Number(mustAttack(g, g.objects[a.attacker]!)));
+      for (let i = attacks.length - 1; i >= 0; i--) {
+        const t = attacks[i]!.target;
+        const atP = t.kind === 'player' ? attacks.filter((x) => x.target.kind === 'player' && x.target.player === t.player).length : 0;
+        if (t.kind === 'player' && atP > (limits.attackPlayer[t.player] ?? Infinity)) attacks.splice(i, 1);
+      }
+      if (attacks.length > limits.attack) attacks.length = limits.attack;
       // CR 506.5: a creature that can't attack alone stays home on its own — or, if it must attack (CR 508.1d), brings a friend.
       if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) {
         const friend = mustAttack(g, g.objects[attacks[0]!.attacker]!) ? p.attackers.find((id) => id !== attacks[0]!.attacker && p.targets.some((t) => !attackRestriction(g, g.objects[id]!, t))) : undefined;

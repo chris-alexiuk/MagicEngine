@@ -1749,32 +1749,41 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   connive(node, ctx) {
     // CR 701.50a: draw a card, then discard a card; if it was a nonland card, put a +1/+1 counter on the conniver.
-    const memo = ctx.memo as { drew?: boolean; who?: PlayerId; conniver?: { id: string; zcc: number } };
+    const memo = ctx.memo as { drew?: boolean; who?: PlayerId; n?: number; conniver?: { id: string; zcc: number } };
     const answer = answerOf(ctx, 'discard');
     if (!memo.drew) {
+      // CR 701.50d: "connives N" — draw N, discard N; CR 701.50e: connive 0 is nothing.
+      const n = node.amount !== undefined ? Math.max(0, amountOf(ctx, node.amount)) : 1;
+      if (n === 0) return true;
       const [o] = refObjects(ctx, ref(node, 'what'));
       // CR 701.50b: if it's gone, its last known controller still connives.
       const who = o?.controller ?? ctx.controller;
       memo.drew = true;
       memo.who = who;
+      memo.n = n;
       if (o) memo.conniver = { id: o.id, zcc: o.zcc };
-      drawCard(ctx.g, who, ctx.events);
+      for (let i = 0; i < n; i++) drawCard(ctx.g, who, ctx.events);
     }
     const who = memo.who!;
+    const n = memo.n ?? 1;
     const hand = zoneList(ctx.g, 'hand', who);
-    let discarded: string | undefined;
+    const count = Math.min(n, hand.length);
+    let discarded: string[];
     if (answer) {
-      if (answer.objects.length !== 1 || !hand.includes(answer.objects[0]!)) throw new RulesError('Choose one card from your hand to discard.');
-      discarded = answer.objects[0]!;
-    } else if (hand.length > 1) {
-      return { ask: { kind: 'discard', player: who, count: 1 } };
-    } else discarded = hand[0];
-    if (!discarded) return true;
-    const card = ctx.g.objects[discarded]!;
-    const nonland = !ctx.g.cards[card.card]!.faces[card.face]!.types.includes('Land');
-    discardCard(ctx.g, discarded, ctx.events);
+      if (answer.objects.length !== count || new Set(answer.objects).size !== count || !answer.objects.every((id) => hand.includes(id))) throw new RulesError(count === 1 ? 'Choose one card from your hand to discard.' : `Choose ${count} cards from your hand to discard.`);
+      discarded = answer.objects;
+    } else if (hand.length > count) {
+      return { ask: { kind: 'discard', player: who, count } };
+    } else discarded = [...hand];
+    if (!discarded.length) return true;
+    let nonland = 0;
+    for (const id of discarded) {
+      const card = ctx.g.objects[id]!;
+      if (!ctx.g.cards[card.card]!.faces[card.face]!.types.includes('Land')) nonland++;
+      discardCard(ctx.g, id, ctx.events);
+    }
     const c = memo.conniver && ctx.g.objects[memo.conniver.id];
-    if (nonland && c && c.zcc === memo.conniver!.zcc && c.zone === 'battlefield') addCounters(ctx, c, '+1/+1', 1);
+    if (nonland && c && c.zcc === memo.conniver!.zcc && c.zone === 'battlefield') addCounters(ctx, c, '+1/+1', nonland);
     return true;
   },
 
@@ -3874,7 +3883,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

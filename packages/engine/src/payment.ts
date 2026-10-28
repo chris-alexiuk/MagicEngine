@@ -4,7 +4,7 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planAutoTap } from './autotap.js';
-import { canActivateTapAbilities, hasType, manaAbilities, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { canActivateTapAbilities, hasType, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
@@ -400,9 +400,12 @@ export function runManaAbility(
   // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
   const before = events.length;
   const queue = [...ability.effects];
+  // CR 106.12b: "it produces three times as much of that mana instead" — for an ability tapping the permanent.
+  const times = ability.cost.tap && o.zone === 'battlefield' ? manaMultiplier(g, player) : 1;
   while (queue.length) {
     const e = queue.shift()!;
     const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {} });
+    if (ok === true && e.type === 'add_mana') for (let k = 1; k < times; k++) runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {} });
     // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
     if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
     else if (ok !== true) throw new RulesError(e.type === 'add_mana' ? 'Choose which mana to add.' : 'That mana ability can’t be resolved automatically.');
@@ -427,7 +430,9 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
           : subject.ref === 'all' && tapped.zone === 'battlefield' && matchesFilter(g, tapped, subject.filter, { controller: src.controller, source: src });
       if (!hit && !(subject.ref === 'self' && src.id === tapped.id)) continue;
       // Forsaken Monument: "Whenever you tap a permanent for {C}" — only when that mana was made.
-      if (a.trigger.producedColor && !produced.includes(a.trigger.producedColor as ManaColor)) continue;
+      // Caged Sun: "mana of the chosen color" — the color chosen as it entered.
+      const wanted = a.trigger.producedColor === 'chosen' ? src.chosen?.color : a.trigger.producedColor;
+      if (a.trigger.producedColor && (!wanted || !produced.includes(wanted as ManaColor))) continue;
       // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
       if (!a.effects.every((x) => x.type === 'add_mana')) {
         g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });

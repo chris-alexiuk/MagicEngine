@@ -32,7 +32,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   }
   const t = text.trim();
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
-  const theirs = /^(.+) in (target player|target opponent|that player)'s (hand|graveyard|library)$/.exec(t);
+  // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
+  const theirs = /^(.+) in (?:(target player|target opponent|that player)'s|their) (hand|graveyard|library)$/.exec(t);
   if (theirs) {
     const head = theirs[1]!;
     let filter: ObjectFilter | undefined;
@@ -42,7 +43,7 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
       const { zone: _z, owner: _o, ...rest } = pf.filter;
       filter = rest as ObjectFilter;
     } else if (head.endsWith('s') !== plural) return null;
-    const player = parsePlayerRef(theirs[2]!, b);
+    const player = theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'players' && b.player.ref !== 'you' ? b.player : null;
     if (!player) return null;
     return { kind: 'cards', zone: theirs[3] as 'hand' | 'graveyard' | 'library', who: 'each', player, ...(filter ? { filter } : {}) };
   }
@@ -204,6 +205,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
       return of && !of.plural ? { kind: 'counters', of: of.ref, counter: counters[1]! } : null;
     }
     return objects(what, b, true);
+  }
+  // Endless Ranks of the Dead: "half the number of Zombies you control, rounded down"
+  const half = /^half (.+), rounded (up|down)$/.exec(t) ?? (b.halfDir ? /^half (the number of .+)$/.exec(t) : null);
+  if (half) {
+    const inner = parseCount(half[1]!, b);
+    const dir = (half[2] as 'up' | 'down' | undefined) ?? b.halfDir!;
+    return inner && !inner.half && !inner.times && !inner.plus ? { ...inner, half: dir } : null;
   }
   // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
   const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t);

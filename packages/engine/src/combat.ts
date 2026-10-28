@@ -211,6 +211,25 @@ export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; 
   return out;
 }
 
+/**
+ * Silent Arbiter: "No more than one creature can attack each combat." / "… can block each combat."; Crawlspace: "No more
+ * than two creatures can attack you each combat." (CR 506.4 restrictions on how many creatures attack or block)
+ */
+export function combatLimits(g: GameState): { attack: number; block: number; attackPlayer: Partial<Record<PlayerId, number>> } {
+  const out = { attack: Infinity, block: Infinity, attackPlayer: {} as Partial<Record<PlayerId, number>> };
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    for (const a of objectAbilities(g, o)) {
+      if (a.kind !== 'static' || a.effect.type !== 'combat_limit') continue;
+      const n = Number(a.effect.amount ?? 1);
+      if (a.effect.what === 'block') out.block = Math.min(out.block, n);
+      else if (a.effect.you) out.attackPlayer[o.controller] = Math.min(out.attackPlayer[o.controller] ?? Infinity, n);
+      else out.attack = Math.min(out.attack, n);
+    }
+  }
+  return out;
+}
+
 export function declareAttackers(
   g: GameState,
   attacks: { attacker: ObjectId; target: AttackTarget }[],
@@ -249,11 +268,22 @@ export function declareAttackers(
   if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) {
     throw new RulesError(`${nameOf(g, g.objects[attacks[0]!.attacker]!)} can’t attack alone.`);
   }
+  // Silent Arbiter, Crawlspace: how many can attack (CR 506.4).
+  const limits = combatLimits(g);
+  if (attacks.length > limits.attack) throw new RulesError(`No more than ${limits.attack === 1 ? 'one creature' : `${limits.attack} creatures`} can attack each combat.`);
+  const atPlayer = (p: PlayerId) => attacks.filter((a) => a.target.kind === 'player' && a.target.player === p).length;
+  for (const [p, n] of Object.entries(limits.attackPlayer)) {
+    if (atPlayer(p) > n!) throw new RulesError(`No more than ${n === 1 ? 'one creature' : `${n} creatures`} can attack ${g.players[p]?.name ?? p} each combat.`);
+  }
+  const full = attacks.length >= limits.attack;
+  const open = (t: AttackTarget) => t.kind !== 'player' || atPlayer(t.player) < (limits.attackPlayer[t.player] ?? Infinity);
   // CR 508.1d: a creature that "attacks each combat if able" must attack if it can.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     // CR 508.1d: a cost to attack is never required, so a creature that would have to pay one isn't required to attack.
-    if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: id, target: t }]))) {
+    if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => open(t) && !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: id, target: t }]))) {
+      // With a limit reached, the requirement is obeyed as far as possible: no creature without one in its place (CR 508.1d).
+      if (full && attacks.every((a) => mustAttack(g, g.objects[a.attacker]!))) continue;
       throw new RulesError(`${nameOf(g, o)} ${goaders(g, o).length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
     }
   }
@@ -456,6 +486,10 @@ export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: 
   }
   // CR 506.5: "can't block alone" — not as the only creature declared as a blocker.
   if (used.size === 1 && hasRule(g, g.objects[blocks[0]!.blocker]!, 'cant_block_alone')) return `${nameOf(g, g.objects[blocks[0]!.blocker]!)} can’t block alone.`;
+  // Silent Arbiter: "No more than one creature can block each combat." — counting blockers other players declared.
+  const blockMax = combatLimits(g).block;
+  const others = Object.keys(c.blockers).filter((id) => !used.has(id)).length;
+  if (used.size + others > blockMax) return `No more than ${blockMax === 1 ? 'one creature' : `${blockMax} creatures`} can block each combat.`;
   for (const [attacker, list] of perAttacker) {
     const a = g.objects[attacker]!;
     const { min, max } = blockerLimits(g, a);

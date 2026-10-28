@@ -191,7 +191,17 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (!planAutoTap(g, player, fbCost, 0, [], { kind: 'spell', object: o })) continue;
     const choice = defaultSpellChoice(g, player, o, face);
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
-    if (choice && costs) out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
+    if (!choice || !costs) continue;
+    // Strive, spree: the chosen targets and modes add to the flashback cost too (CR 601.2f).
+    if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face)) {
+      const total = parseManaCost(fb);
+      const refs = (choice.targets ?? []).map((list) => list.map((t): TargetRef => (t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : (t as TargetRef))));
+      applyCostModifiers(g, player, o, face, total, refs);
+      addPerTargetCost(face, choice.targets, total);
+      addModeCosts(face, choice.modes, total);
+      if (!planAutoTap(g, player, total, 0, [], { kind: 'spell', object: o })) continue;
+    }
+    out.push({ type: 'cast', player, object: id, autoTap: true, ...choice, ...withCosts(costs) });
   }
   // CR 702.127a: aftermath halves of split cards in the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) {

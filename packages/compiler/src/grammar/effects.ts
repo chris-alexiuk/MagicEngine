@@ -418,7 +418,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!dig || !where) return Boolean(dig);
         const expr = dig.node.amount === 'X' ? parseCount(where.replace(/ as this (?:ability|spell) resolves$/, ''), b) : null;
         if (!expr) return false;
-        dig.node.amount = expr;
+        // Hatchery Spider: "… where X is …. You may put a green permanent card with mana value X or less …" — the same X.
+        Object.assign(dig.node, bindX([dig.node], expr)[0]);
         return true;
       };
       const lookThen = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is ([^,]+))?, then (put (?!them back).+)$/.exec(s);
@@ -830,6 +831,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         for (const d of destroys) d.noRegen = true;
         continue;
       }
+      // Hydroid Krasis: "… gain half X life and draw half X cards. Round down each time."
+      const roundEach = /\bhalf\b/.test(s) ? /^Round (up|down) each time$/.exec(sentences[i + 1] ?? '') : null;
+      if (roundEach) {
+        s = `${s}, rounded ${roundEach[1]}`;
+        i++;
+      }
       const effects = parseSentence(s, b);
       if (!effects) return null;
       out.push(...effects);
@@ -837,6 +844,45 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     }
     return out.length ? out : null;
   });
+}
+
+/** "half X", "half their life", "half their library", "half the cards in their hand" — halved, rounded `dir`. */
+function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] | null {
+  const kinds: string[] = [];
+  const t = text
+    .replace(/\bhalf X\b/g, () => (kinds.push('x'), 'X'))
+    .replace(/\b(loses?) half (?:their|his or her|your) life\b/, (_m, v: string) => (kinds.push('life'), `${v} X life`))
+    .replace(/\b(mills?) half (?:their|your) library\b/, (_m, v: string) => (kinds.push('library'), `${v} X cards`))
+    .replace(/\b(discards?) half the cards in (?:their|your) hand\b/, (_m, v: string) => (kinds.push('hand'), `${v} X cards`));
+  const halfCount = /\bhalf the number of\b/.test(t);
+  // Hydroid Krasis: "gain half X life and draw half X cards" — any number of X; one of the others.
+  if ((kinds.length === 0 && !halfCount) || (kinds.some((k) => k !== 'x') && kinds.length > 1)) return null;
+  // The X these stand for can't also be an X the text uses on its own.
+  if (/\bX\b/.test(text.replace(/\bhalf X\b/g, ''))) return null;
+  // "half the number of …" is counted with this rounding too (parseCount).
+  const before = b.halfDir;
+  b.halfDir = dir;
+  const effects = parseSentence(t, b);
+  b.halfDir = before;
+  if (!effects) return null;
+  let bound = 0;
+  const one = (who: unknown): who is Ref => Boolean(who && typeof who === 'object' && (who as Ref).ref !== 'players' && (who as Ref).ref !== 'all');
+  const fix = (list: EffectNode[]): EffectNode[] =>
+    list.map((e) => {
+      const out: EffectNode = { ...e };
+      for (const k of ['effects', 'then', 'else'] as const) if (Array.isArray(e[k])) out[k] = fix(e[k] as EffectNode[]);
+      if (out.amount !== 'X') return out;
+      if (kinds[0] === 'x') out.amount = { kind: 'x', half: dir };
+      else {
+        // The player who loses, mills or discards: one player, counted as they do (CR 608.2h).
+        if (!one(e.who)) return out;
+        out.amount = kinds[0] === 'life' ? { kind: 'life', who: e.who, half: dir } : { kind: 'cards', zone: kinds[0] === 'library' ? 'library' : 'hand', who: 'you', player: e.who, half: dir };
+      }
+      bound++;
+      return out;
+    });
+  const out = fix(effects);
+  return (bound || (kinds.length === 0 && JSON.stringify(out).includes('"half"'))) && !JSON.stringify(out).includes('"X"') ? out : null;
 }
 
 const REST: Record<string, { rest: string; order?: string }> = {
@@ -1043,7 +1089,8 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
       if (r) return r;
       // "~ deals damage to target player equal to the number of cards in that player's hand": the count names a
       // player the instruction targets.
-      const later = /\bthat (?:player|opponent)\b/.test(what)
+      // Peer into the Abyss: "Target player draws cards equal to … cards in their library" — that player's.
+      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b/.test(what)
         ? attempt(b, (b) => {
             const inner = parseInner(text, b);
             const expr = inner && parseCount(what, b);
@@ -1057,6 +1104,13 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Wan Shi Tong: "draw half X cards, rounded down"; Quietus Spike: "that player loses half their life, rounded up";
+  // Traumatize: "Target player mills half their library, rounded down."
+  const halved = /^(.+), rounded (up|down)$/.exec(s);
+  if (halved && /\bhalf\b/.test(halved[1]!)) {
+    const r = attempt(b, (b) => parseHalved(halved[1]!, halved[2] as 'up' | 'down', b));
+    if (r) return r;
+  }
   // Six: "Mill three cards. You may put a land card from among them into your hand." Gyruda: "Put a creature card with
   // an even mana value from among the milled cards onto the battlefield under your control." — the cards milled this way.
   const fromMilled = /^(You may )?(?:[Tt]hen )?[Pp]ut (a|an|up to (?:one|two|three)|any number of) (.+?) from among (them|those cards|the milled cards) (into your hand|onto the battlefield( tapped)?( under your control)?)$/.exec(s);
@@ -2593,10 +2647,12 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 701.61a
   if (/^forage$/i.test(c)) return [{ type: 'forage' }];
   // CR 701.50a: "~ connives", "target creature you control connives".
-  const connive = /^(.+?) connives$/i.exec(c);
+  // CR 701.50d: "connives X" (Spymaster's Vault), "connives 2".
+  const connive = /^(.+?) connives(?: (X|\d+))?$/i.exec(c);
   if (connive) {
     const what = parseObjectRef(connive[1]!, b);
-    return what && !what.plural ? [{ type: 'connive', what: what.ref }] : null;
+    const amount = connive[2] ? parseAmount(connive[2]) : null;
+    return what && !what.plural ? [{ type: 'connive', what: what.ref, ...(amount !== null && amount !== undefined ? { amount } : {}) }] : null;
   }
   // CR 701.47a: "Amass Orcs 2" (older cards: "Amass 2", Zombies).
   const amass = /^amass(?: (\w+))? (\S+)$/i.exec(c);
@@ -2836,12 +2892,14 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
       return [{ type: 'deal_damage', amount, to, divided: true }];
     });
   }
-  const m = /^(~|[Ii]t) deals (\S+) damage to (.+)$/.exec(c);
+  // Crackle with Power: "~ deals five times X damage to each of up to X targets."
+  const m = /^(~|[Ii]t) deals ((?:twice|(?:three|four|five) times) X|\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
     const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
     if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object') && !fromIt) return null;
-    const amount = parseAmount(m[2]!);
+    const timesX = /^(twice|three times|four times|five times) X$/.exec(m[2]!);
+    const amount = timesX ? { kind: 'x' as const, times: { twice: 2, 'three times': 3, 'four times': 4, 'five times': 5 }[timesX[1] as 'twice'] } : parseAmount(m[2]!);
     if (amount === null) return null;
     const out: EffectNode[] = [];
     const second = /^(.+?) and (\S+) damage to (.+)$/.exec(m[3]!);

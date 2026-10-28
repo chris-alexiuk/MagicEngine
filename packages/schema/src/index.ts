@@ -500,7 +500,8 @@ export type AmountExpr = (
   | { kind: 'total_power'; filter: ObjectFilter }
   | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
-) & { times?: number; plus?: number };
+  /** `half`: "half X, rounded down", "half their life, rounded up" — halved after the rest. */
+) & { times?: number; plus?: number; half?: 'up' | 'down' };
 
 /**
  * Rules-meaningful restrictions and requirements carried by continuous effects.
@@ -972,7 +973,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',

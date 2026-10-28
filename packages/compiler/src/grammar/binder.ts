@@ -44,6 +44,8 @@ export class Binder {
   unsupported = false;
   /** The ability mills cards, so "from among them" can mean the milled cards. */
   milled = false;
+  /** Peer into the Abyss: "… half the number of cards in their library … Round up each time." — how "half" rounds. */
+  halfDir: 'up' | 'down' | null = null;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -61,6 +63,7 @@ export class Binder {
     b.votes = this.votes;
     b.unsupported = this.unsupported;
     b.milled = this.milled;
+    b.halfDir = this.halfDir;
     return b;
   }
 
@@ -77,6 +80,7 @@ export class Binder {
     this.votes = other.votes;
     this.unsupported = other.unsupported;
     this.milled = other.milled;
+    this.halfDir = other.halfDir;
   }
 
   addTarget(spec: TargetSpec): Ref {

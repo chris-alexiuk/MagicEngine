@@ -453,7 +453,9 @@ export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
   if (typeof a === 'number') return a;
   if (a && typeof a === 'object' && 'kind' in a) {
     const e = a as AmountExpr;
-    return count(ctx, e) * (e.times ?? 1) + (e.plus ?? 0);
+    const n = count(ctx, e) * (e.times ?? 1) + (e.plus ?? 0);
+    // "half X, rounded down", "half their life, rounded up"
+    return e.half ? (e.half === 'up' ? Math.ceil(n / 2) : Math.floor(n / 2)) : n;
   }
   return 0;
 }

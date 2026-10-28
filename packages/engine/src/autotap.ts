@@ -1,6 +1,6 @@
 import { activationProhibited } from './cast-bans.js';
 import type { AddManaEffect } from '@mtg/schema';
-import { canActivateTapAbilities, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, manaAbilities, manaMultiplier } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
 import { canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
@@ -26,6 +26,9 @@ interface Source {
 
 function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose): Source[] {
   const out: Source[] = [];
+  // CR 106.12b: Nyxbloom Ancient's "three times as much".
+  const times = manaMultiplier(g, player);
+  const many = (mana: ManaColor[]) => (times === 1 ? mana : Array.from({ length: times }, () => mana).flat());
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     if (o.controller !== player || o.tapped || !canActivateTapAbilities(g, o) || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
@@ -41,13 +44,13 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       if (effect.spend && !canSpend(g, player, effect.spend, purpose, o)) return;
       if (effect.anyColor) {
         for (const c of anyColorChoices(g, player, effect.identity, effect, o)) {
-          modes.push({ ability, mana: Array.from({ length: effect.anyColor }, () => c), choice: c });
+          modes.push({ ability, mana: many(Array.from({ length: effect.anyColor }, () => c)), choice: c });
         }
       } else {
         const options = effect.options ?? [];
         options.forEach((opt, i) => {
           const mana = manaOption(opt, o);
-          if (mana) modes.push({ ability, mana, ...(options.length > 1 ? { choice: i } : {}) });
+          if (mana) modes.push({ ability, mana: many(mana), ...(options.length > 1 ? { choice: i } : {}) });
         });
       }
     });

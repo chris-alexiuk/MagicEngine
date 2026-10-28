@@ -331,7 +331,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
 
 export type RefMode = 'effect' | 'static';
 
-const PRONOUNS = /^(?:it|them|they|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
+// Wan Shi Tong: "put X +1/+1 counters on him".
+const PRONOUNS = /^(?:it|him|her|them|they|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
 
 export interface ParsedRef {
   ref: Ref;
@@ -583,14 +584,17 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
     // "each of two target creatures", "each of up to two targets" (CR 115.4).
     const eachOf = /^each of (up to )?(\w+) (?:other )?targets?(?: (.+))?$/i.exec(t);
     if (eachOf) {
-      const count = parseAmount(eachOf[2]!);
-      if (typeof count !== 'number' || count < 2) return null;
+      // Crackle with Power: "each of up to X targets" — as many as the X announced (CR 601.2b–c).
+      const countX = eachOf[2] === 'X';
+      const count = countX ? 1 : parseAmount(eachOf[2]!);
+      if (typeof count !== 'number' || (count < 2 && !countX)) return null;
+      const n = countX ? { countX: true as const } : { count };
       let spec: TargetSpec;
-      if (!eachOf[3]) spec = { what: 'any', filter: { types: ANY_TARGET_TYPES }, text: t, count };
+      if (!eachOf[3]) spec = { what: 'any', filter: { types: ANY_TARGET_TYPES }, text: t, ...n };
       else {
         const pf = parseFilter(eachOf[3], b);
         if (!pf || !pf.plural) return null;
-        spec = { what: 'object', filter: pf.filter, text: t, count };
+        spec = { what: 'object', filter: pf.filter, text: t, ...n };
       }
       if (eachOf[1]) spec.upTo = true;
       const ref = b.addTarget(spec);

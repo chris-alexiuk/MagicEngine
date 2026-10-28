@@ -19,6 +19,20 @@ import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import { abilitySources, faceOf, manaValueOf } from './zones.js';
 
+/**
+ * CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of
+ * that mana instead." How many times as much a player's permanents produce when tapped for mana (they multiply).
+ */
+export function manaMultiplier(g: GameState, player: PlayerId): number {
+  let f = 1;
+  for (const id of abilitySources(g)) {
+    const s = g.objects[id];
+    if (!s || s.zone !== 'battlefield' || s.controller !== player) continue;
+    for (const a of objectAbilities(g, s)) if (a.kind === 'static' && a.effect.type === 'mana_multiplier') f *= Math.max(1, Number(a.effect.factor ?? 1));
+  }
+  return f;
+}
+
 /** CR 700.9: it has a counter on it, is equipped, or is enchanted by an Aura its controller controls. */
 export function isModified(g: GameState, o: GameObject): boolean {
   if (Object.values(o.counters).some((n) => n > 0)) return true;

@@ -414,7 +414,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
     text: ability.text,
     program,
     targets,
-    x: entersX(ability, source, t.info),
+    x: entersX(ability, source, t.info, g),
     ...(division ? { division } : {}),
     trigger: t.info,
     ...(ability.condition ? { condition: ability.condition } : {}),
@@ -483,12 +483,20 @@ export function announceTargets(entry: StackEntry, events: GameEvent[], g?: Game
 
 /** The context a trigger's condition is checked in as it triggers. */
 export function triggerContext(g: GameState, controller: PlayerId, source: GameObject, info: TriggerInfo, ability?: TriggeredAbility): EffectContext {
-  return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: ability ? entersX(ability, source, info) : 0, memo: {}, trigger: info };
+  return { g, controller, source, sourceZcc: source.zcc, events: [], targets: [], x: ability ? entersX(ability, source, info, g) : 0, memo: {}, trigger: info };
 }
 
-/** CR 107.3m: an object's own enters-the-battlefield trigger uses the X its spell was cast with. */
-function entersX(ability: TriggeredAbility, source: GameObject | null, info: TriggerInfo): number {
-  return source && ability.trigger.type === 'enters' && info.object?.id === source.id ? (source.x ?? 0) : 0;
+/**
+ * CR 107.3m: an object's own enters-the-battlefield trigger uses the X its spell was cast with; CR 107.3i: so does its own
+ * "When you cast this spell" trigger (Hydroid Krasis), with the spell on the stack.
+ */
+function entersX(ability: TriggeredAbility, source: GameObject | null, info: TriggerInfo, g?: GameState): number {
+  if (source && ability.trigger.type === 'enters' && info.object?.id === source.id) return source.x ?? 0;
+  if (source && g && ability.trigger.type === 'cast' && (ability.trigger as { self?: boolean }).self && source.zone === 'stack') {
+    const entry = g.stack.find((e) => e.kind === 'spell' && e.object === source.id);
+    return entry?.x ?? 0;
+  }
+  return 0;
 }
 
 /**
