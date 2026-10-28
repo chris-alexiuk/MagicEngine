@@ -487,8 +487,8 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
     ...(e.switchPT ? { switchPT: true as const } : {}),
-    // CR 611.2c: locked to the objects it affected when it was created.
-    applies: (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc),
+    // CR 611.2c: locked to the objects it affected when it was created; Promise of Loyalty: while it has a vow counter.
+    applies: (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc) && (!e.whileCounter || (o.counters[e.whileCounter] ?? 0) > 0),
   }));
 }
 
@@ -563,6 +563,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
     effectsMemo = { g, list: [...staticEffects(g), ...resolvedEffects(g)].sort((a, b) => a.timestamp - b.timestamp) };
   }
   const effects = effectsMemo.list;
+  // Necromancy: "it becomes an Aura" — its own ability's effect, from when it resolved (layer 4).
+  if (o.becameAura && o.zone === 'battlefield' && !c.subtypes.includes('Aura')) c.subtypes = [...c.subtypes, 'Aura'];
   // CR 613.1d: layer 4 — type-changing effects.
   for (const e of effects) {
     if (!e.types || !e.applies(o, c)) continue;

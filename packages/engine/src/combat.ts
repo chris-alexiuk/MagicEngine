@@ -194,6 +194,10 @@ function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): st
     }
   }
   for (const r of chars(g, o).combat) {
+    // Promise of Loyalty: "can't attack you or planeswalkers you control" (CR 508.1c).
+    if (r.cantAttackPlayer && (target.kind === 'player' ? target.player === r.cantAttackPlayer : g.objects[target.object]?.controller === r.cantAttackPlayer && hasType(g, g.objects[target.object]!, 'Planeswalker'))) return `${nameOf(g, o)} can’t attack ${g.players[r.cantAttackPlayer]?.name ?? r.cantAttackPlayer} or their planeswalkers.`;
+  }
+  for (const r of chars(g, o).combat) {
     if (!r.attackOnlyIfDefenderControls) continue;
     const defender = defenderOf(g, target);
     const f = r.attackOnlyIfDefenderControls;

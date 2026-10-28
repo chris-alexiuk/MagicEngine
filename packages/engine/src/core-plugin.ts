@@ -859,7 +859,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.loseKeywords) ? { loseKeywords: node.loseKeywords as string[] } : {}),
       ...(Array.isArray(node.cantHave) ? { cantHave: node.cantHave as string[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
-      ...(node.combat ? { combat: node.combat as CombatRules } : {}),
+      // Promise of Loyalty: "can't attack you or planeswalkers you control" — this effect's controller.
+      ...(node.combat ? { combat: (node.combat as CombatRules).cantAttackYou ? { ...(node.combat as CombatRules), cantAttackPlayer: ctx.controller } : (node.combat as CombatRules) } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
       // Mirror Entity: "… and gain all creature types" (layer 4).
@@ -878,6 +879,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' ? 'game' : 'eot',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
       ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
+      ...(typeof node.whileCounter === 'string' ? { whileCounter: node.whileCounter } : {}),
     });
     return true;
   },
@@ -2959,7 +2961,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of new Set(players.flatMap((p) => mine(p)))) if (!keptAll.has(id)) destroy(g, g.objects[id]!, ctx.events);
       return true;
     }
+    // Promise of Loyalty: "Each player puts a vow counter on a creature they control and sacrifices the rest."
+    for (const [counter, n] of Object.entries((node.keptCounters as Record<string, number> | undefined) ?? {})) {
+      for (const p of players) for (const id of memo.kept[p]!) if (g.objects[id]?.zone === 'battlefield') addCounters({ ...ctx, controller: p }, g.objects[id]!, counter, n);
+    }
     for (const p of players) for (const id of mine(p)) if (!memo.kept[p]!.includes(id)) sacrificeObject(g, g.objects[id]!, p, ctx.events);
+    // "Each of those creatures …": the ones kept.
+    if (ctx.resolution) ctx.resolution.created = players.flatMap((p) => memo.kept![p]!).filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
     return true;
   },
 
@@ -3661,7 +3669,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const aura = ctx.source;
     if (!aura || aura.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && aura.zcc !== ctx.sourceZcc)) return true;
-    const r = aura.attachedTo;
+    // Necromancy: "it becomes an Aura … Put target creature card from a graveyard onto the battlefield … and attach this
+    // enchantment to it."
+    const target = node.what ? refObjects(ctx, ref(node, 'what'))[0] : undefined;
+    if (node.what && !target) return true;
+    const r = target ? { id: target.id, zcc: target.zcc } : aura.attachedTo;
+    if (node.becomeAura) aura.becameAura = true;
     const card = r ? g.objects[r.id] : undefined;
     // The card left its graveyard: nothing returns, and the Aura (attached to nothing) goes (CR 704.5m).
     if (!card || card.zcc !== r!.zcc || card.zone !== 'graveyard') return true;
@@ -3832,7 +3845,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: source ? { id: source.id, zcc: ctx.resolution?.found?.[source.id] === source.zcc ? source.zcc : (ctx.sourceZcc ?? source.zcc) } : { id: '', zcc: 0 },
       sourceName: sourceName(ctx),
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
-      step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' || node.step === 'beginning_of_combat' ? node.step : 'end',
+      step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' || node.step === 'beginning_of_combat' || node.step === 'cleanup' ? node.step : 'end',
       ...(node.whose === 'you' ? { whose: 'you' as const } : {}),
       ...(node.laterTurn ? { laterTurn: true as const } : {}),
       createdTurn: g.turn,

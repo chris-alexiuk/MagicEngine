@@ -568,8 +568,9 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
   g.effects = g.effects.filter((e) => e.until !== 'eot' && !(e.throughTurn !== undefined && e.throughTurn <= g.turn) && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
   g.prevention = [];
   applyControlEffects(g, events);
-  // CR 514.3a: if state-based actions happen now, players get priority and another cleanup step follows.
-  const acted = checkStateBasedActions(g, events);
+  // CR 514.3a: if state-based actions happen now, or abilities trigger (Necromancy: "at the beginning of the next cleanup
+  // step"), players get priority and another cleanup step follows.
+  const acted = checkStateBasedActions(g, events) || g.triggers.length > 0;
   if (g.over || g.pending) return;
   if (acted) {
     g.extraCleanup = true;
@@ -599,7 +600,17 @@ export function pruneDurations(g: GameState, events: GameEvent[]): boolean {
     const s = g.objects[r.id];
     return Boolean(s && s.zone === 'battlefield' && s.zcc === r.zcc && (!r.player || s.controller === r.player));
   };
-  g.effects = g.effects.filter((e) => (!e.whileTapped || held(e.whileTapped)) && (!e.whilePresent || present(e.whilePresent)));
+  // Promise of Loyalty: "for as long as it has a vow counter on it" — over for an object once it hasn't one (narrowing an
+  // effect isn't a state-based action, CR 514.3a).
+  for (const e of g.effects) {
+    if (!e.whileCounter) continue;
+    const still = e.objects.filter((r) => {
+      const s = g.objects[r.id];
+      return Boolean(s && s.zone === 'battlefield' && s.zcc === r.zcc && (s.counters[e.whileCounter!] ?? 0) > 0);
+    });
+    if (still.length !== e.objects.length) e.objects = still;
+  }
+  g.effects = g.effects.filter((e) => (!e.whileTapped || held(e.whileTapped)) && (!e.whilePresent || present(e.whilePresent)) && (!e.whileCounter || e.objects.length > 0));
   if (g.effects.length === before) return false;
   applyControlEffects(g, events);
   return true;
@@ -695,6 +706,10 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
           const to = o.attachedTo && g.objects[o.attachedTo.id];
           // CR 702.103f: a bestowed Aura that's unattached or attached illegally stops being bestowed instead.
           if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) (o.bestowed ? unbestow : toGraveyard).add(id);
+        } else if (o.becameAura) {
+          // Necromancy: an Aura now (CR 704.5m) — attached to nothing, or to anything but the creature it returned, it goes.
+          const to = o.attachedTo && g.objects[o.attachedTo.id];
+          if (!to || to.zcc !== o.attachedTo!.zcc || !canAttach(g, o, to)) toGraveyard.add(id);
         } else if (o.attachedTo && face.subtypes.includes('Equipment')) {
           // CR 704.5n: an Equipment attached illegally becomes unattached and stays on the battlefield.
           const to = g.objects[o.attachedTo.id];

@@ -206,6 +206,8 @@ export function moveObject(
   const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
   if (shuffleInstead) to = 'library';
   delete o.exileOnLeave;
+  // CR 400.7: a new object.
+  delete o.becameAura;
   const controllerBefore = o.controller;
   const countersBefore = from === 'battlefield' ? { ...o.counters } : undefined;
   if (from === 'battlefield') {

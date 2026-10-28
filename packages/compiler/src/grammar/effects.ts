@@ -246,6 +246,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       { type: 'grant_play', what: { ref: 'created' }, mode: 'play', until: 'exiled' },
     ];
   }
+  // Promise of Loyalty: "Each player puts a vow counter on a creature they control and sacrifices the rest. Each of those
+  // creatures can't attack you or planeswalkers you control for as long as it has a vow counter on it."
+  const vow = /^Each player puts an? (\S+) counter on (an? .+?) they control and sacrifices the rest\. Each of those creatures can't attack you or planeswalkers you control for as long as it has an? \1 counter on it\.$/.exec(text.trim());
+  if (vow) {
+    const pf = parseFilter(vow[2]!.replace(/^an? /, ''), b);
+    if (!pf || pf.plural || pf.filter.zone || pf.filter.controller || !(pf.filter.types ?? []).includes('Creature')) return null;
+    return [
+      { type: 'keep_choose', who: { ref: 'players', who: 'each' }, pool: pf.filter, count: 1, keptCounters: { [vow[1]!]: 1 } },
+      { type: 'modify', what: { ref: 'created' }, combat: { cantAttackYou: true }, until: 'game', whileCounter: vow[1]! },
+    ];
+  }
   // Ugin, the Ineffable: "Exile the top card of your library face down and look at it. Create a 2/2 colorless Spirit creature
   // token. When that token leaves the battlefield, put the exiled card into your hand."
   const ugin = /^Exile the top card of your library face down and look at it\. (Create an? [^.]+? token)\. When that token leaves the battlefield, put the exiled card into your hand\.$/.exec(text.trim());

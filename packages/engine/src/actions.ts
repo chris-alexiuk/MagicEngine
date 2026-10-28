@@ -829,6 +829,8 @@ function cast(
     ...(phyrexianLife ? { phyrexianLife: phyrexianLife / 2 } : {}),
     // Addendum: cast during the caster's own main phase.
     ...(g.active === player && (g.step === 'main1' || g.step === 'main2') ? { mainPhase: true as const } : {}),
+    // CR 307.5: when a sorcery couldn't have been cast (it isn't on the stack yet: the stack must be empty).
+    ...(!(g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0) ? { offSorceryTiming: true as const } : {}),
   };
   for (const t of spentTriggers) g.triggers.push({ id: `t${g.nextId++}`, controller: player, source: t.source, sourceName: t.name, ability: t.ability, info: { object: { id: o.id, zcc: o.zcc } } });
   // CR 702.174b / 702.174j: an instant or sorcery whose gift was promised gives it first, as it resolves.

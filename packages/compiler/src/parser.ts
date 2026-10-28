@@ -190,6 +190,42 @@ export class ParserRegistry {
         continue;
       }
 
+      // Necromancy: "You may cast this spell as though it had flash. If you cast it any time a sorcery couldn't have been cast,
+      // the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step." — flash, and (as
+      // the permanent it became) a delayed trigger for the next cleanup step (CR 514.3a).
+      if (/^You may cast (?:this spell|~) as though it had flash\. If you cast it any time a sorcery couldn't have been cast, the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step\.$/.test(line)) {
+        result.keywords.push({ id: 'flash' } as KeywordInstance);
+        result.abilities.push({
+          kind: 'triggered',
+          text: line,
+          trigger: { type: 'enters', subject: { ref: 'self' } },
+          condition: { type: 'cast_off_sorcery_timing' },
+          effects: [{ type: 'delayed', step: 'cleanup', effects: [{ type: 'sacrifice', what: { ref: 'self' } }] }],
+        } as AbilityNode);
+        continue;
+      }
+      // Necromancy: "When this enchantment enters, if it's on the battlefield, it becomes an Aura with "enchant creature put onto
+      // the battlefield with Necromancy." Put target creature card from a graveyard onto the battlefield under your control and
+      // attach this enchantment to it. When this enchantment leaves the battlefield, that creature's controller sacrifices it."
+      const becomesAura = /^When (?:this enchantment|~) enters, if it's on the battlefield, it becomes an Aura with "enchant creature put onto the battlefield with (?:~|this enchantment|[^"]+)\.?" Put target creature card from a graveyard onto the battlefield under your control and attach (?:this enchantment|~) to it\. When (?:this enchantment|~) leaves the battlefield, that creature's controller sacrifices it\.$/.exec(line);
+      if (becomesAura) {
+        result.abilities.push(
+          {
+            kind: 'triggered',
+            text: line,
+            trigger: { type: 'enters', subject: { ref: 'self' } },
+            targets: [{ what: 'object', filter: { zone: 'graveyard', types: ['Creature'] }, text: 'target creature card from a graveyard' }],
+            effects: [{ type: 'reanimate_attach', what: { ref: 'target', index: 0 }, becomeAura: true }],
+          } as AbilityNode,
+          {
+            kind: 'triggered',
+            text: "When this enchantment leaves the battlefield, that creature's controller sacrifices it.",
+            trigger: { type: 'leaves', subject: { ref: 'self' } },
+            effects: [{ type: 'sacrifice_linked' }],
+          } as AbilityNode,
+        );
+        continue;
+      }
       // Animate Dead: "… attach this Aura to it. When this Aura leaves the battlefield, that creature's controller sacrifices
       // it." — two triggered abilities in one paragraph, the second linked to the first (CR 607.2): it sacrifices the
       // creature the first put onto the battlefield.

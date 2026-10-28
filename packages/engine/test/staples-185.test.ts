@@ -406,6 +406,9 @@ const CARDS = [
   makeCard({ name: 'Compleated Lite', type_line: 'Legendary Planeswalker — Test', mana_cost: '{G/U/P}{G/U/P}', cmc: 2, colors: ['G', 'U'], loyalty: '5', oracle_text: 'Compleated ({G/U/P} can be paid with {G}, {U}, or 2 life. If life was paid, this planeswalker enters with two fewer loyalty counters.)\n+1: You gain 1 life.' }),
   makeCard({ name: 'Vraska Sting Lite', type_line: 'Legendary Planeswalker — Vraska', mana_cost: '{0}', loyalty: '12', oracle_text: '−2: Target creature becomes a Treasure artifact with "{T}, Sacrifice this artifact: Add one mana of any color" and loses all other card types and abilities.\n−9: If target player has fewer than nine poison counters, they get a number of poison counters equal to the difference.' }),
   makeCard({ name: 'Nissa Animist Lite', type_line: 'Legendary Planeswalker — Nissa', mana_cost: '{0}', loyalty: '7', oracle_text: "+1: Create an X/X green Phyrexian Horror creature token, where X is Nissa's loyalty.\n−7: Until end of turn, creatures you control get +1/+1 for each Forest you control and gain trample." }),
+  makeCard({ name: 'Promise Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Each player puts a vow counter on a creature they control and sacrifices the rest. Each of those creatures can't attack you or planeswalkers you control for as long as it has a vow counter on it." }),
+  makeCard({ name: 'Necromancy Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'You may cast this spell as though it had flash. If you cast it any time a sorcery couldn\'t have been cast, the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step.\nWhen this enchantment enters, if it\'s on the battlefield, it becomes an Aura with "enchant creature put onto the battlefield with Necromancy Lite." Put target creature card from a graveyard onto the battlefield under your control and attach this enchantment to it. When this enchantment leaves the battlefield, that creature\'s controller sacrifices it.' }),
+  makeCard({ name: 'Disenchant Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target artifact or enchantment.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4687,6 +4690,72 @@ describe('staples (slice 219): Phyrexian mana (CR 107.4f)', () => {
     g = settle(act(g, { type: 'activate', player: 'alice', object: nissa, ability: 1 }));
     const c = chars(g, g.objects[token]!);
     expect([c.power, c.keywords.some((k) => k.id === 'trample')]).toEqual([10, true]);
+  });
+
+  it("Promise of Loyalty: each player keeps one creature with a vow counter; it can't attack you while it has one", () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    const [bear, cub] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+    const [zombie, goblin] = [give(g, 'bob', 'Zombie', 'battlefield'), give(g, 'bob', 'Goblin Pair', 'battlefield')];
+    const carols = give(g, 'carol', 'Zombie', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Promise Lite', 'hand') });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'choose_objects') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'choose_objects', objects: [g.pending.player === 'alice' ? bear : zombie] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([bear, cub, zombie, goblin, carols].map((id) => g.objects[id]!.zone)).toEqual(['battlefield', 'graveyard', 'battlefield', 'graveyard', 'battlefield']);
+    expect([g.objects[zombie]!.counters.vow, g.objects[carols]!.counters.vow]).toEqual([1, 1]);
+    g = toAttack(toStep(g, 'beginning_of_combat', 'bob'));
+    expect(illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: zombie, target: { kind: 'player', player: 'alice' } }] } })).toMatch(/can’t attack/);
+    expect(() => act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: zombie, target: { kind: 'player', player: 'carol' } }] } })).not.toThrow();
+    g.objects[zombie]!.counters.vow = 0;
+    expect(() => act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: zombie, target: { kind: 'player', player: 'alice' } }] } })).not.toThrow();
+  });
+
+  it('Necromancy: as a sorcery, it becomes an Aura on the creature it returns; when it leaves, that creature goes', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'graveyard');
+    const necro = give(g, 'alice', 'Necromancy Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: necro });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bear }]] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.objects[bear]!.zone, g.objects[bear]!.controller]).toEqual(['battlefield', 'alice']);
+    expect(chars(g, g.objects[necro]!).subtypes).toContain('Aura');
+    expect(g.objects[necro]!.attachedTo?.id).toBe(bear);
+    g = toStep(g, 'main1', 'bob');
+    expect([g.objects[necro]!.zone, g.objects[bear]!.zone]).toEqual(['battlefield', 'battlefield']);
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Disenchant Lite', 'hand'), targets: [[{ kind: 'object', object: necro }]] }));
+    expect([g.objects[necro]!.zone, g.objects[bear]!.zone]).toEqual(['graveyard', 'graveyard']);
+  });
+
+  it('Necromancy: cast when a sorcery couldn\'t be, it is sacrificed at the beginning of the next cleanup step', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const bear = give(g, 'bob', 'Bear', 'graveyard');
+    const necro = give(g, 'alice', 'Necromancy Lite', 'hand');
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'cast', player: 'alice', object: necro });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bear }]] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.objects[bear]!.zone, g.objects[bear]!.controller]).toEqual(['battlefield', 'alice']);
+    // Through Bob's end step it stays; the cleanup step's delayed trigger sacrifices it (CR 514.3a).
+    let atEnd = '';
+    for (let i = 0; i < 200 && g.active === 'bob'; i++) {
+      if (g.step === 'end') atEnd = g.objects[necro]!.zone;
+      if (g.pending?.kind === 'declare_attackers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_attackers', attacks: [] } });
+      else if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending?.kind === 'discard_to_hand_size') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'discard_to_hand_size', objects: g.zones.hand[g.pending.player]!.slice(0, g.pending.count) } });
+      else if (g.pending) break;
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect([g.active, atEnd]).toEqual(['alice', 'battlefield']);
+    expect([g.objects[necro]!.zone, g.objects[bear]!.zone]).toEqual(['graveyard', 'graveyard']);
   });
 });
 

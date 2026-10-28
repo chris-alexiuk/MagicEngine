@@ -227,13 +227,15 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
   prepared?: true;
   /** CR 702.103b: cast bestowed — an Aura with enchant creature, not a creature, until it ceases to be bestowed. */
   bestowed?: true;
+  /** Necromancy: "it becomes an Aura with "enchant creature put onto the battlefield with Necromancy"" (until it leaves). */
+  becameAura?: true;
   /** CR 702.102: a fused split spell — both halves cast together (on the stack only). */
   fused?: true;
   /** CR 718.3b: cast prototyped — it has the inset mana cost, power and toughness (and that cost's colors). */
@@ -432,6 +434,8 @@ export interface ContinuousEffect {
   whileTapped?: ObjectRef;
   /** Sower of Temptation: "for as long as ~ remains on the battlefield"; `player`: "for as long as you control ~". */
   whilePresent?: ObjectRef & { player?: PlayerId };
+  /** Promise of Loyalty: "for as long as it has a vow counter on it" — each object for as long as it has one (CR 611.2b). */
+  whileCounter?: string;
   /** "until your next turn": it ends as this player's next turn begins. */
   untilTurnOf?: PlayerId;
   /** "until the end of your next turn": it ends in the cleanup step of this turn. */
@@ -446,7 +450,7 @@ export interface DelayedTrigger {
   sourceName: string;
   text: string;
   /** CR 511.2: "at end of combat" is the end of combat step. */
-  step: 'end' | 'upkeep' | 'end_of_combat' | 'main' | 'main1' | 'beginning_of_combat';
+  step: 'end' | 'upkeep' | 'end_of_combat' | 'main' | 'main1' | 'beginning_of_combat' | 'cleanup';
   createdTurn: number;
   createdStep: Step;
   effects: EffectNode[];
