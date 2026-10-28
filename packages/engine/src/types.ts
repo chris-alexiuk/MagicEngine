@@ -411,6 +411,8 @@ export interface DelayedTrigger {
   info?: TriggerInfo;
   /** "at the beginning of your next upkeep" (rebound): only on its controller's turn. */
   whose?: 'you';
+  /** Final Fortune: "At the beginning of that turn's end step" — the extra turn's, not this one's. */
+  laterTurn?: true;
   /** "When you next cast an instant or sorcery spell this turn": fires on that event instead of a step. */
   on?: { who: 'you'; filter: ObjectFilter };
 }
@@ -428,6 +430,12 @@ export interface PreventionShield {
   combat?: true;
   /** "The next time … would deal damage": used up by the first damage it prevents (CR 615.7). */
   once?: true;
+  /** Obscuring Haze: "by creatures your opponents control" — whichever match as the damage would be dealt. */
+  byFilter?: ObjectFilter;
+  /** "to creatures you control" — likewise for permanents dealt damage. */
+  toFilter?: ObjectFilter;
+  /** Who "you" is for those filters. */
+  controller?: PlayerId;
 }
 
 /** A triggered ability waiting to be put on the stack (CR 603.3). */

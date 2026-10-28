@@ -82,6 +82,15 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
   [/ named ~$/, (f, _m, b) => !f.name && ((f.name = b.env.cardName), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
+  // Fell the Mighty: "with power greater than target creature's power" — counted as the effect applies.
+  [/ with (power|toughness) (greater|less) than (target creature|that creature)'s \1$/, (f, m, b) => {
+    const key = m[1] === 'power' ? 'power' : 'toughness';
+    if (f[key]) return false;
+    const of = parseObjectRef(m[3]!, b)?.ref;
+    if (!of) return false;
+    f[key] = { op: m[2] === 'greater' ? 'gt' : 'lt', n: { kind: 'stat', stat: key, of } };
+    return true;
+  }],
   // Gyruda, Void Winnower: "with an even mana value", "with even mana values" (CR 202.3: 0 is even).
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
@@ -332,7 +341,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
 export type RefMode = 'effect' | 'static';
 
 // Wan Shi Tong: "put X +1/+1 counters on him".
-const PRONOUNS = /^(?:it|him|her|them|they|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
+// Sneak Attack: "Sacrifice the creature at the beginning of the next end step." — the one just mentioned.
+const PRONOUNS = /^(?:it|him|her|them|they|the creature|that (?:creature|permanent|card|spell|token|land|artifact|enchantment|planeswalker|spell or ability)|those (?:creatures|permanents|cards|tokens))$/i;
 
 export interface ParsedRef {
   ref: Ref;
@@ -549,8 +559,10 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // Skyclave Apparition: "the exiled card's owner" (CR 607.2a)
   if (t === "the exiled card's owner") return { ref: 'owner_of', of: { ref: 'exiled_with' } };
   if (b.named[t]) return b.named[t]!;
-  const owner = /^(?:its|that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token)'s) (controller|owner)$/.exec(t);
-  if (owner && b.it) return { ref: owner[1] === 'controller' ? 'controller_of' : 'owner_of', of: b.it };
+  const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t);
+  // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
+  const of = owner ? (owner[1] && b.named[owner[1]]) || b.it : null;
+  if (owner && of) return { ref: owner[2] === 'controller' ? 'controller_of' : 'owner_of', of };
   return null;
 }
 

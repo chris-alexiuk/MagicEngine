@@ -118,6 +118,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     let previous: EffectNode[] = [];
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
+      // Temur Battle Rage: "… Ferocious — That creature also gains trample …" — an ability word in mid-text has no rules
+      // meaning (CR 207.2c); "also" only says it's in addition.
+      if (i > 0) s = s.replace(/^(?!Choose\b)[A-Z][A-Za-z']+(?: [A-Za-z']+){0,2} — (?=[A-Z])/, '');
+      s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
       s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
@@ -770,6 +774,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Final Fortune: "Take an extra turn after this one. At the beginning of that turn's end step, you lose the game."
+      const thatTurn = out[out.length - 1]?.type === 'extra_turn' ? /^At the beginning of that turn's end step, (.+)$/.exec(s) : null;
+      if (thatTurn) {
+        const inner = parseSentence(capitalise(thatTurn[1]!), b);
+        if (!inner) return null;
+        out.push({ type: 'delayed', step: 'end', laterTurn: true, effects: inner });
+        continue;
+      }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
       const delayed =
         /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ??
@@ -1178,12 +1190,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // "… unless that player discards a card" / "sacrifices a creature"; Tergrid's Lantern: "… unless they sacrifice a
   // nonland permanent of their choice or discard a card" (either); "Each opponent loses 3 life unless that player …"
   // (each of them on their own).
-  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?) (.+)$/.exec(s);
+  // Coral Atoll: "sacrifice it unless you return an untapped Island you control to its owner's hand"
+  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?|returns?) (.+)$/.exec(s);
   if (unlessDoes) {
     const r = attempt(b, (b) => {
       const third = (v: string) => (v.endsWith('s') ? v : `${v}s`);
       const strip = (o: string) => o.replace(/ of their choice$/, '');
-      const alt = /^(.+?) or (discards?|sacrifices?) (.+)$/.exec(unlessDoes[4]!);
+      const alt = /^(.+?) or (discards?|sacrifices?|returns?) (.+)$/.exec(unlessDoes[4]!);
       const parts: [string, string][] = alt ? [[unlessDoes[3]!, alt[1]!], [alt[2]!, alt[3]!]] : [[unlessDoes[3]!, unlessDoes[4]!]];
       // Unnatural Hunger: "unless they sacrifice another creature" means other than the enchanted one, not the Aura.
       if (parts.some(([, o]) => /^another /.test(o)) && /\b(?:Aura|Equipment)\b/.test(b.env.typeLine)) return null;
@@ -1199,7 +1212,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const inner = parseSentence(unlessDoes[1]!, b);
       const payer = inner ? parsePlayerRef(unlessDoes[2]!, b) : null;
       if (!inner || !payer || payer.ref === 'players') return null;
-      const actions = parts.map(([v, o]) => attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)));
+      // "unless you return an untapped Island you control to its owner's hand" — one you choose (move_chosen).
+      const actions = parts.map(([v, o]) =>
+        /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
+      );
       if (actions.some((a) => !a)) return null;
       return actions.length === 1 ? [{ type: 'unless_does', payer, action: actions[0]!.effects, effects: inner }] : [{ type: 'unless_does', payer, actions: actions.map((a) => a!.effects), effects: inner }];
     });
@@ -2577,10 +2593,11 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     const to = parseRecipients(both[2]!, b);
     return to?.length === 1 ? [{ type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), to: to[0] }, { type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), by: to[0] }] : null;
   }
-  const all = /^Prevent all (combat )?damage that would be dealt (?:to|by) (.+?) this turn$/.exec(c);
+  // Obscuring Haze: "Prevent all damage that would be dealt this turn by creatures your opponents control."
+  const all = /^Prevent all (combat )?damage that would be dealt (?:to|by) (.+?) this turn$/.exec(c) ?? /^Prevent all (combat )?damage that would be dealt this turn (?:to|by) (.+)$/.exec(c);
   if (all) {
     const to = parseRecipients(all[2]!, b);
-    const by = /dealt by/.test(c);
+    const by = /dealt (?:this turn )?by/.test(c);
     return to?.length === 1 ? [{ type: 'prevent', amount: 'all', ...(all[1] ? { combat: true } : {}), [by ? 'by' : 'to']: to[0] }] : null;
   }
   return null;

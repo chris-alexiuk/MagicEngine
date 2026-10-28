@@ -51,8 +51,16 @@ export interface ParsedToken {
  * after its subtypes plus "Token".
  */
 export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
+  // Dark Depths: "Marit Lage, a legendary 20/20 black Avatar creature token with flying and indestructible" — the name first.
+  const named = /^([A-Z][^,]+), (a legendary .+ token(?: with .+)?)$/.exec(text.trim());
+  if (named) {
+    const inner = parseTokenPhrase(named[2]!, b);
+    return inner && inner.amount === 1 ? { ...inner, face: { ...inner.face, name: named[1]! } } : null;
+  }
   // CR 111.4: "named X" gives it that name instead.
   // Koma: "a 3/3 blue Serpent creature token named Koma's Coil" — the card's own name was shortened to "~".
+  const legendary = /^(\w+) (tapped )?legendary /.test(text.trim());
+  if (legendary) text = text.trim().replace(/^(\w+ (?:tapped )?)legendary /, '$1');
   const m = /^(\w+) (tapped )?(?:(\d+|X)\/(\d+|X) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
   if (m?.[6]?.startsWith('~')) m[6] = m[6].replace(/^~/, b.env.faceName.split(',')[0]!);
   if (!m) return null;
@@ -99,6 +107,11 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if (!extra) return null;
   const typeLine = `${types.join(' ')} — ${subtypes.join(' ')}`;
   const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? [m[3]!, m[4]!] : undefined);
+  // CR 205.4a: a legendary token is a legendary permanent (the legend rule applies to it).
+  if (legendary) {
+    face.supertypes = ['Legendary'];
+    face.typeLine = `Legendary ${face.typeLine}`;
+  }
   // A quoted ability the grammar can't read leaves the whole phrase unread, rather than a token resolved by hand.
   if (extra.quoted.some((q) => face.unparsed.includes(q))) return null;
   return { amount, tapped, face, ...(sizeX ? { size: 'X' as const } : {}) };

@@ -108,7 +108,11 @@ export class ParserRegistry {
     if (/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) {
       for (let i = 1; i < lines.length; i++) {
         const next = stripAbilityWord(lines[i]!);
-        if (/^[A-Z][^.]* instead if [^.]+\.$/.test(next) && lines[i - 1] && /\.$/.test(lines[i - 1]!) && !/^[•+]/.test(lines[i - 1]!)) {
+        // Stubborn Denial: "Ferocious — If you control a creature with power 4 or greater, counter that spell instead.";
+        // Temur Battle Rage: "Ferocious — That creature also gains trample …" — about what the line before did.
+        const wordless = next !== lines[i];
+        const joins = /^[A-Z][^.]* instead if [^.]+\.$/.test(next) || /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) || (wordless && /^(?:That|Those) (?:creature|creatures|spell|permanent|player)\b[^.]*\.$/.test(next));
+        if (joins && lines[i - 1] && /\.$/.test(lines[i - 1]!) && !/^[•+]/.test(lines[i - 1]!)) {
           lines.splice(i - 1, 2, `${lines[i - 1]} ${next}`);
           i--;
         }

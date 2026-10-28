@@ -1983,3 +1983,21 @@ describe('slice 167', () => {
     expect(parse('Each opponent loses half their life, rounded up.', 'Sorcery', 'E').unparsed).toHaveLength(1);
   });
 });
+
+describe('slice 168', () => {
+  it('reads Sneak Attack, Obscuring Haze, Final Fortune, Fell the Mighty and Gratuitous Violence', () => {
+    expect(parse('{R}: You may put a creature card from your hand onto the battlefield. That creature gains haste. Sacrifice the creature at the beginning of the next end step.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'may' }, { type: 'modify', what: { ref: 'created' } }, { type: 'delayed', effects: [{ type: 'sacrifice', what: { ref: 'created' } }] }] });
+    expect(parse('Prevent all damage that would be dealt this turn by creatures your opponents control.', 'Instant', 'O').abilities[0]).toMatchObject({ effects: [{ type: 'prevent', amount: 'all', by: { ref: 'all', filter: { controller: 'opponent' } } }] });
+    expect(parse("Take an extra turn after this one. At the beginning of that turn's end step, you lose the game.", 'Instant', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'extra_turn' }, { type: 'delayed', step: 'end', laterTurn: true }] });
+    expect(parse("Destroy all creatures with power greater than target creature's power.", 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { ref: 'all', filter: { power: { op: 'gt', n: { kind: 'stat', stat: 'power', of: { ref: 'target', index: 0 } } } } } }] });
+    expect(parse('If a creature you control would deal damage to a permanent or player, it deals double that damage instead.', 'Enchantment', 'G').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'damage', op: 'double', filter: { types: ['Creature'], controller: 'you' } } });
+  });
+  it('reads Dark Depths, The Water Crystal, karoos, joined spell lines and "becomes blocked by a creature"', () => {
+    expect(parse('When ~ has no ice counters on it, sacrifice it. If you do, create Marit Lage, a legendary 20/20 black Avatar creature token with flying and indestructible.', 'Legendary Land', 'D').abilities[0]).toMatchObject({ trigger: { type: 'state' }, effects: [{ type: 'may_do', then: [{ type: 'create_token', token: { name: 'Marit Lage', supertypes: ['Legendary'] } }] }] });
+    expect(parse('If an opponent would mill one or more cards, they mill that many cards plus four instead.', 'Legendary Artifact', 'W').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'mill', who: 'opponents', op: 'plus', n: 4 } });
+    expect(parse("When this land enters, sacrifice it unless you return an untapped Island you control to its owner's hand.", 'Land', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'unless_does', action: [{ type: 'move_chosen' }] }] });
+    expect(parse('Counter target noncreature spell unless its controller pays {1}.\nFerocious — If you control a creature with power 4 or greater, counter that spell instead.', 'Instant', 'S').unparsed).toHaveLength(0);
+    expect(parse('Whenever ~ becomes blocked by a creature, destroy that creature.', 'Creature — Basilisk', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] });
+    expect(parse('Whenever ~ blocks or becomes blocked by a non-Wall creature, destroy that creature at end of combat.', 'Creature — Cockatrice', 'C').abilities[0]).toMatchObject({ trigger: { type: 'blocks', orBlocked: true, other: { notSubtypes: ['Wall'] } }, effects: [{ type: 'delayed', effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] }] });
+  });
+});

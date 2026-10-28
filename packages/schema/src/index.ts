@@ -380,7 +380,8 @@ export interface ObjectFilter {
 }
 
 export interface Compare {
-  op: 'le' | 'ge' | 'eq';
+  /** `lt` / `gt`: Fell the Mighty's "power greater than target creature's power". */
+  op: 'le' | 'ge' | 'eq' | 'lt' | 'gt';
   /**
    * 'X': the spell's X ("a creature card with mana value X or less", Chord of Calling); a counted amount when the text
    * says what X is ("where X is 2 plus the sacrificed creature's mana value", Eldritch Evolution) — worked out as it
@@ -500,7 +501,7 @@ export type AmountExpr = (
   | { kind: 'total_power'; filter: ObjectFilter }
   | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
-  /** `half`: "half X, rounded down", "half their life, rounded up" — halved after the rest. */
+  /** `half`: "half X, rounded down", "half their life, rounded up" — the count is halved, then scaled (times, plus). */
 ) & { times?: number; plus?: number; half?: 'up' | 'down' };
 
 /**
@@ -889,7 +890,8 @@ export interface ExileInsteadNode extends EffectNode {
  */
 export interface QuantityReplacementNode extends EffectNode {
   type: 'replace_quantity';
-  event: 'gain_life' | 'tokens' | 'counters' | 'damage';
+  /** `mill`: The Water Crystal — "If an opponent would mill one or more cards, they mill that many cards plus four instead." */
+  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill';
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn). */
   op: 'double' | 'triple' | 'plus' | 'extra';
   n?: number;

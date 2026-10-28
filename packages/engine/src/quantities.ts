@@ -68,6 +68,7 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
   const who = (p: PlayerId | undefined) => !e.who || e.who === 'each' || (e.who === 'you' ? p === you : p !== undefined && p !== you);
   switch (e.event) {
     case 'gain_life':
+    case 'mill':
       return who(s.player);
     case 'tokens': {
       if (!who(s.player)) return false;

@@ -935,6 +935,9 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
       if (!hit) continue;
     }
     if (p.by && !(p.by.kind === 'object' && p.by.id === source.id && p.by.zcc === source.zcc)) continue;
+    const fctx = { controller: p.controller ?? source.controller, source: null, anyZone: true };
+    if (p.byFilter && !matchesFilter(g, source, p.byFilter, fctx)) continue;
+    if (p.toFilter && !(to.kind === 'permanent' && g.objects[to.object] && matchesFilter(g, g.objects[to.object]!, p.toFilter, fctx))) continue;
     if (p.once) {
       amount = 0;
       p.amount = 0;

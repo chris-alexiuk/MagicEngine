@@ -693,7 +693,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.17a: the top N cards go into the graveyard.
     const n = amountOf(ctx, node.amount);
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
-      for (const id of zoneList(ctx.g, 'library', p).slice(0, n)) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      // The Water Crystal: "they mill that many cards plus four instead" (CR 614.1a).
+      const k = replaceQuantity(ctx.g, 'mill', n, { player: p });
+      for (const id of zoneList(ctx.g, 'library', p).slice(0, k)) moveObject(ctx.g, id, 'graveyard', ctx.events);
     }
     return true;
   },
@@ -2883,6 +2885,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
       step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' ? node.step : 'end',
       ...(node.whose === 'you' ? { whose: 'you' as const } : {}),
+      ...(node.laterTurn ? { laterTurn: true as const } : {}),
       createdTurn: g.turn,
       createdStep: g.step,
       effects: freezeTargetAmounts(node.effects as EffectNode[], ctx),
@@ -2958,6 +2961,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return refRecipients(ctx, r).map((x): TargetRef => (x.kind === 'player' ? x : { kind: 'object', id: x.object, zcc: g.objects[x.object]!.zcc }));
     };
     const amount = node.amount === 'all' ? 'all' : amountOf(ctx, node.amount);
+    // Obscuring Haze: "by creatures your opponents control" — whatever matches when the damage would be dealt (CR 615).
+    const byRef = node.by as Ref | undefined;
+    const toRef = node.to as Ref | undefined;
+    const filtered = amount === 'all' && (byRef?.ref === 'all' || toRef?.ref === 'all') && (!byRef || byRef.ref === 'all') && (!toRef || toRef.ref === 'all');
+    if (filtered) {
+      g.prevention.push({
+        id: `p${g.nextId++}`,
+        turn: g.turn,
+        amount,
+        controller: ctx.controller,
+        ...(byRef?.ref === 'all' ? { byFilter: byRef.filter } : {}),
+        ...(toRef?.ref === 'all' ? { toFilter: toRef.filter } : {}),
+        ...(node.combat ? { combat: true as const } : {}),
+      });
+      return true;
+    }
     for (const to of lock(node.to as Ref | undefined)) {
       for (const by of lock(node.by as Ref | undefined)) {
         g.prevention.push({
@@ -3101,6 +3120,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   }
   if (e.type === 'discard') return e.all ? zoneList(g, 'hand', chooser).length > 0 : zoneList(g, 'hand', chooser).length >= amountOf(ctx, e.amount);
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // Coral Atoll: "unless you return an untapped Island you control to its owner's hand".
+  if (e.type === 'move_chosen') return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null })).length >= amountOf(ctx, e.amount ?? 1);
   // CR 701.68b, 701.61a
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
@@ -3330,6 +3351,19 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   blocks(t, check) {
     const e = check.event;
     if (e.type !== 'blocks_declared' || check.sourceLeft) return [];
+    // "blocks or becomes blocked by a creature": once for each creature on the other side, about that creature.
+    if (t.orBlocked && t.other) {
+      const each: TriggerInfo[] = [];
+      const fits = (id: string) => Boolean(check.g.objects[id] && matchesFilter(check.g, check.g.objects[id]!, t.other as ObjectFilter, { controller: check.controller, source: check.source }));
+      for (const { blocker, attacker } of e.blocks) {
+        const b = check.g.objects[blocker];
+        const a = check.g.objects[attacker];
+        if (!a || !b) continue;
+        if (subjectMatches(check, t.subject as Ref, b) && fits(attacker)) each.push({ object: refTo(a) });
+        if (subjectMatches(check, t.subject as Ref, a) && fits(blocker)) each.push({ object: refTo(b), player: b.controller });
+      }
+      return each;
+    }
     const out = new Map<string, TriggerInfo>();
     for (const { blocker, attacker } of e.blocks) {
       const o = check.g.objects[blocker];

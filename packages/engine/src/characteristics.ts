@@ -665,7 +665,8 @@ export interface FilterContext {
 }
 
 // An X or a counted amount not yet worked out (only as an effect resolves) matches nothing.
-const compare = (v: number, c: { op: string; n: unknown }) => (typeof c.n !== 'number' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : v === c.n);
+const compare = (v: number, c: { op: string; n: unknown }) =>
+  typeof c.n !== 'number' ? false : c.op === 'le' ? v <= c.n : c.op === 'ge' ? v >= c.n : c.op === 'lt' ? v < c.n : c.op === 'gt' ? v > c.n : v === c.n;
 
 /** Whether an object matches a filter from the compiled AST. */
 export function matchesFilter(

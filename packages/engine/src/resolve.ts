@@ -422,6 +422,13 @@ function count(ctx: EffectContext, e: AmountExpr): number {
  * creature types, "other than it" that object (CR 608.2h).
  */
 export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
+  // Fell the Mighty: "with power greater than target creature's power" — counted as the effect applies (CR 608.2h).
+  const counted = (['power', 'toughness'] as const).filter((k) => f[k] && typeof f[k]!.n === 'object');
+  if (counted.length) {
+    const out: ObjectFilter = { ...f };
+    for (const k of counted) out[k] = { ...f[k]!, n: amountOf(ctx, f[k]!.n) };
+    return bindFilter(ctx, out);
+  }
   if (!f.sharesCreatureTypeWith && !f.otherThan) return f;
   const out: ObjectFilter = { ...f };
   if (f.sharesCreatureTypeWith) {
@@ -453,9 +460,10 @@ export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
   if (typeof a === 'number') return a;
   if (a && typeof a === 'object' && 'kind' in a) {
     const e = a as AmountExpr;
-    const n = count(ctx, e) * (e.times ?? 1) + (e.plus ?? 0);
-    // "half X, rounded down", "half their life, rounded up"
-    return e.half ? (e.half === 'up' ? Math.ceil(n / 2) : Math.floor(n / 2)) : n;
+    // "half X, rounded down", "half their life, rounded up" — the count is halved; "-X, where X is half …" then negates it.
+    const base = count(ctx, e);
+    const n = e.half ? (e.half === 'up' ? Math.ceil(base / 2) : Math.floor(base / 2)) : base;
+    return n * (e.times ?? 1) + (e.plus ?? 0);
   }
   return 0;
 }

@@ -624,13 +624,20 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (blocked) {
     const by = blocked[2] ? parseFilter(blocked[2], b) : null;
     if (blocked[2] && (!by || by.plural)) return null;
-    if (by) b.named['the blocking creature'] = { ref: 'trigger_object' };
+    // "Whenever ~ becomes blocked by a creature, destroy that creature." — the blocker (CR 509.3d: one trigger each).
+    if (by) {
+      b.named['the blocking creature'] = { ref: 'trigger_object' };
+      if (blocked[1] === 'becomes blocked') b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    }
     // CR 506.2: the defending player is the one whose creatures block it.
     if (blocked[1] === 'becomes blocked') b.named['defending player'] = { ref: 'trigger_player' };
+    // Engulfing Slagwurm: "Whenever ~ blocks or becomes blocked by a creature, destroy that creature." — once for each
+    // creature it blocks or is blocked by, about that creature (CR 509.3c–d).
+    if (by && blocked[1] === 'blocks or becomes blocked') b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
     const trigger: TriggerNode =
       blocked[1] === 'becomes blocked'
         ? { type: 'becomes_blocked', subject: { ref: 'self' }, ...(by ? { by: by.filter } : {}) }
-        : { type: 'blocks', subject: { ref: 'self' }, orBlocked: true };
+        : { type: 'blocks', subject: { ref: 'self' }, orBlocked: true, ...(by ? { other: by.filter } : {}) };
     return { trigger, it: { ref: 'self' }, player: null };
   }
 
@@ -875,7 +882,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
 
   // CR 603.8: a state trigger — "When you control no Islands, sacrifice ~."
-  if (word === 'When' && /^you control no /.test(t)) {
+  // Dark Depths: "When Dark Depths has no ice counters on it, …"
+  if (word === 'When' && (/^you control no /.test(t) || /^~ has no \S+ counters on it$/.test(t))) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
   }
@@ -1341,6 +1349,9 @@ export const triggeredRule: GrammarRule = {
           // stays "that creature" after a condition about ~.
           if (trig.it?.ref === 'trigger_object') b.it = trig.it;
           if (!condition) return null;
+          // Howl of the Hunt: "When this Aura enters, if enchanted creature is a Wolf or Werewolf, untap that creature." —
+          // "that creature" is the one the condition is about.
+          if (/^(?:enchanted|equipped) creature is /.test(iff[1]!) && condition.type === 'is') b.named['that creature'] = (condition as unknown as { of: Ref }).of;
           effectText = iff[2]!;
         }
         if (/^unless /i.test(effectText)) return null;
@@ -2047,6 +2058,12 @@ export const quantityReplacementRule: GrammarRule = {
     if (!env) return null;
     const b = new Binder(env);
     const make = (node: Omit<QuantityReplacementNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'replace_quantity', ...node } });
+    // The Water Crystal: "If an opponent would mill one or more cards, they mill that many cards plus four instead."
+    const mill = /^If (an opponent|a player|you) would mill one or more cards, (?:they|that player|you) mill (.+?) instead\.$/.exec(line);
+    if (mill) {
+      const op = quantityOp(mill[2]!);
+      return op ? make({ event: 'mill', who: mill[1] === 'you' ? 'you' : mill[1] === 'a player' ? 'each' : 'opponents', ...op }) : null;
+    }
     const life = /^If you would gain life, you gain (.+?) instead\.$/.exec(line);
     if (life) {
       const op = quantityOp(life[1]!);
@@ -2128,11 +2145,13 @@ export const quantityReplacementRule: GrammarRule = {
       const pf = target === 'permanent or player' ? { filter: {}, plural: false } : parseFilter(target, b);
       return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
     }
-    const damage = /^If (a|another) (.*?)source( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
+    // Gratuitous Violence: "If a creature you control would deal damage …"
+    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
     if (damage) {
+      const creature = Boolean(damage.splice(3, 1)[0]);
       const op = quantityOp(damage[6]!);
       if (!op) return null;
-      const filter: ObjectFilter = {};
+      const filter: ObjectFilter = creature ? { types: ['Creature'] } : {};
       const adjective = damage[2]!.trim();
       if (adjective) {
         const color = COLOR_WORDS[adjective];

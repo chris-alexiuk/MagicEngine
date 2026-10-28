@@ -320,6 +320,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           const any = hasRule(g, o, 'blocks_each_combat') || reqs.some((m) => !m.attacker);
           const choice = wanted[0] ?? (any ? p.attackers.find((a) => !blockProblem(g, o, g.objects[a]!) && !hasKeyword(g, g.objects[a]!, 'menace')) : undefined);
           if (choice) blocks.push({ blocker, attacker: choice });
+          else if (any) {
+            // CR 509.1c: a menace attacker can still be blocked with a second creature, which obeys the requirement.
+            const menace = p.attackers.find((a) => !blockProblem(g, o, g.objects[a]!));
+            const friend = menace ? p.blockers.find((x) => x !== blocker && !blocks.some((y) => y.blocker === x) && !blockProblem(g, g.objects[x]!, g.objects[menace]!)) : undefined;
+            if (menace && friend) blocks.push({ blocker, attacker: menace }, { blocker: friend, attacker: menace });
+          }
         }
         for (const a of p.attackers.filter((x) => must(x, 'one'))) {
           if (blocks.some((x) => x.attacker === a)) continue;
