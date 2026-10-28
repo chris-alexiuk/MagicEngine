@@ -131,6 +131,11 @@ export interface Program {
   effects: EffectNode[];
   /** CR 700.2: modal — the chosen modes' targets and effects are used, in printed order. */
   modes?: ModeChoice;
+  /**
+   * CR 601.2c: what it does instead when this holds as it's cast. "If this spell was kicked, exile target nonland
+   * permanent instead." (Tear Asunder) has other targets, chosen knowing whether it's kicked or the gift promised.
+   */
+  variant?: { condition: ConditionNode; targets?: TargetSpec[]; effects: EffectNode[] };
 }
 
 export interface ModeChoice {
@@ -331,6 +336,8 @@ export interface ObjectFilter {
   powerBelowSource?: true;
   /** Selvala: "its power is greater than each other creature's power" — the greatest, not tied. */
   powerAboveOthers?: true;
+  /** Kutzil: "with power greater than its base power" (CR 208.4b: base power is set by layers 7a–7b). */
+  powerAboveBase?: true;
   /** CR 702.78a (conspire): "that each share a color with it" — the source. */
   sharesColorWithSource?: true;
   /** Attached to a permanent ("if this permanent is attached to a creature", reconfigure). */
@@ -795,7 +802,11 @@ export interface AsEntersNode extends EffectNode {
   /** counter: "You may have ~ enter with an additional +1/+1 counter on it" (riot, unleash; `elseHaste` for riot). */
   /** read_ahead: "As this Saga enters, choose a number between one and this Saga's final chapter number" (CR 702.155b). */
   /** card_name: "As ~ enters, choose a nonland card name" (CR 201.3; `filter` says what kind of card). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name';
+  /** card_type: "As ~ enters, choose artifact, creature, enchantment, instant, or sorcery" (`options`; all card types if absent). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type';
+  options?: string[];
+  /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */
+  thenCounters?: { counter: string; filter: ObjectFilter };
   elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
@@ -893,7 +904,9 @@ export interface ExileInsteadNode extends EffectNode {
 export interface QuantityReplacementNode extends EffectNode {
   type: 'replace_quantity';
   /** `mill`: The Water Crystal — "If an opponent would mill one or more cards, they mill that many cards plus four instead." */
-  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill';
+  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life';
+  /** Bloodletter of Aclazotz: only during its controller's turn. */
+  yourTurn?: true;
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn). */
   op: 'double' | 'triple' | 'plus' | 'extra';
   n?: number;
@@ -934,6 +947,8 @@ export const PLAYER_RULES = [
   'hexproof_from',
   /** Teferi, Time Raveler: "Each opponent can cast spells only any time they could cast a sorcery." (CR 307.5) */
   'sorcery_timing',
+  /** Trouble in Pairs: "If an opponent would begin an extra turn, that player skips that turn instead." (CR 614.10) */
+  'skip_extra_turns',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -968,16 +983,16 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',

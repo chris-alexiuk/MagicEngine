@@ -114,9 +114,18 @@ export class ParserRegistry {
         // Dispatch: "Metalcraft — If you control three or more artifacts, exile that creature." — the target of the line before.
         const refersBack = /\b(?:that|those) (?:creature|creatures|spell|permanent|player|card|land)\b|\bthe same (?:target|creature)\b/i.test(next);
         const joins = /^[A-Z][^.]* instead if [^.]+\.$/.test(next) || /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) || (wordless && refersBack && /^(?:If|That|Those)\b[^.]*\.$/.test(next));
-        if (joins && lines[i - 1] && /\.$/.test(lines[i - 1]!) && !/^[•+]/.test(lines[i - 1]!)) {
-          lines.splice(i - 1, 2, `${lines[i - 1]} ${next}`);
-          i--;
+        const plain = (l: string | undefined) => Boolean(l) && /\.$/.test(l!) && !/^[•+]/.test(l!) && !/^(?:As an additional cost|This spell|Cast this spell|~ can't be countered)/.test(l!);
+        if (joins && plain(lines[i - 1])) {
+          // Code of Constraint: "Target creature gets -4/-0 …. / Draw a card. / Addendum — If …, tap that creature …" — back
+          // to the line that has the target.
+          let j = i - 1;
+          if (refersBack && !/\btarget\b/i.test(lines[j]!)) {
+            let k = j - 1;
+            while (k >= 0 && plain(lines[k]) && !/\btarget\b/i.test(lines[k]!)) k--;
+            if (k >= 0 && plain(lines[k])) j = k;
+          }
+          lines.splice(j, i - j + 1, [...lines.slice(j, i), next].join(' '));
+          i = j;
         }
       }
     }

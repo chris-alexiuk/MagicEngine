@@ -38,7 +38,9 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
       for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);
       if (chosen.some((m) => p.modes!.options[m]!.manual)) manual = true;
     }
-    add(p.targets, p.effects);
+    // CR 601.2c: chosen as it's cast — kicked, or the gift promised — so its targets are those of what it will do.
+    if (p.variant && holds?.(p.variant.condition)) add(p.variant.targets, p.variant.effects);
+    else add(p.targets, p.effects);
   }
   if (modes?.length && !usedModes) throw new RulesError('That isn’t modal.');
   return { specs, effects, ...(manual ? { manual: true as const } : {}) };
@@ -80,6 +82,7 @@ function allEffects(p: Program): EffectNode[] {
   };
   visit(p.effects);
   for (const m of p.modes?.options ?? []) visit(m.effects);
+  if (p.variant) visit(p.variant.effects);
   return out;
 }
 

@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -171,6 +171,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'kicked':
       // CR 702.33d: the spell (or the permanent it became) was kicked.
       return Boolean(source?.cast?.kicked);
+    case 'cast_in_main_phase':
+      // Addendum: "If you cast this spell during your main phase" — a copy wasn't cast (CR 707.10).
+      return Boolean(source?.cast?.mainPhase && !source.cast.copy && source.cast.by === controller);
     case 'arrived_since_upkeep': {
       // CR 702.30a: it came under your control after your previous upkeep began (or you've had none).
       const upkeeps = g.players[controller]?.upkeeps ?? [];
@@ -284,7 +287,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'cast_by_you': {
       // "if you cast it" — the spell or permanent itself, or what "it" names.
       const o = cond.of ? refObjects(ctx, cond.of as never)[0] : source;
-      return !o?.cast?.copy && o?.cast?.by === controller && (!cond.fromHand || o.cast.from === 'hand');
+      return !o?.cast?.copy && o?.cast?.by === controller && (!cond.fromHand || o.cast.from === 'hand') && (!cond.from || o.cast.from === cond.from);
     }
     case 'self_tapped':
       return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);

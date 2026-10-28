@@ -1,6 +1,7 @@
 import { grantableStatic, isQuoted, parseQuotedAbility } from './quoted.js';
 import { keywordSupported, type KeywordInstance, type ObjectFilter, type Ref, type TargetSpec } from '@mtg/schema';
 import { attempt, type Binder } from './binder.js';
+import { parseCount } from './amounts.js';
 import { capitalise, COLOR_WORDS, parseAmount, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
@@ -19,6 +20,17 @@ const PERMANENT_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land'
 
 /** Post-modifiers, peeled off the end of a phrase one at a time. */
 const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boolean][] = [
+  // Loot, Exuberant Explorer: "a creature card with mana value less than or equal to the number of lands you control" —
+  // counted as the effect applies. Before "you control": that's
+  // the count's.
+  [/ with mana value less than or equal to (the number of .+)$/, (f, m, b) => {
+    // "… in your library" is the card's zone: peeled first.
+    if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[1]!)) return false;
+    const n = parseCount(m[1]!, b);
+    if (!n) return false;
+    f.manaValue = { op: 'le', n };
+    return true;
+  }],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
@@ -91,6 +103,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f[key] = { op: m[2] === 'greater' ? 'gt' : 'lt', n: { kind: 'stat', stat: key, of } };
     return true;
   }],
+  // Kutzil: "creatures you control each with power greater than its base power"
+  [/ (?:each )?with power greater than (?:its|their) base power$/, (f) => !f.powerAboveBase && ((f.powerAboveBase = true), true)],
   // Gyruda, Void Winnower: "with an even mana value", "with even mana values" (CR 202.3: 0 is even).
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
@@ -403,7 +417,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     const t = text.trim();
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
-    if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$|most votes$/i.test(t), targeted: false });
+    if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$|most votes$|^(?:each of )?those creatures$/i.test(t), targeted: false });
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
     const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
     if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });
@@ -419,6 +433,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     }
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
+      // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target).
+      if (it?.ref === 'self' && /^(?:that|those|the) (?:creatures?|permanents?|artifact|enchantment|land|planeswalker)$/i.test(t) && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
       return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.

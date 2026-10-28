@@ -103,6 +103,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   if (/^Look at the top three cards of your library\. Put one of them into your hand, put one of them on the bottom of your library, and exile one of them\. You may play the exiled card this turn\.$/.test(text.trim())) {
     return [{ type: 'look_sort', amount: 3, slots: ['hand', 'bottom', 'exile_play'] }];
   }
+  // Archdruid's Charm: "Search your library for a creature or land card and reveal it. Put it onto the battlefield tapped if
+  // it's a land card. Otherwise, put it into your hand. Then shuffle."
+  const landOrHand = /^Search your library for (.+?) and reveal it\. Put it onto the battlefield( tapped)? if it's a land card\. Otherwise, put it into your hand\. Then shuffle\.$/.exec(text.trim());
+  if (landOrHand) {
+    const r = attempt(b, (b) => parseEffectText(`Search your library for ${landOrHand[1]}, reveal it, put it into your hand, then shuffle.`, b));
+    const search = r?.length === 1 && r[0]!.type === 'search' && r[0]!.amount === 1 ? r[0]! : null;
+    return search ? [{ ...search, landsTo: 'battlefield', ...(landOrHand[2] ? { landsTapped: true } : {}) }] : null;
+  }
   // Torment of Hailfire: "Repeat the following process X times. Each opponent loses 3 life unless …"
   const repeatN = /^Repeat the following process (\w+) times\. ([^.]+\.)$/.exec(text.trim());
   if (repeatN) {
@@ -122,6 +130,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // meaning (CR 207.2c); "also" only says it's in addition.
       if (i > 0) s = s.replace(/^(?!Choose\b)[A-Z][A-Za-z']+(?: [A-Za-z']+){0,2} — (?=[A-Z])/, '');
       s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
+      // Dawn's Truce: "If the gift was promised, permanents you control also gain indestructible until end of turn."
+      s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
       s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
@@ -559,7 +569,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "If it's a Spirit, …" after the object was destroyed, exiled or bounced would ask about a card that has left: not
       // read here.
       const MOVES = new Set(['destroy', 'exile', 'move', 'sacrifice', 'bounce', 'return', 'flicker', 'put_into_library', 'shuffle_into_library']);
-      if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
+      // Essence Flux: "Exile target creature you control, then return that card to the battlefield …. If it's a Spirit, …" —
+      // back on the battlefield, it's the permanent it became (followed by the resolution, CR 400.7).
+      const lastMove = [...out].reverse().find((e) => MOVES.has(e.type));
+      const backOnField = lastMove?.type === 'move' && lastMove.to === 'battlefield' && JSON.stringify(lastMove.what) === JSON.stringify(b.it);
+      if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       const iff = /^If ([^,]+), (.+)$/.exec(s);
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
@@ -688,21 +702,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 707.10c: "You may choose new targets for the copy."
       if (/^(?:If the spell has any targets, )?[Yy]ou may choose (?:a )?new targets? for (?:the|any of the) cop(?:y|ies)$/.test(s)) {
-        const copyIn = (list: EffectNode[]): EffectNode | null => {
-          for (const x of [...list].reverse()) {
-            if (x.type === 'copy_spell') return x;
-            for (const k of ['then', 'effects', 'else']) {
-              const found = Array.isArray(x[k]) ? copyIn(x[k] as EffectNode[]) : null;
-              if (found) return found;
-            }
-          }
-          return null;
-        };
+        // Increasing Vengeance: "… If this spell was cast from a graveyard, copy that spell twice instead. You may choose new
+        // targets for the copies." — whichever copying happens.
+        const copiesIn = (list: EffectNode[]): EffectNode[] =>
+          list.flatMap((x) => [...(x.type === 'copy_spell' ? [x] : []), ...['then', 'effects', 'else'].flatMap((k) => (Array.isArray(x[k]) ? copiesIn(x[k] as EffectNode[]) : []))]);
         // Narset's Reversal: "Copy target instant or sorcery spell, then return it to its owner's hand. You may choose new
         // targets for the copy." — the latest copy, even with an instruction after it.
-        const last = copyIn(out.slice(-1)) ?? (out.length > 1 && out[out.length - 1]!.type === 'move' ? copyIn(out.slice(-2, -1)) : null);
-        if (!last) return null;
-        last.newTargets = true;
+        const last = copiesIn(out.slice(-1));
+        const copies = last.length ? last : out.length > 1 && out[out.length - 1]!.type === 'move' ? copiesIn(out.slice(-2, -1)) : [];
+        if (!copies.length) return null;
+        for (const c of copies) c.newTargets = true;
         continue;
       }
       // CR 508.4: "Those tokens enter tapped and attacking." — the tokens just created.
@@ -853,6 +862,26 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (!effects) return null;
       out.push(...effects);
       previous = effects;
+      // Inspiring Call: "Draw a card for each creature you control with a +1/+1 counter on it. Those creatures gain
+      // indestructible …"; Unbreakable Formation: "Creatures you control gain indestructible …. If …, put a +1/+1 counter
+      // on each of those creatures" — the creatures this sentence counted or affected (nothing between changes which).
+      const following = sentences[i + 1];
+      if (following && /\b(?:those creatures|each of those creatures)\b/i.test(following)) {
+        const sets = new Set<string>();
+        const walk = (v: unknown): void => {
+          if (Array.isArray(v)) v.forEach(walk);
+          else if (v && typeof v === 'object') {
+            const o = v as Record<string, unknown>;
+            if ((o.ref === 'all' || o.kind === 'count') && o.filter) sets.add(JSON.stringify(o.filter));
+            Object.values(o).forEach(walk);
+          }
+        };
+        walk(effects);
+        const filter = sets.size === 1 ? (JSON.parse([...sets][0]!) as ObjectFilter) : null;
+        if (filter?.types?.includes('Creature') && (!filter.zone || filter.zone === 'battlefield')) {
+          for (const n of ['those creatures', 'each of those creatures']) b.named[n] = { ref: 'all', filter };
+        }
+      }
       // Fabled Passage: "Search … put it onto the battlefield tapped, then shuffle. Then …, untap that land." — the card found.
       const last = effects[effects.length - 1];
       if (last?.type === 'search' && last.amount === 1 && (!last.who || (last.who as Ref).ref === 'target') && ['battlefield', 'hand', 'exile'].includes(String(last.to))) b.it = { ref: 'created' };
@@ -906,6 +935,9 @@ const REST: Record<string, { rest: string; order?: string }> = {
   'into your hand': { rest: 'hand' },
   'on the bottom of your library in any order': { rest: 'bottom', order: 'any' },
   'on the bottom of your library in a random order': { rest: 'bottom', order: 'random' },
+  // Loot, Exuberant Explorer: "Put the rest on the bottom in a random order."
+  'on the bottom in a random order': { rest: 'bottom', order: 'random' },
+  'on the bottom in any order': { rest: 'bottom', order: 'any' },
   'on the bottom of your library': { rest: 'bottom', order: 'any' },
   'back on top of your library in any order': { rest: 'top', order: 'any' },
   'on top of your library in any order': { rest: 'top', order: 'any' },
@@ -1486,6 +1518,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Forgotten Ancient: "move any number of +1/+1 counters from this creature onto other creatures" — one at a time, onto
+  // whichever creatures its controller likes.
+  const moveSome = /^[Mm]ove any number of (\S+) counters from ~ onto other creatures$/.exec(s);
+  if (moveSome) return [{ type: 'move_counters', from: { ref: 'self' }, to: { ref: 'all', filter: { types: ['Creature'], other: true } }, counter: moveSome[1]!.replace(/−/g, '-'), distribute: true }];
   // CR 702.58a (graft): "move a +1/+1 counter from ~ onto that creature"
   const moveCounter = /^[Mm]ove (a|an|one) (\S+) counter from (.+?) onto (.+)$/.exec(s);
   if (moveCounter) {
@@ -1545,6 +1581,37 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return rest ? [{ type: 'player_effect', who: { ref: 'you' }, rule: 'hexproof_from', until: 'eot', filter: { colors: words.map((w) => COLOR_WORDS[w]!) } }, ...rest] : null;
     });
     if (r) return r;
+  }
+  // Cataclysm: "Each player chooses from among the permanents they control an artifact, a creature, an enchantment, and a
+  // land, then sacrifices the rest."; Cataclysmic Gearhulk: "… an artifact, a creature, an enchantment, and a planeswalker
+  // from among the nonland permanents they control, …"; Liliana: "Each opponent chooses a permanent they control of each
+  // permanent type and sacrifices the rest."; Planetary Annihilation: "Each player chooses six lands they control, then
+  // sacrifices the rest."
+  const keep = /^(.+?) chooses (?:from among the permanents they control )?(.+?)(?: from among the (nonland )?permanents they control)?,? (?:then|and) sacrifices the rest$/.exec(s);
+  if (keep) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(keep[1]!, b);
+      if (!who) return null;
+      const pool: ObjectFilter = keep[3] ? { notTypes: ['Land'] } : {};
+      if (keep[2] === 'a permanent they control of each permanent type') {
+        return [{ type: 'keep_choose', who, pool, slots: ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'].map((t) => ({ types: [t] })) } as EffectNode];
+      }
+      const list = /^(?:an? (?:artifact|creature|enchantment|land|planeswalker|battle), )+(?:and )?an? (?:artifact|creature|enchantment|land|planeswalker|battle)$/.test(keep[2]!) ? keep[2]!.split(/, (?:and )?/) : null;
+      if (list) return [{ type: 'keep_choose', who, pool, slots: list.map((w) => ({ types: [capitalise(w.replace(/^an? /, ''))] })) } as EffectNode];
+      const counted = /^(up to )?(\w+) (.+?) they control$/.exec(keep[2]!);
+      if (!counted || keep[3]) return null;
+      const n = counted[2] === 'a' || counted[2] === 'an' ? 1 : parseAmount(counted[2]!);
+      const pf = parseFilter(counted[3]!, b);
+      if (typeof n !== 'number' || !pf || pf.plural !== n > 1 || pf.filter.zone || pf.filter.controller) return null;
+      return [{ type: 'keep_choose', who, pool: pf.filter, count: n, ...(counted[1] ? { upTo: true } : {}) } as EffectNode];
+    });
+    if (r) return r;
+  }
+  // Sevinne's Reclamation: "you may copy this spell and may choose a new target for the copy" (CR 707.10c).
+  const mayCopy = /^(you may )?copy ~ and may choose (?:a )?new targets? for the copy$/i.exec(s);
+  if (mayCopy) {
+    const copy: EffectNode = { type: 'copy_spell', what: { ref: 'self' }, newTargets: true };
+    return mayCopy[1] ? [{ type: 'may', effects: [copy] }] : [copy];
   }
   // Dawn's Truce: "You and permanents you control gain hexproof until end of turn." (CR 702.11)
   const youAndGain = /^You and (.+?) gain (hexproof|hexproof and indestructible|indestructible and hexproof) until end of turn$/.exec(s);
@@ -1662,6 +1729,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const to = bite[2] === 'itself' ? [from.ref] : parseRecipients(bite[2]!, b);
       if (!to) return null;
       return to.map((t) => ({ type: 'deal_damage', amount: { kind: 'stat', stat: 'power', of: from.ref }, to: t, from: from.ref }));
+    });
+    if (r) return r;
+  }
+  // Rakdos Charm: "Each creature deals 1 damage to its controller."; Wave of Reckoning: "Each creature deals damage to
+  // itself equal to its power."; Lukka: "Each creature you control deals damage equal to its power to each opponent."
+  // Each of them is the source of its own damage (CR 120.3), all dealt at once.
+  const eachN = /^(each .+?) deals (\S+) damage to (.+)$/i.exec(s);
+  const each = bite && /^each /i.test(bite[1]!) ? { subject: bite[1]!, amount: null, to: bite[2]! } : eachN ? { subject: eachN[1]!, amount: eachN[2]!, to: eachN[3]! } : null;
+  if (each) {
+    const r = attempt(b, (b) => {
+      const before = b.it;
+      const from = parseObjectRef(each.subject, b);
+      if (!from?.plural || from.ref.ref !== 'all') return null;
+      b.it = before;
+      const amount = each.amount === null ? null : parseAmount(each.amount);
+      if (each.amount !== null && typeof amount !== 'number') return null;
+      const to = each.to === 'itself' ? 'itself' : each.to === 'its controller' ? 'controller' : parseRecipients(each.to, b);
+      if (!to || (Array.isArray(to) && to.length !== 1)) return null;
+      return [{ type: 'each_deals', from: from.ref, ...(amount === null ? { stat: 'power' } : { amount }), to: Array.isArray(to) ? to[0]! : to } as EffectNode];
     });
     if (r) return r;
   }

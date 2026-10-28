@@ -65,6 +65,9 @@ export interface Characteristics {
   combat: CombatRules[];
   /** Whether it has a power and toughness at all (creatures, Vehicles…). */
   hasPT: boolean;
+  /** CR 208.4b: power and toughness after layers 7a–7b only. */
+  basePower?: number;
+  baseToughness?: number;
 }
 
 /** One continuous effect that might apply, with what's needed to order and scope it. */
@@ -550,6 +553,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
       if (t !== null) c.toughness = t;
     }
   }
+  c.basePower = c.power;
+  c.baseToughness = c.toughness;
   // CR 613.4c: layer 7c — effects and counters that modify power and toughness.
   for (const e of effects) {
     if (!e.pt || !e.applies(o, c)) continue;
@@ -739,6 +744,7 @@ export function matchesFilter(
   if (f.notCounter && (f.notCounter === 'any' ? Object.values(counters).some((n) => n > 0) : (counters[f.notCounter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
+  if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
   if (f.modified && !(then ? then.modified : isModified(g, o))) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;
@@ -751,7 +757,9 @@ export function matchesFilter(
     if (!c.colors.some((x) => theirs.includes(x))) return false;
   }
   // "of the chosen type/color": what the source's controller chose as it entered (CR 614.12).
-  if (f.chosenType && !(ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
+  // Cloud Key: the chosen card type (CR 205.2a), otherwise the chosen creature type.
+  const chosenCard = ctx.source?.chosen?.cardType;
+  if (f.chosenType && !(chosenCard ? c.types.includes(chosenCard) : ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType))) return false;
   if (f.notChosenType && ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType)) return false;
   // Oran-Rief: "that entered this turn" — on the battlefield since it entered this turn.
   if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;

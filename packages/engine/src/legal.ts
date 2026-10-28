@@ -1,9 +1,9 @@
 import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
-import type { AddManaEffect, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
+import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canActivateTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
-import { helperChoices } from './helpers-cost.js';
+import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
 import { amountOf } from './resolve.js';
@@ -91,7 +91,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // X spells need a value; the UI asks for one (also "discard X cards" as an additional cost).
       if (cost.unsupported.length || cost.x > 0 || additionalCosts(face).some((c) => c.amount === 'X')) return;
       // Convoke, improvise, delve: what they can cover, if mana alone isn't enough.
-      const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
+      const helpers = helperKeywords(g, player, o, face);
       let help: CostChoices = {};
       const purpose = { kind: 'spell' as const, object: o };
       const costs = defaultCostChoices(g, player, o, additionalCosts(face));
@@ -382,7 +382,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
         : opt.id === 'bestow'
           ? bestowedFace(face)
           : face;
-    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast);
+    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast, [opt.id]);
     const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])]);
     if (!choice || !costs) continue;
     out.push({ type: 'cast', player, object: o.id, autoTap: true, ...choice, ...withCosts(costs), ...(opt.kind === 'alternative' ? { alt: opt.id } : { extras: [opt.id] }) });
@@ -520,7 +520,7 @@ function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typ
   cost.generic -= (help.improvise?.length ?? 0) + (help.delve?.length ?? 0);
 }
 
-function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0]): Choice | null {
+function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0], holds?: Parameters<typeof flatten>[2]): Choice | null {
   const modal = programs.find((p) => p.modes);
   const modeSets: (number[] | undefined)[] = modal
     ? modal.modes!.options.map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => (modal.modes!.repeat ? i : i + k))).filter((m) => m.every((i) => i < modal.modes!.options.length))
@@ -531,7 +531,7 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
   for (const modes of modeSets) {
     let program: CompiledProgram;
     try {
-      program = flatten(programs, modes);
+      program = flatten(programs, modes, holds);
     } catch {
       continue;
     }
@@ -550,7 +550,8 @@ export function defaultCastChoice(g: GameState, player: PlayerId, id: ObjectId):
   return choice ? { ...(choice.targets ? { targets: choice.targets } : {}), ...(choice.modes ? { modes: choice.modes } : {}) } : null;
 }
 
-function defaultSpellChoice(g: GameState, player: PlayerId, o: GameObject, face: FaceDef): Choice | null {
+/** `paid`: the optional costs it's cast with (CR 601.2c: a gift promised or kicker paid can change its targets). */
+function defaultSpellChoice(g: GameState, player: PlayerId, o: GameObject, face: FaceDef, paid: string[] = []): Choice | null {
   if (isPermanentCard(face)) {
     const aura = auraTargetSpec(face);
     if (!aura) return {};
@@ -559,5 +560,6 @@ function defaultSpellChoice(g: GameState, player: PlayerId, o: GameObject, face:
   }
   const programs = spellPrograms(face);
   if (!programs) return {};
-  return defaultProgramChoice(g, player, o, programs);
+  const holds = (c: ConditionNode) => (c.type === 'paid' ? paid.includes(String(c.cost)) !== Boolean(c.not) : c.type === 'kicked' ? paid.includes('kicker') : c.type === 'cast_in_main_phase' ? g.active === player && (g.step === 'main1' || g.step === 'main2') : false);
+  return defaultProgramChoice(g, player, o, programs, holds);
 }

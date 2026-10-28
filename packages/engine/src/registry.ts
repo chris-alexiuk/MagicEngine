@@ -185,4 +185,15 @@ function applyEnterReplacements(g: GameState, o: GameObject): void {
       }
     }
   }
+  // Spelunking: "Lands you control enter untapped." — even one that would enter tapped: its controller orders the
+  // replacement effects (CR 616.1), so this one applies last.
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller !== o.controller) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'enter_untapped_others') continue;
+      const effect = (a as StaticAbility).effect;
+      if (staticConditionHolds(g, effect as { condition?: ConditionNode }, src) && matchesFilter(g, o, (effect.filter ?? {}) as ObjectFilter, { controller: src.controller, source: src, anyZone: true })) o.tapped = false;
+    }
+  }
 }

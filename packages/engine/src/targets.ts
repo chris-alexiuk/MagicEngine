@@ -246,7 +246,7 @@ function findDivided(effects: EffectNode[]): EffectNode | undefined {
 export function defaultTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): Target[][] | null {
   const out: Target[][] = [];
   for (const spec of specs) {
-    const candidates = targetCandidates(g, controller, spec, source);
+    const candidates = targetCandidates(g, controller, spec, source).filter((t) => !another(spec) || !out.flat().some((u) => sameTarget(t, u)));
     const n = targetCount(g, controller, spec, x);
     if (candidates.length < targetsRequired(g, controller, spec, candidates, x)) return null;
     if (spec.perPlayer) {
@@ -272,6 +272,9 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
   }
   return out;
 }
+
+/** "another target creature": not one chosen for an earlier "target" of the same spell or ability. */
+const another = (spec: TargetSpec) => /\banother target\b/i.test(spec.text ?? '');
 
 const sameTarget = (a: Target, b: Target) =>
   a.kind === b.kind &&
@@ -312,6 +315,7 @@ export function chooseTargets(
     }
     list.forEach((t, j) => {
       if (list.slice(0, j).some((u) => sameTarget(t, u))) throw new RulesError(`The same target was chosen twice for “${spec.text}”.`);
+      if (another(spec) && given.slice(0, i).flat().some((u) => sameTarget(t, u))) throw new RulesError(`“${spec.text}” must be different from the other targets.`);
       if (!isLegalTarget(g, controller, spec, t, source)) {
         const what =
           t.kind === 'player'

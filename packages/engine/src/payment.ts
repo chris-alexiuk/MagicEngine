@@ -10,7 +10,7 @@ import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spend
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
 import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
-import { replaceQuantity } from './quantities.js';
+import { lifeLoss, replaceQuantity } from './quantities.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
@@ -291,7 +291,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     }
     if (c.type === 'pay_life') {
       const ps = g.players[player]!;
-      const life = lifeCost(g, player, o, c);
+      const life = lifeLoss(g, player, lifeCost(g, player, o, c));
       ps.life -= life;
       events.push({ type: 'life', player, delta: -life, life: ps.life });
     } else if (c.type === 'sacrifice_self') {

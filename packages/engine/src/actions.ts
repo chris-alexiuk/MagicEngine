@@ -5,7 +5,7 @@ import { untapStep } from './flow.js';
 import { STEPS } from './types.js';
 import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
-import { payWithHelpers } from './helpers-cost.js';
+import { helperKeywords, payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
@@ -654,7 +654,13 @@ function cast(
   // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
   // A bonus that depends on a cost ("if this spell was cast using teamwork") looks at the costs being chosen now.
   const holds = (c: ConditionNode) =>
-    c.type === 'paid' ? extras.includes(String(c.cost)) || altId === c.cost : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
+    c.type === 'kicked'
+      ? kicked || extras.includes('kicker')
+      : c.type === 'cast_in_main_phase'
+        ? g.active === player && (g.step === 'main1' || g.step === 'main2')
+        : c.type === 'paid'
+        ? (extras.includes(String(c.cost)) || altId === c.cost) !== Boolean(c.not)
+        : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
   // CR 702.47: cards spliced onto it add their rules text (and their splice costs, below).
   const splices = spliceCards(g, player, o, castFace, costChoices.splice);
   let program = spellProgram(castFace, modes, holds, added.some((a) => a.allModes));
@@ -701,7 +707,7 @@ function cast(
   // CR 601.2f: then increases and reductions.
   applyCostModifiers(g, player, o, castFace, cost, targets);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
-  const helpers = face.keywords.map((k) => k.id).filter((k) => k === 'convoke' || k === 'delve' || k === 'improvise');
+  const helpers = helperKeywords(g, player, o, face);
   const helping = costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length;
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
@@ -769,15 +775,19 @@ function cast(
   if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
   o.cast = {
     by: player,
-    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? (castFrom === 'library' || castFrom === 'graveyard' ? castFrom : 'exile') : 'hand',
+    // Where it was cast from — a foretold or plotted card from exile too ("if this spell was cast from exile").
+    from: castFrom,
     before,
-    ...(kicked ? { kicked: true as const, kicks } : {}),
+    // A kicker that isn't mana ("Kicker—Sacrifice an artifact or Goblin") is paid as an optional additional cost.
+    ...(kicked ? { kicked: true as const, kicks } : extras.includes('kicker') ? { kicked: true as const, kicks: 1 } : {}),
     ...(paid.length ? { paid } : {}),
     ...(colorsSpent ? { colors: colorsSpent } : {}),
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
     ...(giftTo ? { giftTo } : {}),
     ...(uncounterableCast ? { uncounterable: true as const } : {}),
+    // Addendum: cast during the caster's own main phase.
+    ...(g.active === player && (g.step === 'main1' || g.step === 'main2') ? { mainPhase: true as const } : {}),
   };
   for (const t of spentTriggers) g.triggers.push({ id: `t${g.nextId++}`, controller: player, source: t.source, sourceName: t.name, ability: t.ability, info: { object: { id: o.id, zcc: o.zcc } } });
   // CR 702.174b / 702.174j: an instant or sorcery whose gift was promised gives it first, as it resolves.

@@ -152,8 +152,14 @@ export const spellRule: GrammarRule = {
     if (!env || !/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
-    const program = parseProgram(line, b);
+    const variant = variantOf(line, env);
+    if (variant === null) return null;
+    const program = parseProgram(variant ? variant.base : line, b);
     if (!program) return null;
+    if (variant) {
+      if (program.modes || variant.program.modes || unfindable(variant.program)) return null;
+      program.variant = { condition: variant.condition, ...(variant.program.targets ? { targets: variant.program.targets } : {}), effects: variant.program.effects };
+    }
     // "X target creatures" with X the announced X only (CR 601.2b), not an X the text works out.
     if (hasCountX(program) && /\bX is\b|\bthat many target/.test(line)) return null;
     if (unfindable(program)) return null;
@@ -161,6 +167,36 @@ export const spellRule: GrammarRule = {
     return node;
   },
 };
+
+/**
+ * CR 601.2c: "If this spell was kicked, exile target nonland permanent instead." (Tear Asunder), "If the gift was promised,
+ * instead return target nonland permanent …", "If this spell was kicked, it also deals 4 damage to target player" — the
+ * targets depend on it, so they're chosen knowing whether it's kicked: the text without that sentence, and the text as
+ * it reads when it holds ("instead": that sentence in place of the one before; otherwise added). Undefined when the line
+ * isn't this shape; null when it is but a reading fails.
+ */
+function variantOf(line: string, env: GrammarEnv): { base: string; condition: ConditionNode; program: Program } | null | undefined {
+  const sentences = splitSentences(line);
+  if (!sentences || sentences.length < 2) return undefined;
+  const IF = /^If (?:this spell|~) was kicked, |^If the gift was promised, |^If you cast (?:this spell|~) during your main phase, /;
+  const k = sentences.findIndex((s, i) => i > 0 && IF.test(s) && /\btarget\b/.test(s) && !/\bwould\b/.test(s));
+  if (k < 0) return undefined;
+  const s = sentences[k]!;
+  const head = /^If [^,]+/.exec(s)![0];
+  const condition = (/gift/.test(head) ? { type: 'paid', cost: 'gift' } : /main phase/.test(head) ? { type: 'cast_in_main_phase' } : { type: 'kicked' }) as ConditionNode;
+  let clause = s.replace(IF, '');
+  const instead = /^instead /.test(clause) || / instead$/.test(clause);
+  clause = clause.replace(/^instead /, '').replace(/ instead$/, '');
+  // "it also deals 4 damage to …": the spell does, as in the sentence before.
+  clause = clause.replace(/^it (?:also )?deals /, '~ deals ').replace(/^(\S.*?) also /, '$1 ');
+  const sentence = clause.replace(/^\w/, (c) => c.toUpperCase());
+  const base = sentences.filter((_, i) => i !== k);
+  const changed = instead ? sentences.flatMap((x, i) => (i === k - 1 ? [] : i === k ? [sentence] : [x])) : sentences.map((x, i) => (i === k ? sentence : x));
+  const vb = new Binder(env);
+  vb.it = { ref: 'self' };
+  const program = parseProgram(`${changed.join('. ')}.`, vb);
+  return program ? { base: `${base.join('. ')}.`, condition, program } : null;
+}
 
 /** A discarded card is known only by what it was ("that card's mana value"), not as an object to act on. */
 const unfindable = (program: object): boolean => JSON.stringify(program).includes('"ref":"discarded_this_way"');
@@ -807,7 +843,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'unblocked', subject }, it: subject.ref === 'all' ? { ref: 'trigger_object' } : subject, player: null };
   }
   // "Whenever one or more creatures you control deal combat damage to a player": once for each player.
-  const batchHits = /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
+  // Kutzil: "one or more creatures you control each with power greater than its base power deals combat damage …"
+  const batchHits = /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents)$/.exec(t) ?? /^one or more (.+? each with .+?) deals combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
   if (batchHits) {
     const pf = parseFilter(batchHits[1]!, b);
     if (!pf || !pf.plural) return null;
@@ -1026,6 +1063,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     };
   }
 
+  // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures, draws their second card each turn, or
+  // casts their second spell each turn" — one player, any of the events (CR 603.2).
+  const playerEvents = word === 'Whenever' ? /^(an opponent|a player|you) ([a-z][^,]+), ([a-z][^,]+),? or ([a-z][^,]+)$/.exec(t) : null;
+  if (playerEvents) {
+    const parsed = playerEvents.slice(2).map((p) => parseTrigger('Whenever', `${playerEvents[1]} ${p}`, b.clone()));
+    if (parsed.every(Boolean) && new Set(parsed.map((p) => JSON.stringify(p!.player))).size === 1) {
+      return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: null, player: parsed[0]!.player };
+    }
+  }
   // Syr Konrad: "Whenever another creature dies, or a creature card is put into a graveyard from anywhere other than the
   // battlefield, or a creature card leaves your graveyard" — any of the events (CR 603.2).
   if (word === 'Whenever' && / or (?:a|an|another|one) /.test(t) && t.includes(', or ')) {
@@ -1132,6 +1178,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
     b.eventAmount = true;
     return { trigger: { type: 'counters_put', counter: countersOn[1]!, subject, ...(youPut ? { byYou: true } : {}) }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+  }
+  // Midnight Clock: "When the twelfth hour counter is put on this artifact" — as its count of them reaches twelve.
+  const nthCounter = /^the (first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth) ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
+  if (nthCounter) {
+    const ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+    return { trigger: { type: 'counters_put', counter: nthCounter[2]!, subject: { ref: 'self' }, reaches: ORD.indexOf(nthCounter[1]!) + 1 }, it: { ref: 'self' }, player: null };
   }
   // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
   // Mayhem Devil: "Whenever a player sacrifices a permanent"
@@ -1569,6 +1621,13 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
     if (!pf || pf.plural || pf.filter.zone) return null;
     return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extra[1] ? { other: true } : {}) }, counter: extra[3]!, amount: 1 };
   }
+  // Spelunking: "Lands you control enter untapped." — the controller orders replacement effects (CR 616.1), so it wins.
+  const untapped = /^(.+?) you control enter untapped$/.exec(body);
+  if (untapped) {
+    const pf = parseFilter(`${untapped[1]!.replace(/^\w/, (c) => c.toLowerCase())} you control`, b);
+    if (!pf || !pf.plural || pf.filter.zone) return null;
+    return { type: 'enter_untapped_others', filter: pf.filter };
+  }
   const m = /^(.+?) enter(?: the battlefield)? tapped$/.exec(body);
   if (!m || /^(?:~|It|This)\b/.test(m[1]!)) return null;
   const pf = parseFilter(m[1]!.replace(/, and /, ', or ').replace(/^(\w+) and (\w+)/, '$1 or $2').replace(/^\w/, (c) => c.toLowerCase()), b);
@@ -1669,6 +1728,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
   if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
+  // Trouble in Pairs (CR 614.10: skipping is a replacement).
+  const skipExtra = /^If (an opponent|a player|you) would begin an extra turn, (?:that player skips|you skip) that turn instead$/.exec(body);
+  if (skipExtra) return { type: 'player_rule', who: skipExtra[1] === 'an opponent' ? 'opponents' : skipExtra[1] === 'you' ? 'you' : 'each', rule: 'skip_extra_turns' };
   // CR 401.5: looking at, or playing with, the top card of your library revealed.
   if (/^You may look at the top card of your library (?:any time|at any time)$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'look_at_top' };
   if (body === 'You may activate abilities of creatures you control as though those creatures had haste') return { type: 'player_rule', who: 'you', rule: 'abilities_haste' };
@@ -1968,6 +2030,30 @@ export const castRestrictionRule: GrammarRule = {
   },
 };
 
+/**
+ * "Artifact spells you cast have convoke.", "Nonartifact spells you cast have improvise.", "Noncreature spells you cast from
+ * exile have convoke." — they help pay as such a spell is cast (CR 702.51a, 702.126a, 702.66a).
+ */
+export const spellKeywordRule: GrammarRule = {
+  id: 'spell_keyword',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^(?:(.+?) )?[Ss]pells you cast( from exile| from your hand)? have (convoke|improvise|delve)\.$/.exec(line);
+    if (!env || !m) return null;
+    let filter: ObjectFilter = {};
+    if (m[1]) {
+      const first = m[1].split(' ')[0]!;
+      const words = isSubtype(first) ? m[1] : m[1].replace(/^\w/, (c) => c.toLowerCase());
+      const pf = parseFilter(`${words.replace(/ and /g, ' or ')} spells`, new Binder(env));
+      if (!pf || (pf.filter.zone && pf.filter.zone !== 'stack')) return null;
+      const { zone: _z, ...rest } = pf.filter;
+      filter = rest;
+    }
+    const from = m[2] ? (m[2] === ' from exile' ? 'exile' : 'hand') : undefined;
+    return { kind: 'static', text: original, effect: { type: 'spell_keyword', keyword: m[3]!, filter, ...(from ? { from } : {}) } };
+  },
+};
+
 export const costModifierRule: GrammarRule = {
   id: 'cost_modifier',
   parse(line, original, ctx) {
@@ -2075,6 +2161,12 @@ export const quantityReplacementRule: GrammarRule = {
     if (mill) {
       const op = quantityOp(mill[2]!);
       return op ? make({ event: 'mill', who: mill[1] === 'you' ? 'you' : mill[1] === 'a player' ? 'each' : 'opponents', ...op }) : null;
+    }
+    // Bloodletter of Aclazotz: "If an opponent would lose life during your turn, they lose twice that much life instead."
+    const lose = /^If (an opponent|a player) would lose life( during your turn)?, (?:they|that player) loses? (.+?) instead\.$/.exec(line);
+    if (lose) {
+      const op = quantityOp(lose[3]!);
+      return op && /\blife\b/.test(lose[3]!) ? make({ event: 'lose_life', who: lose[1] === 'a player' ? 'each' : 'opponents', ...op, ...(lose[2] ? { yourTurn: true } : {}) }) : null;
     }
     const life = /^If you would gain life, you gain (.+?) instead\.$/.exec(line);
     if (life) {
@@ -2305,6 +2397,20 @@ export const asEntersRule: GrammarRule = {
       }
     }
     if (what === 'choose a creature type') node = { type: 'as_enters', choice: 'creature_type' };
+    // Banner of Kinship: "choose a creature type. This artifact enters with a fellowship counter on it for each creature you
+    // control of the chosen type." — counted once the type is chosen, as it enters (CR 614.12, 122.6).
+    const typeThenCounters = /^choose a creature type\. ~ enters with an? (\S+) counter on it for each (.+)$/.exec(what);
+    if (typeThenCounters) {
+      const pf = parseFilter(typeThenCounters[2]!, new Binder(env));
+      if (!pf || pf.filter.zone) return null;
+      node = { type: 'as_enters', choice: 'creature_type', thenCounters: { counter: typeThenCounters[1]!, filter: pf.filter } };
+    }
+    // Cloud Key: "choose artifact, creature, enchantment, instant, or sorcery"; "choose a card type" (CR 205.2a).
+    const cardTypes = /^choose (?:a card type|((?:(?:artifact|battle|creature|enchantment|instant|land|planeswalker|sorcery|kindred), )+or (?:artifact|battle|creature|enchantment|instant|land|planeswalker|sorcery|kindred)))$/.exec(what);
+    if (cardTypes) {
+      node = { type: 'as_enters', choice: 'card_type' };
+      if (cardTypes[1]) node.options = cardTypes[1].split(/, (?:or )?/).map((w) => w.replace(/^\w/, (c) => c.toUpperCase()));
+    }
     // CR 201.3: "choose a card name", "choose a nonland card name", "choose a creature card name"
     const name = /^choose a (nonland |creature |artifact |noncreature )?card name$/.exec(what);
     if (name) {
@@ -2950,6 +3056,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   prototypeRule,
   asUnblockedRule,
   castRestrictionRule,
+  spellKeywordRule,
   costModifierRule,
   quantityReplacementRule,
   triggerExtraRule,

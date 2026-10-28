@@ -204,7 +204,7 @@ export interface GameObject {
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -234,7 +234,7 @@ export interface GameObject {
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
-  chosen?: { color?: Color; creatureType?: string; cardName?: string };
+  chosen?: { color?: Color; creatureType?: string; cardName?: string; cardType?: string };
 }
 
 /** A reference that goes stale when the object changes zones. */

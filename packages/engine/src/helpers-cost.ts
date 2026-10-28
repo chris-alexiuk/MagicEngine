@@ -1,7 +1,28 @@
-import { chars, hasType } from './characteristics.js';
+import type { FaceDef, ObjectFilter } from '@mtg/schema';
+import { chars, hasType, matchesFilter, objectAbilities } from './characteristics.js';
 import type { ManaCost } from './mana.js';
 import { RulesError, type CostChoices, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type PlayerId } from './types.js';
-import { moveObject, setTapped, zoneList } from './zones.js';
+import { abilitySources, moveObject, setTapped, zoneList } from './zones.js';
+
+const HELPERS = new Set(['convoke', 'delve', 'improvise']);
+
+/**
+ * The spell's convoke, improvise and delve: its own, and those its caster's permanents give it ("Artifact spells you cast
+ * have convoke", "Nonartifact spells you cast have improvise") — CR 702.51a, 702.126a, 702.66a.
+ */
+export function helperKeywords(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef): string[] {
+  const out = new Set(face.keywords.map((k) => k.id).filter((k) => HELPERS.has(k)));
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    if (src.controller !== player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'spell_keyword' || !HELPERS.has(String(a.effect.keyword))) continue;
+      if (a.effect.from && a.effect.from !== spell.zone) continue;
+      if (matchesFilter(g, spell, (a.effect.filter ?? {}) as ObjectFilter, { controller: player, source: src, anyZone: true })) out.add(String(a.effect.keyword));
+    }
+  }
+  return [...out];
+}
 
 /**
  * Keywords that pay part of a spell's cost another way (CR 601.2g–h, after the total cost is set):

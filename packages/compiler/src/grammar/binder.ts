@@ -93,6 +93,9 @@ export class Binder {
   addTarget(spec: TargetSpec): Ref {
     // "target spell with mana value X or less, where X is …": the engine can't check X as targets are chosen yet.
     if ((spec.filter as { manaValue?: { n?: unknown } } | undefined)?.manaValue?.n === 'X') this.unsupported = true;
+    // Nor a counted amount ("with mana value less than or equal to the number of lands you control").
+    const f = (spec.filter ?? {}) as Record<string, { n?: unknown } | undefined>;
+    if ((['power', 'toughness', 'manaValue'] as const).some((k) => typeof f[k]?.n === 'object')) this.unsupported = true;
     this.targets.push(spec);
     return { ref: 'target', index: this.targets.length - 1 };
   }

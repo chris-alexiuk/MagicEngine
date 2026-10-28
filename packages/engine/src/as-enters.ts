@@ -1,6 +1,6 @@
 import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
 import { chars, hasType, matchesFilter } from './characteristics.js';
-import { replaceQuantity } from './quantities.js';
+import { lifeLoss, replaceQuantity } from './quantities.js';
 import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
@@ -51,6 +51,10 @@ export function promptAsEnters(g: GameState): boolean {
         break;
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
+        break;
+      case 'card_type':
+        // CR 205.2a: the card types.
+        g.pending = { ...base, text: 'Choose a card type.', options: node.options ?? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Instant', 'Kindred', 'Land', 'Planeswalker', 'Sorcery'] };
         break;
       case 'card_name': {
         // CR 201.3: any card name may be chosen; only the names of cards in this game can matter here.
@@ -111,8 +115,9 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         // CR 119.4: a player can pay life only if their life total is at least that much.
         const ps = g.players[player]!;
         if (ps.life < amount) throw new RulesError(`You don’t have ${amount} life to pay.`);
-        ps.life -= amount;
-        events.push({ type: 'life', player, delta: -amount, life: ps.life });
+        const lost = lifeLoss(g, player, amount);
+        ps.life -= lost;
+        events.push({ type: 'life', player, delta: -lost, life: ps.life });
       } else o.tapped = true;
       break;
     }
@@ -174,11 +179,22 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
     }
     case 'color':
     case 'creature_type':
+    case 'card_type':
     case 'card_name': {
       const choice = answer.choice;
       if (!choice || !p.options?.includes(choice)) throw new RulesError(`Choose one of: ${p.options?.slice(0, 6).join(', ')}…`);
-      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : { creatureType: choice }) };
+      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : p.choice === 'card_type' ? { cardType: choice } : { creatureType: choice }) };
       events.push({ type: 'chosen', object: o.id, choice });
+      // Banner of Kinship: counters for each permanent of the chosen type, put on it as it enters (CR 122.6).
+      const then = next.node.thenCounters;
+      if (then) {
+        const counted = g.zones.battlefield.filter((id) => id !== o.id && matchesFilter(g, g.objects[id]!, then.filter, { controller: o.controller, source: o })).length;
+        const n = replaceQuantity(g, 'counters', counted, { player: o.controller, object: o, counter: then.counter });
+        if (n > 0) {
+          o.counters[then.counter] = (o.counters[then.counter] ?? 0) + n;
+          events.push({ type: 'counters', object: o.id, counter: then.counter, delta: n, by: o.controller });
+        }
+      }
       break;
     }
   }

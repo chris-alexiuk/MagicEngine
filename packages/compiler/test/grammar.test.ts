@@ -625,7 +625,11 @@ describe('fight, bite and one-line patterns (slice 18)', () => {
     expect(one('You gain 4 life. If a creature died this turn, you gain 8 life instead.', 'Instant')).toMatchObject({
       effects: [{ type: 'if', effects: [{ type: 'gain_life', amount: 8 }], else: [{ type: 'gain_life', amount: 4 }] }],
     });
-    expect(parse('Exile target artifact or enchantment. If this spell was kicked, exile target nonland permanent instead.', 'Instant', 'Spell').unparsed).toHaveLength(1);
+    // New targets: chosen as it's cast, knowing whether it's kicked (CR 601.2c) — slice 170's variant.
+    expect(one('Exile target artifact or enchantment. If this spell was kicked, exile target nonland permanent instead.', 'Instant')).toMatchObject({
+      targets: [{ filter: { types: ['Artifact', 'Enchantment'] } }],
+      variant: { condition: { type: 'kicked' }, targets: [{ filter: { notTypes: ['Land'] } }], effects: [{ type: 'move', to: 'exile' }] },
+    });
   });
   it('counters filters, "~ or another", "it enters with", raid, multikicker, chosen returns', () => {
     expect(one('Each creature you control with a +1/+1 counter on it has trample.', 'Enchantment')).toMatchObject({ effect: { affected: { filter: { counter: '+1/+1' } } } });
@@ -2019,5 +2023,44 @@ describe('slice 169 (what pronouns refer to)', () => {
     expect(parse("{1}{B}, {T}, Sacrifice another creature: Draw X cards, where X is that creature's power.", 'Legendary Creature — Human Elf Cleric', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'power' } }] });
     expect(parse("When this creature enters, target player discards a card. ~ deals damage to that player equal to that card's mana value.", 'Creature — Rat', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'discard' }, { type: 'deal_damage', amount: { kind: 'cost_lki', cost: 'discarded', stat: 'mana_value' } }] });
     expect(parse("At the beginning of your upkeep, put a number of +1/+1 counters on each other creature you control equal to that creature's toughness.", 'Creature — Dragon', 'C').unparsed).toHaveLength(1);
+  });
+});
+
+describe('slice 170 (targets chosen as it is cast; each creature deals damage)', () => {
+  it('reads kicker, gift and addendum targets as a variant, and additive kicker targets', () => {
+    expect(parse("Return target creature an opponent controls to its owner's hand. If the gift was promised, instead return target nonland permanent an opponent controls to its owner's hand.", 'Instant', 'I').abilities[0]).toMatchObject({
+      targets: [{ filter: { types: ['Creature'] } }],
+      variant: { condition: { type: 'paid', cost: 'gift' }, targets: [{ filter: { notTypes: ['Land'] } }] },
+    });
+    expect(parse('~ deals 4 damage to target creature. If this spell was kicked, it also deals 4 damage to target player or planeswalker.', 'Instant', 'G').abilities[0]).toMatchObject({
+      targets: [{}],
+      variant: { targets: [{}, {}], effects: [{ type: 'deal_damage' }, { type: 'deal_damage', to: { ref: 'target', index: 1 } }] },
+    });
+    expect(parse('Exile target artifact or enchantment. If you cast this spell during your main phase, you may exile up to one other target artifact or enchantment.', 'Instant', 'R').abilities[0]).toMatchObject({ variant: { condition: { type: 'cast_in_main_phase' } } });
+  });
+  it('reads "each creature deals damage", "those creatures", a Spirit back from exile, and granted improvise', () => {
+    expect(parse('Each creature deals 1 damage to its controller.', 'Instant', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'each_deals', amount: 1, to: 'controller' }] });
+    expect(parse('Each creature deals damage to itself equal to its power.', 'Sorcery', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'each_deals', stat: 'power', to: 'itself' }] });
+    expect(parse('Draw a card for each creature you control with a +1/+1 counter on it. Those creatures gain indestructible until end of turn.', 'Instant', 'I').abilities[0]).toMatchObject({
+      effects: [{ type: 'draw' }, { type: 'modify', what: { ref: 'all', filter: { counter: '+1/+1', controller: 'you' } } }],
+    });
+    expect(parse("Exile target creature you control, then return that card to the battlefield under its owner's control. If it's a Spirit, put a +1/+1 counter on it.", 'Instant', 'E').abilities[0]).toMatchObject({
+      effects: [{ type: 'move' }, { type: 'move', to: 'battlefield' }, { type: 'if', cond: { type: 'is', filter: { subtypes: ['Spirit'] } } }],
+    });
+    expect(parse('Nonartifact spells you cast have improvise.', 'Artifact', 'I').abilities[0]).toMatchObject({ effect: { type: 'spell_keyword', keyword: 'improvise', filter: { notTypes: ['Artifact'] } } });
+  });
+  it("doesn't read an instant as \"that creature\"", () => {
+    const r = parse("Target creature gets -4/-0 until end of turn.\nDraw a card.\nAddendum — If you cast this spell during your main phase, tap that creature and it doesn't untap during its controller's next untap step.", 'Instant', 'C');
+    expect(r.unparsed).toHaveLength(0);
+    expect(JSON.stringify(r.abilities)).not.toContain('"ref":"self"');
+    expect(parse('Draw a card. If you cast this spell during your main phase, tap that creature.', 'Instant', 'C').unparsed).toHaveLength(1);
+  });
+  it('reads keeping permanents and sacrificing the rest, the twelfth counter, life loss doubled and casting from a graveyard', () => {
+    expect(parse('Each player chooses from among the permanents they control an artifact, a creature, an enchantment, and a land, then sacrifices the rest.', 'Sorcery', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'keep_choose', slots: [{ types: ['Artifact'] }, {}, {}, { types: ['Land'] }] }] });
+    expect(parse('Each player chooses six lands they control, then sacrifices the rest.', 'Sorcery', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'keep_choose', pool: { types: ['Land'] }, count: 6 }] });
+    expect(parse('When the twelfth hour counter is put on ~, draw seven cards.', 'Artifact', 'M').abilities[0]).toMatchObject({ trigger: { type: 'counters_put', counter: 'hour', reaches: 12 } });
+    expect(parse('If an opponent would lose life during your turn, they lose twice that much life instead.', 'Creature — Vampire Demon', 'B').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'lose_life', op: 'double', yourTurn: true } });
+    expect(parse('Draw a card. If this spell was cast from a graveyard, draw two cards instead.', 'Sorcery', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'cast_by_you', from: 'graveyard' } }] });
+    expect(parse('As ~ enters, choose artifact, creature, enchantment, instant, or sorcery.', 'Artifact', 'K').abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'card_type', options: ['Artifact', 'Creature', 'Enchantment', 'Instant', 'Sorcery'] } });
   });
 });

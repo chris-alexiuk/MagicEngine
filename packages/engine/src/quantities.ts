@@ -42,6 +42,14 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
 }
 
 /**
+ * How much life a player loses when they would lose `n` (Bloodletter of Aclazotz, CR 614.1a): from damage (CR 120.3a), an
+ * effect, or paying life — which is losing it (CR 119.4).
+ */
+export function lifeLoss(g: GameState, player: PlayerId, n: number): number {
+  return replaceQuantity(g, 'lose_life', n, { player });
+}
+
+/**
  * Peregrin Took, Xorn: the extra tokens to create as well when a player creates tokens (CR 614.1a), and how many —
  * for tokens matching `tokenFilter` (by the created face's types and subtypes).
  */
@@ -70,6 +78,8 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
     case 'gain_life':
     case 'mill':
       return who(s.player);
+    case 'lose_life':
+      return who(s.player) && (!e.yourTurn || g.active === you);
     case 'tokens': {
       if (!who(s.player)) return false;
       const f = e.tokenFilter;

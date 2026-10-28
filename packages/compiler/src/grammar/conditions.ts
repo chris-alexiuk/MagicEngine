@@ -162,8 +162,20 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
   const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
+  // Spelunking: "If you put a Cave onto the battlefield this way" — what the effect before put there.
+  const putThisWay = /^you put an? (.+?) onto the battlefield this way$/.exec(t);
+  if (putThisWay) {
+    const pf = parseFilter(putThisWay[1]!, b);
+    return pf && !pf.plural && !pf.filter.zone ? { type: 'is', of: { ref: 'created' }, filter: pf.filter } : null;
+  }
+  // Addendum: "If you cast this spell during your main phase" (a copy wasn't cast, CR 707.10).
+  if (/^you cast (?:~|this spell) during your main phase$/.test(t)) return { type: 'cast_in_main_phase' };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
+  // Sevinne's Reclamation: "If this spell was cast from a graveyard"; "if this spell was cast from your hand" (a copy wasn't
+  // cast, CR 707.10).
+  const castFrom = /^~ was cast from (your hand|a graveyard|exile)$/.exec(t);
+  if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
   const cast = /^you cast it( from your hand)?$/.exec(t);
   // "Whenever a creature you control enters, if you cast it, …": "it" is the entering creature.
   if (cast) return { type: 'cast_by_you', ...(cast[1] ? { fromHand: true } : {}), ...(b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };

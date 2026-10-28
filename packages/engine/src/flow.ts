@@ -330,7 +330,8 @@ export function endStep(g: GameState, events: GameEvent[]): void {
       return;
     }
     // CR 500.7: an extra turn comes next (the most recently created first).
-    while (g.extraTurns?.length && g.players[g.extraTurns[0]!]?.lost) g.extraTurns.shift();
+    // Trouble in Pairs: "If an opponent would begin an extra turn, that player skips that turn instead." (CR 614.10)
+    while (g.extraTurns?.length && (g.players[g.extraTurns[0]!]?.lost || playerRule(g, g.extraTurns[0]!, 'skip_extra_turns'))) g.extraTurns.shift();
     const extra = g.extraTurns?.shift();
     beginTurn(g, extra ?? nextPlayer(g, g.active), events);
     return;

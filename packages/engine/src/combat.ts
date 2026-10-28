@@ -16,7 +16,7 @@ import {
   type PlayerId,
 } from './types.js';
 import { playerRule } from './player-rules.js';
-import { replaceQuantity } from './quantities.js';
+import { lifeLoss, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
@@ -851,8 +851,10 @@ export function dealDamage(
     } else {
       // CR 120.3a: damage to a player makes them lose that much life (CR 119.8: unless their life total can't change).
       if (!playerRule(g, to.player, 'life_cant_change')) {
-        ps.life -= amount;
-        events.push({ type: 'life', player: to.player, delta: -amount, life: ps.life });
+        // Bloodletter of Aclazotz: the damage is the same; the life lost may be more.
+        const lost = lifeLoss(g, to.player, amount);
+        ps.life -= lost;
+        events.push({ type: 'life', player: to.player, delta: -lost, life: ps.life });
       }
     }
     if (combat) {
