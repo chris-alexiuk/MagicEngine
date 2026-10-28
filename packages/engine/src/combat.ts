@@ -1,5 +1,5 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, ObjectFilter, StaticAbility, StaticPreventionNode } from '@mtg/schema';
+import type { AttackTaxNode, EffectNode, ObjectFilter, StaticAbility, StaticPreventionNode } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
 import {
@@ -14,7 +14,9 @@ import {
   type GameState,
   type ObjectId,
   type PlayerId,
+  type PreventionFollowUp,
 } from './types.js';
+import { runEffect, type EffectContext } from './registry.js';
 import { playerRule } from './player-rules.js';
 import { lifeLoss, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
@@ -885,9 +887,11 @@ export function dealDamage(
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).
   const unpreventable = g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
   if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
+  // CR 615.5: what a prevention effect does with the damage it prevented happens right after.
+  if (preventedFollowUps.length) runPreventedFollowUps(g, source, to, events);
   // CR 702.16j: damage to a player with protection from everything is prevented.
   if (!unpreventable && amount > 0 && to.kind === 'player' && playerRule(g, to.player, 'protection_everything')) {
-    events.push({ type: 'prevented', source: source.id, amount });
+    events.push({ type: 'prevented', source: source.id, amount, to });
     return 0;
   }
   if (amount <= 0) return 0;
@@ -953,7 +957,7 @@ export function dealDamage(
 
 /** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number } {
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; then?: PreventionFollowUp } {
   let halves = 0;
   // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
   // granted ability of the creature itself.
@@ -985,29 +989,67 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       }
       if (!hit) continue;
       if (e.half) halves++;
-      else return { all: true, halves };
+      // Vigor: "Put a +1/+1 counter on that creature for each 1 damage prevented this way." (CR 615.5)
+      else return { all: true, halves, ...(e.then ? { then: { effects: e.then as EffectNode[], controller: holder.controller, source: { id: holder.id, zcc: holder.zcc }, about: 'recipient' as const } } : {}) };
     }
   }
   return { all: false, halves };
+}
+
+/** Prevention effects' follow-ups waiting to happen after the damage they prevented (CR 615.5). */
+const preventedFollowUps: { then: PreventionFollowUp; amount: number }[] = [];
+
+/**
+ * CR 615.5: "Some prevention effects also include an additional effect, which may refer to the amount of damage that was
+ * prevented. … the rest of the effect takes place immediately afterward." These never ask anyone anything (the compiler
+ * reads only such follow-ups): the amount prevented is the event amount, the source of the damage the event object.
+ */
+function runPreventedFollowUps(g: GameState, source: GameObject, to: DamageRecipient, events: GameEvent[]): void {
+  const queue = preventedFollowUps.splice(0, preventedFollowUps.length);
+  for (const { then, amount } of queue) {
+    const holder = then.source ? g.objects[then.source.id] : undefined;
+    const ctx: EffectContext = {
+      g,
+      controller: then.controller,
+      ...(holder ? { source: holder } : {}),
+      events,
+      targets: then.targets ?? [],
+      x: 0,
+      memo: {},
+      trigger: {
+        amount,
+        object: then.about === 'recipient' && to.kind === 'permanent' && g.objects[to.object] ? { id: to.object, zcc: g.objects[to.object]!.zcc } : { id: source.id, zcc: source.zcc },
+        ...(to.kind === 'player' ? { player: to.player } : {}),
+      },
+    };
+    const list = [...then.effects];
+    while (list.length) {
+      const r = runEffect(structuredClone(list.shift()!), ctx);
+      if (typeof r === 'object' && 'expand' in r) list.unshift(...r.expand);
+      ctx.memo = {};
+    }
+  }
 }
 
 /** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
 function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
   const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : { all: false, halves: 0 };
   if (fixed.all) {
-    events.push({ type: 'prevented', source: source.id, amount });
+    events.push({ type: 'prevented', source: source.id, amount, to });
+    if (fixed.then) preventedFollowUps.push({ then: fixed.then, amount });
     return 0;
   }
   // Gisela: "prevent half that damage, rounded up" — what's left is half, rounded down.
   if (fixed.halves) {
     const before = amount;
     for (let i = 0; i < fixed.halves; i++) amount = Math.floor(amount / 2);
-    if (amount < before) events.push({ type: 'prevented', source: source.id, amount: before - amount });
+    if (amount < before) events.push({ type: 'prevented', source: source.id, amount: before - amount, to });
   }
   if (amount <= 0 || !g.prevention.length) return amount;
   const left0 = amount;
   for (const p of g.prevention) {
     if (amount <= 0) break;
+    const before = amount;
     if (p.turn !== g.turn || (p.combat && !combat)) continue;
     if (p.to) {
       const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : p.to.kind === 'object' && to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
@@ -1027,9 +1069,10 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
       p.amount -= used;
       amount -= used;
     }
+    if (p.then && before > amount) preventedFollowUps.push({ then: p.then, amount: before - amount });
   }
   g.prevention = g.prevention.filter((p) => (p.amount === 'all' || p.amount > 0) && !(p.once && p.amount === 0));
-  if (amount < left0) events.push({ type: 'prevented', source: source.id, amount: left0 - amount });
+  if (amount < left0) events.push({ type: 'prevented', source: source.id, amount: left0 - amount, to });
   return amount;
 }
 

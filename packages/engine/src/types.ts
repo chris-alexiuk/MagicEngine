@@ -478,6 +478,22 @@ export interface PreventionShield {
   toFilter?: ObjectFilter;
   /** Who "you" is for those filters. */
   controller?: PlayerId;
+  /**
+   * CR 615.5: "For each 1 damage prevented this way, …" (Inkshield), "If damage is prevented this way, ~ deals that much
+   * damage to that source's controller" (Deflecting Palm) — done right after, with the amount prevented.
+   */
+  then?: PreventionFollowUp;
+}
+
+/** What a prevention effect does after it prevents damage (CR 615.5): its effects, who controls them, what made them. */
+export interface PreventionFollowUp {
+  effects: EffectNode[];
+  controller: PlayerId;
+  source?: ObjectRef;
+  /** Brace for Impact: "put a +1/+1 counter on that creature" — the targets of the spell that made the shield. */
+  targets?: TargetRef[][];
+  /** Vigor: "that creature" is the permanent the damage would have been dealt to (else the source of the damage). */
+  about?: 'recipient';
 }
 
 /** A triggered ability waiting to be put on the stack (CR 603.3). */
@@ -511,6 +527,8 @@ export interface Resolution {
   created?: ObjectRef[];
   /** What the latest effect putting cards onto the battlefield put there ("They gain haste"). */
   movedOnto?: ObjectRef[];
+  /** Permanents this resolution's proliferate put counters on (Ripples of Potential). */
+  proliferated?: ObjectRef[];
   /** How many times this ability has resolved this turn, counting this time ("if this is the second time …"). */
   abilityCount?: number;
   /** Cosmium Confluence: "Put three +1/+1 counters on a Cave you control. It becomes …" — the one chosen. */
@@ -805,7 +823,7 @@ export type GameEvent =
       by?: ObjectRef;
     }
   | { type: 'control_changed'; object: ObjectId; controller: PlayerId }
-  | { type: 'prevented'; source: ObjectId; amount: number }
+  | { type: 'prevented'; source: ObjectId; amount: number; to?: DamageRecipient }
   | { type: 'created'; object: ObjectId; controller: PlayerId }
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }

@@ -1634,6 +1634,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: sacrificed[1] === 'you' || batch ? null : { ref: 'trigger_player' },
     };
   }
+  // Selfless Squire: "Whenever damage that would be dealt to you is prevented".
+  if (t === 'damage that would be dealt to you is prevented') {
+    b.eventAmount = true;
+    return { trigger: { type: 'damage_prevented', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  }
   const life = /^(you) gain life( for the first time each turn)?$/.exec(t);
   if (life) {
     b.eventAmount = true;
@@ -3012,6 +3017,17 @@ export const staticPreventionRule: GrammarRule = {
     if (line === "You control your opponents while they're searching their libraries.") return { kind: 'static', text: original, effect: { type: 'search_control' } } as StaticAbility;
     if (line === 'While an opponent is searching their library, they exile each card they find. You may play those cards for as long as they remain exiled, and you may spend mana as though it were mana of any color to cast them.') {
       return { kind: 'static', text: original, effect: { type: 'search_exile' } } as StaticAbility;
+    }
+    // Vigor: "If damage would be dealt to another creature you control, prevent that damage. Put a +1/+1 counter on that
+    // creature for each 1 damage prevented this way." (CR 615.5: the counters right after)
+    const vigor = /^If damage would be dealt to (.+?), prevent that damage\. Put an? \+1\/\+1 counter on that creature for each 1 damage prevented this way\.$/.exec(line);
+    if (vigor) {
+      const other = /^another /.test(vigor[1]!);
+      const pf = parseFilter(vigor[1]!.replace(/^(?:a|an|another) /, ''), new Binder(env));
+      if (!pf || pf.filter.zone || !(pf.filter.types ?? []).includes('Creature')) return null;
+      if (other) pf.filter.other = true;
+      const node: StaticPreventionNode = { type: 'prevent_damage', to: pf.filter, then: [{ type: 'add_counters', what: { ref: 'trigger_object' }, counter: '+1/+1', amount: { kind: 'event' } }] };
+      return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
     // CR 615.12: Frenzied Baloth: "Combat damage can't be prevented."; "Damage can't be prevented."
     const cant = /^(Combat damage|Damage) can't be prevented\.$/.exec(line);

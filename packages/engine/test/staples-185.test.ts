@@ -362,6 +362,14 @@ const CARDS = [
   makeCard({ name: 'Wake Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return all artifact cards from your graveyard to the battlefield. They gain haste until end of turn.' }),
   makeCard({ name: 'Construct Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
   makeCard({ name: 'Judgment Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'For any number of opponents, destroy target nonland permanent that player controls.' }),
+  makeCard({ name: 'Inkshield Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Prevent all combat damage that would be dealt to you this turn. For each 1 damage prevented this way, create a 2/1 white and black Inkling creature token with flying.' }),
+  makeCard({ name: 'Palm Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "The next time a source of your choice would deal damage to you this turn, prevent that damage. If damage is prevented this way, this spell deals that much damage to that source's controller." }),
+  makeCard({ name: 'Vigor Lite', type_line: 'Creature — Elemental Incarnation', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'Trample\nIf damage would be dealt to another creature you control, prevent that damage. Put a +1/+1 counter on that creature for each 1 damage prevented this way.' }),
+  makeCard({ name: 'Squire Lite', type_line: 'Creature — Human Soldier', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'When this creature enters, prevent all damage that would be dealt to you this turn.\nWhenever damage that would be dealt to you is prevented, put that many +1/+1 counters on this creature.' }),
+  makeCard({ name: 'Mastery Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Exile target card that's an instant or sorcery from your graveyard. For each card exiled this way, copy it, and you may cast the copy without paying its mana cost. Exile this spell.\nOverload {1}" }),
+  makeCard({ name: 'Ripples Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Proliferate, then choose any number of permanents you control that had a counter put on them this way. Those permanents phase out.' }),
+  makeCard({ name: 'Breach Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Each player mills ten cards. For each player, choose a creature or planeswalker card in that player's graveyard. Put those cards onto the battlefield under your control. Then each creature you control becomes a Phyrexian in addition to its other types." }),
+  makeCard({ name: 'Faith Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Prevent the next 3 damage that would be dealt to target creature this turn. For each 1 damage prevented this way, put a +1/+1 counter on that creature.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4068,6 +4076,45 @@ describe('staples (slice 214)', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: judgment, targets: [[{ kind: 'object', object: b }]] }));
     expect([g.objects[b]!.zone, g.objects[c]!.zone]).toEqual(['graveyard', 'battlefield']);
   });
+  for (const name of ['Inkshield Lite', 'Palm Lite'] as const) {
+    it(`${name}: what it does with the damage it prevented (CR 615.5)`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+      const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+      g = act(g, { type: 'pass', player: 'bob' });
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', name, 'hand') });
+      g = settle(g);
+      if (g.pending?.kind === 'choose_objects') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [ogre] } }));
+      const [a, b] = [g.players.alice!.life, g.players.bob!.life];
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: ogre, target: { kind: 'player', player: 'alice' } }] } });
+      for (let i = 0; i < 30 && g.step !== 'end'; i++) {
+        if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+        else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+        else break;
+      }
+      expect(g.players.alice!.life).toBe(a);
+      if (name === 'Inkshield Lite') expect(g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice').length).toBe(5);
+      else expect(g.players.bob!.life).toBe(b - 5);
+    });
+  }
+  it('Selfless Squire: that many counters when damage to you is prevented', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const squire = give(g, 'alice', 'Squire Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: squire }));
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(g.players.alice!.life).toBe(life);
+    expect(g.objects[squire]!.counters['+1/+1']).toBe(3);
+  });
+  it('Vigor: counters instead of damage on another creature you control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const vigor = give(g, 'alice', 'Vigor Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[bear]).toMatchObject({ zone: 'battlefield', damage: 0, counters: { '+1/+1': 3 } });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: vigor }]] }));
+    expect(g.objects[vigor]).toMatchObject({ damage: 3 });
+  });
   it('Silkguard: a counter on each of up to X targets; Auras, Equipment and modified creatures gain hexproof', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const [a, b, c] = [0, 1, 2].map(() => give(g, 'alice', 'Bear', 'battlefield'));
@@ -4078,6 +4125,65 @@ describe('staples (slice 214)', () => {
     expect([a, b, c].map((id) => g.objects[id!]!.counters['+1/+1'] ?? 0)).toEqual([1, 1, 0]);
     const hexproof = (id: string) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'hexproof');
     expect([a, b, c].map((id) => hexproof(id!))).toEqual([true, true, false]);
+  });
+});
+
+describe('staples (slice 215)', () => {
+  it('Breach the Multiverse: one creature or planeswalker card from each graveyard, all under your control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Bear', 'graveyard');
+    const [o1, o2] = [give(g, 'bob', 'Ogre', 'graveyard'), give(g, 'bob', 'Walker', 'graveyard')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Breach Lite', 'hand') }));
+    for (let i = 0; i < 4 && g.pending?.kind === 'choose_objects'; i++) {
+      const p = g.pending;
+      const pick = p.candidates.includes(o2) ? o2 : p.candidates.includes(mine) ? mine : p.candidates[0]!;
+      g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [pick] } }));
+    }
+    expect([g.objects[mine]!.zone, g.objects[o2]!.zone, g.objects[o1]!.zone]).toEqual(['battlefield', 'battlefield', 'graveyard']);
+    expect(g.objects[o2]!.controller).toBe('alice');
+    expect(chars(g, g.objects[mine]!).subtypes).toContain('Phyrexian');
+  });
+  it('Test of Faith: a counter on the target for each damage its shield prevented', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Faith Lite', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
+    expect(g.objects[ogre]).toMatchObject({ damage: 3, counters: { '+1/+1': 3 } });
+  });
+  it('Ripples of Potential: proliferate, then phase out any of yours that got a counter', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    const theirs = give(g, 'bob', 'Bear', 'battlefield');
+    for (const id of [a, b, theirs]) g.objects[id]!.counters['+1/+1'] = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ripples Lite', 'hand') }));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'proliferate', objects: [a, theirs], players: [] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', candidates: [a] });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [a] } }));
+    expect([g.objects[a]!.phasedOut, g.objects[b]!.phasedOut, g.objects[theirs]!.phasedOut]).toEqual(['directly', undefined, undefined]);
+    expect(g.objects[theirs]!.counters['+1/+1']).toBe(2);
+  });
+  it("Mizzix's Mastery: copy the exiled card and cast the copy free; overloaded, each of them in the order chosen", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const salve = give(g, 'alice', 'Salve', 'graveyard');
+    const life = g.players.alice!.life;
+    const mastery = give(g, 'alice', 'Mastery Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: mastery, targets: [[{ kind: 'object', object: salve }]] }));
+    expect(g.pending).toMatchObject({ kind: 'cast_free' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: true } }));
+    expect(g.players.alice!.life).toBe(life + 3);
+    expect([g.objects[salve]!.zone, g.objects[mastery]!.zone]).toEqual(['exile', 'exile']);
+    // Overloaded: each instant and sorcery card in the graveyard.
+    const [s1, s2] = [give(g, 'alice', 'Salve', 'graveyard'), give(g, 'alice', 'Gift of Words', 'graveyard')];
+    g.players.alice!.pool.C = 1;
+    const hand = g.zones.hand.bob!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mastery Lite', 'hand'), alt: 'overload', autoTap: true }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', ordered: true });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [s2, s1] } });
+    for (let i = 0; i < 2; i++) g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: true } });
+    g = settle(g);
+    expect(g.players.alice!.life).toBe(life + 6);
+    expect(g.zones.hand.bob!.length).toBe(hand + 2);
   });
 });
 

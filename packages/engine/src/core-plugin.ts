@@ -542,6 +542,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // the source or what the effect targets ("Return target spell to its owner's hand", Venser, Narset's Reversal).
         if (o.zone === 'stack' && o.id !== ctx.source?.id && (node.what as Ref | undefined)?.ref !== 'target') continue;
         moveObject(ctx.g, o.id, to, ctx.events);
+        // Mizzix's Mastery: "For each card exiled this way, copy it …" — what this move exiled.
+        if (to === 'exile' && ctx.g.objects[o.id]?.zone === 'exile') movedOnto.push({ id: o.id, zcc: ctx.g.objects[o.id]!.zcc });
         // Rousing Refrain: "Exile ~ with three time counters on it."
         const withCounters = node.counters as Record<string, number> | undefined;
         if (withCounters && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') for (const [k, n] of Object.entries(withCounters)) ctx.g.objects[o.id]!.counters[k] = (ctx.g.objects[o.id]!.counters[k] ?? 0) + n;
@@ -552,7 +554,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
       }
     }
-    if (to === 'battlefield' && ctx.resolution) ctx.resolution.movedOnto = movedOnto;
+    if ((to === 'battlefield' || to === 'exile') && ctx.resolution) ctx.resolution.movedOnto = movedOnto;
     return true;
   },
 
@@ -2283,10 +2285,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!answer.objects.every((id) => objects.includes(id)) || !answer.players.every((p) => players.includes(p))) {
       throw new RulesError('Choose only permanents and players that have counters.');
     }
+    const got: ObjectRef[] = [];
     for (const id of new Set(answer.objects)) {
       const o = g.objects[id]!;
+      const before = Object.values(o.counters).reduce((a, b) => a + b, 0);
       for (const [counter, n] of Object.entries(o.counters)) if (n > 0) addCounters(ctx, o, counter, 1);
+      if (Object.values(o.counters).reduce((a, b) => a + b, 0) > before) got.push({ id: o.id, zcc: o.zcc });
     }
+    // Ripples of Potential: "… permanents you control that had a counter put on them this way".
+    if (ctx.resolution) ctx.resolution.proliferated = [...(ctx.resolution.proliferated ?? []), ...got];
     for (const p of new Set(answer.players)) {
       const ps = g.players[p]!;
       if (ps.poison > 0) ps.poison++;
@@ -2444,6 +2451,50 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // CR 702.26: "Target creature phases out." (It phases in during its controller's next untap step.)
+  // Breach the Multiverse: "For each player, choose a creature or planeswalker card in that player's graveyard. Put those cards
+  // onto the battlefield under your control." — one from each graveyard that has one, then all of them at once.
+  return_from_each_graveyard(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { picked?: ObjectId[]; i?: number };
+    const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
+    const players = g.order.filter((p) => !g.players[p]!.lost);
+    memo.picked ??= [];
+    let answer = answerOf(ctx, 'choose_objects');
+    for (let i = memo.i ?? 0; i < players.length; i++) {
+      const candidates = zoneList(g, 'graveyard', players[i]!).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
+      memo.i = i;
+      if (candidates.length > 1 && !answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: `Choose a card in ${g.players[players[i]!]!.name}'s graveyard.` } };
+      if (candidates.length > 1) {
+        if (answer!.objects.length !== 1 || !candidates.includes(answer!.objects[0]!)) throw new RulesError('Choose one of those cards.');
+        memo.picked.push(answer!.objects[0]!);
+      } else if (candidates.length === 1) memo.picked.push(candidates[0]!);
+      answer = null;
+      memo.i = i + 1;
+    }
+    const moved: ObjectRef[] = [];
+    for (const id of memo.picked) {
+      if (g.objects[id]?.zone !== 'graveyard') continue;
+      moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller });
+      const now = g.objects[id]!;
+      if ((now.zone as string) === 'battlefield') moved.push({ id, zcc: now.zcc });
+    }
+    if (ctx.resolution) ctx.resolution.movedOnto = moved;
+    return true;
+  },
+
+  // Ripples of Potential: "then choose any number of permanents you control that had a counter put on them this way. Those
+  // permanents phase out." (CR 702.26)
+  phase_out_proliferated(_node, ctx) {
+    const g = ctx.g;
+    const candidates = (ctx.resolution?.proliferated ?? []).map((r) => g.objects[r.id]).filter((o): o is GameObject => Boolean(o && o.zone === 'battlefield' && !o.phasedOut && o.controller === ctx.controller)).map((o) => o.id);
+    if (!candidates.length) return true;
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: candidates.length, text: 'Choose any number of those permanents to phase out.' } };
+    if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose among those permanents.');
+    for (const id of answer.objects) phaseOut(g, g.objects[id]!, ctx.events);
+    return true;
+  },
+
   phase_out(node, ctx) {
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield' && !o.phasedOut) phaseOut(ctx.g, o, ctx.events);
     return true;
@@ -3233,8 +3284,40 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // cast ceases to exist, so it's made only once the player says yes.
   cast_copy_of(node, ctx) {
     const g = ctx.g;
-    const [o] = refObjects(ctx, ref(node, 'what'));
-    if (!o || !castableCard(g, o)) return true;
+    const all = refObjects(ctx, ref(node, 'what')).filter((x) => castableCard(g, x));
+    // Mizzix's Mastery (overloaded): "For each card exiled this way, copy it, and you may cast the copy …" — the player picks
+    // which copies to cast, in the order they're cast (CR 608.2g).
+    const memo = ctx.memo as { order?: string[]; i?: number };
+    if (all.length > 1 || memo.order) {
+      if (!memo.order) {
+        const answer = answerOf(ctx, 'choose_objects');
+        const candidates = all.map((x) => x.id);
+        if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: candidates.length, ordered: true, text: 'Choose the cards to copy, in the order you cast the copies.' } };
+        if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose among those cards.');
+        memo.order = answer.objects;
+        memo.i = 0;
+      }
+      let answer = answerOf(ctx, 'cast_free');
+      for (let i = memo.i ?? 0; i < memo.order.length; i++) {
+        const card = g.objects[memo.order[i]!];
+        if (!card) continue;
+        if (!answer) {
+          memo.i = i;
+          return { ask: { kind: 'cast_free', player: ctx.controller, object: card.id, sourceName: sourceName(ctx), text: `Copy ${nameOf(g, card)} and cast the copy without paying its mana cost?` } };
+        }
+        if (answer.cast) {
+          const id = `o${g.nextId++}`;
+          g.objects[id] = { id, card: card.card, owner: ctx.controller, controller: ctx.controller, zone: card.zone, zcc: 0, face: card.face, tapped: false, sick: false, damage: 0, counters: {}, timestamp: ++g.clock, spellCopy: true };
+          zoneList(g, card.zone, ctx.controller).push(id);
+          castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, {});
+        }
+        answer = null;
+        memo.i = i + 1;
+      }
+      return true;
+    }
+    const [o] = all;
+    if (!o) return true;
     const answer = answerOf(ctx, 'cast_free');
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Copy ${nameOf(g, o)} and cast the copy without paying its mana cost?` } };
     if (!answer.cast) return true;
@@ -3908,6 +3991,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return refRecipients(ctx, r).map((x): TargetRef => (x.kind === 'player' ? x : { kind: 'object', id: x.object, zcc: g.objects[x.object]!.zcc }));
     };
     const amount = node.amount === 'all' ? 'all' : amountOf(ctx, node.amount);
+    // Inkshield: "For each 1 damage prevented this way, create …" (CR 615.5).
+    const then = node.then ? { then: { effects: node.then as EffectNode[], controller: ctx.controller, targets: ctx.targets, ...(ctx.source ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}) } } : {};
     // Obscuring Haze: "by creatures your opponents control" — whatever matches when the damage would be dealt (CR 615).
     const byRef = node.by as Ref | undefined;
     const toRef = node.to as Ref | undefined;
@@ -3921,6 +4006,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         ...(byRef?.ref === 'all' ? { byFilter: byRef.filter } : {}),
         ...(toRef?.ref === 'all' ? { toFilter: toRef.filter } : {}),
         ...(node.combat ? { combat: true as const } : {}),
+        ...then,
       });
       return true;
     }
@@ -3933,6 +4019,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ...(to ? { to } : {}),
           ...(by ? { by } : {}),
           ...(node.combat ? { combat: true as const } : {}),
+          ...then,
         });
       }
     }
@@ -3952,7 +4039,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: sources, min: 1, max: 1, text: 'Choose a source.' } };
     const chosen = answer.objects[0];
     if (answer.objects.length !== 1 || !chosen || !sources.includes(chosen)) throw new RulesError('Choose one of those sources.');
-    g.prevention.push({ id: `p${g.nextId++}`, turn: g.turn, amount: 'all', once: true, to: { kind: 'player', player: ctx.controller }, by: { kind: 'object', id: chosen, zcc: g.objects[chosen]!.zcc } });
+    // Deflecting Palm: "If damage is prevented this way, ~ deals that much damage to that source's controller." (CR 615.5)
+    const then = node.then ? { then: { effects: node.then as EffectNode[], controller: ctx.controller, targets: ctx.targets, ...(ctx.source ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}) } } : {};
+    g.prevention.push({ id: `p${g.nextId++}`, turn: g.turn, amount: 'all', once: true, to: { kind: 'player', player: ctx.controller }, by: { kind: 'object', id: chosen, zcc: g.objects[chosen]!.zcc }, ...then });
     return true;
   },
 
@@ -4654,6 +4743,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (!defender || !e.attacks.some(({ target }) => target.kind === 'player' && target.player === defender)) return [];
     if (t.by === 'you' && check.g.active !== check.controller) return [];
     return [{ player: check.g.active }];
+  },
+  // Selfless Squire: "Whenever damage that would be dealt to you is prevented, put that many +1/+1 counters on this creature."
+  damage_prevented(_t, check) {
+    const e = check.event;
+    if (e.type !== 'prevented' || check.sourceLeft || e.amount <= 0 || e.to?.kind !== 'player' || e.to.player !== check.controller) return [];
+    return [{ player: e.to.player, amount: e.amount, object: { id: e.source, zcc: check.g.objects[e.source]?.zcc ?? 0 } }];
   },
   gain_life(t, check) {
     const e = check.event;

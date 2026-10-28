@@ -171,6 +171,36 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     if (!pf || pf.filter.zone !== 'library') return null;
     return [{ type: 'search', filter: pf.filter, amount: 2, to: 'hand', ...(parting[1] ? { upTo: true } : {}), ...(parting[3] ? { reveal: true } : {}), divide: { chooser: { ref: 'you' }, count: 1, chosenTo: parting[4], restTo: parting[5] } }];
   }
+  // Mizzix's Mastery: "Exile target card that's an instant or sorcery from your graveyard. For each card exiled this way, copy
+  // it, and you may cast the copy without paying its mana cost. Exile ~." — overloaded, "each card" (CR 702.96b).
+  const mastery = /^Exile (target|each) card that's an instant or sorcery from your graveyard\. For each card exiled this way, copy it, and you may cast the copy without paying its mana cost\. Exile ~\.$/.exec(text.trim());
+  if (mastery) {
+    const what = mastery[1] === 'target' ? parseObjectRef('target instant or sorcery card from your graveyard', b) : parseObjectRef('each instant or sorcery card from your graveyard', b);
+    if (!what || (mastery[1] === 'target') === what.plural) return null;
+    return [
+      { type: 'move', what: what.ref, to: 'exile' },
+      { type: 'cast_copy_of', what: mastery[1] === 'target' ? what.ref : { ref: 'moved_onto' } },
+      { type: 'move', what: { ref: 'self' }, to: 'exile' },
+    ];
+  }
+  // Breach the Multiverse: "For each player, choose a creature or planeswalker card in that player's graveyard. Put those
+  // cards onto the battlefield under your control."
+  const breach = /^(.*?)For each player, choose (?:a|an) (.+?) card in that player's graveyard\. Put those cards onto the battlefield under your control\.(?: (.+))?$/.exec(text.trim());
+  if (breach) {
+    const before = breach[1] ? parseEffectText(breach[1].trim(), b) : [];
+    const pf = before ? parseFilter(`${breach[2]} card in a graveyard`, b) : null;
+    if (!before || !pf || pf.plural) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    b.it = { ref: 'moved_onto' };
+    const after = breach[3] ? parseEffectText(breach[3].replace(/^Then (\w)/, (_m, c: string) => c.toUpperCase()), b) : [];
+    if (!after) return null;
+    return [...before, { type: 'return_from_each_graveyard', filter }, ...after];
+  }
+  // Ripples of Potential: "Proliferate, then choose any number of permanents you control that had a counter put on them this
+  // way. Those permanents phase out."
+  if (/^Proliferate, then choose any number of permanents you control that had a counter put on them this way\. Those permanents phase out\.$/.test(text.trim())) {
+    return [{ type: 'proliferate' }, { type: 'phase_out_proliferated' }];
+  }
   // Conduit of Worlds: "Choose target nonland permanent card in your graveyard. If you haven't cast a spell this turn, you may
   // cast that card. If you do, you can't cast additional spells this turn." — cast as it resolves, paying its costs (CR 608.2g).
   const conduit = /^Choose (target .+?)\. If (.+?), you may cast that card\. If you do, you can't cast additional spells this turn\.$/.exec(text.trim());
@@ -541,6 +571,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const last = out[out.length - 1] as AddManaEffect | undefined;
         if (last?.type !== 'add_mana' || last.spend) return null;
         last.spend = { spells: { types: ['Artifact'] }, abilities: {}, special: ['unlock', 'face_up'], other: true };
+        continue;
+      }
+      // CR 615.5: Inkshield — "For each 1 damage prevented this way, create a 2/1 … Inkling creature token with flying.";
+      // Deflecting Palm — "If damage is prevented this way, ~ deals that much damage to that source's controller." Done
+      // right after the damage is prevented, with the amount prevented; never with a choice to make.
+      const preventedWay = i > 0 ? /^(?:For each 1 damage prevented this way|If damage is prevented this way), (.+)$/.exec(s) : null;
+      if (preventedWay) {
+        const last = out[out.length - 1];
+        if ((last?.type !== 'prevent' && last?.type !== 'prevent_chosen_source') || last.then) return null;
+        const pb = b.clone();
+        pb.eventAmount = true;
+        pb.named = { ...pb.named, "that source's controller": { ref: 'controller_of', of: { ref: 'trigger_object' } } };
+        const before = pb.targets.length;
+        let inner = parseSentence(capitalise(preventedWay[1]!), pb);
+        if (inner && /^For each/.test(s)) inner = scaleBy(inner, { kind: 'event' });
+        const SAFE = new Set(['create_token', 'deal_damage', 'gain_life', 'lose_life', 'draw', 'add_counters']);
+        if (!inner || pb.targets.length !== before || pb.unsupported || !inner.every((e) => SAFE.has(e.type) && !e.copyOf)) return null;
+        last.then = inner;
         continue;
       }
       const spendOnly = i > 0 ? /^Spend this mana only (.+)$/.exec(s) : null;
