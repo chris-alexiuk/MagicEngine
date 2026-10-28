@@ -233,6 +233,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'is', of: subject.ref, filter };
   }
   if (/^it's your turn$/.test(t)) return { type: 'your_turn', value: true };
+  // Great Train Heist: "If it's your combat phase, there is an additional combat phase after this phase."
+  if (/^it's your combat phase$/.test(t)) return { type: 'step', combat: true, yours: true };
+  if (/^it's your (?:precombat )?main phase$/.test(t)) return { type: 'step', main: true, yours: true };
   // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
   const statIs = /^(its|~'s|that creature's|that card's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t);
   if (statIs) {

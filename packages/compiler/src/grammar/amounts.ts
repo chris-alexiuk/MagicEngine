@@ -137,6 +137,15 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Thousand-Year Storm: "for each other instant and sorcery spell you've cast before it this turn"
+  const castBefore = /^other (.+?) spell you've cast before it this turn$/.exec(t);
+  if (castBefore) {
+    const pf = parseFilter(`${castBefore[1]!.replace(/^(\w+) and (\w+)$/, '$1 or $2')} spell`, b);
+    if (!pf || pf.filter.controller || (pf.filter.zone && pf.filter.zone !== 'stack')) return null;
+    // Wherever those spells are now.
+    delete pf.filter.zone;
+    return { kind: 'cast_before', of: b.it ?? { ref: 'self' }, filter: pf.filter, yours: true };
+  }
   // Neheb, the Eternal: "for each 1 life your opponents have lost this turn"
   const lifeEach = /^1 life (.+?) this turn$/.exec(t);
   if (lifeEach) return lifeThisTurn(lifeEach[1]!);
@@ -186,6 +195,12 @@ function lifeThisTurn(who: string): AmountExpr | null {
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // Cavern-Hoard Dragon: "the greatest number of artifacts an opponent controls" — the most any one opponent controls.
+  const most = /^the greatest number of (.+ (?:an opponent controls|your opponents control))$/.exec(t);
+  if (most) {
+    const c = parseCount(`the number of ${most[1]!.replace(/ your opponents control$/, ' an opponent controls')}`, b);
+    return c?.kind === 'count' && c.filter.controller === 'opponent' && !c.times && !c.plus ? { ...c, most: true } : null;
+  }
   // Archfiend of Despair: "the life that player lost this turn" — each of the players in turn.
   const theirLife = /^the life (?:they|that player) (lost|gained) this turn$/.exec(t);
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
@@ -194,6 +209,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
+  // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
+  if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"
   const totalPower = /^the total (power|toughness|mana value) of (other )?(.+)$/.exec(t);
   if (totalPower) {

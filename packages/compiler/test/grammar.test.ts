@@ -2362,3 +2362,25 @@ describe('slice 190', () => {
     expect(parse('At the beginning of your upkeep, put a +1/+1 counter on each creature each opponent controls.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'all', filter: { controller: 'opponent' } } }] });
   });
 });
+
+describe('slice 191', () => {
+  it('reads counters of any kind, chosen opponents and two-part combat', () => {
+    expect(parse('Remove up to three counters from target permanent.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'remove_counters', amount: 3, upTo: true }] });
+    expect(parse('Sacrifice ~: Remove all counters from target permanent.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'remove_counters', amount: 'all' }] });
+    expect((parse('Remove a counter from target permanent.', 'Sorcery').abilities[0] as { effects: { counter?: string }[] }).effects[0]!.counter).toBeUndefined();
+    expect(parse('Choose target opponent. Whenever a creature you control deals combat damage to that player this turn, create a tapped Treasure token.', 'Sorcery').abilities[0]).toMatchObject({ targets: [{ what: 'player', player: 'opponent' }], effects: [{ type: 'turn_trigger', ability: { trigger: { type: 'deals_combat_damage', to: 'target', index: 0 } } }] });
+    expect(parse('Choose target opponent. Then the chosen player loses 2 life.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', who: { ref: 'target', index: 0 } }] });
+    expect(parse("Untap all creatures you control. If it's your combat phase, there is an additional combat phase after this phase.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'untap' }, { type: 'if', cond: { type: 'step', combat: true, yours: true }, effects: [{ type: 'extra_combat' }] }] });
+    expect(parse('IV — Mega Flare — ~ deals 3 damage to each opponent.', 'Enchantment Creature — Saga Dragon').abilities[0]).toMatchObject({ trigger: { type: 'chapter', chapters: [4] } });
+  });
+  it('reads counted spells cast before, the most an opponent controls and other new amounts', () => {
+    expect(parse("Whenever you cast an instant or sorcery spell, copy it for each other instant and sorcery spell you've cast before it this turn.", 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'copy_spell', amount: { kind: 'cast_before', yours: true, filter: { types: ['Instant', 'Sorcery'] } } }] });
+    expect(parse('This spell costs {X} less to cast, where X is the greatest number of artifacts an opponent controls.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', amount: { kind: 'count', most: true } } });
+    expect(parse('Whenever one or more cards are put into exile from your library and/or your graveyard, put a +1/+1 counter on ~.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'leave_graveyard', from: ['library', 'graveyard'], to: 'exile' } });
+    expect(parse('{X}: Destroy each nonland permanent with mana value X whose controller was dealt combat damage by ~ this turn.', 'Artifact Creature').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { filter: { controllerHitBySource: true, manaValue: { op: 'eq', n: 'X' } } } }] });
+    expect(parse("When ~ enters, target opponent may have you draw three cards. If the player doesn't, you mill three cards, then ~ deals damage to that player equal to the total mana value of those cards.", 'Artifact Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', who: { ref: 'target' }, effects: [{ type: 'draw', who: { ref: 'you' } }], else: [{ type: 'mill' }, { type: 'deal_damage', amount: { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' } }] }] });
+    expect(parse('Draw X cards. If X is 10 or more, instead shuffle your graveyard into your library, draw X cards, untap up to five lands, and you have no maximum hand size for the rest of the game.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ type: 'shuffle_zones' }, { type: 'draw' }, { type: 'untap_chosen' }, { type: 'player_effect' }] }] });
+    // What a cost may choose isn't counted against X.
+    expect(parse("You may exile a red card with mana value X from your hand rather than pay this spell's mana cost.", 'Instant').unparsed).toHaveLength(1);
+  });
+});

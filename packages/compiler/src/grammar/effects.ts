@@ -175,6 +175,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (i !== sentences.length - 1) return null;
         let cond = turnTrig[2]!;
         let effect = turnTrig[4]!;
+        if (b.player?.ref === 'target' && / to that player$/.test(cond)) cond = cond.replace(/ to that player$/, ` to TARGETPLAYER${b.player.index}`);
         if (b.it?.ref === 'target') {
           cond = cond.replace(/^(?:that creature|that permanent|it)(?= )/, `TARGETREF${b.it.index}`);
           // Jaya, Fiery Negotiator: "Whenever you attack this turn, Jaya deals damage … to that creature." — the target.
@@ -183,7 +184,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const r = b.env.parseAbilities!(`Whenever ${cond}, ${effect}.`, b.env.cardName, b.env.typeLine);
         const ability = r.abilities[0];
         if (r.unparsed.length || r.manualKeywords.length || r.abilities.length !== 1 || ability?.kind !== 'triggered' || ability.trigger.type === 'tapped_for_mana') return null;
-        if ((cond.includes('TARGETREF') || effect.includes('TARGETREF')) && ability.targets?.length) return null;
+        if ((cond.includes('TARGETREF') || cond.includes('TARGETPLAYER') || effect.includes('TARGETREF')) && ability.targets?.length) return null;
         out.push({ type: 'turn_trigger', ability });
         previous = [];
         continue;
@@ -406,7 +407,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const cant = /^If you can't, (.+)$/.exec(s);
       if (cant) {
         const last = out[out.length - 1];
-        if (last?.type !== 'remove_counters') return null;
+        if (last?.type !== 'remove_counters' || last.counter === undefined) return null;
         const inner = parseSentence(capitalise(cant[1]!.replace(/\bthe permanent\b/, '~')), b);
         if (!inner) return null;
         last.ifCant = inner;
@@ -502,7 +503,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       if (theyMay && theyDo && !/^You$/.test(theyMay[1]!)) {
         const who = singlePlayer(theyMay[1]!, b);
-        const first = who ? attempt(b, (b) => parseClause(theyMay[2]!, b, who)) : null;
+        // Combustible Gearhulk: "target opponent may have you draw three cards" — they choose, you do it.
+        const haveYou = /^have you (.+)$/.exec(theyMay[2]!);
+        const first = who
+          ? attempt(b, (b) => {
+              if (!haveYou) return parseClause(theyMay[2]!, b, who);
+              const effects = parseSentence(`You ${haveYou[1]!}`, b);
+              return effects ? { effects } : null;
+            })
+          : null;
         const rest = first ? parseSentence(capitalise(theyDo[1]!), b) : null;
         if (!who || !first || !rest) return null;
         const declined = /n't, /.test(sentences[i + 1]!);
@@ -1618,6 +1627,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Glissa Sunslayer: "Remove up to three counters from target permanent" — of any kinds (CR 122.8).
+  const removeAny = /^[Rr]emove (up to )?(a|an|one|two|three|four|five|six|X|all) counters? from (.+)$/.exec(s);
+  if (removeAny) {
+    const r = attempt(b, (b) => {
+      const all = removeAny[2] === 'all';
+      if (all && removeAny[1]) return null;
+      const what = parseObjectRef(removeAny[3]!, b);
+      const amount = all ? 'all' : parseAmount(removeAny[2]!);
+      if (!what || amount === null || amount === undefined || (what.plural && !all)) return null;
+      return [{ type: 'remove_counters', what: what.ref, amount, ...(removeAny[1] ? { upTo: true } : {}) }];
+    });
+    if (r) return r;
+  }
   // "Remove a time counter from it" (vanishing, CR 702.63a).
   const remove = /^[Rr]emove (a|an|one|two|three|\d+) (\S+) counters? from (.+)$/.exec(s);
   if (remove) {
@@ -2246,6 +2268,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return scaleBy(inner, { kind: 'votes', option }) ?? [{ type: 'repeat', times: { kind: 'votes', option }, effects: inner }];
     });
   }
+  // Great Train Heist: "Choose target opponent." — the player, for what follows ("that player").
+  if (/^[Cc]hoose target (?:opponent|player)$/.test(s)) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(s.slice(7), b);
+      if (!who) return null;
+      b.named = { ...b.named, 'the chosen player': who };
+      return [];
+    });
+    if (r) return r;
+  }
   // "Choose target creature." — the target, for what follows ("that creature").
   const chooseTarget = /^[Cc]hoose (target .+|up to one target .+)$/.exec(s);
   if (chooseTarget) {
@@ -2363,6 +2395,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const l = parseSentence(s.slice(0, j.index), b);
       const rest = l ? parseSentence(capitalise(s.slice(j.index! + j[0].length)), b) : null;
       return l && rest ? [...l, ...rest] : null;
+    });
+    if (r) return r;
+  }
+  // Finale of Revelation: "shuffle your graveyard into your library, draw X cards, untap up to five lands, and you have no
+  // maximum hand size for the rest of the game" — a series of instructions, each a sentence of its own kind.
+  const series = s.split(/, (?:and )?/);
+  if (series.length >= 3 && /, and [^,]+$/.test(s) && series.slice(1).every((p) => /^(?:you |[a-z]+(?<!s) )/.test(p) && !/^(?:that|those|it|its|this|which|where|then) /.test(p))) {
+    const r = attempt(b, (b) => {
+      const out: EffectNode[] = [];
+      for (const p of series) {
+        const e = parseSentence(capitalise(p), b);
+        if (!e) return null;
+        out.push(...e);
+      }
+      return out;
     });
     if (r) return r;
   }
@@ -3212,7 +3259,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return what ? [{ type: 'phase_out', what: what.ref }] : null;
   }
   // CR 500.8: "After this phase, there is an additional combat phase (followed by an additional main phase)."
-  const extraCombat = /^after this (?:main )?phase, there is an additional combat phase( followed by an additional main phase)?$/i.exec(c);
+  const extraCombat =
+    /^after this (?:main )?phase, there is an additional combat phase( followed by an additional main phase)?$/i.exec(c) ??
+    /^there is an additional combat phase( followed by an additional main phase)? after this (?:main )?phase$/i.exec(c);
   if (extraCombat) return [{ type: 'extra_combat', ...(extraCombat[1] ? { main: true } : {}) }];
   // CR 701.54a: "The Ring tempts you."
   if (/^the ring tempts you$/i.test(c)) return [{ type: 'ring_tempts' }];

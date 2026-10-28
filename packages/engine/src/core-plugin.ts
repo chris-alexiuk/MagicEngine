@@ -918,7 +918,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const ability = node.ability as TriggeredAbility;
     const src = ctx.source;
     if (!src) return true;
-    const bind = JSON.stringify(ability).includes('"ref":"target"') && !ability.targets?.length;
+    const json = JSON.stringify(ability);
+    const bind = (json.includes('"ref":"target"') || json.includes('"to":"target"')) && !ability.targets?.length;
     (ctx.g.turnTriggers ??= []).push({
       id: `tt${ctx.g.nextId++}`,
       controller: ctx.controller,
@@ -1786,6 +1787,50 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // "Remove a time counter from it."
   remove_counters(node, ctx) {
+    // "Remove up to three counters from target permanent": of any kinds, the controller choosing which (CR 122.8).
+    if (node.counter === undefined) {
+      const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
+      if (node.amount === 'all') {
+        for (const o of objects)
+          for (const [counter, have] of Object.entries(o.counters)) {
+            if (!have) continue;
+            delete o.counters[counter];
+            ctx.events.push({ type: 'counters', object: o.id, counter, delta: -have });
+          }
+        return true;
+      }
+      const memo = ctx.memo as { index?: number; left?: number; asked?: string };
+      memo.index ??= 0;
+      const answer = answerOf(ctx, 'choose_option');
+      for (; memo.index < objects.length; memo.index++, memo.left = undefined) {
+        const o: GameObject = objects[memo.index]!;
+        memo.left ??= Math.max(0, amountOf(ctx, node.amount));
+        if (answer && memo.asked === o.id) {
+          memo.asked = undefined;
+          if (answer.choice === 'Done') continue;
+          if (!o.counters[answer.choice]) throw new RulesError('Choose a kind of counter it has.');
+          o.counters[answer.choice]!--;
+          if (!o.counters[answer.choice]) delete o.counters[answer.choice];
+          ctx.events.push({ type: 'counters', object: o.id, counter: answer.choice, delta: -1 });
+          memo.left--;
+        }
+        const kinds: string[] = Object.keys(o.counters).filter((k) => (o.counters[k] ?? 0) > 0);
+        if (memo.left <= 0 || !kinds.length) continue;
+        // Only one kind and no choice of how many: remove them.
+        if (kinds.length === 1 && !node.upTo) {
+          const k = kinds[0]!;
+          const n = Math.min(memo.left, o.counters[k]!);
+          o.counters[k]! -= n;
+          if (!o.counters[k]) delete o.counters[k];
+          ctx.events.push({ type: 'counters', object: o.id, counter: k, delta: -n });
+          continue;
+        }
+        memo.asked = o.id;
+        const options = node.upTo ? [...kinds, 'Done'] : kinds;
+        return { ask: { kind: 'choose_option', player: ctx.controller, options, text: `Remove a counter from ${nameOf(ctx.g, o)} (${memo.left} left).`, sourceName: sourceName(ctx) } };
+      }
+      return true;
+    }
     const counter = String(node.counter);
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       const have = o.counters[counter] ?? 0;
@@ -3538,6 +3583,13 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
   // Tempt with Immortality: "return a creature card from your graveyard to the battlefield" — only with one there.
   if (e.type === 'return_chosen') return zoneList(g, 'graveyard', chooser).some((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null, anyZone: true }));
+  // Leatherhead: "you may remove a counter from her. When you do, …" — only with a counter there to remove.
+  if (e.type === 'remove_counters' && e.amount !== 'all') {
+    const n = Math.max(1, amountOf(ctx, e.amount));
+    return refObjects(ctx, ref(e, 'what')).some((o) =>
+      e.counter === undefined ? Object.values(o.counters).reduce((a: number, b) => a + (b ?? 0), 0) >= n : (o.counters[String(e.counter)] ?? 0) >= n,
+    );
+  }
   return true;
 }
 
@@ -3859,6 +3911,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
     if (t.to === 'enchanted' && e.to.player !== check.source.attachedToPlayer) return [];
+    // Great Train Heist: "… deals combat damage to that player this turn" — the player its creator targeted.
+    const hitPlayer = e.to.player;
+    if (t.to === 'target' && !check.targets?.[Number(t.index ?? 0)]?.some((x) => x.kind === 'player' && x.player === hitPlayer)) return [];
     // "Whenever a creature deals combat damage to one of your opponents"
     if (t.to === 'opponent' && e.to.player === check.controller) return [];
     const o = check.g.objects[e.source];
@@ -4085,9 +4140,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever one or more cards leave your graveyard": once per batch.
   leave_graveyard(t, check) {
     const e = check.event;
-    if (e.type !== 'moved' || e.from !== 'graveyard' || check.sourceLeft) return [];
+    // Laelia: "… put into exile from your library and/or your graveyard" — `from` those zones, `to` exile.
+    const from = (t.from as string[] | undefined) ?? ['graveyard'];
+    const left = (x: GameEvent): x is Extract<GameEvent, { type: 'moved' }> => x.type === 'moved' && from.includes(x.from) && (!t.to || x.to === t.to);
+    if (!left(e) || check.sourceLeft) return [];
     const mine = (x: GameEvent) => {
-      if (x.type !== 'moved' || x.from !== 'graveyard') return false;
+      if (x.type !== 'moved' || !left(x)) return false;
       const o = check.g.objects[x.object];
       return Boolean(o && o.owner === check.controller && (!t.filter || matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true })));
     };

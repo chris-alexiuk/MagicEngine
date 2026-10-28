@@ -70,6 +70,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
   [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
+  // Steel Hellkite: "each nonland permanent with mana value X whose controller was dealt combat damage by this creature
+  // this turn"
+  [/ whose controller was dealt combat damage by (?:~|this creature) this turn$/, (f) => !f.controllerHitBySource && ((f.controllerHitBySource = true), true)],
   // Transmute (CR 702.53a), transfigure (CR 702.71a)
   [/ with the same mana value as (?:~|the discarded card|this card|this permanent)$/, (f) => !f.sameManaValueAs && ((f.sameManaValueAs = 'self'), true)],
   [/ that (?:aren't|isn't) of the chosen type$/, (f) => !f.notChosenType && ((f.notChosenType = true), true)],
@@ -141,6 +144,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
+  // Steel Hellkite: "each nonland permanent with mana value X"
+  [/ with mana value X$/, (f) => compare(f, 'mana value', 'X', 'eq')],
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
   [/ with mana cost ((?:\{[^}]+\})+)(?: or ((?:\{[^}]+\})+))?$/, (f, m) => !f.manaCostIs && ((f.manaCostIs = [m[1]!, ...(m[2] ? [m[2]] : [])]), true)],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
@@ -645,7 +650,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };
   // "As ~ enters, choose a player." — "the chosen player" (CR 614.12).
-  if (t === 'the chosen player') return { ref: 'chosen_player' };
+  // Haunt the Network: "Choose target opponent. … Then the chosen player loses X life" — that target.
+  if (t === 'the chosen player') return b.named[t] ?? { ref: 'chosen_player' };
   // Skyclave Apparition: "the exiled card's owner" (CR 607.2a)
   if (t === "the exiled card's owner") return { ref: 'owner_of', of: { ref: 'exiled_with' } };
   if (b.named[t]) {

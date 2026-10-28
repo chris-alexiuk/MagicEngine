@@ -266,7 +266,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // "for each creature target player controls"
       const owners = e.filter.controlledBy ? refPlayers(ctx, e.filter.controlledBy as Ref) : null;
       const filter = bindFilter(ctx, e.filter);
-      return g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source })).length;
+      const matching = g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source }));
+      if (e.most) return Math.max(0, ...livePlayers(g).filter((p) => p !== ctx.controller).map((p) => matching.filter((id) => g.objects[id]!.controller === p).length));
+      return matching.length;
     }
     case 'cards': {
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);
@@ -356,8 +358,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           !(e.nontoken && d.token) &&
           (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
       ).length;
-    case 'moved_this_way':
-      return movedThisWay(ctx, e).length;
+    case 'moved_this_way': {
+      const moved = movedThisWay(ctx, e);
+      // Combustible Gearhulk: "the total mana value of those cards".
+      if (e.stat === 'mana_value') return moved.reduce((n, m) => n + (g.objects[m.id] ? manaValueOf(g, g.objects[m.id]!) : 0), 0);
+      return moved.length;
+    }
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
     case 'life_this_turn': {
       const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.lifeGained;
@@ -471,6 +477,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'cast_before': {
       // Counted as it was cast, so spells cast in response don't add to it (CR 702.40a).
       const o = e.of.ref === 'self' ? ctx.source : refObjects(ctx, e.of)[0];
+      // Thousand-Year Storm: "each other instant and sorcery spell you've cast before it this turn".
+      if (e.filter || e.yours) {
+        const ref = e.of.ref === 'trigger_object' ? ctx.trigger?.object : o ? { id: o.id } : undefined;
+        const cast = (g.turnLog.castSpells ?? []).filter((c) => !e.yours || c.player === ctx.controller);
+        const at = ref ? cast.findIndex((c) => c.id === ref.id) : -1;
+        if (at < 0) return 0;
+        return cast.slice(0, at).filter((c) => !e.filter || (g.objects[c.id] && matchesFilter(g, g.objects[c.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: null, anyZone: true }))).length;
+      }
       return o?.cast?.before ?? 0;
     }
     default:

@@ -54,6 +54,16 @@ const CARDS = [
   makeCard({ name: 'White Salve', type_line: 'Instant', mana_cost: '{W}', cmc: 1, colors: ['W'], oracle_text: 'You gain 1 life.' }),
   makeCard({ name: 'Orcish Mine', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant land\nThis Aura enters with three ore counters on it.\nAt the beginning of your upkeep and whenever enchanted land becomes tapped, remove an ore counter from this Aura.\nWhen the last ore counter is removed from this Aura, destroy enchanted land and this Aura deals 2 damage to that land\'s controller.' }),
   makeCard({ name: 'Tap Land', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Tap target land.' }),
+  makeCard({ name: 'Heartless Act', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Choose one —\n• Destroy target creature with no counters on it.\n• Remove up to three counters from target creature.' }),
+  makeCard({ name: 'Leatherhead Lite', type_line: 'Creature — Crocodile', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever this creature deals combat damage to a player, you may remove a counter from this creature. When you do, you gain 5 life.' }),
+  makeCard({ name: 'Great Train Heist', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Choose target opponent. Whenever a creature you control deals combat damage to that player this turn, create a tapped Treasure token.' }),
+  makeCard({ name: 'Thousand-Year Storm', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Whenever you cast an instant or sorcery spell, copy it for each other instant and sorcery spell you've cast before it this turn. You may choose new targets for the copies." }),
+  makeCard({ name: 'Cavern-Hoard Dragon', type_line: 'Creature — Dragon', mana_cost: '{7}{R}{R}', cmc: 9, power: '6', toughness: '6', oracle_text: 'This spell costs {X} less to cast, where X is the greatest number of artifacts an opponent controls.\nFlying' }),
+  makeCard({ name: 'Laelia Lite', type_line: 'Creature — Spirit Warrior', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever one or more cards are put into exile from your library and/or your graveyard, put a +1/+1 counter on this creature.' }),
+  makeCard({ name: 'Exile Two', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exile the top two cards of your library.' }),
+  makeCard({ name: 'Steel Hellkite', type_line: 'Artifact Creature — Dragon', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Flying\n{X}: Destroy each nonland permanent with mana value X whose controller was dealt combat damage by this creature this turn. Activate only once each turn.' }),
+  makeCard({ name: 'Combustible Gearhulk', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "First strike\nWhen this creature enters, target opponent may have you draw three cards. If the player doesn't, you mill three cards, then this creature deals damage to that player equal to the total mana value of those cards." }),
+  makeCard({ name: 'Finale of Revelation', type_line: 'Sorcery', mana_cost: '{X}{U}{U}', oracle_text: 'Draw X cards. If X is 10 or more, instead shuffle your graveyard into your library, draw X cards, untap up to five lands, and you have no maximum hand size for the rest of the game.\nExile Finale of Revelation.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -544,5 +554,132 @@ describe('staples (slice 190): descended, died under your control, two-event tri
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tap Land', 'hand'), targets: [[{ kind: 'object', object: land }]] }));
     expect(g.objects[land]!.zone).toBe('graveyard');
     expect(g.players.bob!.life).toBe(life - 2);
+  });
+});
+
+describe('staples (slice 191)', () => {
+  it('Heartless Act: up to three counters of any kinds, the caster choosing which', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g.objects[bear]!.counters = { '+1/+1': 2, shield: 1 };
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Heartless Act', 'hand'), modes: [1], targets: [[{ kind: 'object', object: bear }]] });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'choose_option', options: ['+1/+1', 'shield', 'Done'] });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'shield' } });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: '+1/+1' } });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'Done' } }));
+    expect(g.objects[bear]!.counters).toEqual({ '+1/+1': 1 });
+  });
+
+  it('"you may remove a counter … When you do": not without a counter to remove', () => {
+    const hit = (counters: Record<string, number>) => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const croc = give(g, 'alice', 'Leatherhead Lite', 'battlefield');
+      g.objects[croc]!.counters = counters;
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: croc, target: { kind: 'player', player: 'bob' } }] } });
+      for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+        if (g.pending?.kind === 'may') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'may', yes: true } });
+        else if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+        else if (g.pending) break;
+        else g = act(g, { type: 'pass', player: g.priority! });
+      }
+      return g;
+    };
+    const none = hit({});
+    const one = hit({ shield: 1 });
+    expect(one.players.alice!.life - none.players.alice!.life).toBe(5);
+  });
+
+  it('Great Train Heist: combat damage to the chosen opponent this turn', () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Great Train Heist', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }, { attacker: cub, target: { kind: 'player', player: 'carol' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    const treasures = g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice');
+    expect(treasures.length).toBe(1);
+    expect(g.objects[treasures[0]!]!.tapped).toBe(true);
+  });
+
+  it('Thousand-Year Storm: a copy for each instant and sorcery you cast before it this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Thousand-Year Storm', 'battlefield');
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    expect(g.players.alice!.life).toBe(life + 3);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Cub', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    expect(g.players.alice!.life).toBe(life + 9);
+  });
+
+  it('Cavern-Hoard Dragon: {X} less for the most artifacts any one opponent controls', () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 3; i++) give(g, 'bob', 'Trinket', 'battlefield');
+    for (let i = 0; i < 2; i++) give(g, 'carol', 'Trinket', 'battlefield');
+    const dragon = give(g, 'alice', 'Cavern-Hoard Dragon', 'hand');
+    g.players.alice!.pool.R = 2;
+    g.players.alice!.pool.C = 3;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: dragon })).toBeTruthy();
+    g.players.alice!.pool.C = 4;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: dragon }));
+    expect(g.objects[dragon]!.zone).toBe('battlefield');
+  });
+
+  it('Laelia: once for each batch of cards exiled from your library', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const laelia = give(g, 'alice', 'Laelia Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Exile Two', 'hand') }));
+    expect(g.objects[laelia]!.counters['+1/+1']).toBe(1);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mill Three', 'hand') }));
+    expect(g.objects[laelia]!.counters['+1/+1']).toBe(1);
+  });
+
+  it('Steel Hellkite: only permanents of the players it dealt combat damage to', () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    const kite = give(g, 'alice', 'Steel Hellkite', 'battlefield');
+    const [theirs, other, mine] = [give(g, 'bob', 'Trinket', 'battlefield'), give(g, 'carol', 'Trinket', 'battlefield'), give(g, 'alice', 'Trinket', 'battlefield')];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: kite, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: kite, ability: 0, x: 1 }));
+    expect([g.objects[theirs]!.zone, g.objects[other]!.zone, g.objects[mine]!.zone]).toEqual(['graveyard', 'battlefield', 'battlefield']);
+  });
+
+  it('Combustible Gearhulk: the opponent chooses; declining, they take the milled cards\' total mana value', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lib = g.zones.library.alice!;
+    for (const name of ['Ogre Three', 'Bear', 'Trinket']) {
+      const id = give(g, 'alice', name, 'library');
+      lib.splice(lib.indexOf(id), 1);
+      lib.unshift(id);
+    }
+    const life = g.players.bob!.life;
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Combustible Gearhulk', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'may', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'may', yes: false } }));
+    expect(g.players.bob!.life).toBe(life - 6);
+    expect(g.zones.hand.alice!.length).toBe(hand);
+  });
+
+  it('Finale of Revelation: X of 10 or more does the rest instead', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const hand = g.zones.hand.alice!.length;
+    g.players.alice!.pool.U = 2;
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Finale of Revelation', 'hand'), x: 2 }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 2);
   });
 });

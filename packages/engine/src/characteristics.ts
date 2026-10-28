@@ -772,6 +772,7 @@ export function matchesFilter(
   if (f.notHistoric && (c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   // "a creature dealt damage by ~ this turn"
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
+  if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;

@@ -418,6 +418,8 @@ export interface ObjectFilter {
   notObject?: string;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
+  /** Steel Hellkite: its controller was dealt combat damage by the source this turn. */
+  controllerHitBySource?: true;
   /** Oran-Rief: "each green creature that entered this turn" */
   enteredThisTurn?: true;
 }
@@ -488,7 +490,8 @@ export type Amount = number | 'X' | AmountExpr;
  */
 export type AmountExpr = (
   /** Permanents on the battlefield matching a filter (from the controller's point of view). */
-  | { kind: 'count'; filter: ObjectFilter }
+  // Cavern-Hoard Dragon: `most` — the greatest number any one opponent controls.
+  | { kind: 'count'; filter: ObjectFilter; most?: true }
   /** Cards in hands, graveyards or libraries. */
   /** `player`: "in target opponent's hand" — that player's cards (`who` is then ignored). */
   /** `least`: the fewest any one of those players has (Shelldock Isle: "a library has twenty or fewer cards in it"). */
@@ -516,7 +519,8 @@ export type AmountExpr = (
   /** "that much" / "that many": the amount of the event that triggered the ability. */
   | { kind: 'event' }
   /** CR 702.40a (storm): spells cast before that spell this turn. */
-  | { kind: 'cast_before'; of: Ref }
+  // Thousand-Year Storm: only spells you cast, and only those that match.
+  | { kind: 'cast_before'; of: Ref; filter?: ObjectFilter; yours?: true }
   /** CR 903.8: times you've cast your commander from the command zone this game. */
   | { kind: 'commander_casts' }
   /** CR 702.33c (multikicker): how many times the spell was kicked. */
@@ -542,7 +546,8 @@ export type AmountExpr = (
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
   | { kind: 'discarded_this_way'; max?: true }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
-  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard'; types?: string[]; notTypes?: string[]; token?: boolean }
+  // Combustible Gearhulk: `stat` — "the total mana value of those cards" rather than how many.
+  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard'; types?: string[]; notTypes?: string[]; token?: boolean; stat?: 'mana_value' }
   /** "You gain life equal to the damage dealt this way": what this resolution's damage effects dealt. */
   | { kind: 'damage_this_way' }
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */

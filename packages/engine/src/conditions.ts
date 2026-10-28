@@ -69,7 +69,7 @@ export interface TurnLog {
   /** Players who activated a loyalty ability this turn (The Chain Veil). */
   loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
-  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean }[];
+  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; source?: ObjectId; zcc?: number }[];
 }
 
 export function newTurnLog(): TurnLog {
@@ -142,7 +142,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
           const s = g.objects[e.source]!;
           const c = chars(g, s);
-          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander) });
+          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander), source: s.id, zcc: s.zcc });
         }
         if (e.to.kind === 'permanent') {
           const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
@@ -223,6 +223,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'step': {
       if (cond.yours && g.active !== controller) return false;
       if (cond.combat) return ['beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat'].includes(g.step);
+      // Moraug: "if it's your main phase" — either one (CR 505.1).
+      if (cond.main) return g.step === 'main1' || g.step === 'main2';
       return g.step === cond.step;
     }
     case 'max_speed':

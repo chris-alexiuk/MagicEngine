@@ -240,6 +240,13 @@ const MANA_RUN = /^(?:\{(?:\d+|[WUBRGCSX]|[WUBRG2]\/[WUBRGP])\})+$/;
 
 /** "Sacrifice a creature", "Sacrifice another artifact", "Discard a card" — costs where the player picks what. */
 export function choiceCost(item: string, b: Binder | null): EffectNode | null {
+  const c = choiceCostOf(item, b);
+  // Blazing Shoal, Osgir: "exile a red card with mana value X" — what a cost may choose isn't counted against the X
+  // announced, so the line stays unread.
+  return c && JSON.stringify(c.filter ?? {}).includes('"n":"X"') ? null : c;
+}
+
+function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
   // Chatterfang: "Sacrifice X Squirrels" — as many as the X announced.
   const sacX = /^[Ss]acrifice X (.+)$/.exec(item);
   if (sacX && b) {
@@ -1140,7 +1147,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
-  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents))$/.exec(t);
+  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
     if (!pf || pf.plural) return null;
@@ -1154,7 +1161,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (pf.filter.owner) return null;
       pf.filter.owner = 'you';
     }
-    const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, '').replace(/ you$/, '').replace(/ to (?:an opponent|one of your opponents)$/, ' to a player'));
+    // Great Train Heist: "Choose target opponent. Whenever a creature you control deals combat damage to that player this
+    // turn, …" — the player the spell targeted.
+    const toTarget = / to TARGETPLAYER(\d+)$/.exec(other[2]!);
+    const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, '').replace(/ you$/, '').replace(/ to (?:an opponent|one of your opponents|TARGETPLAYER\d+)$/, ' to a player'));
     if (type === 'attacks' && / you$/.test(other[2]!)) b.named['that creature'] = { ref: 'trigger_object' };
     // Old Gnawbone: "Whenever a creature you control deals combat damage to a player, create that many Treasure tokens."
     if (type === 'deals_combat_damage') b.eventAmount = true;
@@ -1162,7 +1172,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       trigger: {
         type,
         subject: { ref: 'all', filter: pf.filter },
-        ...(type === 'deals_combat_damage' ? { to: / to a player$/.test(other[2]!) ? 'player' : 'opponent' } : {}),
+        ...(type === 'deals_combat_damage' ? { to: toTarget ? 'target' : / to a player$/.test(other[2]!) ? 'player' : 'opponent' } : {}),
+        ...(toTarget ? { index: Number(toTarget[1]) } : {}),
         ...(/ you$/.test(other[2]!) ? { defender: 'you_only' } : {}),
         // CR 702.83b: it's the only creature declared as an attacker.
         ...(/ alone$/.test(other[2]!) ? { alone: true } : {}),
@@ -1239,6 +1250,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       const { zone: _z, owner: _o, ...filter } = pf.filter;
       return { trigger: { type: 'leave_graveyard', filter, each: true }, it: { ref: 'trigger_object' }, player: null };
     }
+  }
+  // Laelia, the Blade Reforged: "Whenever one or more cards are put into exile from your library and/or your graveyard"
+  const exiledFromYours = /^one or more cards are put into exile from your (library|graveyard)(?: and\/or your (library|graveyard))?$/.exec(t);
+  if (exiledFromYours) {
+    const from = [exiledFromYours[1]!, ...(exiledFromYours[2] ? [exiledFromYours[2]] : [])];
+    return { trigger: { type: 'leave_graveyard', from, to: 'exile' }, it: { ref: 'self' }, player: null };
   }
   // "Whenever one or more cards leave your graveyard", "… creature cards …"
   const leaveGy = /^one or more (cards|.+? cards) leave your graveyard$/.exec(t);
@@ -2753,7 +2770,10 @@ export const chapterRule: GrammarRule = {
     const chapters = m[1]!.split(', ').map((r) => ROMAN[r]!);
     const b = new Binder(env);
     b.it = { ref: 'self' };
-    const program = parseProgram(m[2]!.replace(/^\w/, (c) => c.toUpperCase()), b);
+    // Summon: Bahamut: "IV — Mega Flare — This creature deals …" — a name for the chapter, with no rules meaning (CR 207.2c).
+    const named = /^([A-Z][A-Za-z' ]*?) — (.+)$/s.exec(m[2]!);
+    const body = named && !/^Choose\b/.test(named[1]!) ? named[2]! : m[2]!;
+    const program = parseProgram(body.replace(/^\w/, (c) => c.toUpperCase()), b);
     if (!program) return null;
     const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: { type: 'chapter', chapters }, ...program };
     return node;
