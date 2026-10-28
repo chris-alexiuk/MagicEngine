@@ -121,6 +121,13 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         .map((id) => g.objects[id]!)
         .filter((o) => o && (!owners || owners.includes(o.controller)) && (!ownedBy || ownedBy.includes(o.owner)) && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null }));
     }
+    case 'moved_onto': {
+      // "Return all creature cards from your graveyard to the battlefield. They gain haste until end of turn."
+      return (ctx.resolution?.movedOnto ?? ctx.trigger?.movedOnto ?? []).flatMap((r) => {
+        const o = g.objects[r.id];
+        return o && o.zcc === r.zcc ? [o] : [];
+      });
+    }
     case 'created': {
       // "the token", "sacrifice it at the beginning of the next end step"
       const made = ctx.resolution?.created ?? ctx.trigger?.created ?? [];

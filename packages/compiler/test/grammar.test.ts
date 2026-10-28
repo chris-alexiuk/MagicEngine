@@ -1389,7 +1389,8 @@ describe('slice 127', () => {
     expect(fiend).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'reflexive', abilities: [{ targets: [{ filter: { controller: 'opponent' } }], effects: [{ type: 'destroy' }] }] }] }] });
     expect(parse('Whenever you attack, you may pay {1}{W}. When you do, target creature gains lifelink until end of turn.', 'Creature — Gargoyle', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{1}{W}', effects: [{ type: 'reflexive' }] }] });
     // "that creature" after an action on some other object doesn't read (it isn't something the new ability sees).
-    expect(parse("At the beginning of your end step, you may sacrifice another creature. When you do, Zia deals damage equal to that creature's power to any target.", 'Creature — Dragon', 'Zia').unparsed).toHaveLength(1);
+    // "that creature" after a sacrifice: the sacrificed creature as it last existed (slice 214).
+    expect(parse("At the beginning of your end step, you may sacrifice another creature. When you do, Zia deals damage equal to that creature's power to any target.", 'Creature — Dragon', 'Zia').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'reflexive', abilities: [{ effects: [{ type: 'deal_damage', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'power' } }] }] }] }] });
   });
 });
 
@@ -1855,7 +1856,8 @@ describe('slice 161', () => {
     expect(parse("Whenever you attack, for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a planeswalker they control.", 'Legendary Creature — Human Knight', 'A').abilities[0]).toMatchObject({ trigger: { type: 'you_attack' }, effects: [{ type: 'create_token', attackingEach: true, orPlaneswalker: true, tapped: true }] });
     expect(parse('Exile the top card of target opponent\'s library.', 'Sorcery', 'X').abilities[0]).toMatchObject({ targets: [{ what: 'player' }] });
     expect(parse("III — Exile the top three cards of target opponent's library. You may play those cards this turn.", 'Enchantment — Saga', 'K').abilities[0]).toMatchObject({ targets: [{ what: 'player' }], effects: [{ type: 'exile_top', amount: 3, who: { ref: 'target', index: 0 } }] });
-    expect(parse('Return each creature card with mana value X or less from your graveyard to the battlefield. Exile those creatures at the beginning of your next upkeep.', 'Sorcery', 'R').unparsed).toHaveLength(1);
+    // Rally the Ancestors: "those creatures" — the permanents the cards became (slice 214).
+    expect(parse('Return each creature card with mana value X or less from your graveyard to the battlefield. Exile those creatures at the beginning of your next upkeep.', 'Sorcery', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'delayed', effects: [{ type: 'move', what: { ref: 'moved_onto' }, to: 'exile' }] }] });
   });
   it('reads Academy Manufactor, Guardian Project, Mangara, Veil of Summer and The Ozolith', () => {
     expect(parse('If you would create a Clue, Food, or Treasure token, instead create one of each.', 'Artifact Creature — Assembly-Worker', 'M').abilities[0]).toMatchObject({ effect: { type: 'token_one_of_each', tokens: [{ name: 'Clue' }, { name: 'Food' }, { name: 'Treasure' }] } });

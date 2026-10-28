@@ -883,6 +883,7 @@ export function matchesFilter(
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
   // "a card named …" (CR 201.2)
   if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
+  if (f.notName && (g.cards[o.card]?.faces.some((x) => x.name === f.notName) || g.cards[o.card]?.name === f.notName)) return false;
   if (f.manaCostIs && !f.manaCostIs.includes(faceOf(g, o).manaCost)) return false;
   // "with a +1/+1 counter on it" (CR 122.1); looking back, the counters it had on the battlefield (CR 603.10a).
   const last = ctx.lookBack && o.zone !== 'battlefield' ? g.lastKnown?.[o.id] : undefined;

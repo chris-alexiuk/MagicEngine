@@ -132,6 +132,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
   // "creature that was dealt damage this turn"
   [/ that was dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
+  // Tiamat: "Dragon cards not named Tiamat" (CR 201.2).
+  [/ not named (~|[A-Z].*)$/, (f, m, b) => !f.notName && ((f.notName = m[1] === '~' ? b.env.cardName : m[1]!.trim()), true)],
   // "a card named Pir, Imaginative Rascal" (CR 201.2) — after any zone words are peeled off.
   [/ named ([A-Z].*)$/, (f, m) => !f.name && ((f.name = m[1]!.trim()), true)],
   // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
@@ -308,9 +310,9 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // "each Fungus and Saproling you control": either subtype.
   // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
   // Sapling Nursery: "Treefolk and Forests you control" — a word that's its own plural goes with either.
-  const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr'];
+  const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];
   // Valley Rotcaller: "Squirrels, Bats, Lizards, and Rats you control" — a list of them.
-  rest = rest.replace(/\b([A-Z][\w-]*)(,?) and (?=([A-Z][\w-]*))/g, (m, a: string, comma: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a)) ? `${a}${comma} or ` : m));
+  rest = rest.replace(/\b([A-Z][\w-]*)(,?) and (?=([A-Z][\w-]*))/g, (m, a: string, comma: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a) || SAME_PLURAL.includes(z)) ? `${a}${comma} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
   // describe every alternative.
@@ -573,6 +575,12 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
     const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
     if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });
+    // Gisa, Glorious Resurrector: "all creature cards exiled with Gisa" — of those, the ones of that type.
+    const exiledKind = /^(all|each) (artifact|creature|enchantment|land|instant|sorcery|planeswalker|nonland|noncreature) cards exiled with ~$/i.exec(t);
+    if (exiledKind) {
+      const pf = parseFilter(`${exiledKind[2]} cards`, b);
+      if (pf && !pf.filter.zone) return set(b, { ref: { ref: 'all', filter: { ...pf.filter, zone: 'exile', exiledWithSource: true } }, plural: true, targeted: false });
+    }
     // "return ~ from your graveyard to your hand": the ability functions from the graveyard (CR 113.6m).
     if (t === '~ from your graveyard') {
       b.selfZone = 'graveyard';
@@ -619,6 +627,14 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       }
       // "each of up to two other target creatures" (CR 115.4)
       const eachOf = /^each of (up to )?(\w+) (other )?target (.+)$/i.exec(t);
+      // Silkguard: "each of up to X target creatures you control" — as many as the X announced (CR 601.2b–c).
+      if (eachOf && eachOf[2] === 'X') {
+        const pf = parseFilter(eachOf[4]!, b);
+        if (!pf || !pf.plural) return null;
+        if (eachOf[3]) pf.filter.other = true;
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(eachOf[1] ? { upTo: true } : {}) };
+        return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
+      }
       if (eachOf) {
         const count = parseAmount(eachOf[2]!);
         const pf = typeof count === 'number' && count >= 2 ? parseFilter(eachOf[4]!, b) : null;
@@ -711,7 +727,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Bare plurals: "Creatures you control", "Other Zombies you control".
     const bare = /^(other )?(.+)$/i.exec(t)!;
     // Valley Floodcaller: "Birds, Frogs, Otters, and Rats you control get +1/+1" — every creature of those types.
-    let pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s, (?:[A-Z]\w+s, )*and [A-Z]\w+s\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
+    // Silkguard: "Auras, Equipment, and modified creatures you control" — likewise.
+    let pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s?, (?:[A-Z]\w+s?, )*and (?:[A-Z]\w+s|[a-z]+ [a-z]+s)\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
     // Sorin, Vengeful Bloodlord: "creatures and planeswalkers you control have lifelink" — anything that's either.
     const bareList = pf ? null : /^((?:[a-z-]+, )*[a-z-]+s),? and ([a-z-]+s\b.*)$/.exec(bare[2]!);
     if (bareList && !/ and /.test(bareList[2]!)) pf = parseFilter(`${bareList[1]}, or ${bareList[2]}`.replace(/^(\w+), or /, '$1 or '), b);

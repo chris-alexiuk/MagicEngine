@@ -538,7 +538,9 @@ function collectExileKeywords(g: GameState, batch: GameEvent[]): void {
     if (e.type === 'step' && e.step === 'upkeep') {
       for (const id of g.zones.exile) {
         const o = g.objects[id]!;
-        if (!o.suspended || o.owner !== g.active || !(o.counters.time ?? 0)) continue;
+        // CR 702.62b: suspended — in exile, with suspend, and with a time counter (Rousing Refrain exiles itself so).
+        const suspend = o.suspended || g.cards[o.card]?.faces[0]?.keywords.some((k) => k.id === 'suspend');
+        if (!suspend || o.owner !== g.active || !(o.counters.time ?? 0)) continue;
         g.triggers.push({
           id: `t${g.nextId++}`,
           controller: o.owner,

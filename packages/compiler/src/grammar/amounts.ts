@@ -120,6 +120,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Otharri: "for each experience counter you have" (CR 122.1: counters on a player).
+  const playerCounter = /^(\w+) counter you have$/.exec(t);
+  if (playerCounter) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounter[1]! };
   // Coalition Relic: "for each charge counter removed this way".
   if (/^(?:\S+ )?counter removed this way$/.test(t)) return { kind: 'counters_removed' };
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).

@@ -157,7 +157,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // on the battlefield, and you control it.
   if (/^(?:it|that card|that permanent) entered (?:the battlefield )?under your control$/.test(t) && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { zone: 'battlefield', controller: 'you' } };
   // Valakut Exploration: "if there are cards exiled with this enchantment" (CR 607.2a).
-  if (/^there (?:are|is) (?:one or more )?cards? exiled with ~$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'exile', who: 'each', filter: { exiledWithSource: true } }, op: 'ge', n: 1 };
+  // Ugin's Labyrinth: "If a card is exiled with this land".
+  if (/^there (?:are|is) (?:one or more )?cards? exiled with ~$|^(?:a card is|one or more cards are) exiled with ~$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'exile', who: 'each', filter: { exiledWithSource: true } }, op: 'ge', n: 1 };
   // Bonehoard Dracosaur: "If you exiled a land card this way", "If you exiled a nonland card this way".
   const youMoved = /^you (exiled|milled|sacrificed|destroyed) (?:a|an|one or more) (.+?) this way$/.exec(t);
   if (youMoved) {

@@ -177,6 +177,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   cost: Cost;
   /** True for mana abilities (CR 605): they don't use the stack. */
   mana?: true;
+  /** Lair of the Hydra: "X can't be 0." — the least X it can be activated with. */
+  xMin?: number;
   /** CR 602.5d: "Activate only as a sorcery." */
   /** 'instant': "Activate only as an instant" — for a mana ability, only with priority (Lion's Eye Diamond). */
   timing?: 'sorcery' | 'instant';
@@ -418,6 +420,8 @@ export interface ObjectFilter {
   orSource?: true;
   /** "a card named Pir, Imaginative Rascal" */
   name?: string;
+  /** Tiamat: "Dragon cards not named Tiamat". */
+  notName?: string;
   /** Urza's Saga: "an artifact card with mana cost {0} or {1}" — its printed mana cost is one of these (CR 202.1). */
   manaCostIs?: string[];
   /** "creature that was dealt damage this turn" */
@@ -505,6 +509,8 @@ export type Ref =
   | { ref: 'enchanted_player' }
   /** "the token", "those tokens": what the effect just created. */
   | { ref: 'created' }
+  /** "Return all creature cards from your graveyard to the battlefield. They gain haste …" — the permanents they became. */
+  | { ref: 'moved_onto' }
   /** CR 701.38: "each permanent with the most votes or tied for most votes". */
   | { ref: 'voted' }
   /** "Target player sacrifices a creature. You gain life equal to that creature's toughness." — what this effect sacrificed. */

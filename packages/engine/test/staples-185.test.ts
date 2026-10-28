@@ -348,6 +348,20 @@ const CARDS = [
   makeCard({ name: 'Kraken Lite', type_line: 'Creature — Kraken', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: '' }),
   makeCard({ name: 'Klauth Lite', type_line: 'Legendary Creature — Dragon', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "Whenever this creature attacks, add X mana in any combination of colors, where X is the total power of attacking creatures. Spend this mana only to cast spells. Until end of turn, you don't lose this mana as steps and phases end." }),
   makeCard({ name: 'Pact Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Choose a creature type. Target player draws X cards and loses X life, where X is the number of creatures they control of the chosen type.' }),
+  makeCard({ name: 'Intuition Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Search your library for three cards and reveal them. Target opponent chooses one. Put that card into your hand and the rest into your graveyard. Then shuffle.' }),
+  makeCard({ name: 'Gifts Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Search your library for up to four cards with different names and reveal them. Target opponent chooses two of those cards. Put the chosen cards into your graveyard and the rest into your hand. Then shuffle.' }),
+  makeCard({ name: 'Silkguard Lite', type_line: 'Instant', mana_cost: '{X}{G}', colors: ['G'], oracle_text: 'Put a +1/+1 counter on each of up to X target creatures you control.\nAuras, Equipment, and modified creatures you control gain hexproof until end of turn.' }),
+  makeCard({ name: 'Hydra Lair Lite', type_line: 'Land', mana_cost: '', oracle_text: "{T}: Add {G}.\n{X}{G}: Until end of turn, this land becomes an X/X green Hydra creature. It's still a land. X can't be 0." }),
+  makeCard({ name: 'Labyrinth Lite', type_line: 'Land', mana_cost: '', oracle_text: 'Imprint — When this land enters, you may exile a colorless card with mana value 7 or greater from your hand.\n{T}: Add {C}. If a card is exiled with this land, add {C}{C} instead.' }),
+  makeCard({ name: 'Big Eldrazi', type_line: 'Creature — Eldrazi', mana_cost: '{7}', cmc: 7, power: '7', toughness: '7', oracle_text: '' }),
+  makeCard({ name: 'Parting Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Search your library for two cards. Put one into your hand and the other into your graveyard. Then shuffle.' }),
+  makeCard({ name: 'Emiel Lite', type_line: 'Creature — Unicorn', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Whenever another creature you control enters, you may pay {G/W}. If you do, put a +1/+1 counter on it. If it's a Unicorn, put two +1/+1 counters on it instead." }),
+  makeCard({ name: 'Unicorn Lite', type_line: 'Creature — Unicorn', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Refrain Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Add {R} for each card in target opponent's hand. Until end of turn, you don't lose this mana as steps and phases end. Exile this spell with three time counters on it.\nSuspend 3—{1}{R}" }),
+  makeCard({ name: 'Ziatora Lite', type_line: 'Legendary Creature — Demon Dragon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "At the beginning of your end step, you may sacrifice another creature. When you do, this creature deals damage equal to that creature's power to any target and you create three Treasure tokens." }),
+  makeCard({ name: 'Wake Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return all artifact cards from your graveyard to the battlefield. They gain haste until end of turn.' }),
+  makeCard({ name: 'Construct Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Judgment Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'For any number of opponents, destroy target nonland permanent that player controls.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -3948,6 +3962,122 @@ describe('staples (slice 213): total mana value, tapped and attacking, fallbacks
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ao Lite', 'hand') }));
     expect(g.objects[bear]!.counters['+1/+1']).toBe(2);
     expect(g.objects[trinket]!.counters['+1/+1'] ?? 0).toBe(0);
+  });
+});
+
+describe('staples (slice 214)', () => {
+  it('Intuition: the opponent chooses which revealed card goes to your hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [bear, ogre, cub] = ['Bear', 'Ogre Three', 'Cub'].map((n) => give(g, 'alice', n, 'library'));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Intuition Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [bear!, ogre!, cub!] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob', min: 1, max: 1 });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [cub!] } }));
+    expect([bear, ogre, cub].map((id) => g.objects[id!]!.zone)).toEqual(['graveyard', 'graveyard', 'hand']);
+  });
+  it('Gifts Ungiven: up to four with different names; the two the opponent chooses go to the graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [bear, ogre, cub, bear2] = ['Bear', 'Ogre Three', 'Cub', 'Bear'].map((n) => give(g, 'alice', n, 'library'));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Gifts Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [bear!, bear2!, cub!] } })).toMatch(/different names/);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [bear!, ogre!, cub!] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob', min: 2, max: 2 });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [bear!, ogre!] } }));
+    expect([bear, ogre, cub, bear2].map((id) => g.objects[id!]!.zone)).toEqual(['graveyard', 'graveyard', 'hand', 'library']);
+  });
+  it("Lair of the Hydra: X can't be 0", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lair = give(g, 'alice', 'Hydra Lair Lite', 'battlefield');
+    g.players.alice!.pool.G = 4;
+    expect(illegal(g, { type: 'activate', player: 'alice', object: lair, ability: 0, x: 0 })).toMatch(/X can't be less than 1/);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: lair, ability: 0, x: 3 }));
+    expect(chars(g, g.objects[lair]!)).toMatchObject({ power: 3, toughness: 3 });
+  });
+  it("Ugin's Labyrinth: {C}{C} while a card is exiled with it", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const big = give(g, 'alice', 'Big Eldrazi', 'hand');
+    const lab = give(g, 'alice', 'Labyrinth Lite', 'hand');
+    g = act(g, { type: 'play_land', player: 'alice', object: lab });
+    g = settle(g);
+    if (g.pending?.kind === 'may') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    if (g.pending?.kind === 'choose_objects') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [big] } });
+    g = settle(g);
+    expect(g.objects[big]!.zone).toBe('exile');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: lab, ability: 0 });
+    expect(g.players.alice!.pool.C).toBe(2);
+  });
+  it('Final Parting: one of the two found cards to your hand, the other to your graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [bear, ogre] = ['Bear', 'Ogre Three'].map((n) => give(g, 'alice', n, 'library'));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Parting Lite', 'hand') }));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [bear!, ogre!] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'alice', min: 1, max: 1 });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [ogre!] } }));
+    expect([g.objects[bear!]!.zone, g.objects[ogre!]!.zone]).toEqual(['graveyard', 'hand']);
+  });
+  it('Emiel the Blessed: two counters instead on a Unicorn, if you paid', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Emiel Lite', 'battlefield');
+    for (const [name, want] of [['Cub', 1], ['Unicorn Lite', 2]] as const) {
+      g.players.alice!.pool.G = 1;
+      const id = give(g, 'alice', name, 'hand');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: id }));
+      if (g.pending?.kind === 'pay') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } }));
+      expect(g.objects[id]!.counters['+1/+1']).toBe(want);
+    }
+  });
+  it('Rousing Refrain: exiled with three time counters, it is suspended (CR 702.62b)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const refrain = give(g, 'alice', 'Refrain Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: refrain, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.objects[refrain]).toMatchObject({ zone: 'exile', counters: { time: 3 } });
+    expect(g.players.alice!.restricted?.reduce((n, r) => n + r.amount, 0)).toBe(g.zones.hand.bob!.length);
+    g = toStep(toStep(g, 'main1', 'bob'), 'main1', 'alice');
+    expect(g.objects[refrain]!.counters.time).toBe(2);
+  });
+  it("Ziatora: the sacrificed creature's power, as it last existed (CR 608.2h)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Ziatora Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    const life = g.players.bob!.life;
+    g = toStep(g, 'end', 'alice');
+    g = settle(g);
+    for (let i = 0; i < 6 && g.pending; i++) {
+      const p = g.pending;
+      if (p.kind === 'may') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } }));
+      else if (p.kind === 'sacrifice') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'sacrifice', objects: [ogre] } }));
+      else if (p.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }));
+      else break;
+    }
+    expect(g.objects[ogre]!.zone).toBe('graveyard');
+    expect(g.players.bob!.life).toBe(life - 5);
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(3);
+  });
+  it('Wake the Past: "they" are the permanents the returned cards became', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const c = give(g, 'alice', 'Construct Lite', 'graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Wake Lite', 'hand') }));
+    expect(g.objects[c]!.zone).toBe('battlefield');
+    expect(chars(g, g.objects[c]!).keywords.some((k) => k.id === 'haste')).toBe(true);
+  });
+  it("Windgrace's Judgment: a target for any number of opponents", () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const b = give(g, 'bob', 'Trinket', 'battlefield');
+    const c = give(g, 'carol', 'Trinket', 'battlefield');
+    const judgment = give(g, 'alice', 'Judgment Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: judgment, targets: [[{ kind: 'object', object: b }]] }));
+    expect([g.objects[b]!.zone, g.objects[c]!.zone]).toEqual(['graveyard', 'battlefield']);
+  });
+  it('Silkguard: a counter on each of up to X targets; Auras, Equipment and modified creatures gain hexproof', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b, c] = [0, 1, 2].map(() => give(g, 'alice', 'Bear', 'battlefield'));
+    const silk = give(g, 'alice', 'Silkguard Lite', 'hand');
+    g.players.alice!.pool.G = 3;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: silk, x: 2, targets: [[a!, b!, c!].map((object) => ({ kind: 'object' as const, object }))] })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: silk, x: 2, targets: [[a!, b!].map((object) => ({ kind: 'object' as const, object }))] }));
+    expect([a, b, c].map((id) => g.objects[id!]!.counters['+1/+1'] ?? 0)).toEqual([1, 1, 0]);
+    const hexproof = (id: string) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'hexproof');
+    expect([a, b, c].map((id) => hexproof(id!))).toEqual([true, true, false]);
   });
 });
 

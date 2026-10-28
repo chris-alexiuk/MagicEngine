@@ -1006,6 +1006,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (activationProhibited(g, player, o, false)) throw new RulesError(`You can’t activate ${nameOf(g, o)}’s abilities now.`);
   const limit = perTurnLimit(g, o, ability);
   if (limit && activationsThisTurn(g, o, index) >= limit) throw new RulesError(limit === 1 ? 'That ability can be activated only once each turn.' : `That ability can be activated only ${limit} times each turn.`);
+  // Lair of the Hydra: "X can't be 0."
+  if (ability.xMin !== undefined && choices.x < ability.xMin) throw new RulesError(`X can't be less than ${ability.xMin}.`);
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
   // Chatterfang: "Sacrifice X Squirrels" — X is announced as it's activated (CR 107.3a, 602.2b).

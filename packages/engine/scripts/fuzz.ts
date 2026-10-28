@@ -226,6 +226,14 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         const sub = (id: string) => g.cards[g.objects[id]!.card]!.faces[0]!.subtypes;
         pool = [pool[0]!, ...pool.slice(1).filter((id) => sub(id).some((t) => sub(pool[0]!).includes(t)))];
       }
+      // Gifts Ungiven: cards with different names.
+      if (p.distinctNames) {
+        const seen = new Set<string>();
+        pool = pool.filter((id) => {
+          const name = g.cards[g.objects[id]!.card]!.name;
+          return seen.has(name) ? false : (seen.add(name), true);
+        });
+      }
       // Protean Hulk: keep under the total mana value.
       if (p.totalMV) {
         let left = p.totalMV.max;

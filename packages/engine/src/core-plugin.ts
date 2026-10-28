@@ -503,6 +503,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of ids) moveObject(ctx.g, id, 'library', ctx.events, { position: 'bottom' });
       return true;
     }
+    const movedOnto: ObjectRef[] = [];
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
         moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : 'top' });
@@ -521,6 +522,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (node.attachTo && faceOf(ctx.g, o).subtypes.includes('Aura') && (!onto || !canAttach(ctx.g, o, onto))) continue;
         moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}) });
         const now = ctx.g.objects[o.id]!;
+        if (now.zone === 'battlefield') movedOnto.push({ id: now.id, zcc: now.zcc });
         if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
       } else if (node.until === 'opponent_monarch') {
         // Palace Jailer: back to the battlefield when an opponent of this ability's controller becomes the monarch.
@@ -540,6 +542,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // the source or what the effect targets ("Return target spell to its owner's hand", Venser, Narset's Reversal).
         if (o.zone === 'stack' && o.id !== ctx.source?.id && (node.what as Ref | undefined)?.ref !== 'target') continue;
         moveObject(ctx.g, o.id, to, ctx.events);
+        // Rousing Refrain: "Exile ~ with three time counters on it."
+        const withCounters = node.counters as Record<string, number> | undefined;
+        if (withCounters && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') for (const [k, n] of Object.entries(withCounters)) ctx.g.objects[o.id]!.counters[k] = (ctx.g.objects[o.id]!.counters[k] ?? 0) + n;
         // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
         if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
         // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
@@ -547,6 +552,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
       }
     }
+    if (to === 'battlefield' && ctx.resolution) ctx.resolution.movedOnto = movedOnto;
     return true;
   },
 
@@ -2673,7 +2679,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ctx.events.push({ type: 'searched', player, owner });
           return true;
         }
-        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}), ...(node.totalMV !== undefined ? { totalMV: totalMVLimit(ctx, node.totalMV, candidates) } : {}) } };
+        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}), ...(node.totalMV !== undefined ? { totalMV: totalMVLimit(ctx, node.totalMV, candidates) } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
@@ -2713,6 +2719,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           return true;
         }
       }
+      // Gifts Ungiven: "up to four cards with different names".
+      if (node.distinctNames && new Set(chosen.map((id) => nameOf(g, g.objects[id]!))).size !== chosen.length) throw new RulesError('The cards must have different names.');
+      // Intuition: "… and reveal them. Target opponent chooses one." — that player picks among the revealed cards.
+      const divide = node.divide as { chooser: Ref; count: number } | undefined;
+      if (divide && chosen.length) {
+        const chooser = refPlayers(ctx, divide.chooser)[0];
+        // Final Parting: you choose among cards you found (not revealed); Intuition: they're revealed for the opponent.
+        const shown = Boolean(node.reveal) || chooser !== player;
+        if (shown) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
+        if (chooser && chosen.length > divide.count) {
+          memo.found = chosen;
+          return { ask: { kind: 'choose_objects', player: chooser, candidates: chosen, min: divide.count, max: divide.count, text: `Choose ${divide.count} of ${shown ? 'the revealed' : 'those'} cards to put into your ${(node.divide as { chosenTo: string }).chosenTo}.`, ...(shown ? { revealed: [...chosen] } : {}) } };
+        }
+      }
       // Cultivate: revealed, then the player picks which one goes onto the battlefield.
       if (split && chosen.length) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
       if (split && chosen.length > 1) {
@@ -2728,6 +2748,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (id === first) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(split.tapped ? { tapped: true } : {}) });
         else moveObject(g, id, 'hand', ctx.events);
       }
+      shuffleInPlace(g, zoneList(g, 'library', owner));
+      ctx.events.push({ type: 'shuffled', player });
+      return true;
+    }
+    // Intuition: "Put that card into your hand and the rest into your graveyard."
+    const divide = node.divide as { chooser: Ref; count: number; chosenTo: 'hand' | 'graveyard'; restTo: 'hand' | 'graveyard' } | undefined;
+    if (divide) {
+      let picked = chosen;
+      if (memo.found && chosen.length > divide.count) {
+        const pick = answerOf(ctx, 'choose_objects');
+        if (!pick || pick.objects.length !== divide.count || new Set(pick.objects).size !== pick.objects.length || !pick.objects.every((id) => chosen.includes(id))) throw new RulesError(`Choose ${divide.count} of the revealed cards.`);
+        picked = pick.objects;
+      }
+      for (const id of chosen) if (g.objects[id]?.zone === 'library') moveObject(g, id, picked.includes(id) ? divide.chosenTo : divide.restTo, ctx.events);
       shuffleInPlace(g, zoneList(g, 'library', owner));
       ctx.events.push({ type: 'shuffled', player });
       return true;
@@ -3658,12 +3692,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       targets: ctx.targets.map((list) => list.map((t) => (t.kind === 'object' && ctx.resolution?.found?.[t.id] !== undefined ? { ...t, zcc: ctx.resolution.found[t.id]! } : t))),
       // Gift of Immortality: "return that card to the battlefield … Return this card to the battlefield attached to that
       // creature at the beginning of the next end step" — the creature as this resolution returned it (CR 400.7j).
-      ...(ctx.trigger || ctx.resolution?.created
+      ...(ctx.trigger || ctx.resolution?.created || ctx.resolution?.movedOnto
         ? {
             info: {
               ...ctx.trigger,
               ...(ctx.trigger?.object && ctx.resolution?.found?.[ctx.trigger.object.id] !== undefined ? { object: { id: ctx.trigger.object.id, zcc: ctx.resolution.found[ctx.trigger.object.id]! } } : {}),
               ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}),
+              // Rally the Ancestors: "Exile those creatures at the beginning of your next upkeep."
+              ...(ctx.resolution?.movedOnto ? { movedOnto: ctx.resolution.movedOnto } : {}),
             },
           }
         : {}),

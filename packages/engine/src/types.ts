@@ -350,6 +350,8 @@ export interface TriggerInfo {
   power?: number;
   /** Tokens the original ability created, for a delayed trigger ("sacrifice it at the next end step"). */
   created?: ObjectRef[];
+  /** What the original effect put onto the battlefield, for a delayed trigger ("Exile those creatures …"). */
+  movedOnto?: ObjectRef[];
   /** CR 603.12: what the resolution that created a reflexive ability rolled, and what it sacrificed (as it last existed). */
   dieResult?: number;
   lkiThisWay?: CostLKI;
@@ -507,6 +509,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** What the latest effect putting cards onto the battlefield put there ("They gain haste"). */
+  movedOnto?: ObjectRef[];
   /** How many times this ability has resolved this turn, counting this time ("if this is the second time …"). */
   abilityCount?: number;
   /** Cosmium Confluence: "Put three +1/+1 counters on a Cave you control. It becomes …" — the one chosen. */
@@ -607,7 +611,7 @@ export type PendingChoice =
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string; x?: { max?: number } }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
   /** sameLandType: the cards found must share a land type (Myriad Landscape). */
-  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true; totalMV?: { max: number; of: Record<ObjectId, number> } }
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true; totalMV?: { max: number; of: Record<ObjectId, number> }; distinctNames?: true }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
   | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
   /** CR 701.34a: any number of permanents and players that have counters. */

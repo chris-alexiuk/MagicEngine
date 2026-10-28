@@ -533,6 +533,11 @@ export const activatedRule: GrammarRule = {
       node.maxPerTurn = 1;
       andIf(node, { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } });
     }
+    // Lair of the Hydra: "X can't be 0." — announced as 1 or more (CR 107.3, 601.2b).
+    if (/ X can't be 0\.$/.test(effectText) && /\{X\}/.test(cost.mana ?? '')) {
+      effectText = effectText.replace(/ X can't be 0\.$/, '');
+      node.xMin = 1;
+    }
     for (let changed = true; changed; ) {
       changed = false;
       for (const [re, set] of ACTIVATION_LIMITS) {
