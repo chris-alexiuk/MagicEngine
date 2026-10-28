@@ -120,6 +120,20 @@ const CARDS = [
   makeCard({ name: 'Edict Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent sacrifices a creature of their choice.' }),
   makeCard({ name: 'Merfolk Lord', type_line: 'Creature — Merfolk', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Other Merfolk you control get +1/+1.' }),
   makeCard({ name: 'Merfolk Grunt', type_line: 'Creature — Merfolk', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Caduceus Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature has "Prevent all damage that would be dealt to this creature."\nEquip {0}' }),
+  makeCard({ name: 'Nabber Lite', type_line: 'Creature — Goblin Rogue', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever an opponent taps an artifact for mana, gain control of that artifact until the end of your next turn.' }),
+  makeCard({ name: 'Mind Stone Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Add {C}.' }),
+  makeCard({ name: 'Throttle Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'After this main phase, there are two additional combat phases.\nAt the beginning of each combat this turn, untap all creatures that attacked this turn.' }),
+  makeCard({ name: 'Palantir Lite', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: "At the beginning of your end step, put an influence counter on this artifact and scry 2. Then target opponent may have you draw a card. If that player doesn't, you mill X cards, where X is the number of influence counters on this artifact, and that player loses life equal to the total mana value of those cards." }),
+  makeCard({ name: 'Containment Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: 'Whenever you discard a card, you may exile that card from your graveyard. If you do, you may play that card this turn.' }),
+  makeCard({ name: 'Taunt Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Goad all creatures your opponents control. Until your next turn, those creatures can't block." }),
+  makeCard({ name: 'Maha Lite', type_line: 'Legendary Creature — Elemental Bird', mana_cost: '{0}', power: '6', toughness: '5', oracle_text: 'Creatures your opponents control have base toughness 1.' }),
+  makeCard({ name: 'Jarad Lite', type_line: 'Legendary Creature — Zombie Elf', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Sacrifice a Swamp and a Forest: Return this card from your graveyard to your hand.' }),
+  makeCard({ name: 'Swamp', type_line: 'Basic Land — Swamp', mana_cost: '', oracle_text: '({T}: Add {B}.)' }),
+  makeCard({ name: 'Gix Lite', type_line: 'Legendary Creature — Phyrexian Praetor', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever a creature deals combat damage to one of your opponents, its controller may pay 1 life. If they do, they draw a card.' }),
+  makeCard({ name: 'Caryatid Lite', type_line: 'Creature — Plant', mana_cost: '{0}', power: '0', toughness: '1', oracle_text: '{T}: Add one mana of any color. If you control a creature with power 4 or greater, add two mana of any one color instead.' }),
+  makeCard({ name: 'Chainer Lite', type_line: 'Legendary Creature — Human Minion', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Whenever a nontoken creature you control enters, if you didn't cast it from your hand, it gains haste until your next turn." }),
+  makeCard({ name: 'Reanimate Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return target creature card from your graveyard to the battlefield.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1258,5 +1272,158 @@ describe('staples (slice 197): attacking a player, batches of sacrifices, counte
     give(g, 'alice', 'Merfolk Lord', 'battlefield');
     const grunt = give(g, 'alice', 'Merfolk Grunt', 'battlefield');
     expect(chars(g, g.objects[grunt]!).power).toBe(2);
+  });
+});
+
+describe('staples (slice 197): granted prevention, borrowed artifacts, extra combats', () => {
+  it('Caduceus: the equipped creature has "Prevent all damage that would be dealt to this creature."', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const staff = give(g, 'alice', 'Caduceus Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    g.objects[staff]!.attachedTo = { id: ogre, zcc: g.objects[ogre]!.zcc };
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
+    expect(g.objects[ogre]!.damage).toBe(0);
+  });
+
+  it('Treasure Nabber: an artifact an opponent taps for mana, until the end of your next turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Nabber Lite', 'battlefield');
+    const stone = give(g, 'bob', 'Mind Stone Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate_mana', player: 'bob', object: stone, ability: 0 }));
+    expect(g.objects[stone]!.controller).toBe('alice');
+    g = toStep(g, 'main1', 'alice');
+    expect(g.objects[stone]!.controller).toBe('alice');
+    g = toStep(g, 'upkeep', 'bob');
+    expect(g.objects[stone]!.controller).toBe('bob');
+  });
+
+  it('Full Throttle: two more combats, each untapping what attacked', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Throttle Lite', 'hand') }));
+    let combats = 0;
+    for (let i = 0; i < 200 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_attackers') {
+        combats++;
+        expect(g.objects[cub]!.tapped).toBe(false);
+        g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: cub, target: { kind: 'player', player: 'bob' } }] } });
+      } else if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(combats).toBe(3);
+  });
+
+  it('Palantír of Orthanc: declined, you mill and they lose life equal to the total mana value', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const palantir = give(g, 'alice', 'Palantir Lite', 'battlefield');
+    g.objects[palantir]!.counters.influence = 1;
+    const top = [give(g, 'alice', 'Ogre Three', 'library'), give(g, 'alice', 'Ogre Spell', 'library')];
+    const lib = g.zones.library.alice!;
+    lib.splice(lib.indexOf(top[0]!), 1);
+    lib.splice(lib.indexOf(top[1]!), 1);
+    lib.unshift(...top);
+    const life = g.players.bob!.life;
+    g = toStep(g, 'end', 'alice');
+    for (let i = 0; i < 40 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } });
+      else if (p?.kind === 'scry') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'scry', top: p.objects, bottom: [] } });
+      else if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: false } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    // Two influence counters: both cards milled (3 + 3).
+    expect(top.every((id) => g.objects[id]!.zone === 'graveyard')).toBe(true);
+    expect(g.players.bob!.life).toBe(life - 6);
+  });
+});
+
+describe('staples (slice 198)', () => {
+  it('Containment Construct: a discarded card exiled may be played this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Containment Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Salve', 'hand'), give(g, 'alice', 'Salve', 'hand')];
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Looting', 'hand') });
+    for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'discard') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [a, b] } });
+      else if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.objects[a]!.zone).toBe('exile');
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: a }));
+    expect(g.players.alice!.life).toBe(life + 3);
+  });
+
+  it("Taunt from the Rampart: goaded, and they can't block until your next turn", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'bob', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Taunt Lite', 'hand') }));
+    expect(chars(g, g.objects[cub]!).rules.has('cant_block')).toBe(true);
+    g = toStep(g, 'main1', 'bob');
+    expect(chars(g, g.objects[cub]!).rules.has('cant_block')).toBe(true);
+    g.objects[cub]!.tapped = true;
+    g = toStep(g, 'main1', 'alice');
+    expect(chars(g, g.objects[cub]!).rules.has('cant_block')).toBe(false);
+  });
+
+  it('Maha: base toughness 1, power unchanged', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Maha Lite', 'battlefield');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    expect([chars(g, g.objects[ogre]!).power, chars(g, g.objects[ogre]!).toughness]).toEqual([5, 1]);
+  });
+
+  it('Jarad: a Swamp and a Forest, two different lands', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const jarad = give(g, 'alice', 'Jarad Lite', 'graveyard');
+    const swamp = give(g, 'alice', 'Swamp', 'battlefield');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'activate' && a.object === jarad)).toBe(false);
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: jarad, ability: 0, costs: { sacrifice: [swamp, swamp] } } as never)).toBeTruthy();
+    g = settle(act(g, { type: 'activate', player: 'alice', object: jarad, ability: 0, costs: { sacrifice: [swamp, forest] } } as never));
+    expect(g.objects[jarad]!.zone).toBe('hand');
+  });
+
+  it('Gix: the attacking player may pay 1 life to draw', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Gix Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const [life, hand] = [g.players.alice!.life, g.zones.hand.alice!.length];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: cub, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p?.kind === 'pay') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'pay', pay: true } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([life - 1, hand + 1]);
+  });
+
+  it('Ilysian Caryatid: two mana of one color with a big creature', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const plant = give(g, 'alice', 'Caryatid Lite', 'battlefield');
+    let h = act(structuredClone(g), { type: 'activate_mana', player: 'alice', object: plant, ability: 0, choice: 'U' });
+    expect(h.players.alice!.pool.U).toBe(1);
+    give(g, 'alice', 'Ogre', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: plant, ability: 0, choice: 'U' });
+    expect(g.players.alice!.pool.U).toBe(2);
+  });
+
+  it("Chainer: haste for a creature you didn't cast from your hand", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Chainer Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Reanimate Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(chars(g, g.objects[cub]!).keywords.some((k) => k.id === 'haste')).toBe(true);
+    const bear = give(g, 'alice', 'Cub', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(chars(g, g.objects[bear]!).keywords.some((k) => k.id === 'haste')).toBe(false);
   });
 });

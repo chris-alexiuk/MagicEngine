@@ -412,6 +412,8 @@ export interface ContinuousEffect {
   whileTapped?: ObjectRef;
   /** "until your next turn": it ends as this player's next turn begins. */
   untilTurnOf?: PlayerId;
+  /** "until the end of your next turn": it ends in the cleanup step of this turn. */
+  throughTurn?: number;
 }
 
 /** CR 603.7: a delayed triggered ability waiting for its moment ("at the beginning of the next end step"). */

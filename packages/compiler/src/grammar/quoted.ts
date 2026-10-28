@@ -56,6 +56,11 @@ export function parseQuotedAbility(item: string, b: Binder, printed: boolean): K
 
 /** A static ability that only changes the object that has it: rule flags, keywords, combat rules, +N/+N. */
 export function grantableStatic(a: AbilityNode): boolean {
+  // Caduceus, Staff of Hermes: has "Prevent all damage that would be dealt to this creature." (CR 615.1a)
+  if (a.kind === 'static' && !a.gate && a.effect.type === 'prevent_damage') {
+    const e = a.effect as unknown as Record<string, unknown>;
+    return Boolean(e.toSelf) && Object.keys(e).every((k) => ['type', 'toSelf', 'damage'].includes(k));
+  }
   if (a.kind !== 'static' || a.gate || a.effect.type !== 'continuous') return false;
   const e = a.effect as ContinuousEffectNode;
   if (e.affected.ref !== 'self' || e.condition) return false;

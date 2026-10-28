@@ -415,6 +415,13 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     // CR 107.14: "Pay {E}{E}" removes energy counters from you.
     else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
+    // Jarad: "Sacrifice a Swamp and a Forest"; Mount Doom: "Sacrifice Mount Doom and a legendary artifact" — each its own.
+    else if (/^[Ss]acrifice (?:~|(?:a|an) [^,]+?) and (?:a|an) [^,]+$/.test(item)) {
+      const m = /^[Ss]acrifice (~|(?:a|an) [^,]+?) and ((?:a|an) [^,]+)$/.exec(item)!;
+      const parts = [m[1]!, m[2]!].map((p) => (p === '~' ? { type: 'sacrifice_self' } : choiceCost(`Sacrifice ${p}`, b)));
+      if (parts.some((p) => !p)) return null;
+      (cost.other ??= []).push(...(parts as EffectNode[]));
+    }
     else {
       const life = /^[Pp]ay (\d+) life$/.exec(item);
       if (!life) return null;
@@ -604,7 +611,8 @@ export const activatedRule: GrammarRule = {
       // Urza's Tower: "{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead."
       // Incubation Druid: "If this creature has a +1/+1 counter on it, add three mana of that type instead."
       // Gemstone Caverns: "If ~ has a luck counter on it, instead add one mana of any color."
-      const insteadMana = mana && effect && mana[2] ? (/^If (.+?), add ((?:\{[WUBRGC]\})+|(?:two|three) mana of that (?:type|color)) instead\.$/.exec(mana[2]) ?? /^If (.+?), instead add ((?:\{[WUBRGC]\})+|one mana of any color)\.$/.exec(mana[2])) : null;
+      // Ilysian Caryatid: "If you control a creature with power 4 or greater, add two mana of any one color instead."
+      const insteadMana = mana && effect && mana[2] ? (/^If (.+?), add ((?:\{[WUBRGC]\})+|(?:two|three) mana of that (?:type|color)|(?:two|three) mana of any one color|one mana of any color) instead\.$/.exec(mana[2]) ?? /^If (.+?), instead add ((?:\{[WUBRGC]\})+|one mana of any color)\.$/.exec(mana[2])) : null;
       if (mana && effect && insteadMana) {
         const cond = parseCondition(insteadMana[1]!, new Binder(env));
         const many = /^(two|three) mana of that/.exec(insteadMana[2]!);
@@ -1028,6 +1036,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // Forbidden Orchard: "Whenever you tap ~ for mana" — an ordinary triggered ability when it doesn't add mana (CR 605.1b).
   if (t === 'you tap ~ for mana') return { trigger: { type: 'tapped_for_mana', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+  // Treasure Nabber: "Whenever an opponent taps an artifact for mana" — not a mana ability (CR 605.1b); it goes on the stack.
+  const tapsFor = /^(an opponent|a player) taps (a|an) (.+?) for mana$/.exec(t);
+  if (tapsFor) {
+    const pf = parseFilter(tapsFor[3]!, b);
+    if (!pf || pf.plural || pf.filter.controller) return null;
+    b.named[`that ${tapsFor[3]!.split(' ').pop()}`] = { ref: 'trigger_object' };
+    const controller = tapsFor[1] === 'an opponent' ? { controller: 'opponent' as const } : {};
+    return { trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: { ...pf.filter, ...controller } }, its: true }, it: { ref: 'trigger_object' }, player: null };
+  }
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
   // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34)
@@ -2134,6 +2151,13 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   if (base) {
     const subject = parseObjectRef(base[1]!, b, 'static');
     return subject ? { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' } : null;
+  }
+  // Maha, Its Feathers Night: "Creatures your opponents control have base toughness 1." — only that one (layer 7b).
+  const baseOne = /^(.+?) ha(?:s|ve) base (power|toughness) (\d+)$/.exec(body);
+  if (baseOne) {
+    const subject = parseObjectRef(baseOne[1]!, b, 'static');
+    const n = Number(baseOne[3]);
+    return subject ? { type: 'continuous', affected: subject.ref, ...(baseOne[2] === 'power' ? { setPower: n } : { setToughness: n }), setLayer: '7b' } : null;
   }
   // CR 509.1c: "All creatures able to block ~ do so." (lure)
   const lure = /^All creatures able to block (.+) do so$/.exec(body);

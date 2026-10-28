@@ -550,7 +550,7 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
       delete o.copyRevert;
     }
   }
-  g.effects = g.effects.filter((e) => e.until !== 'eot' && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
+  g.effects = g.effects.filter((e) => e.until !== 'eot' && !(e.throughTurn !== undefined && e.throughTurn <= g.turn) && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
   g.prevention = [];
   applyControlEffects(g, events);
   // CR 514.3a: if state-based actions happen now, players get priority and another cleanup step follows.

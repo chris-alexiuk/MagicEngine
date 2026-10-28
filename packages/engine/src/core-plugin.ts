@@ -3457,6 +3457,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       control: to,
       until: node.until === 'eot' ? 'eot' : 'game',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
+      // Treasure Nabber: "until the end of your next turn" — it ends with that turn's cleanup (CR 514.2).
+      ...(node.until === 'end_of_your_next_turn' ? { throughTurn: lastTurnOf(g, ctx.controller, 'next_turn') } : {}),
     });
     applyControlEffects(g, ctx.events);
     return true;

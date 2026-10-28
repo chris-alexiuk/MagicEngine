@@ -174,6 +174,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Hunter's Insight: "Choose target creature you control. Whenever that creature deals combat damage to a player or
       // planeswalker this turn, draw that many cards."; Massacre Girl: "Whenever a creature dies this turn, …" — a triggered
       // ability for the rest of the turn (CR 603.7).
+      // Full Throttle: "At the beginning of each combat this turn, untap all creatures that attacked this turn."
+      const stepTrig = b.env.parseAbilities && i === sentences.length - 1 ? /^At the beginning of each combat this turn, (.+)$/.exec(s) : null;
+      if (stepTrig) {
+        const r = b.env.parseAbilities!(`At the beginning of each combat, ${stepTrig[1]}.`, b.env.cardName, b.env.typeLine);
+        const ability = r.abilities[0];
+        if (r.unparsed.length || r.manualKeywords.length || r.abilities.length !== 1 || ability?.kind !== 'triggered' || ability.targets?.length) return null;
+        out.push({ type: 'turn_trigger', ability });
+        previous = [];
+        continue;
+      }
       const turnTrig = b.env.parseAbilities ? /^(Until end of turn, )?[Ww]henever (.+?)( this turn)?, (.+)$/.exec(s) : null;
       if (turnTrig && (turnTrig[1] || turnTrig[3]) && !/\bthis turn\b/.test(turnTrig[2]!)) {
         // Dalkovan Encampment: "… create two … tokens that are tapped and attacking. Sacrifice them at the beginning of the
@@ -321,13 +331,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // Dance of the Dead: "that player may pay {1}{B}. If the player does, untap that creature." — another player pays.
-      const otherPay = /^(That player|Its controller|They) may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+      // Gix, Yawgmoth Praetor: "its controller may pay 1 life. If they do, they draw a card." — life too (CR 119.4).
+      const otherPay = /^(That player|Its controller|They) may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(\d+) life)$/.exec(s);
       const otherDo = otherPay && sentences[i + 1] ? /^If (?:the player|that player|they) (?:does|do), (.+)$/.exec(sentences[i + 1]!) : null;
       if (otherPay && otherDo) {
         const payer = singlePlayer(otherPay[1]!.toLowerCase(), b);
-        const inner = payer ? parseSentence(capitalise(otherDo[1]!), b) : null;
+        // "they draw a card": the one who paid.
+        const theyDo = /^they (.+)$/.exec(otherDo[1]!);
+        const inner = !payer ? null : theyDo ? (attempt(b, (b) => parseClause(theyDo[1]!, b, payer))?.effects ?? null) : parseSentence(capitalise(otherDo[1]!), b);
         if (!payer || !inner) return null;
-        out.push({ type: 'may_pay', cost: otherPay[2]!, payer, effects: inner });
+        out.push({ type: 'may_pay', cost: otherPay[3] ? '' : otherPay[2]!, ...(otherPay[3] ? { life: Number(otherPay[3]) } : {}), payer, effects: inner });
         i++;
         continue;
       }
@@ -1403,6 +1416,15 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Containment Construct: "If you do, you may play that card this turn." — the card the instruction before moved.
+  const playIt = /^[Yy]ou may (play|cast) (that card|it) (this turn|until the end of your next turn)$/.exec(s);
+  if (playIt) {
+    const what = attempt(b, (b) => {
+      const r = parseObjectRef(playIt[2]!, b);
+      return r && !r.plural && ['trigger_object', 'target', 'chosen_object'].includes(r.ref.ref) ? r : null;
+    });
+    if (what) return [{ type: 'grant_play', what: what.ref, mode: playIt[1], ...(playIt[3] === 'this turn' ? {} : { until: 'next_turn' }) }];
+  }
   // Braids, Arisen Nightmare (joined above): each opponent may do it; each who doesn't is punished.
   const punisher = /^[Ee]ach opponent may (.+?); for each opponent who doesn't, (.+)$/.exec(s);
   if (punisher) {
@@ -1495,6 +1517,17 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const durable = (r: EffectNode[] | null) => (r && r.every((x) => x.type === 'modify' || x.type === 'gain_control') ? r : null);
     const inner = attempt(b, (b) => durable(parseSentence(`${base} until end of turn`, b))) ?? attempt(b, (b) => durable(parseSentence(base, b)));
     if (inner) return inner.map((x) => ({ ...x, until: 'source_tapped' }));
+  }
+  // Palantír of Orthanc: "you mill X cards, where X is the number of influence counters on ~, and that player loses
+  // life equal to …" — X belongs to the first instruction; the second follows it.
+  const whereAnd = /^(.+?, where X is [^,]+), and ((?:you|that player|they|each opponent|target \w+) .+)$/.exec(s);
+  if (whereAnd) {
+    const r = attempt(b, (b) => {
+      const one = parseSentence(whereAnd[1]!, b);
+      const two = one ? parseSentence(capitalise(whereAnd[2]!), b) : null;
+      return one && two ? [...one, ...two] : null;
+    });
+    if (r) return r;
   }
   // "…, where X is the number of creatures you control." (CR 107.3a: X defined by the text)
   const where = /^(.+), where X is (.+)$/.exec(s);
@@ -2428,6 +2461,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
+  // Taunt from the Rampart: "Until your next turn, those creatures can't block."
+  const untilNext = /^Until your next turn, ([^,]+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
+  if (untilNext && !/\b(?:becomes?|is|are)\b/.test(untilNext[1]!)) {
+    const r = attempt(b, (b) => parseSentence(`${untilNext[1]} ${untilNext[2]} ${untilNext[3]} until your next turn`, b));
+    if (r) return r;
+  }
+
 
   const whole = attempt(b, (b) => parseClause(s, b, null));
   if (whole) return whole.effects;
@@ -2570,11 +2610,13 @@ const VERBS: Record<string, VerbHandler> = {
   },
   gain(args, who, b, imperative) {
     // Layer 2 (CR 613.1b): "Gain control of target creature until end of turn."
-    const control = /^control of (.+?)( until end of turn)?$/.exec(args);
+    // Treasure Nabber: "… until the end of your next turn".
+    const control = /^control of (.+?)( until end of turn| until the end of your next turn)?$/.exec(args);
     if (control) {
       if (!imperative) return null;
       const what = parseObjectRef(control[1]!, b);
-      return what ? [{ type: 'gain_control', what: what.ref, ...(control[2] ? { until: 'eot' } : {}) }] : null;
+      const until = control[2] === ' until end of turn' ? 'eot' : control[2] ? 'end_of_your_next_turn' : null;
+      return what ? [{ type: 'gain_control', what: what.ref, ...(until ? { until } : {}) }] : null;
     }
     // Heliod's Intervention: "Target player gains twice X life."
     if (args === 'twice X life') return [{ type: 'gain_life', amount: { kind: 'x', times: 2 }, who }];
@@ -3353,6 +3395,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     // Overpowering Attack: "there is an additional combat phase after this phase, followed by an additional main phase"
     /^there is an additional combat phase after this (?:main )?phase(, followed by an additional main phase)$/i.exec(c);
   if (extraCombat) return [{ type: 'extra_combat', ...(extraCombat[1] ? { main: true } : {}) }];
+  // Full Throttle: "After this main phase, there are two additional combat phases." — one after the other.
+  const extraCombats = /^after this (?:main )?phase, there are (two|three) additional combat phases$/i.exec(c);
+  if (extraCombats) return Array.from({ length: extraCombats[1] === 'two' ? 2 : 3 }, () => ({ type: 'extra_combat' }));
   // CR 701.54a: "The Ring tempts you."
   if (/^the ring tempts you$/i.test(c)) return [{ type: 'ring_tempts' }];
   // CR 701.27a: transforming turns a double-faced permanent over.
@@ -3741,11 +3786,12 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(lure[1]!, b);
     return what ? [{ type: 'modify', what: what.ref, combat: { mustBeBlocked: 'all' }, until: 'eot' }] : null;
   }
-  const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) this turn$/.exec(c);
+  // Taunt from the Rampart: "Until your next turn, those creatures can't block."
+  const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) (this turn|until your next turn)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
     const what = parseObjectRef(m[1]!, b);
-    return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: 'eot' }] : null;
+    return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: m[3] === 'this turn' ? 'eot' : 'your_next_turn' }] : null;
   });
 }
 

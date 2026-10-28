@@ -232,9 +232,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
   // Approach of the Second Sun: "you've cast another spell named ~ this game".
   if (t === "you've cast another spell named ~ this game") return { type: 'cast_named_before' };
-  const cast = /^you cast it( from your hand)?$/.exec(t);
+  const cast = /^you (cast|didn't cast) it( from your hand)?$/.exec(t);
   // "Whenever a creature you control enters, if you cast it, …": "it" is the entering creature.
-  if (cast) return { type: 'cast_by_you', ...(cast[1] ? { fromHand: true } : {}), ...(b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
+  // Chainer, Nightmare Adept: "if you didn't cast it from your hand".
+  if (cast) {
+    const cond: ConditionNode = { type: 'cast_by_you', ...(cast[2] ? { fromHand: true } : {}), ...(b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
+    return cast[1] === 'cast' ? cond : { type: 'not', cond };
+  }
   const state = /^~ is (tapped|untapped)$/.exec(t);
   if (state) return { type: 'self_tapped', tapped: state[1] === 'tapped' };
   // "~ is equipped", "~ is enchanted" — something of that kind is attached to it.

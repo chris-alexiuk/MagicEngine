@@ -131,7 +131,9 @@ export function returnCostCandidates(g: GameState, player: PlayerId, o: GameObje
 }
 
 export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, cost: Cost, choices: CostChoices = {}): void {
-  // Two costs can't both use the same chosen object.
+  // Two costs can't both use the same chosen object (Jarad: "Sacrifice a Swamp and a Forest" — two different lands).
+  if (new Set(choices.sacrifice ?? []).size !== (choices.sacrifice ?? []).length) throw new RulesError('Choose a different permanent for each sacrifice.');
+  if (new Set(choices.discard ?? []).size !== (choices.discard ?? []).length) throw new RulesError('Choose a different card for each discard.');
   let sacUsed = 0;
   let discardUsed = 0;
   for (const c of cost.other ?? []) {
@@ -468,7 +470,8 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
     if (a.trigger.producedColor && (!wanted || !produced.includes(wanted as ManaColor))) continue;
     // Forbidden Orchard: not a mana ability (it doesn't add mana) — it goes on the stack like any trigger (CR 605.1b).
     if (!a.effects.every((x) => x.type === 'add_mana')) {
-      g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc } } });
+      // Price of Glory: "Whenever a player taps a land for mana, if it's not that player's turn, …" — who tapped it.
+      g.triggers.push({ id: `t${g.nextId++}`, controller: src.controller, source: { id: src.id, zcc: src.zcc }, sourceName: nameOf(g, src), ability: a, info: { object: { id: tapped.id, zcc: tapped.zcc }, player: tapped.controller } });
       continue;
     }
     // "its controller adds …"; "add …" — the trigger's controller.

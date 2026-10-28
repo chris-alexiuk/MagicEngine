@@ -930,6 +930,20 @@ export function dealDamage(
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
 function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number } {
   let halves = 0;
+  // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
+  // granted ability of the creature itself.
+  const recipient = to.kind === 'permanent' ? g.objects[to.object] : undefined;
+  if (recipient) {
+    for (const k of chars(g, recipient).keywords) {
+      if (k.id !== 'ability') continue;
+      for (const a of k.abilities ?? []) {
+        if (a.kind !== 'static' || a.effect.type !== 'prevent_damage') continue;
+        const e = a.effect as StaticPreventionNode;
+        if (!e.toSelf || (e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
+        return { all: true, halves: 0 };
+      }
+    }
+  }
   for (const id of abilitySources(g)) {
     const holder = g.objects[id]!;
     for (const a of objectAbilities(g, holder)) {

@@ -2499,3 +2499,20 @@ describe('slice 197 (more)', () => {
     expect(parse('Sacrifice a Merfolk: Draw a card.', 'Creature').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 1 }] } });
   });
 });
+
+describe('slice 198', () => {
+  it('reads granted prevention, borrowed artifacts, extra combats and plays of a moved card', () => {
+    expect(parse('Equipped creature has "Prevent all damage that would be dealt to this creature."', 'Artifact — Equipment').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'ability', abilities: [{ effect: { type: 'prevent_damage', toSelf: true } }] }] } });
+    expect(parse('Whenever an opponent taps an artifact for mana, gain control of that artifact until the end of your next turn.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', subject: { filter: { types: ['Artifact'], controller: 'opponent' } } }, effects: [{ type: 'gain_control', until: 'end_of_your_next_turn' }] });
+    expect(parse('After this main phase, there are two additional combat phases.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'extra_combat' }, { type: 'extra_combat' }] });
+    expect(parse('At the beginning of each combat this turn, untap all creatures that attacked this turn.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'turn_trigger', ability: { trigger: { type: 'phase', step: 'beginning_of_combat' } } }] });
+    expect(parse('Whenever you discard a card, you may exile that card from your graveyard. If you do, you may play that card this turn.', 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'grant_play', what: { ref: 'trigger_object' }, mode: 'play' }] }] });
+    expect(parse("Goad all creatures your opponents control. Until your next turn, those creatures can't block.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'goad' }, { type: 'modify', rules: ['cant_block'], until: 'your_next_turn' }] });
+    expect(parse('Creatures your opponents control have base toughness 1.', 'Creature').abilities[0]).toMatchObject({ effect: { setToughness: 1 } });
+    expect(parse('Sacrifice a Swamp and a Forest: Return this card from your graveyard to your hand.', 'Creature').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', filter: { subtypes: ['Swamp'] } }, { type: 'sacrifice', filter: { subtypes: ['Forest'] } }] } });
+    expect(parse("Whenever a nontoken creature you control enters, if you didn't cast it from your hand, it gains haste until your next turn.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'not', cond: { type: 'cast_by_you', fromHand: true } } });
+    expect(parse('Whenever a creature deals combat damage to one of your opponents, its controller may pay 1 life. If they do, they draw a card.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', life: 1, payer: { ref: 'controller_of' } }] });
+    expect(parse('{T}: Add one mana of any color. If you control a creature with power 4 or greater, add two mana of any one color instead.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ anyColor: 2 }], else: [{ anyColor: 1 }] }] });
+    expect(parse("At the beginning of your end step, target opponent may have you draw a card. If that player doesn't, you mill X cards, where X is the number of influence counters on ~, and that player loses life equal to the total mana value of those cards.", 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', else: [{ type: 'mill', amount: { kind: 'counters' } }, { type: 'lose_life' }] }] });
+  });
+});

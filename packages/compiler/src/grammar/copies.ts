@@ -12,7 +12,8 @@ import { COLOR_WORDS, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js'
 /** Splits "it's white, it has no mana cost, and it's a Zombie …" into its parts (not inside quotes). */
 function exceptParts(text: string): string[] {
   return text
-    .split(/,? and (?=(?:it|its|the token)\b)|, (?:and )?(?=(?:it|its|the token)\b)/)
+    // Hulkling: "his name is ~, he's 4/4, and he has flying and this ability" — a character card's pronouns too.
+    .split(/,? and (?=(?:it|its|the token|he|his|she|her)\b)|, (?:and )?(?=(?:it|its|the token|he|his|she|her)\b)/)
     .map((p) => p.trim())
     .filter(Boolean);
 }
@@ -61,8 +62,11 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       continue;
     }
     const name = /^its name is (.+)$/.exec(p);
+    // Not a list of other exceptions run on ("his name is ~, he's a legendary 4/4 …").
+    if (name && /,\s+(?:it|he|she|they)(?:'s| is| has| have)\b| until /.test(name[1]!)) return null;
     if (name) {
-      out.name = name[1]!;
+      // Hulkling: "his name is Hulkling, Young Avenger" — its own name, written "~" by then.
+      out.name = name[1] === '~' ? (b.env.faceName || b.env.cardName) : name[1]!;
       continue;
     }
     const pt = /^it's (\d+)\/(\d+)$/.exec(p);
@@ -107,6 +111,15 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       continue;
     }
     if (/^it has this ability$/.test(p)) {
+      out.keepThisAbility = true;
+      continue;
+    }
+    // Hulkling: "he has flying and this ability".
+    const hasAndThis = /^it has (.+) and this ability$/.exec(p);
+    if (hasAndThis) {
+      const kws = parseKeywordList(hasAndThis[1]!, b, true);
+      if (!kws?.length) return null;
+      (out.keywords ??= []).push(...kws);
       out.keepThisAbility = true;
       continue;
     }
