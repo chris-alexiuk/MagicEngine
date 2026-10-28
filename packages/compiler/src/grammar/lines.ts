@@ -472,6 +472,14 @@ export const activatedRule: GrammarRule = {
     if (cost.other?.some((c) => c.type === 'discard_self')) node.zone = 'hand';
     if (cost.other?.some((c) => c.type === 'exile_self')) node.zone = 'graveyard';
     if (cost.other?.some((c) => c.type === 'exile_self_hand')) node.zone = 'hand';
+    // CR 702.142a: "Boast — [Cost]: [Effect]" — activate only if this creature attacked this turn, and once each turn
+    // (Birgi lets it be twice).
+    if (/^Boast — /.test(original)) {
+      if (!/\bCreature\b/.test(ctx.typeLine)) return null;
+      node.boast = true;
+      node.maxPerTurn = 1;
+      andIf(node, { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } });
+    }
     for (let changed = true; changed; ) {
       changed = false;
       for (const [re, set] of ACTIVATION_LIMITS) {
@@ -521,7 +529,7 @@ export const activatedRule: GrammarRule = {
     const among = cost.loyalty === undefined ? /^Add one mana of any color among (.+?)\.$/.exec(effectText) : null;
     if (among) {
       const pf = parseFilter(among[1]!.replace(/, and /, ', or ').replace(/ and /, ' or '), new Binder(env));
-      if (!pf || !pf.plural || pf.filter.zone || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+      if (!pf || !pf.plural || (pf.filter.zone && !(pf.filter.zone === 'graveyard' && pf.filter.owner === 'you')) || node.timing || node.maxPerTurn || node.oncePerGame) return null;
       return { ...node, effects: [{ type: 'add_mana', anyColor: 1, colorsAmong: pf.filter }], mana: true };
     }
     // Nykthos, Three Tree City: "Choose a color. Add an amount of mana of that color equal to your devotion to that color."
@@ -1938,6 +1946,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // don't lose unspent mana as steps and phases end."
   const keepMana = /^(You|Players) don't lose unspent (?:(white|blue|black|red|green) )?mana as steps and phases end$/.exec(body);
   if (keepMana) return { type: 'player_rule', who: keepMana[1] === 'You' ? 'you' : 'each', rule: 'keep_mana', ...(keepMana[2] ? { colors: [COLOR_WORDS[keepMana[2]]!] } : {}) };
+  // Birgi, God of Storytelling (CR 702.142a)
+  if (body === 'Creatures you control can boast twice during each of your turns rather than once') return { type: 'player_rule', who: 'you', rule: 'boast_twice' };
   // Platinum Angel: "You can't lose the game and your opponents can't win the game." (CR 104.3a: conceding still works.)
   if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
   // Narset, Parter of Veils
@@ -3360,6 +3370,10 @@ export const triggerExtraRule: GrammarRule = {
     if (of) {
       if (of[1] === 'equipped creature') return make({ sourceAttached: true, permanent: true });
       if (of[1] === 'a permanent you control') return make({ source: { controller: 'you' }, permanent: true });
+      // Echoes of Eternity: "a colorless spell you control or another colorless permanent you control" — cast triggers too.
+      if (of[1] === 'a colorless spell you control or another colorless permanent you control') {
+        return make({ source: { controller: 'you', colorless: true, anyOf: [{ zone: 'stack' }, { zone: 'battlefield', other: true }] } });
+      }
       const source = filterOf(of[1]!);
       return source ? make({ source, permanent: true }) : null;
     }

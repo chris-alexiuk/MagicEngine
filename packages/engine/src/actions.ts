@@ -828,6 +828,12 @@ function cast(
 }
 
 /** How many times this turn an ability with a per-turn limit has been activated. */
+/** How many times each turn an ability may be activated: Birgi's "can boast twice during each of your turns". */
+export function perTurnLimit(g: GameState, o: GameObject, ability: { maxPerTurn?: number; boast?: true }): number | undefined {
+  if (ability.boast && g.active === o.controller && playerRule(g, o.controller, 'boast_twice')) return 2;
+  return ability.maxPerTurn;
+}
+
 export function activationsThisTurn(g: GameState, o: GameObject, index: number): number {
   const a = o.activations?.[index];
   return a && a.turn === g.turn ? a.n : 0;
@@ -1005,7 +1011,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (!ability) throw new RulesError(`${nameOf(g, o)} has no such ability.`);
   // CR 101.2: "your opponents can't … activate abilities of artifacts, creatures, or enchantments"
   if (activationProhibited(g, player, o, false)) throw new RulesError(`You can’t activate ${nameOf(g, o)}’s abilities now.`);
-  if (ability.maxPerTurn && activationsThisTurn(g, o, index) >= ability.maxPerTurn) throw new RulesError(`That ability can be activated only ${ability.maxPerTurn} times each turn.`);
+  const limit = perTurnLimit(g, o, ability);
+  if (limit && activationsThisTurn(g, o, index) >= limit) throw new RulesError(limit === 1 ? 'That ability can be activated only once each turn.' : `That ability can be activated only ${limit} times each turn.`);
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
   // Chatterfang: "Sacrifice X Squirrels" — X is announced as it's activated (CR 107.3a, 602.2b).
@@ -1076,7 +1083,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
-  if (ability.maxPerTurn) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };
+  if (ability.maxPerTurn || ability.boast) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };
   if (ability.oncePerGame) (o.activatedOnce ??= {})[index] = true;
   const lki = costLKI(g, cost, choices.costs);
   payOtherCosts(g, player, o, cost, events, choices.costs);

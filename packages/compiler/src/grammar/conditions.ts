@@ -189,6 +189,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
   // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
+  // "if ~ attacked this turn" (as this object, CR 400.7).
+  if (/^~ attacked this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
   // Vaultborn Tyrant: "When this creature dies, if it's not a token, …" — a token that died has ceased to exist.
   if (/^(?:it's not|it isn't|it wasn't|it was not|~ isn't|~ wasn't|~ is not|~ was not) a token$/.test(t)) return { type: 'is', of: b.it ?? { ref: 'self' }, filter: { token: false } };
   // CR 702.194b: "if this spell was cast using teamwork"

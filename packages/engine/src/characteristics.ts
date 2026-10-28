@@ -699,9 +699,11 @@ export function hasKeyword(g: GameState, o: GameObject, id: string): boolean {
 /** The colors among the permanents a filter describes ("among legendary creatures you control"), in WUBRG order. */
 export function colorsAmong(g: GameState, controller: PlayerId, filter: ObjectFilter, source: GameObject | null): Color[] {
   const out = new Set<Color>();
-  for (const id of g.zones.battlefield) {
+  // The Grey Havens: "any color among legendary creature cards in your graveyard".
+  const ids = filter.zone === 'graveyard' ? (filter.owner === 'you' ? (g.zones.graveyard[controller] ?? []) : g.order.flatMap((p) => g.zones.graveyard[p] ?? [])) : g.zones.battlefield;
+  for (const id of ids) {
     const o = g.objects[id]!;
-    if (!matchesFilter(g, o, filter, { controller, source })) continue;
+    if (!matchesFilter(g, o, filter, { controller, source, anyZone: filter.zone === 'graveyard' })) continue;
     for (const c of chars(g, o).colors) out.add(c);
   }
   return (['W', 'U', 'B', 'R', 'G'] as Color[]).filter((c) => out.has(c));

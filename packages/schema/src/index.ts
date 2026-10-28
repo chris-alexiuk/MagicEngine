@@ -195,6 +195,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true };
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
+  /** CR 702.142a: a boast ability (Birgi's "boast twice" raises its limit). */
+  boast?: true;
   /** CR 602.2: "Any player may activate this ability." */
   anyPlayer?: true;
   /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a). */
@@ -406,6 +408,8 @@ export interface ObjectFilter {
   chosenName?: true;
   /** Path of Ancestry: "a creature spell that shares a creature type with your commander". */
   sharesTypeWithCommander?: true;
+  /** Braids, Arisen Nightmare: "a permanent … that shares a card type with" what was sacrificed earlier this resolution. */
+  sharesCardTypeWithSacrificed?: true;
   /** Shared Animosity: "that shares a creature type with it" (CR 205.3m) — it being this object. */
   sharesCreatureTypeWith?: Ref;
   /** Mirror Box: "with the same name as that creature" — the name it has (CR 201.2); `sameName` is set by the engine. */
@@ -1050,6 +1054,8 @@ export const PLAYER_RULES = [
   'spend_any_color',
   /** CR 500.5: "You don't lose unspent red mana as steps and phases end" — mana of its `colors` (any, without them) stays. */
   'keep_mana',
+  /** Birgi, God of Storytelling: "Creatures you control can boast twice during each of your turns rather than once." */
+  'boast_twice',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -1082,7 +1088,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],

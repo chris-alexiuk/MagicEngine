@@ -46,6 +46,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Braids, Arisen Nightmare: "… each opponent may sacrifice a permanent of their choice that shares a card type with it.
+  // For each opponent who doesn't, that player loses 2 life and you draw a card." — one instruction.
+  text = text.replace(/(each opponent may [^.]+)\. For each opponent who doesn't, ([^.]+)\./, "$1; for each opponent who doesn't, $2.");
   // Fable of the Mirror-Breaker: "You may discard up to two cards. If you do, draw that many cards." — discarding none is
   // not doing it, so it's "Discard up to two cards, then draw that many cards".
   text = text.replace(/\bYou may discard up to (\w+) cards\. If you do, draw that many cards\./, 'Discard up to $1 cards, then draw that many cards.');
@@ -1390,6 +1393,28 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Braids, Arisen Nightmare (joined above): each opponent may do it; each who doesn't is punished.
+  const punisher = /^[Ee]ach opponent may (.+?); for each opponent who doesn't, (.+)$/.exec(s);
+  if (punisher) {
+    const r = attempt(b, (b) => {
+      const asThem = capitalise(
+        punisher[1]!
+          .replace(/ of their choice\b/g, '')
+          .replace(/ that shares a card type with it$/, ' that shares a card type with the sacrificed permanent')
+          .replace(/\btheir\b/g, 'your')
+          .replace(/\bthey (control|own)\b/g, 'you $1'),
+      );
+      if (/\b(?:they|them|their)\b/.test(asThem)) return null;
+      const theirs = parseSentence(asThem, b);
+      if (!theirs) return null;
+      const saved = b.player;
+      b.player = { ref: 'each_player' };
+      const declined = parseSentence(capitalise(punisher[2]!), b);
+      b.player = saved;
+      return declined ? [{ type: 'opponents_may', effects: theirs, declined }] : null;
+    });
+    if (r) return r;
+  }
   // Baleful Mastery: "an opponent draws a card"; Fateful Handoff: "An opponent gains control of that permanent." — one the
   // controller chooses as it resolves.
   const anOpponent = /^An opponent (?!controls\b|chooses\b|separates\b|may\b)(.+)$/.exec(s);
@@ -2323,7 +2348,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Mistrise Village: "The next spell you cast this turn can't be countered."; "The next instant or sorcery spell you cast
   // this turn costs {2} less to cast", "… costs {X} less to cast, where X is the number of Wizards you control".
-  const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
+  // Archway of Innovation: "The next spell you cast this turn has improvise."
+  const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|has (?:improvise|convoke|delve)|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
   if (next) {
     let filter: ObjectFilter = {};
     if (next[1]) {
@@ -2333,6 +2359,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       filter = rest;
     }
     if (next[2] === "can't be countered") return [{ type: 'next_spell', filter, uncounterable: true }];
+    if (/^has /.test(next[2]!)) return [{ type: 'next_spell', filter, keyword: next[2]!.slice(4) }];
     if (next[3] === 'X') {
       // ", where X is …" in the same sentence is bound by the sentence (bindX).
       const x = next[4] ? parseCount(next[4], b) : 'X';
@@ -3350,6 +3377,14 @@ function parseLayerChange(c: string, b: Binder): EffectNode[] | null {
       const what = parseObjectRef(color[1]!, b);
       const colors = color[2] === 'colorless' ? [] : color[2]!.split(' and ').map((w) => COLOR_WORDS[w]!);
       return what ? [{ type: 'modify', what: what.ref, colors, until }] : null;
+    });
+  }
+  // Allosaurus Shepherd: "becomes a Dinosaur in addition to its other creature types" (CR 205.1b)
+  const extraType = /^(.+?) becomes? an? ([A-Z][\w’'-]*) in addition to (?:its|their) other creature types$/.exec(body);
+  if (extraType && (SUBTYPES.creature as readonly string[]).includes(extraType[2]!)) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(extraType[1]!, b);
+      return what ? [{ type: 'modify', what: what.ref, types: [], subtypes: [extraType[2]!], retainTypes: true, until }] : null;
     });
   }
   // "becomes a Coward", "becomes an Island"

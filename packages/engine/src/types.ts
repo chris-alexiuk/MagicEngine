@@ -924,7 +924,7 @@ export interface GameState {
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
   /** "The next spell you cast this turn can't be countered" / "costs {1} less to cast" — used up by that spell. */
-  nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number }[];
+  nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number; keyword?: string }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
   /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
   playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter }[];

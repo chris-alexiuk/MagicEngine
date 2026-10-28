@@ -12,6 +12,10 @@ const HELPERS = new Set(['convoke', 'delve', 'improvise']);
  */
 export function helperKeywords(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef): string[] {
   const out = new Set(face.keywords.map((k) => k.id).filter((k) => HELPERS.has(k)));
+  // Archway of Innovation: "The next spell you cast this turn has improvise."
+  for (const n of g.nextSpell ?? []) {
+    if (n.keyword && HELPERS.has(n.keyword) && n.player === player && n.turn === g.turn && matchesFilter(g, spell, n.filter, { controller: player, source: g.objects[n.source.id] ?? null, anyZone: true })) out.add(n.keyword);
+  }
   for (const id of abilitySources(g)) {
     const src = g.objects[id]!;
     if (src.controller !== player) continue;

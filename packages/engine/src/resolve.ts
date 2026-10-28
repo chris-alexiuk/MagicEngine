@@ -500,6 +500,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
  * Binds a filter's references to objects as an effect applies: "that shares a creature type with it" becomes those
  * creature types, "other than it" that object (CR 608.2h).
  */
+const PERMANENT_CARD_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
+
 export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
   // Fell the Mighty: "with power greater than target creature's power" — counted as the effect applies (CR 608.2h);
   // Day of Black Sun: "each creature with mana value X or less" — the X paid.
@@ -508,6 +510,13 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const out: ObjectFilter = { ...f };
     for (const k of counted) out[k] = { ...f[k]!, n: f[k]!.n === 'X' ? ctx.x : amountOf(ctx, f[k]!.n) };
     return bindFilter(ctx, out);
+  }
+  if (f.sharesCardTypeWithSacrificed) {
+    // Braids: the card types of the permanent sacrificed first in this resolution, as it last existed (CR 608.2h).
+    const was = ctx.resolution?.lkiThisWay?.sacrificed?.[0]?.types ?? [];
+    const { sharesCardTypeWithSacrificed: _s, ...rest } = f;
+    const types = PERMANENT_CARD_TYPES.filter((t) => was.includes(t));
+    return bindFilter(ctx, { ...rest, types: rest.types ? rest.types.filter((t) => types.includes(t)) : types });
   }
   if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs) return f;
   const out: ObjectFilter = { ...f };
@@ -577,6 +586,8 @@ function contextFor(g: GameState, entry: StackEntry, r: Resolution, events: Game
     if (entry.trigger) ctx.trigger = entry.trigger;
   } else if (source) ctx.sourceZcc = source.zcc;
   if (answer) ctx.answer = answer;
+  // Braids: "For each opponent who doesn't, that player loses 2 life" — that opponent.
+  if (node?.eachPlayer) ctx.eachPlayer = node.eachPlayer as PlayerId;
   return ctx;
 }
 
@@ -632,7 +643,9 @@ export function runResolution(g: GameState, events: GameEvent[], answer?: Choice
     if (typeof result === 'object' && 'expand' in result) {
       // What an effect done "as" another player expands into is done by them too.
       const as = node.asPlayer;
-      r.effects.splice(r.index, 1, ...(as ? result.expand.map((e) => (e.asPlayer ? e : { ...e, asPlayer: as })) : result.expand));
+      const each = node.eachPlayer;
+      const expanded = as ? result.expand.map((e) => (e.asPlayer ? e : { ...e, asPlayer: as })) : result.expand;
+      r.effects.splice(r.index, 1, ...(each ? expanded.map((e) => (e.eachPlayer ? e : { ...e, eachPlayer: each })) : expanded));
       r.memo = {};
       continue;
     }

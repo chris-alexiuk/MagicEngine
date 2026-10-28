@@ -72,6 +72,12 @@ const CARDS = [
   makeCard({ name: 'Baleful Mastery', type_line: 'Instant', mana_cost: '{3}{B}', cmc: 4, oracle_text: "You may pay {1}{B} rather than pay this spell's mana cost.\nIf the {1}{B} cost was paid, an opponent draws a card.\nExile target creature or planeswalker." }),
   makeCard({ name: 'Vaultborn Tyrant', type_line: 'Creature — Dinosaur', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "Trample\nWhen this creature dies, if it's not a token, create a token that's a copy of it, except it's an artifact in addition to its other types." }),
   makeCard({ name: 'Behind the Mask', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Kicker {1}\nUntil end of turn, target artifact or creature becomes an artifact creature with base power and toughness 4/3. If this spell was kicked, it has base power and toughness 1/1 until end of turn instead.' }),
+  makeCard({ name: 'Braggart Lite', type_line: 'Creature — Dwarf Berserker', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Boast — {0}: You gain 1 life. (Activate only if this creature attacked this turn and only once each turn.)' }),
+  makeCard({ name: 'Birgi Lite', type_line: 'Legendary Creature — God', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Creatures you control can boast twice during each of your turns rather than once.' }),
+  makeCard({ name: 'Archway of Innovation', type_line: 'Land', mana_cost: '', oracle_text: '{T}: Add {U}.\n{U}, {T}: The next spell you cast this turn has improvise.' }),
+  makeCard({ name: 'Ogre Spell', type_line: 'Sorcery', mana_cost: '{3}', cmc: 3, oracle_text: 'You gain 3 life.' }),
+  makeCard({ name: 'Braids, Arisen Nightmare', type_line: 'Legendary Creature — Nightmare', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "At the beginning of your end step, you may sacrifice an artifact, creature, enchantment, land, or planeswalker. If you do, each opponent may sacrifice a permanent of their choice that shares a card type with it. For each opponent who doesn't, that player loses 2 life and you draw a card." }),
+  makeCard({ name: 'Lithoform Lite', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: '{0}, {T}: Copy target permanent spell you control. (The copy becomes a token.)' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -777,5 +783,93 @@ describe('staples (slice 192)', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Behind the Mask', 'hand'), targets: [[{ kind: 'object', object: trinket }]], kicked: true }));
     const c = chars(g, g.objects[trinket]!);
     expect([c.types.includes('Creature'), c.power, c.toughness]).toEqual([true, 1, 1]);
+  });
+});
+
+describe('staples (slice 192): boast (CR 702.142a)', () => {
+  const attackWith = (g: GameState, attacker: string) => {
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    return g;
+  };
+  it('only after it attacked, and once each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dwarf = give(g, 'alice', 'Braggart Lite', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 })).toBeTruthy();
+    g = attackWith(g, dwarf);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 }));
+    expect(illegal(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 })).toMatch(/once/);
+  });
+  it('Birgi: twice during your turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Birgi Lite', 'battlefield');
+    const dwarf = give(g, 'alice', 'Braggart Lite', 'battlefield');
+    g = attackWith(g, dwarf);
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 }));
+    g = settle(act(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 }));
+    expect(g.players.alice!.life).toBe(life + 2);
+    expect(illegal(g, { type: 'activate', player: 'alice', object: dwarf, ability: 0 })).toBeTruthy();
+  });
+});
+
+describe('staples (slice 192): the next spell has improvise', () => {
+  it('Archway of Innovation: only that next spell', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const arch = give(g, 'alice', 'Archway of Innovation', 'battlefield');
+    const relics = [give(g, 'alice', 'Trinket', 'battlefield'), give(g, 'alice', 'Trinket', 'battlefield'), give(g, 'alice', 'Trinket', 'battlefield')];
+    const spell = give(g, 'alice', 'Ogre Spell', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, costs: { improvise: relics } })).toBeTruthy();
+    g.players.alice!.pool.U = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: arch, ability: 0 }));
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: spell, costs: { improvise: relics } }));
+    expect(g.players.alice!.life).toBe(life + 3);
+    for (const r of relics) g.objects[r]!.tapped = false;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ogre Spell', 'hand'), costs: { improvise: relics } })).toBeTruthy();
+  });
+});
+
+describe('staples (slice 193): Braids, Arisen Nightmare', () => {
+  it('each opponent may sacrifice a permanent sharing a card type; each who doesn\'t loses 2 life and you draw', () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Braids, Arisen Nightmare', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const carolBear = give(g, 'carol', 'Bear', 'battlefield');
+    const bobTrinket = give(g, 'bob', 'Trinket', 'battlefield');
+    const [bobLife, carolLife, hand] = [g.players.bob!.life, g.players.carol!.life, g.zones.hand.alice!.length];
+    g = toStep(g, 'end', 'alice');
+    for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } });
+      else if (p?.kind === 'sacrifice') {
+        const pick = p.player === 'alice' ? bear : carolBear;
+        g = act(g, { type: 'choose', player: p.player, answer: { kind: 'sacrifice', objects: [pick] } });
+      } else if (p) throw new Error(`unexpected ${p.kind}`);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+    expect(g.objects[carolBear]!.zone).toBe('graveyard');
+    expect(g.objects[bobTrinket]!.zone).toBe('battlefield');
+    expect([g.players.bob!.life, g.players.carol!.life]).toEqual([bobLife - 2, carolLife]);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+});
+
+describe('staples (slice 193): copying a permanent spell', () => {
+  it('Lithoform Engine: the copy becomes a token (CR 707.10f)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const engine = give(g, 'alice', 'Lithoform Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: cub });
+    g = settle(act(g, { type: 'activate', player: 'alice', object: engine, ability: 0, targets: [[{ kind: 'object', object: cub }]] }));
+    const cubs = g.zones.battlefield.filter((id) => g.objects[id]!.card === g.objects[cub]!.card);
+    expect(cubs.length).toBe(2);
+    expect(cubs.filter((id) => g.objects[id]!.token).length).toBe(1);
   });
 });

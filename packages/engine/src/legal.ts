@@ -17,7 +17,7 @@ import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { freePermission, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
-import { activationsThisTurn, targetLifeTax } from './actions.js';
+import { activationsThisTurn, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
 
@@ -300,7 +300,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     });
     if (!banned) activatedAbilities(g, o).forEach((ab, ability) => {
       if (!mine && !ab.anyPlayer) return;
-      if (ab.maxPerTurn && activationsThisTurn(g, o, ability) >= ab.maxPerTurn) return;
+      const limit = perTurnLimit(g, o, ab);
+      if (limit && activationsThisTurn(g, o, ability) >= limit) return;
       const { cost } = ab;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if ((ab.timing === 'sorcery' || cost.loyalty !== undefined) && !sorcerySpeed) return;

@@ -1267,6 +1267,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     (g.nextSpell ??= []).push({
       id: `n${g.nextId++}`, player: ctx.controller, turn: g.turn, filter: (node.filter ?? {}) as ObjectFilter, source,
       ...(node.uncounterable ? { uncounterable: true as const } : {}), ...(reduce !== undefined ? { reduce } : {}),
+      ...(node.keyword ? { keyword: String(node.keyword) } : {}),
     });
     return true;
   },
@@ -1843,6 +1844,36 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ctx.events.push({ type: 'counters', object: o.id, counter, delta: -n });
     }
     return true;
+  },
+
+  // Braids, Arisen Nightmare: "each opponent may sacrifice a permanent of their choice that shares a card type with it. For
+  // each opponent who doesn't, that player loses 2 life and you draw a card." — each opponent in turn order (CR 101.4)
+  // decides; then those who do, do it, and the rest are punished.
+  opponents_may(node, ctx) {
+    const g = ctx.g;
+    const opponents = apnap(g).filter((p) => p !== ctx.controller && livePlayers(g).includes(p));
+    const memo = ctx.memo as { i?: number; asking?: PlayerId; out?: EffectNode[] };
+    memo.i ??= 0;
+    memo.out ??= [];
+    const theirs = node.effects as EffectNode[];
+    const doIt = (p: PlayerId) => theirs.map((e) => ({ ...structuredClone(e), asPlayer: p }));
+    const declined = (p: PlayerId) => ((node.declined as EffectNode[] | undefined) ?? []).map((e) => ({ ...structuredClone(e), eachPlayer: p }));
+    const answer = answerOf(ctx, 'may');
+    if (answer && memo.asking) {
+      memo.out.push(...(answer.yes ? doIt(memo.asking) : declined(memo.asking)));
+      memo.asking = undefined;
+      memo.i++;
+    }
+    for (; memo.i < opponents.length; memo.i++) {
+      const p = opponents[memo.i]!;
+      if (!theirs.every((e) => feasible(e, { ...ctx, controller: p }, p))) {
+        memo.out.push(...declined(p));
+        continue;
+      }
+      memo.asking = p;
+      return { ask: { kind: 'may', player: p, text: describeEffects(theirs), sourceName: sourceName(ctx) } };
+    }
+    return { expand: memo.out };
   },
 
   // Baleful Mastery: "an opponent draws a card" — the controller chooses one of their opponents as it resolves.
@@ -2446,7 +2477,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.21a: each player (in APNAP order, CR 101.4) chooses permanents they control and sacrifices them.
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const filter = (node.filter ?? {}) as ObjectFilter;
+    const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
     const players = refPlayers(ctx, ref(node, 'who'));
     const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
     const matching = (p: PlayerId) =>
@@ -3579,7 +3610,7 @@ function revealUntilCast(ctx: EffectContext, qualifies: (o: GameObject, g: GameS
 function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
   if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(chooser)) {
-    const filter = (e.filter ?? {}) as ObjectFilter;
+    const filter = bindFilter(ctx, (e.filter ?? {}) as ObjectFilter);
     const n = g.zones.battlefield.filter((id) => {
       const o = g.objects[id]!;
       return o.controller === chooser && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });

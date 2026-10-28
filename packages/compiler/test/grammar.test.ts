@@ -2402,3 +2402,18 @@ describe('slice 192', () => {
     expect(parse('Until end of turn, target artifact becomes an artifact creature with base power and toughness 4/3. If this spell was kicked, it has base power and toughness 1/1 until end of turn instead.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ types: ['Artifact', 'Creature'], setPower: 1 }] }] });
   });
 });
+
+describe('slice 193', () => {
+  it('reads boast, Birgi, next-spell keywords and Echoes of Eternity', () => {
+    expect(parse('Boast — {1}{R}: ~ deals 1 damage to any target.', 'Creature').abilities[0]).toMatchObject({ boast: true, maxPerTurn: 1, activateIf: { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } } });
+    expect(parse('Creatures you control can boast twice during each of your turns rather than once.', 'Legendary Creature — God').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'boast_twice' } });
+    expect(parse('{U}, {T}: The next spell you cast this turn has improvise.', 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'next_spell', keyword: 'improvise' }] });
+    expect(parse('If a triggered ability of a colorless spell you control or another colorless permanent you control triggers, that ability triggers an additional time.', 'Enchantment').abilities[0]).toMatchObject({ effect: { type: 'trigger_extra', source: { colorless: true, anyOf: [{ zone: 'stack' }, { zone: 'battlefield', other: true }] } } });
+    expect(parse('{T}: Add one mana of any color among legendary creature cards in your graveyard.', 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', colorsAmong: { zone: 'graveyard', owner: 'you' } }] });
+  });
+  it('reads permanent spells, added creature types and Braids', () => {
+    expect(parse('{4}, {T}: Copy target permanent spell you control.', 'Artifact').abilities[0]).toMatchObject({ targets: [{ filter: { zone: 'stack', types: expect.arrayContaining(['Creature', 'Artifact']) } }] });
+    expect(parse('Target creature becomes a Dinosaur in addition to its other creature types until end of turn.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'modify', subtypes: ['Dinosaur'], retainTypes: true, until: 'eot' }] });
+    expect(parse("At the beginning of your end step, you may sacrifice an artifact, creature, enchantment, land, or planeswalker. If you do, each opponent may sacrifice a permanent of their choice that shares a card type with it. For each opponent who doesn't, that player loses 2 life and you draw a card.", 'Legendary Creature — Nightmare').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'opponents_may', effects: [{ type: 'sacrifice_choice', filter: { sharesCardTypeWithSacrificed: true } }], declined: [{ type: 'lose_life', who: { ref: 'each_player' } }, { type: 'draw', who: { ref: 'you' } }] }] }] });
+  });
+});

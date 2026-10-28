@@ -70,6 +70,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
   [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
+  // Braids, Arisen Nightmare: "a permanent … that shares a card type with it" — what was sacrificed.
+  [/ that shares a card type with the sacrificed permanent$/, (f) => !f.sharesCardTypeWithSacrificed && ((f.sharesCardTypeWithSacrificed = true), true)],
   // Relentless Assault: "Untap all creatures that attacked this turn."
   [/ that attacked this turn$/, (f) => !f.attackedThisTurn && ((f.attackedThisTurn = true), true)],
   // Steel Hellkite: "each nonland permanent with mana value X whose controller was dealt combat damage by this creature
@@ -383,7 +385,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     // CR 903.3: "commander creatures you own"
     else if (w === 'commander') f.commander = true;
     // "permanent card" (CR 110.4b): a card with a permanent type.
-    else if (w === 'permanent' && /^cards?$/.test(lower)) f.types = [...PERMANENT_TYPES];
+    // Lithoform Engine: "target permanent spell you control" — a spell that will become a permanent.
+    else if (w === 'permanent' && /^(?:cards?|spells?)$/.test(lower)) f.types = [...PERMANENT_TYPES];
     else if (subtypeOf(raw) === raw) (f.subtypes ??= []).push(raw);
     else return null;
   }
