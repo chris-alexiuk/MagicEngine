@@ -1011,7 +1011,12 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   const name = nameOf(g, o);
   const sorcerySpeed = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
   // Chatterfang: "Sacrifice X Squirrels" — X is announced as it's activated (CR 107.3a, 602.2b).
-  const cost = ability.cost.other?.some((c) => c.amount === 'X') ? { ...ability.cost, other: ability.cost.other.map((c) => (c.amount === 'X' ? { ...c, amount: choices.x } : c)) } : ability.cost;
+  // Kozilek, the Great Distortion: "Discard a card with mana value X" — the X announced (CR 601.2b via 602.2b).
+  const xFilter = (c: EffectNode): EffectNode => {
+    const f = c.filter as ObjectFilter | undefined;
+    return f?.manaValue?.n === 'X' ? { ...c, filter: { ...f, manaValue: { ...f.manaValue, n: choices.x } } } : c;
+  };
+  const cost = ability.cost.other?.some((c) => c.amount === 'X' || (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X') ? { ...ability.cost, other: ability.cost.other.map((c) => xFilter(c.amount === 'X' ? { ...c, amount: choices.x } : c)) } : ability.cost;
 
   if (cost.loyalty !== undefined) {
     // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn.

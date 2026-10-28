@@ -3438,11 +3438,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (candidates.length === max && min === max && !total) chosen = candidates;
     else {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}) } };
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard${node.distinctNames ? ' with different names' : ''}${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
       }
       if (total && answer.objects.reduce((n, id) => n + total.of[id]!, 0) > total.max) throw new RulesError(`Their total mana value must be ${total.max} or less.`);
+      if (node.distinctNames && new Set(answer.objects.map((id) => nameOf(g, g.objects[id]!))).size !== answer.objects.length) throw new RulesError('The cards must have different names.');
       chosen = answer.objects;
     }
     const moved: ObjectRef[] = [];
@@ -3981,8 +3982,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const filter = liveFilter(ctx, (node.filter ?? {}) as ObjectFilter);
     // Currency Converter: "a card exiled with this artifact".
-    const pool = filter.zone === 'exile' ? g.zones.exile : g.zones.battlefield;
-    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' ? { anyZone: true } : {}) }));
+    // Party Thrasher: "exile the top two cards of your library, then choose one of them" — among those.
+    const among = node.among ? refObjects(ctx, ref(node, 'among')).map((o) => o.id) : null;
+    const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : g.zones.battlefield);
+    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' || among ? { anyZone: true } : {}) }));
     if (!candidates.length || !ctx.resolution) return true;
     let pick = candidates.length === 1 ? candidates[0] : undefined;
     if (!pick) {

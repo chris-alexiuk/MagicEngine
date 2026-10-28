@@ -880,6 +880,8 @@ export interface CopyExcept {
   noManaCost?: true;
   /** "except it has this ability" — the ability doing the copying (the engine fills in `abilities`). */
   keepThisAbility?: true;
+  /** Sakashima of a Thousand Faces: "except it has Sakashima's other abilities" — the engine fills in `abilities`. */
+  keepOtherAbilities?: true;
   abilities?: AbilityNode[];
   /**
    * Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature" — not a copiable value but a

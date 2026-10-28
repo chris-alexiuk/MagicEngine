@@ -654,6 +654,8 @@ export type PendingChoice =
       kinds?: Record<ObjectId, number[]>;
       /** "… with total mana value N or less" (Lively Dirge): the chosen cards' mana values add up to `max` or less. */
       totalMV?: { max: number; of: Record<ObjectId, number> };
+      /** Eerie Ultimatum: "… with different names". */
+      distinctNames?: true;
     }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped

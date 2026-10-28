@@ -375,6 +375,12 @@ const CARDS = [
   makeCard({ name: 'Lightning Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "This spell deals 3 damage to any target. Then that player or that permanent's controller may pay {R}{R}. If the player does, they may copy this spell and may choose a new target for that copy." }),
   makeCard({ name: 'Beseech Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Bargain\nSearch your library for a card, exile it face down, then shuffle. If this spell was bargained, you may cast the exiled card without paying its mana cost if that spell's mana value is 4 or less. Put the exiled card into your hand if it wasn't cast this way." }),
   makeCard({ name: 'Ugin Lite', type_line: 'Legendary Planeswalker — Ugin', mana_cost: '{0}', loyalty: '4', oracle_text: '+1: Exile the top card of your library face down and look at it. Create a 2/2 colorless Spirit creature token. When that token leaves the battlefield, put the exiled card into your hand.' }),
+  makeCard({ name: 'Grasp Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Search target opponent's library for a card and exile it face down. Then that player shuffles. You may play that card for as long as it remains exiled." }),
+  makeCard({ name: 'Ultimatum Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return any number of permanent cards with different names from your graveyard to the battlefield.' }),
+  makeCard({ name: 'Vastlands Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player looks at the top five cards of their library and may reveal a land card and/or an instant or sorcery card from among them. Each player puts the cards they revealed this way into their hand and the rest on the bottom of their library in a random order. Each player gains 3 life.' }),
+  makeCard({ name: 'Kozilek Lite', type_line: 'Legendary Creature — Eldrazi', mana_cost: '{0}', power: '12', toughness: '12', oracle_text: 'Discard a card with mana value X: Counter target spell with mana value X.' }),
+  makeCard({ name: 'Sakashima Lite', type_line: 'Legendary Creature — Human Rogue', mana_cost: '{0}', power: '3', toughness: '1', oracle_text: "You may have Sakashima Lite enter as a copy of another creature you control, except it has Sakashima Lite's other abilities.\nThe \"legend rule\" doesn't apply to permanents you control." }),
+  makeCard({ name: 'Thrasher Lite', type_line: 'Creature — Lizard Wizard', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: 'Whenever this creature attacks, you may discard a card. If you do, exile the top two cards of your library, then choose one of them. You may play that card this turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4245,6 +4251,85 @@ describe('staples (slice 215)', () => {
 });
 
 describe('staples (slice 216)', () => {
+  it("Praetor's Grasp: a card from their library, face down, that you may play while it remains exiled", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'bob', 'Cub', 'library');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Grasp Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [cub] } }));
+    expect(g.objects[cub]).toMatchObject({ zone: 'exile', hiddenFor: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: cub }));
+    expect(g.objects[cub]).toMatchObject({ zone: 'battlefield', controller: 'alice' });
+  });
+  it('Explore the Vastlands: each player takes up to a land and an instant or sorcery from their top five', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const put = (p: 'alice' | 'bob', names: string[]) => {
+      const lib = g.zones.library[p]!;
+      const ids = names.map((n) => give(g, p, n, 'library'));
+      for (const id of ids) lib.splice(lib.indexOf(id), 1);
+      lib.unshift(...ids);
+      return ids;
+    };
+    const [af, as] = put('alice', ['Forest', 'Salve', 'Bear', 'Forest', 'Salve']);
+    const [bf] = put('bob', ['Forest', 'Bear', 'Bear', 'Bear', 'Bear']);
+    const [la, lb] = [g.players.alice!.life, g.players.bob!.life];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Vastlands Lite', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'alice' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [af!, as!] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [bf!] } }));
+    expect([g.objects[af!]!.zone, g.objects[as!]!.zone, g.objects[bf!]!.zone]).toEqual(['hand', 'hand', 'hand']);
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([la + 3, lb + 3]);
+  });
+  it('Kozilek, the Great Distortion: discard a card with mana value X to counter a spell with mana value X', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const koz = give(g, 'alice', 'Kozilek Lite', 'battlefield');
+    const [two, three] = [give(g, 'alice', 'Bear', 'hand'), give(g, 'alice', 'Ogre Three', 'hand')];
+    g.players.bob!.pool.G = 2;
+    const spell = give(g, 'bob', 'Bear', 'hand');
+    g = act(g, { type: 'cast', player: 'bob', object: spell, autoTap: true });
+    g = act(g, { type: 'pass', player: 'bob' });
+    const target = [[{ kind: 'object' as const, object: spell }]];
+    expect(illegal(g, { type: 'activate', player: 'alice', object: koz, ability: 0, x: 2, targets: target, costs: { discard: [three!] } })).toBeTruthy();
+    expect(illegal(g, { type: 'activate', player: 'alice', object: koz, ability: 0, x: 3, targets: target, costs: { discard: [three!] } })).toBeTruthy();
+    g = settle(act(g, { type: 'activate', player: 'alice', object: koz, ability: 0, x: 2, targets: target, costs: { discard: [two!] } }));
+    expect([g.objects[spell]!.zone, g.objects[two!]!.zone]).toEqual(['graveyard', 'graveyard']);
+  });
+  it("Sakashima of a Thousand Faces: a copy that keeps its other abilities (no legend rule)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ghalta = give(g, 'alice', 'Ghalta Lite', 'battlefield');
+    const saka = give(g, 'alice', 'Sakashima Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: saka }));
+    expect(g.pending).toMatchObject({ kind: 'as_enters' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', copy: ghalta } }));
+    expect([g.objects[ghalta]!.zone, g.objects[saka]!.zone]).toEqual(['battlefield', 'battlefield']);
+    expect(chars(g, g.objects[saka]!).name).toBe('Ghalta Lite');
+  });
+  it('Party Thrasher: exile two, choose one of them, play it this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const thrasher = give(g, 'alice', 'Thrasher Lite', 'battlefield');
+    const junk = give(g, 'alice', 'Trinket', 'hand');
+    const lib = g.zones.library.alice!;
+    const [c1, c2] = [give(g, 'alice', 'Cub', 'library'), give(g, 'alice', 'Salve', 'library')];
+    for (const id of [c1, c2]) lib.splice(lib.indexOf(id), 1);
+    lib.unshift(c1, c2);
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: thrasher, target: { kind: 'player', player: 'bob' } }] } });
+    g = settle(g);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    if (g.pending?.kind === 'discard') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [junk] } });
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', candidates: [c1, c2] });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [c2] } }));
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === c2)).toBe(true);
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === c1)).toBe(false);
+  });
+  it('Eerie Ultimatum: permanent cards with different names', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [b1, b2, t1] = [give(g, 'alice', 'Bear', 'graveyard'), give(g, 'alice', 'Bear', 'graveyard'), give(g, 'alice', 'Trinket', 'graveyard')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ultimatum Lite', 'hand') }));
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [b1, b2, t1] } })).toMatch(/different names/);
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [b1, t1] } }));
+    expect([b1, b2, t1].map((id) => g.objects[id]!.zone)).toEqual(['battlefield', 'graveyard', 'battlefield']);
+  });
   it('Ugin, the Ineffable: the face-down card comes to hand when the Spirit token leaves', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const ugin = give(g, 'alice', 'Ugin Lite', 'battlefield');

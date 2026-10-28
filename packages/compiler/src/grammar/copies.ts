@@ -116,6 +116,11 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       out.keepThisAbility = true;
       continue;
     }
+    // Sakashima of a Thousand Faces: "except it has Sakashima's other abilities".
+    if (/^it has ~'s other abilities$/.test(p)) {
+      out.keepOtherAbilities = true;
+      continue;
+    }
     // Hulkling: "he has flying and this ability".
     const hasAndThis = /^it has (.+) and this ability$/.exec(p);
     if (hasAndThis) {

@@ -281,6 +281,8 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
   }
   const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
   if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  const discardMV = /^[Dd]iscard a card with mana value (\d+)$/.exec(item);
+  if (discardMV) return { type: 'discard', amount: 1, filter: { manaValue: { op: 'eq', n: Number(discardMV[1]) } } };
   // CR 701.59a: "Collect evidence 6"
   const evidence = /^[Cc]ollect evidence (\d+)$/.exec(item);
   if (evidence) return { type: 'collect_evidence', amount: Number(evidence[1]) };
@@ -457,6 +459,9 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
     // Gonti's Aether Heart: "Pay eight {E}".
     else if (/^[Pp]ay (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) \{E\}$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: parseAmount(/^[Pp]ay (\w+)/.exec(item)![1]!) as number });
+    // Kozilek, the Great Distortion: "Discard a card with mana value X" — the X announced as it's activated (the engine
+    // binds it to the discarded card, CR 601.2b via 602.2b).
+    else if (/^[Dd]iscard a card with mana value X$/.test(item) && !planeswalker) (cost.other ??= []).push({ type: 'discard', amount: 1, filter: { manaValue: { op: 'eq', n: 'X' } } });
     else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
     // Jarad: "Sacrifice a Swamp and a Forest"; Mount Doom: "Sacrifice Mount Doom and a legendary artifact" — each its own.
     else if (/^[Ss]acrifice (?:~|(?:a|an) [^,]+?) and (?:a|an) [^,]+$/.test(item)) {
@@ -706,7 +711,7 @@ export const activatedRule: GrammarRule = {
     const b = new Binder(env);
     b.it = { ref: 'self' };
     // "{X}, {T}: Tap target creature with power X or less."; "−X: Return target creature card with mana value X …".
-    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1;
+    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X'));
     // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
     // (its power as it was, CR 608.2h).
     const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));

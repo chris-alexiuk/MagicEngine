@@ -214,6 +214,31 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       { type: 'move', what: { ref: 'created' }, to: 'hand' },
     ];
   }
+  // Explore the Vastlands: "Each player looks at the top five cards of their library and may reveal a land card and/or an
+  // instant or sorcery card from among them. Each player puts the cards they revealed this way into their hand and the rest on
+  // the bottom of their library in a random order. Each player gains 3 life." — each of them, in turn order (CR 101.4).
+  const vast = /^Each player looks at the top (\w+) cards of their library and may reveal (a|an) (.+?) card and\/or (a|an) (.+?) card from among them\. Each player puts the cards they revealed this way into their hand and the rest on the bottom of their library in a random order\.(?: (.+))?$/.exec(text.trim());
+  if (vast) {
+    const n = parseAmount(vast[1]!);
+    const each = eachOfPair(vast[2]!, `${vast[3]} card and/or ${vast[4]} ${vast[5]} card`, 'library', b);
+    const after = vast[6] ? parseEffectText(vast[6], b) : [];
+    if (typeof n !== 'number' || !each || !after) return null;
+    return [{ type: 'players_do', players: { ref: 'players', who: 'each' }, effects: [{ type: 'dig', amount: n, take: 2, each, to: 'hand', optional: true, reveal: true, rest: 'bottom', order: 'random' }] }, ...after];
+  }
+  // Hoarding Broodlord: "search your library for a card, exile it face down, then shuffle. For as long as that card remains
+  // exiled, you may play it."; Praetor's Grasp: "Search target opponent's library for a card and exile it face down. Then
+  // that player shuffles. You may play that card for as long as it remains exiled."
+  const broodlord =
+    /^[Ss]earch (your|target opponent's) library for a card, exile it face down, then shuffle\. For as long as that card remains exiled, you may play it\.$/.exec(text.trim()) ??
+    /^[Ss]earch (your|target opponent's) library for a card and exile it face down\. Then that player shuffles\. You may play that card for as long as it remains exiled\.$/.exec(text.trim());
+  if (broodlord) {
+    const library = broodlord[1] === 'your' ? null : parsePlayerRef('target opponent', b);
+    if (broodlord[1] !== 'your' && !library) return null;
+    return [
+      { type: 'search', filter: { zone: 'library' }, amount: 1, to: 'exile', faceDown: true, ...(library ? { library } : { filter: { zone: 'library', owner: 'you' } }) },
+      { type: 'grant_play', what: { ref: 'created' }, mode: 'play', until: 'exiled' },
+    ];
+  }
   // Ugin, the Ineffable: "Exile the top card of your library face down and look at it. Create a 2/2 colorless Spirit creature
   // token. When that token leaves the battlefield, put the exiled card into your hand."
   const ugin = /^Exile the top card of your library face down and look at it\. (Create an? [^.]+? token)\. When that token leaves the battlefield, put the exiled card into your hand\.$/.exec(text.trim());
@@ -1826,6 +1851,16 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Party Thrasher: "exile the top two cards of your library, then choose one of them" — "that card" afterwards.
+  const exileChoose = /^[Ee]xile the top (two|three|four|five) cards of your library, then choose one of them$/.exec(s);
+  if (exileChoose) {
+    b.it = { ref: 'chosen_object' };
+    b.named = { ...b.named, 'that card': { ref: 'chosen_object' } };
+    return [
+      { type: 'exile_top', amount: parseAmount(exileChoose[1]!), who: { ref: 'you' } },
+      { type: 'choose_object', filter: {}, among: { ref: 'moved_onto' } },
+    ];
+  }
   // Gisa, Glorious Resurrector: "put all creature cards exiled with Gisa onto the battlefield under your control".
   const putExiled = /^[Pp]ut (all (?:[a-z]+ )?cards exiled with ~) onto the battlefield under your control$/.exec(s);
   if (putExiled) return parseSentence(`Return ${putExiled[1]} to the battlefield under your control`, b);
@@ -3768,6 +3803,10 @@ const VERBS: Record<string, VerbHandler> = {
     // Tyvar, Jubilant Brawler: "a creature card with mana value 2 or less".
     // Lively Dirge: "up to two creature cards with total mana value 4 or less"; Technomancer: "any number of artifact creature
     // cards with total mana value 6 or less".
+    // Eerie Ultimatum: "any number of permanent cards with different names".
+    const differentNames = / with different names(?= from your graveyard)/.test(args);
+    if (differentNames) args = args.replace(/ with different names(?= from your graveyard)/, '');
+    if (differentNames && !/^(?:up to (?:two|three)|any number of) /.test(args)) return null;
     const chosenReturn = /^(a|an|up to (?:one|two|three)|any number of) ((?!.*\btarget\b).+? cards?(?: with (?:mana value|power|toughness) (?:(?!total ).)+?)?)(?: with total mana value (\d+|X) or less)? from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
     if (chosenReturn && who.ref === 'you') {
       const any = chosenReturn[1] === 'any number of';
@@ -3779,7 +3818,7 @@ const VERBS: Record<string, VerbHandler> = {
       if (total === null) return null;
       // "it" afterwards: the returned card.
       b.it = { ref: 'created' };
-      return [{ type: 'return_chosen', filter, amount: any ? 'all' : n, to: chosenReturn[4] === 'your hand' ? 'hand' : 'battlefield', ...(chosenReturn[5] ? { tapped: true } : {}), ...(chosenReturn[1]!.startsWith('up to ') || any ? { optional: true } : {}), ...(total !== undefined ? { totalMV: total } : {}) }];
+      return [{ type: 'return_chosen', filter, amount: any ? 'all' : n, to: chosenReturn[4] === 'your hand' ? 'hand' : 'battlefield', ...(chosenReturn[5] ? { tapped: true } : {}), ...(chosenReturn[1]!.startsWith('up to ') || any ? { optional: true } : {}), ...(total !== undefined ? { totalMV: total } : {}), ...(differentNames ? { distinctNames: true } : {}) }];
     }
     const hand = /^(.+?) to (its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {

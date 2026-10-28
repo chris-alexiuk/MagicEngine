@@ -207,7 +207,11 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         if (!p.candidates?.includes(answer.copy)) throw new RulesError('Choose one of the permanents it can copy.');
         const original = g.objects[answer.copy]!;
         // CR 707.2: the copiable values of the original, with this effect's exceptions (CR 707.9).
-        o.copyOf = withExceptions(g, copiable(original), next.node.copyExcept);
+        // Sakashima of a Thousand Faces: "except it has Sakashima's other abilities" — its own, but this one.
+        const except = next.node.copyExcept?.keepOtherAbilities
+          ? (({ keepOtherAbilities: _k, ...rest }) => ({ ...rest, abilities: [...(rest.abilities ?? []), ...faceOf(g, o).abilities.filter((a) => !(a.kind === 'static' && a.effect.type === 'as_enters'))] }))(next.node.copyExcept)
+          : next.node.copyExcept;
+        o.copyOf = withExceptions(g, copiable(original), except);
         events.push({ type: 'became_copy', object: o.id, of: original.id });
         // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."
         if (next.node.copyTapped) o.tapped = true;

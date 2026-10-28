@@ -271,6 +271,15 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         }
         return { player: me, answer: { kind: 'choose_objects', objects } };
       }
+      // Eerie Ultimatum: different names.
+      if (p.distinctNames) {
+        const seen = new Set<string>();
+        const objects = shuffle([...p.candidates]).filter((id) => {
+          const name = g.cards[g.objects[id]!.card]!.name;
+          return seen.has(name) ? false : (seen.add(name), true);
+        });
+        return { player: me, answer: { kind: 'choose_objects', objects: objects.slice(0, Math.max(n, p.min)) } };
+      }
       // Lively Dirge: keep under the total mana value.
       if (p.totalMV) {
         let left = p.totalMV.max;
