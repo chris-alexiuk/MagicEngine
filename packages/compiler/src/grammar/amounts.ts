@@ -79,7 +79,8 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
   const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
-  const pf = parseFilter(noun, b.clone());
+  // Bonehoard Dracosaur: "a nonland card exiled this way" — a bare "nonland" is read as "nonland permanent".
+  const pf = parseFilter(noun, b.clone()) ?? (/^non[a-z]+$/.test(noun) ? parseFilter(`${noun} permanent`, b.clone()) : null);
   if (!pf) return null;
   const f = pf.filter;
   if (another) f.other = true;
@@ -119,6 +120,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Coalition Relic: "for each charge counter removed this way".
+  if (/^(?:\S+ )?counter removed this way$/.test(t)) return { kind: 'counters_removed' };
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
   const colorsOf = /^of (that spell|that card|~)'s colors$/.exec(t) ?? (t === 'of its colors' ? [t, 'it'] : null);
   if (colorsOf) {
@@ -248,6 +251,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"
+  // The Skullspore Nexus: "the total power of those creatures" — the ones that died together.
+  if (b.batchPower && t === 'the total power of those creatures') return { kind: 'event', stat: 'power' };
   const totalPower = /^the total (power|toughness|mana value) of (other )?(.+)$/.exec(t);
   if (totalPower) {
     // Summon: Bahamut: "the total mana value of other permanents you control" — other than the source.
@@ -409,6 +414,8 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
     const out: EffectNode = { ...e };
     for (const [k, v] of Object.entries(e)) {
       if ((k === 'effects' || k === 'then' || k === 'else' || k === 'cant') && Array.isArray(v)) out[k] = bindX(v as EffectNode[], expr);
+      // Liliana of the Dark Realms: a choice between "+X/+X" and "-X/-X" (choose_one's options).
+      else if (k === 'options' && e.type === 'choose_one' && Array.isArray(v)) out[k] = (v as EffectNode[][]).map((o) => bindX(o, expr));
       else if (k === 'filter' && v && typeof v === 'object') out[k] = bindFilterX(v as ObjectFilter);
       else if (v && typeof v === 'object' && (v as { ref?: string }).ref) out[k] = deep(v);
       else out[k] = sub(v);

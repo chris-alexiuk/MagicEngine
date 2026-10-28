@@ -56,12 +56,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   // Aku Djinn: "each creature each opponent controls"
-  [/ (?:an opponent controls|your opponents control|opponents control|each opponent controls)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
+  [/ (?:an opponent controls|your opponents control|(?<!those )opponents control|each opponent controls)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
   [/ defending player controls$/, (f) => !f.controller && ((f.controller = 'defending'), true)],
   // "all creatures target player controls", "each creature that player controls"
-  [/ (target player|target opponent|that player|the chosen player|chosen player|they) controls?$/, (f, m, b) => {
-    if (/control$/.test(m[0]) !== (m[1] === 'they')) return false;
+  [/ (target player|target opponent|that player|the chosen player|chosen player|they|those opponents|those players) controls?$/, (f, m, b) => {
+    if (/control$/.test(m[0]) !== ['they', 'those opponents', 'those players'].includes(m[1]!)) return false;
     if (f.controller || f.controlledBy) return false;
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.controlledBy = who), true));
@@ -184,6 +184,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
   // Scrap Trawler: "target artifact card in your graveyard with lesser mana value" — than the artifact that triggered it.
   [/ with lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'lt', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
+  // Kodama of the East Tree: "a permanent card with equal or lesser mana value".
+  [/ with equal or lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'le', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
   // Kozilek's Unsealing: "a creature spell with mana value 4, 5, or 6" — any of them.
   [/ with mana value (\d+), (\d+),? or (\d+)$/, (f, m) => !f.anyOf && !f.manaValue && ((f.anyOf = [m[1], m[2], m[3]].map((n) => ({ manaValue: { op: 'eq' as const, n: Number(n) } }))), true)],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
@@ -207,6 +209,11 @@ function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge'
 }
 
 function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: string, b: Binder): boolean {
+  // Skrelv's Hive: "creatures you control with toxic" — a keyword that takes a number, whatever the number.
+  if (/^(?:toxic|ward|annihilator|afflict|bushido|rampage)$/.test(text) && !f[key]) {
+    f[key] = [text];
+    return true;
+  }
   const kws = parseKeywordList(text, b);
   // Stormtide Leviathan: "without flying or islandwalk" — a landwalk is its kind ("landwalk:island").
   if (!kws || f[key] || kws.some((k) => (k.text && k.id !== 'landwalk') || k.cost || k.n !== undefined)) return false;
@@ -737,6 +744,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (lost) return { ref: 'players', who: lost[1] === 'player' ? 'each' : 'opponents', lostLife: true };
   // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
+  // Call the Coppercoats: "Choose any number of target opponents. … those opponents control" — the players chosen.
+  if ((t === 'those opponents' || t === 'those players') && b.named[t]) return b.named[t]!;
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.
   // Priest of Forgotten Gods: "Any number of target players each lose 2 life …" (CR 115.1d).
   // Gleaming Splendor: "Two target players each draw a card."

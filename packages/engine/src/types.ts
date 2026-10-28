@@ -338,6 +338,10 @@ export interface TriggerInfo {
   lki?: { counters: Record<string, number> };
   /** How much happened ("that much life", "that many +1/+1 counters"): damage dealt, life gained or lost. */
   amount?: number;
+  /** CR 400.7f: a trigger on the enchanted permanent leaving — the Aura can be found in its owner's graveyard. */
+  auraFind?: true;
+  /** The Skullspore Nexus: the total power of the creatures that died together (as they last existed, CR 603.10a). */
+  power?: number;
   /** Tokens the original ability created, for a delayed trigger ("sacrifice it at the next end step"). */
   created?: ObjectRef[];
   /** CR 603.12: what the resolution that created a reflexive ability rolled, and what it sacrificed (as it last existed). */
@@ -395,6 +399,8 @@ export interface ContinuousEffect {
   retainTypes?: boolean;
   /** Layer 5: the colors it becomes. */
   colors?: Color[];
+  /** Layer 5: "in addition to its other colors" — colors it gets as well. */
+  addColors?: Color[];
   /** Layer 4: its creature types become these ("becomes a Bird"). */
   creatureTypes?: string[];
   /** Layer 4 (CR 305.7): its land types become these; it loses its rules-text abilities. */
@@ -509,6 +515,8 @@ export interface Resolution {
   votes?: Record<string, number>;
   /** CR 701.38: the objects with the most votes or tied for most votes. */
   voted?: ObjectRef[];
+  /** Counters this resolution's remove-counters effects removed ("for each charge counter removed this way"). */
+  countersRemoved?: number;
   /** Cards each player discarded as this resolved ("the greatest number of cards a player discarded this way"). */
   discarded?: Record<PlayerId, number>;
   /** Cards each player drew as this resolved (Cut a Deal: "for each opponent who drew a card this way"). */
@@ -781,6 +789,8 @@ export type GameEvent =
       token?: true;
       /** Counters it had, when it left the battlefield (CR 603.10a look-back). */
       counters?: Record<string, number>;
+      /** Kodama of the East Tree: the permanent whose ability put it onto the battlefield. */
+      by?: ObjectRef;
     }
   | { type: 'control_changed'; object: ObjectId; controller: PlayerId }
   | { type: 'prevented'; source: ObjectId; amount: number }

@@ -14,7 +14,7 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { blight, blightCandidates, foodCandidates, payDuringResolution } from './payment.js';
-import { removeFromCombat, attach, createEmblem, createToken, createTokenCopy, destroy, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
+import { removeFromCombat, attach, canAttach, createEmblem, createToken, createTokenCopy, destroy, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -470,7 +470,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // CR 712.14a: "transformed" — a double-faced card enters with its back face up (others don't move at all).
         const dfc = (ctx.g.cards[o.card]?.faces.length ?? 0) > 1 && ['transform', 'modal_dfc', 'meld'].includes(ctx.g.cards[o.card]!.layout);
         if (node.transformed && !dfc) continue;
+        // Mantle of the Ancients: "… to the battlefield attached to enchanted creature". CR 303.4f: an Aura that can't
+        // legally be attached to it stays where it is; an Equipment enters unattached (CR 301.5c).
+        const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
+        const onto = attachTo && attachTo.zone === 'battlefield' ? attachTo : undefined;
+        if (node.attachTo && faceOf(ctx.g, o).subtypes.includes('Aura') && (!onto || !canAttach(ctx.g, o, onto))) continue;
         moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}) });
+        const now = ctx.g.objects[o.id]!;
+        if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
       } else if (node.until === 'opponent_monarch') {
         // Palace Jailer: back to the battlefield when an opponent of this ability's controller becomes the monarch.
         if (o.zone !== 'battlefield') continue;
@@ -806,6 +813,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.allCreatureTypes ? { types: [], subtypes: [...SUBTYPES.creature], retainTypes: true } : {}),
       // "the color of your choice", "the creature type of your choice" — chosen earlier as this resolved.
       ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : [c as Color])) } : {}),
+      ...(Array.isArray(node.addColors) ? { addColors: node.addColors as Color[] } : {}),
       ...(Array.isArray(node.creatureTypes) ? { creatureTypes: (node.creatureTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.creatureType ? [chosen.creatureType] : []) : [t])) } : {}),
       ...(Array.isArray(node.landTypes) ? { landTypes: (node.landTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.landType ? [chosen.landType] : []) : [t])) } : {}),
       ...(node.loseAbilities ? { loseAbilities: true as const } : {}),
@@ -1914,6 +1922,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         for (const o of objects)
           for (const [counter, have] of Object.entries(o.counters)) {
             if (!have) continue;
+            if (ctx.resolution) ctx.resolution.countersRemoved = (ctx.resolution.countersRemoved ?? 0) + have;
             delete o.counters[counter];
             ctx.events.push({ type: 'counters', object: o.id, counter, delta: -have });
           }
@@ -1930,6 +1939,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           if (answer.choice === 'Done') continue;
           if (!o.counters[answer.choice]) throw new RulesError('Choose a kind of counter it has.');
           o.counters[answer.choice]!--;
+          if (ctx.resolution) ctx.resolution.countersRemoved = (ctx.resolution.countersRemoved ?? 0) + 1;
           if (!o.counters[answer.choice]) delete o.counters[answer.choice];
           ctx.events.push({ type: 'counters', object: o.id, counter: answer.choice, delta: -1 });
           memo.left--;
@@ -1940,6 +1950,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (kinds.length === 1 && !node.upTo) {
           const k = kinds[0]!;
           const n = Math.min(memo.left, o.counters[k]!);
+          if (ctx.resolution) ctx.resolution.countersRemoved = (ctx.resolution.countersRemoved ?? 0) + n;
           o.counters[k]! -= n;
           if (!o.counters[k]) delete o.counters[k];
           ctx.events.push({ type: 'counters', object: o.id, counter: k, delta: -n });
@@ -1956,8 +1967,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const have = o.counters[counter] ?? 0;
       // "Remove a fade counter from it. If you can't, sacrifice it." (CR 702.32a)
       if (node.ifCant && have < amountOf(ctx, node.amount)) return { expand: node.ifCant as EffectNode[] };
-      const n = Math.min(have, amountOf(ctx, node.amount));
+      // "remove all charge counters from this artifact"
+      const n = node.amount === 'all' ? have : Math.min(have, amountOf(ctx, node.amount));
       if (n <= 0) continue;
+      if (ctx.resolution) ctx.resolution.countersRemoved = (ctx.resolution.countersRemoved ?? 0) + n;
       o.counters[counter] = have - n;
       if (!o.counters[counter]) delete o.counters[counter];
       ctx.events.push({ type: 'counters', object: o.id, counter, delta: -n });
@@ -2546,8 +2559,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;
     // Field of Ruin: "Each player searches their library for a basic land card, …" — each in turn (APNAP, CR 101.4).
-    if (node.who && (ref(node, 'who') as { ref: string }).ref === 'players') {
-      const players = refPlayers(ctx, ref(node, 'who'));
+    // Scheming Symmetry: "Choose two target players. Each of them searches …" — likewise.
+    const searchers = node.who ? refPlayers(ctx, ref(node, 'who')) : [];
+    if (node.who && ((ref(node, 'who') as { ref: string }).ref === 'players' || searchers.length > 1)) {
+      const players = searchers;
       const order = apnap(g).filter((p) => players.includes(p));
       return { expand: order.map((p) => ({ ...structuredClone(node), who: { ref: 'you' }, asPlayer: p })) };
     }
@@ -3558,7 +3573,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // CR 603.7c / 400.7: a target this resolution moved ("put it onto the battlefield … exile it at the beginning of
       // the next end step") is followed to the object it became.
       targets: ctx.targets.map((list) => list.map((t) => (t.kind === 'object' && ctx.resolution?.found?.[t.id] !== undefined ? { ...t, zcc: ctx.resolution.found[t.id]! } : t))),
-      ...(ctx.trigger || ctx.resolution?.created ? { info: { ...ctx.trigger, ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}) } } : {}),
+      // Gift of Immortality: "return that card to the battlefield … Return this card to the battlefield attached to that
+      // creature at the beginning of the next end step" — the creature as this resolution returned it (CR 400.7j).
+      ...(ctx.trigger || ctx.resolution?.created
+        ? {
+            info: {
+              ...ctx.trigger,
+              ...(ctx.trigger?.object && ctx.resolution?.found?.[ctx.trigger.object.id] !== undefined ? { object: { id: ctx.trigger.object.id, zcc: ctx.resolution.found[ctx.trigger.object.id]! } } : {}),
+              ...(ctx.resolution?.created ? { created: ctx.resolution.created } : {}),
+            },
+          }
+        : {}),
       ...(node.on ? { on: node.on as { who: 'you'; filter: ObjectFilter } } : {}),
     });
     return true;
@@ -4169,6 +4194,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // "When ~ enters untapped"; Amulet of Vigor: "Whenever a permanent you control enters tapped"
     if (t.untapped && o.tapped) return [];
     if (t.tapped && !o.tapped) return [];
+    // Kodama of the East Tree: "if it wasn't put onto the battlefield with this ability".
+    if (t.notBySource && e.type === 'moved' && e.by?.id === check.source.id && e.by.zcc === check.source.zcc) return [];
     // "Whenever one or more tokens you control enter": once for the batch.
     if (t.batch) {
       const all = (check.batch ?? [e]).filter((x) => {
@@ -4196,15 +4223,18 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true })) return [];
     // "Whenever one or more other creatures die": once for the creatures that died at the same time.
     if (t.batch) {
-      const first = (check.batch ?? [e]).find((x) => {
+      const together = (check.batch ?? [e]).filter((x) => {
         if (x.type !== 'moved' || x.from !== 'battlefield' || x.to !== 'graveyard') return false;
         const xo = check.g.objects[x.object];
         return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller, lookBack: true }));
       });
-      return first === e ? [{}] : [];
+      // The Skullspore Nexus: "the total power of those creatures" — as they last existed on the battlefield.
+      const power = together.reduce((n, x) => n + (x.type === 'moved' ? Math.max(0, check.g.lastKnown?.[x.object]?.power ?? 0) : 0), 0);
+      return together[0] === e ? [{ power }] : [];
     }
     // "Whenever a creature an opponent controls dies, that player loses 2 life": who controlled it (CR 603.10a).
-    return [{ object: refTo(o), lki, player: e.controller }];
+    // CR 400.7f: "When enchanted creature dies, return this card to its owner's hand" finds the Aura in the graveyard.
+    return [{ object: refTo(o), lki, player: e.controller, ...((t.subject as Ref | undefined)?.ref === 'attached' ? { auraFind: true as const } : {}) }];
   },
   // CR 603.6c: leaves-the-battlefield abilities.
   leaves(t, check) {
@@ -4227,7 +4257,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       });
       return first === e ? [{}] : [];
     }
-    return [{ object: refTo(o), lki, player: e.controller }];
+    return [{ object: refTo(o), lki, player: e.controller, ...((t.subject as Ref | undefined)?.ref === 'attached' ? { auraFind: true as const } : {}) }];
   },
   attacks(t, check) {
     const e = check.event;

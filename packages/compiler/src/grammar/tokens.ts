@@ -93,6 +93,9 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
     else if (w === 'colorless') continue;
     else break;
   }
+  // Replicating Ring: "eight colorless snow artifact tokens named Replicated Ring" (CR 205.4a: snow is a supertype).
+  const snow = parts[i] === 'snow';
+  if (snow) i++;
   const subtypes: string[] = [];
   for (; i < parts.length && subtypeOf(parts[i]!) === parts[i]; i++) subtypes.push(parts[i]!);
   const types: string[] = [];
@@ -101,17 +104,22 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
     if (!t || t.toLowerCase() !== parts[i]) return null;
     types.push(t);
   }
-  if (!subtypes.length || !types.length) return null;
+  // A token without subtypes needs a name (CR 111.4).
+  if ((!subtypes.length && !m[6]) || !types.length) return null;
   const isCreature = types.includes('Creature');
   if (isCreature !== Boolean(m[3])) return null; // creature tokens state P/T; others don't
   const extra = m[7] ? withText(m[7], b) : { text: '', quoted: [] };
   if (!extra) return null;
-  const typeLine = `${types.join(' ')} — ${subtypes.join(' ')}`;
+  const typeLine = subtypes.length ? `${types.join(' ')} — ${subtypes.join(' ')}` : types.join(' ');
   const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? [m[3]!, m[4]!] : undefined);
   // CR 205.4a: a legendary token is a legendary permanent (the legend rule applies to it).
   if (legendary) {
     face.supertypes = ['Legendary'];
     face.typeLine = `Legendary ${face.typeLine}`;
+  }
+  if (snow) {
+    face.supertypes = [...face.supertypes, 'Snow'];
+    face.typeLine = face.typeLine.replace(/^Token /, 'Token Snow ');
   }
   // A quoted ability the grammar can't read leaves the whole phrase unread, rather than a token resolved by hand.
   if (extra.quoted.some((q) => face.unparsed.includes(q))) return null;

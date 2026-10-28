@@ -81,14 +81,16 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       continue;
     }
     // "it's a 3/3 black Zombie creature in addition to its other types"
-    const addition = /^it's (?:a |an )?(?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) )*)(.+) in addition to its other types$/.exec(p);
+    // Ratadrabik: "it's a 2/2 black Zombie in addition to its other colors and types" — the colors are added too.
+    const addition = /^it's (?:a |an )?(?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) )*)(.+) in addition to its other (colors and )?types$/.exec(p);
     if (addition) {
       if (addition[1]) {
         out.power = Number(addition[1]);
         out.toughness = Number(addition[2]);
       }
       const colors = addition[3]!.trim().split(' ').filter(Boolean);
-      if (colors.length) out.colors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
+      if (colors.length && addition[5]) out.addColors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
+      else if (colors.length) out.colors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
       if (!typeWords(addition[4]!.split(' '), out, false)) return null;
       continue;
     }

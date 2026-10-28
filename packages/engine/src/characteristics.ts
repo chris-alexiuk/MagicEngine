@@ -89,6 +89,8 @@ interface ActiveEffect {
   types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[] };
   /** Layer 5: colors it becomes. */
   colors?: Color[];
+  /** Layer 5: colors it gets in addition to its own. */
+  addColors?: Color[];
   /** Layer 4: creature types it becomes; land types it becomes (CR 305.7). */
   creatureTypes?: string[];
   landTypes?: string[];
@@ -419,6 +421,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
         ...(e.landTypes ? { landTypes: e.landTypes } : {}),
         ...(e.colors ? { colors: e.colors } : {}),
+        ...(e.addColors ? { addColors: e.addColors } : {}),
         ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
         ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
         ...(e.cantHave ? { cantHave: e.cantHave } : {}),
@@ -438,7 +441,7 @@ function ptGated(e: ContinuousEffectNode): boolean {
   const f = e.affected.filter as ObjectFilter;
   const byPT = (x: ObjectFilter): boolean => Boolean(x.power || x.toughness || x.anyOf?.some(byPT));
   if (!byPT(f)) return false;
-  if (e.power !== undefined || e.toughness !== undefined || e.setPower !== undefined || e.addTypes || e.setTypes || e.loseTypes || e.colors || e.loseAbilities || e.loseKeywords || e.cantHave || e.creatureTypes || e.landTypes) return false;
+  if (e.power !== undefined || e.toughness !== undefined || e.setPower !== undefined || e.addTypes || e.setTypes || e.loseTypes || e.colors || e.addColors || e.loseAbilities || e.loseKeywords || e.cantHave || e.creatureTypes || e.landTypes) return false;
   return !(e.keywords ?? []).some((k) => k.id === 'ability' || k.abilities?.some((a) => a.kind === 'static'));
 }
 
@@ -473,6 +476,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.setPower !== undefined || e.setToughness !== undefined ? { set: { layer: '7b' as const, pt: (): [number | null, number | null] => [e.setPower ?? null, e.setToughness ?? (e.setPower !== undefined ? 0 : null)] } } : {}),
     ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
     ...(e.colors ? { colors: e.colors } : {}),
+    ...(e.addColors ? { addColors: e.addColors } : {}),
     ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
     ...(e.landTypes ? { landTypes: e.landTypes } : {}),
     ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
@@ -606,7 +610,10 @@ function layered(g: GameState, o: GameObject): Characteristics {
     c.supertypes = [...c.supertypes, 'Legendary'];
   }
   // CR 613.1e: layer 5 — color-changing effects.
-  for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
+  for (const e of effects) {
+    if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
+    else if (e.addColors && e.applies(o, c)) c.colors = (['W', 'U', 'B', 'R', 'G'] as Color[]).filter((x) => c.colors.includes(x) || e.addColors!.includes(x));
+  }
   // CR 122.1b: keyword counters ("a flying counter") — it has that keyword (layer 6; here before other layer-6 effects).
   if (o.zone === 'battlefield') {
     for (const [k, n] of Object.entries(o.counters)) if (n > 0 && KEYWORD_COUNTERS.has(k)) c.keywords.push({ id: k });

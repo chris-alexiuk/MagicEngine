@@ -43,6 +43,8 @@ export class Binder {
   itOnField = false;
   /** The trigger event has an amount, so "that much" / "that many" means it. */
   eventAmount = false;
+  /** "Whenever one or more creatures die": "the total power of those creatures" is the batch's (as they last existed). */
+  batchPower = false;
   /** What the last "deals N damage to …" dealt damage to ("a creature dealt damage this way"). */
   damaged: Ref | null = null;
   /** CR 701.38: the options of the vote this ability holds ("If sickness gets more votes"). */
@@ -71,6 +73,7 @@ export class Binder {
     b.itIsSource = this.itIsSource;
     b.itOnField = this.itOnField;
     b.eventAmount = this.eventAmount;
+    b.batchPower = this.batchPower;
     b.damaged = this.damaged;
     b.votes = this.votes;
     b.unsupported = this.unsupported;
@@ -91,6 +94,7 @@ export class Binder {
     this.itIsSource = other.itIsSource;
     this.itOnField = other.itOnField;
     this.eventAmount = other.eventAmount;
+    this.batchPower = other.batchPower;
     this.damaged = other.damaged;
     this.votes = other.votes;
     this.unsupported = other.unsupported;

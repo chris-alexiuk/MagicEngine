@@ -110,6 +110,11 @@ export class ParserRegistry {
       .split('\n')
       .map(stripReminder)
       .flatMap((l) => {
+        // Thunderfoot Baloth: "Lieutenant — As long as you control your commander, this creature gets +2/+2 and other
+        // creatures you control get +2/+2 and have trample." — two static abilities under one condition.
+        const names = [ctx.faceName, ctx.faceName.split(',')[0]!].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+        const pair = new RegExp(`^((?:[A-Z][\\w' ]+ — )?As long as [^,]+, )((?:this creature|${names}) gets? [+-]\\d+\\/[+-]\\d+) and ((?:other )?creatures you control (?:get|have) [^"]+)\\.$`).exec(l);
+        if (pair) return [`${pair[1]}${pair[2]}.`, `${pair[1]}${pair[3]}.`];
         const both = /^(.+?) enters tapped and (doesn't untap during your untap step|with .+ counters? on it)\.$/.exec(l);
         if (!both) return [l];
         return [`${both[1]} enters tapped.`, both[2]!.startsWith('with') ? `${both[1]} enters ${both[2]}.` : `${both[1]} ${both[2]}.`];

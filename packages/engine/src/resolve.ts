@@ -28,7 +28,11 @@ function sourceOf(ctx: EffectContext): GameObject | null {
   const s = ctx.source;
   if (!s) return null;
   // CR 400.7: once it has changed zones it's a new object that "~" no longer refers to (unless 400.7j finds it).
-  return ctx.sourceZcc === undefined || s.zcc === ctx.sourceZcc || foundNow(ctx, s) ? s : null;
+  if (ctx.sourceZcc === undefined || s.zcc === ctx.sourceZcc || foundNow(ctx, s)) return s;
+  // CR 400.7f: "When enchanted creature dies, return this card to its owner's hand" — the Aura put into its owner's
+  // graveyard with the creature, or for not being attached (CR 704.5m), and not moved since.
+  if (ctx.trigger?.auraFind && s.zone === 'graveyard' && s.zcc === ctx.sourceZcc + 1 && ctx.g.lastKnown?.[s.id]?.zcc === ctx.sourceZcc) return s;
+  return null;
 }
 
 function targetObjects(ctx: EffectContext, index: number): GameObject[] {
@@ -128,6 +132,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
     case 'sacrificed_this_way':
       // What this resolution sacrificed, where it is now ("… sacrifices a creature. Return it to the battlefield").
       return movedThisWay(ctx, { how: 'sacrificed' }).flatMap((m) => (g.objects[m.id] ? [g.objects[m.id]!] : []));
+    case 'discarded_this_way':
+      // Malcolm: "you may cast the discarded card" — what this resolution's discard effects put into a graveyard.
+      return (ctx.resolution?.moves ?? [])
+        .filter((m) => m.effect === 'discard' && m.from === 'hand')
+        .flatMap((m) => (g.objects[m.id] && g.objects[m.id]!.zone === m.to ? [g.objects[m.id]!] : []));
     case 'exiled_with': {
       // CR 607.2a: cards in exile that this object's linked ability put there.
       const s = ctx.source;
@@ -234,7 +243,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -447,7 +456,10 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.x;
     case 'event':
       // "that much", "that many": how much the trigger event was.
-      return ctx.trigger?.amount ?? 0;
+      return e.stat === 'power' ? (ctx.trigger?.power ?? 0) : (ctx.trigger?.amount ?? 0);
+    case 'counters_removed':
+      // Coalition Relic: "for each charge counter removed this way".
+      return ctx.resolution?.countersRemoved ?? 0;
     case 'party': {
       // CR 700.8: up to one each of Cleric, Rogue, Warrior and Wizard — the biggest such group.
       const roles = ['Cleric', 'Rogue', 'Warrior', 'Wizard'];

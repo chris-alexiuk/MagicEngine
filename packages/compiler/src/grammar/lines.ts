@@ -215,8 +215,11 @@ function variantOf(line: string, env: GrammarEnv): { base: string; condition: Co
   return program ? { base: `${base.join('. ')}.`, condition, program } : null;
 }
 
-/** A discarded card is known only by what it was ("that card's mana value"), not as an object to act on. */
-const unfindable = (program: object): boolean => JSON.stringify(program).includes('"ref":"discarded_this_way"');
+/**
+ * A card discarded outside the resolution (a cost) can't be found by "the discarded card"; only a discard by the same
+ * resolution can (Malcolm: "you may cast the discarded card").
+ */
+const unfindable = (program: object): boolean => JSON.stringify(program).includes('"ref":"discarded_this_way"') && !JSON.stringify(program).includes('"type":"discard"');
 
 /** Whether a program has a target count that is "X" (TargetSpec.countX). */
 const hasCountX = (program: object): boolean => JSON.stringify(program).includes('"countX":true');
@@ -613,6 +616,8 @@ export const activatedRule: GrammarRule = {
       if (mana && effect && spentWhen) {
         const sb = new Binder(env);
         const pf = parseFilter(spentWhen[1]!.replace(/^(?:a|an) /, ''), sb);
+        // Primal Wellspring: "copy that spell and you may choose new targets for the copy" — the spell it paid for.
+        sb.named['that spell'] = { ref: 'trigger_object' };
         const then = pf && pf.filter.zone === 'stack' ? parseEffectText(`${spentWhen[2]!.replace(/^\w/, (c) => c.toUpperCase())}.`, sb) : null;
         if (!pf || !then || sb.targets.length) return null;
         const { zone: _z, ...filter } = pf.filter;
@@ -1107,7 +1112,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, saddled: true }, it: { ref: 'self' }, player: null };
   }
   // Kaya's Ghostform: "When enchanted permanent dies or is put into exile" — it leaves for one of those zones.
-  const attachedGone = /^(~|(?:enchanted|equipped) (?:creature|permanent|artifact|land)) (dies or is put into exile|is put into exile)$/.exec(t);
+  // God-Eternal Oketra: "When ~ dies or is put into exile from the battlefield".
+  const attachedGone = /^(~|(?:enchanted|equipped) (?:creature|permanent|artifact|land)) (dies or is put into exile|is put into exile)(?: from the battlefield)?$/.exec(t);
   if (attachedGone) {
     const subject: Ref = attachedGone[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
     const toZones = attachedGone[2] === 'is put into exile' ? ['exile'] : ['graveyard', 'exile'];
@@ -1652,6 +1658,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const pf = parseFilter(manyDie[2]!, b);
     if (!pf || !pf.plural || pf.filter.zone) return null;
     if (manyDie[1]) pf.filter.other = true;
+    if (pf.filter.types?.length === 1 && pf.filter.types[0] === 'Creature') b.batchPower = true;
     return { trigger: { type: 'dies', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
   // CR 706: "Whenever you roll one or more dice", "Whenever you roll a die"
@@ -1800,6 +1807,10 @@ export const triggeredRule: GrammarRule = {
         if (iff && iff[1] === 'no mana was spent to cast it' && trig.trigger.type === 'cast') {
           trig.trigger = { ...trig.trigger, noManaSpent: true };
           effectText = iff[2]!;
+        } else if (iff && iff[1] === "it wasn't put onto the battlefield with this ability" && trig.trigger.type === 'enters' && !trig.trigger.batch) {
+          // Kodama of the East Tree: what this permanent's ability put there can't trigger it again.
+          trig.trigger = { ...trig.trigger, notBySource: true };
+          effectText = iff[2]!;
         } else if (iff && iff[1] === "you're the defending player" && trig.trigger.type === 'attacks' && !trig.trigger.defender) {
           // Kazuul: "Whenever a creature an opponent controls attacks, if you're the defending player" — it attacks you or a
           // planeswalker you control (CR 506.2); that can't change before it resolves.
@@ -1810,10 +1821,15 @@ export const triggeredRule: GrammarRule = {
           // "Whenever another creature enters, if ~ has a counter on it, … onto that creature": the event's object
           // stays "that creature" after a condition about ~.
           if (trig.it?.ref === 'trigger_object') b.it = trig.it;
+          // Adaptive Training Post: "Whenever you cast an instant or sorcery spell, if this artifact has fewer than three charge
+          // counters on it, put a charge counter on it." — a spell can't have counters, so "it" is this permanent.
+          if (trig.trigger.type === 'cast' && /^~ has .+ counters? on it$/.test(iff[1]!)) b.it = { ref: 'self' };
           if (!condition) return null;
           // Howl of the Hunt: "When this Aura enters, if enchanted creature is a Wolf or Werewolf, untap that creature." —
           // "that creature" is the one the condition is about.
           if (/^(?:enchanted|equipped) creature is /.test(iff[1]!) && condition.type === 'is') b.named['that creature'] = (condition as unknown as { of: Ref }).of;
+          // Valakut Exploration: "if there are cards exiled with this enchantment, put them into …".
+          if (/^there (?:are|is) (?:one or more )?cards? exiled with ~$/.test(iff[1]!)) b.named['them'] ??= { ref: 'exiled_with' };
           effectText = iff[2]!;
         }
         if (/^unless /i.test(effectText)) return null;
@@ -2003,6 +2019,8 @@ export const continuousRule: GrammarRule = {
       }
       if (!found) return null;
     }
+    // Arixmethes: "As long as Arixmethes has a slumber counter on it, it's a land."
+    if (conds.length) rest = rest.replace(/^it's /, 'it is ');
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
       parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
@@ -2248,12 +2266,13 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return inner && !inner.condition ? { ...inner, alsoPlayer: youToo[3] as 'hexproof' | 'shroud' } : null;
   }
   // Bender's Waterskin, Unwinding Clock: "Untap this artifact / all artifacts you control during each other player's untap step."
-  const untapOthers = /^Untap (~|all (.+?)) during each other player's untap step$/.exec(body);
+  // Dazzling Theater: "Untap each creature you control during each other player's untap step."
+  const untapOthers = /^Untap (~|all (.+?)|each (.+?)) during each other player's untap step$/.exec(body);
   // (Seedborn Muse's "all permanents you control" is a rule for the player.)
-  if (untapOthers && untapOthers[2] !== 'permanents you control') {
+  if (untapOthers && untapOthers[2] !== 'permanents you control' && untapOthers[3] !== 'permanent you control') {
     if (untapOthers[1] === '~') return { type: 'continuous', affected: { ref: 'self' }, rules: ['untap_during_others'] };
-    const pf = parseFilter(untapOthers[2]!, b);
-    return pf && pf.plural && !pf.filter.zone ? { type: 'continuous', affected: { ref: 'all', filter: pf.filter }, rules: ['untap_during_others'] } : null;
+    const pf = parseFilter((untapOthers[2] ?? untapOthers[3])!, b);
+    return pf && pf.plural === Boolean(untapOthers[2]) && !pf.filter.zone ? { type: 'continuous', affected: { ref: 'all', filter: pf.filter }, rules: ['untap_during_others'] } : null;
   }
   // CR 602.5: "Enchanted creature's activated abilities can't be activated", "Activated abilities of artifacts your
   // opponents control can't be activated", "… and its activated abilities can't be activated unless they're mana abilities".
@@ -2314,7 +2333,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2348,7 +2367,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     }
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
-    const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (?:land )?types$/.exec(part);
+    // Blade of the Oni: "is a black Demon in addition to its other colors and types" (layers 4 and 5).
+    const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (colors and )?(?:land )?types$/.exec(part);
     if (also && !effect.addTypes && also[1] === 'the chosen type') {
       effect.addTypes = { types: [], subtypes: [], chosenType: true };
       continue;
@@ -2356,14 +2376,22 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (also && !effect.addTypes) {
       const types: string[] = [];
       const subtypes: string[] = [];
+      const colors: Color[] = [];
       for (const w of also[1]!.split(' ')) {
+        if (also[2] && COLOR_WORDS[w]) {
+          colors.push(COLOR_WORDS[w]! as Color);
+          continue;
+        }
+        if (also[2] && w === 'and' && colors.length) continue;
         const t = TYPE_NOUNS[w.toLowerCase()];
         // "are Forest lands in addition to their other types" — the plural with a plural subject.
         if (t && (t.toLowerCase() === w.toLowerCase() || (/s$/.test(w) && t.toLowerCase() === w.toLowerCase().slice(0, -1)))) types.push(t);
         else if (subtypeOf(w) === w || subtypeOf(w.replace(/s$/, '')) === w.replace(/s$/, '')) subtypes.push(subtypeOf(w) === w ? w : w.replace(/s$/, ''));
         else return null;
       }
+      if (also[2] && !colors.length) return null;
       effect.addTypes = { types, subtypes };
+      if (colors.length) effect.addColors = colors;
       continue;
     }
     // Layer 4: "isn't a creature" (the Theros Gods, under their condition).
@@ -2672,6 +2700,13 @@ export const costModifierRule: GrammarRule = {
       return { kind: 'static', text: original, effect: node };
     }
     // Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast."
+    // Defense Grid: "Each spell costs {3} more to cast except during its controller's turn."
+    const grid = /^Each spell costs (\{\d+\}) more to cast except during its controller's turn$/.exec(body);
+    if (grid) {
+      const a = amountOf(grid[1]!);
+      if (!a) return null;
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'each', filter: {}, change: 'more', exceptCastersTurn: true, ...a } as CostModifierNode };
+    }
     // Alisaie Leveilleur: "The second spell you cast each turn costs {2} less to cast."
     const firstEach = /^The (first|second) ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}) less to cast$/.exec(body);
     if (firstEach) {

@@ -387,6 +387,7 @@ export function moveObject(
     face: from === 'battlefield' || from === 'stack' ? faceBefore : o.face,
     ...(o.token ? { token: true as const } : {}),
     ...(countersBefore ? { counters: countersBefore } : {}),
+    ...(to === 'battlefield' && g.resolving?.entry.kind === 'ability' ? { by: { ...g.resolving.entry.source } } : {}),
   });
   // CR 714.3a: a Saga enters with a lore counter on it.
   if (to === 'battlefield') addLore(g, o, events, true);

@@ -51,6 +51,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       // As its cost is worked out, the spell is still where it's cast from (it moves to the stack after, CR 601.2a's order here).
       if (e.castFrom && !e.castFrom.includes(spell.zone as 'graveyard' | 'exile')) continue;
       if (e.notFromHand && spell.zone === 'hand') continue;
+      // Defense Grid: "except during its controller's turn".
+      if (e.exceptCastersTurn && g.active === player) continue;
       // Conduit of Ruin: "The first creature spell you cast each turn" — none like it cast before this one this turn.
       if (e.firstEachTurn) {
         const before = (g.turnLog.castSpells ?? []).filter((c) => c.player === player && c.id !== spell.id && g.objects[c.id] && (!e.filter || matchesFilter(g, g.objects[c.id]!, e.filter, { controller: source.controller, source, anyZone: true })));

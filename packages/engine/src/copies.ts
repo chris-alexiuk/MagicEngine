@@ -40,6 +40,7 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
   if (x.setCreatureTypes) f.subtypes = [...f.subtypes.filter((s) => !CREATURE_TYPES.has(s)), ...x.setCreatureTypes];
   for (const s of x.addSubtypes ?? []) if (!f.subtypes.includes(s)) f.subtypes.push(s);
   if (x.colors) f.colors = [...x.colors];
+  if (x.addColors) f.colors = (['W', 'U', 'B', 'R', 'G'] as const).filter((c) => f.colors.includes(c) || x.addColors!.includes(c));
   if (x.power !== undefined) f.power = String(x.power);
   if (x.toughness !== undefined) f.toughness = String(x.toughness);
   if (x.keywords) f.keywords.push(...structuredClone(x.keywords));

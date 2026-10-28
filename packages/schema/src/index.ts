@@ -527,6 +527,8 @@ export type AmountExpr = (
   | { kind: 'count'; filter: ObjectFilter; most?: true }
   /** Maester Seymour, Lux Artillery: "the number of counters among creatures you control" — every counter on them. */
   | { kind: 'counters_among'; filter: ObjectFilter }
+  // Coalition Relic: "for each charge counter removed this way" — by this resolution's remove-counters effects.
+  | { kind: 'counters_removed' }
   /** Cards in hands, graveyards or libraries. */
   /** `player`: "in target opponent's hand" — that player's cards (`who` is then ignored). */
   /** `least`: the fewest any one of those players has (Shelldock Isle: "a library has twenty or fewer cards in it"). */
@@ -552,7 +554,8 @@ export type AmountExpr = (
   /** X as paid (CR 107.3m), when it needs scaling ("-X/-X"). */
   | { kind: 'x' }
   /** "that much" / "that many": the amount of the event that triggered the ability. */
-  | { kind: 'event' }
+  // The Skullspore Nexus: "the total power of those creatures" (stat: the creatures that died together, as they last existed).
+  | { kind: 'event'; stat?: 'power' }
   /** CR 702.40a (storm): spells cast before that spell this turn. */
   // Thousand-Year Storm: only spells you cast, and only those that match.
   | { kind: 'cast_before'; of: Ref; filter?: ObjectFilter; yours?: true }
@@ -845,6 +848,8 @@ export interface CopyExcept {
   setCreatureTypes?: string[];
   /** "it's white" / "it's black": its colors become these. */
   colors?: Color[];
+  /** Ratadrabik: "it's a 2/2 black Zombie in addition to its other colors and types" — these colors as well. */
+  addColors?: Color[];
   /** "it's 1/1" */
   power?: number;
   toughness?: number;
@@ -906,6 +911,8 @@ export interface ContinuousEffectNode extends EffectNode {
   landTypes?: string[];
   /** Layer 5: "is blue", "is colorless" ([]). */
   colors?: Color[];
+  /** Layer 5: "is a black Demon in addition to its other colors and types" — these colors as well. */
+  addColors?: Color[];
   /** Layer 6: "loses all abilities" (CR 613.1f). */
   loseAbilities?: true;
   /** "As long as [condition], …" / "During your turn, …": applies only while this is true. */
@@ -1015,6 +1022,8 @@ export interface CostModifierNode extends EffectNode {
   firstEachTurn?: true;
   /** Alisaie Leveilleur: "The second spell you cast each turn" (with `firstEachTurn`). */
   nthEachTurn?: number;
+  /** Defense Grid: "except during its controller's turn". */
+  exceptCastersTurn?: true;
 }
 
 /**
@@ -1161,7 +1170,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

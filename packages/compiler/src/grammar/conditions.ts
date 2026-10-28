@@ -2,7 +2,7 @@ import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
-import { capitalise, COLOR_WORDS, parseAmount, TYPE_NOUNS } from './words.js';
+import { capitalise, COLOR_WORDS, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
  * Conditions in "if" clauses: intervening "if" on triggers (CR 603.4) and
@@ -142,6 +142,20 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed|returned) this way$/.exec(t) ?? /^(another .+?) (?:is|was) (returned) this way$/.exec(t);
   if (movedOne) {
     const amount = movedThisWay(`${movedOne[1]} ${movedOne[2]} this way`, b);
+    if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
+  }
+  // Emeria Shepherd: "If that land is a Plains" — the land that entered.
+  const thatIs = /^that (land|creature|permanent) is an? ([A-Z][a-z]+)$/.exec(t);
+  if (thatIs && b.it?.ref === 'trigger_object' && subtypeOf(thatIs[2]!) === thatIs[2]) return { type: 'is', of: b.it, filter: { subtypes: [thatIs[2]!] } };
+  // Phelia: "return that card to the battlefield under its owner's control. If it entered under your control, …" — it's
+  // on the battlefield, and you control it.
+  if (/^(?:it|that card|that permanent) entered (?:the battlefield )?under your control$/.test(t) && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { zone: 'battlefield', controller: 'you' } };
+  // Valakut Exploration: "if there are cards exiled with this enchantment" (CR 607.2a).
+  if (/^there (?:are|is) (?:one or more )?cards? exiled with ~$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'exile', who: 'each', filter: { exiledWithSource: true } }, op: 'ge', n: 1 };
+  // Bonehoard Dracosaur: "If you exiled a land card this way", "If you exiled a nonland card this way".
+  const youMoved = /^you (exiled|milled|sacrificed|destroyed) (?:a|an|one or more) (.+?) this way$/.exec(t);
+  if (youMoved) {
+    const amount = movedThisWay(`${youMoved[2]} ${youMoved[1]} this way`, b);
     if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
   }
   // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
