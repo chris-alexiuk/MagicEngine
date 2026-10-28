@@ -1205,7 +1205,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
-  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?)$/.exec(t);
+  // Aerial Extortionist: "enters or deals combat damage to a player"; Alpha Deathclaw: "enters or becomes monstrous".
+  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies|deals combat damage to a player) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?|deals combat damage to a player|becomes monstrous|becomes tapped)$/.exec(t);
   if (either && either[2] !== either[3]) {
     const one = parseTrigger(word, `${either[1]} ${either[2]}`, b);
     const two = one ? parseTrigger(word, `${either[1]} ${either[3]}`, b) : null;
@@ -2924,6 +2925,15 @@ export const selfReplacementRule: GrammarRule = {
   },
 };
 
+/** Maskwood Nexus (CR 205.3m, layer 4). */
+export const everyCreatureTypeRule: GrammarRule = {
+  id: 'every_creature_type',
+  parse(line, original) {
+    if (line !== "Creatures you control are every creature type. The same is true for creature spells you control and creature cards you own that aren't on the battlefield.") return null;
+    return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'all', filter: { types: ['Creature'], controller: 'you' } }, addTypes: { types: [], subtypes: [], allCreatureTypes: true, elsewhere: true } } } as StaticAbility;
+  },
+};
+
 /** "This land enters tapped unless you control a Plains or an Island." (CR 614.1d, checked as it enters, CR 614.12) */
 export const entersTappedUnlessRule: GrammarRule = {
   id: 'enters_tapped_unless',
@@ -3717,6 +3727,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   chapterRule,
   entersWithCountersRule,
   entersTappedUnlessRule,
+  everyCreatureTypeRule,
   asEntersRule,
   entersAsCopyRule,
   reanimateAuraRule,

@@ -118,6 +118,26 @@ function subtypeKind(s: string): keyof typeof SUBTYPES | undefined {
 }
 const LAND_TYPES: readonly string[] = SUBTYPES.land;
 
+/**
+ * Maskwood Nexus: "The same is true for creature spells you control and creature cards you own that aren't on the
+ * battlefield." — every creature type, from a permanent's static ability (CR 604.1: it works in other zones' cards).
+ */
+let elsewhereMemo: { g: GameState; key: string; players: Set<PlayerId> } | null = null;
+function everyCreatureTypeElsewhere(g: GameState, o: GameObject, c: Characteristics): void {
+  if (!c.types.includes('Creature')) return;
+  // Rare: which players control such a permanent, worked out once per state.
+  const key = `${g.clock}|${g.nextId}|${g.zones.battlefield.length}`;
+  if (elsewhereMemo?.g !== g || elsewhereMemo.key !== key) {
+    const players = new Set<PlayerId>();
+    for (const id of g.zones.battlefield) {
+      const src = g.objects[id]!;
+      if (printedAbilities(faceOf(g, src)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && Boolean((a.effect as ContinuousEffectNode).addTypes?.elsewhere))) players.add(src.controller);
+    }
+    elsewhereMemo = { g, key, players };
+  }
+  if (elsewhereMemo.players.has(o.zone === 'stack' ? o.controller : o.owner)) c.subtypes = [...new Set([...c.subtypes, ...CREATURE_TYPES])];
+}
+
 function printed(face: FaceDef): Characteristics {
   // CR 702.73a / CR 604.3: changeling is a characteristic-defining ability — every creature type.
   const changeling = face.keywords.some((k) => k.id === 'changeling');
@@ -391,7 +411,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.combat ? { combat: { ...e.combat, from: source.id } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes
-          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && source.chosen?.creatureType ? [source.chosen.creatureType] : [])], retain: true } }
+          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && source.chosen?.creatureType ? [source.chosen.creatureType] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
           : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
         // Theros Gods: "As long as your devotion to red is less than five, Purphoros isn't a creature."
@@ -449,7 +469,8 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
   return g.effects.map((e) => ({
     timestamp: e.timestamp,
     ...(e.power !== undefined ? { pt: (): [number, number] => [e.power ?? 0, e.toughness ?? 0] } : {}),
-    ...(e.setPower !== undefined ? { set: { layer: '7b' as const, pt: (): [number, number] => [e.setPower!, e.setToughness ?? 0] } } : {}),
+    // CR 701.12g: an exchange with a life total sets just one of them.
+    ...(e.setPower !== undefined || e.setToughness !== undefined ? { set: { layer: '7b' as const, pt: (): [number | null, number | null] => [e.setPower ?? null, e.setToughness ?? (e.setPower !== undefined ? 0 : null)] } } : {}),
     ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
     ...(e.colors ? { colors: e.colors } : {}),
     ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
@@ -513,6 +534,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     // Layer 6 on spells (CR 613.1f): "Instant and sorcery spells you control have lifelink" (Heartflame Duelist).
     for (const e of spellGrants(g)) if (e.applies(o, c)) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
     applyOwnCDA(g, o, c);
+    everyCreatureTypeElsewhere(g, o, c);
     // Effects locked to this spell (CR 611.2c) — "Target spell or permanent becomes white" (Purelace):
     // colors (layer 5) and abilities (layer 6). They end when it leaves the stack (CR 400.7).
     if (g.effects.length) {
@@ -524,6 +546,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
   }
   if (o.zone !== 'battlefield') {
     applyOwnCDA(g, o, c);
+    everyCreatureTypeElsewhere(g, o, c);
     return withCounters(c, o);
   }
 

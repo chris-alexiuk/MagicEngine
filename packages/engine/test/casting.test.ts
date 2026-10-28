@@ -84,7 +84,7 @@ describe('casting spells', () => {
   });
 
   it('CR 608.2n: an instant the engine can’t run is resolved by hand, then goes to the graveyard', () => {
-    const text = 'Exchange life totals with target player.';
+    const text = 'Each player antes the top card of their library.';
     const swap = makeCard({ name: 'Life Swap', type_line: 'Instant', mana_cost: '{G}{G}', oracle_text: text });
     let g = toStep(start({ extra: [swap] }), 'main1');
     give(g, 'alice', 'Forest', 'battlefield');

@@ -44,7 +44,7 @@ import {
 import { defaultCastChoice } from '../src/legal.js';
 import { planAutoTap } from '../src/autotap.js';
 import { parseManaCost } from '../src/mana.js';
-import { withTargetX } from '../src/targets.js';
+import { relatedPick, withTargetX } from '../src/targets.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -160,7 +160,13 @@ function randomiseTargets(g: GameState, a: Action): Action {
   if (specs.some((s) => s.perPlayer)) return a;
   // "with mana value X or less": the X it's cast or activated with.
   const x = (a as { x?: number }).x ?? 0;
-  return { ...a, targets: withTargetX(x, () => specs!.map((spec) => sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner))) };
+  // Agadeem's Awakening, Run Away Together, Secret Tunnel: related targets (a related set of the random ones, or none).
+  const distinct = (spec: (typeof specs)[number], picked: Target[]) => {
+    if (!spec.distinctManaValues && !spec.differentControllers && !spec.shareCreatureType && !spec.shareCardType) return picked;
+    const pick = relatedPick(g, spec, picked, picked.length);
+    return pick.length >= (spec.upTo ? (spec.min ?? 0) : (spec.count ?? 1)) ? pick : relatedPick(g, spec, targetCandidates(g, a.player, spec, o), spec.count ?? 1);
+  };
+  return { ...a, targets: withTargetX(x, () => specs!.map((spec) => distinct(spec, sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)))) };
 }
 
 function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | null {

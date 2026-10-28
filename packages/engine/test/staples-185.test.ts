@@ -223,6 +223,16 @@ const CARDS = [
   makeCard({ name: 'Bloom Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'You may play up to three additional lands this turn.' }),
   makeCard({ name: 'Merchant Lite', type_line: 'Creature — Human Citizen', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{T}, Remove a counter from a nonland permanent you control: Draw a card.' }),
   makeCard({ name: 'Initiate Lite', type_line: 'Creature — Human Warlock', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: '{0}, Remove two +1/+1 counters from among creatures you control: You gain 5 life.' }),
+  makeCard({ name: 'Nexus Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "Creatures you control are every creature type. The same is true for creature spells you control and creature cards you own that aren't on the battlefield." }),
+  makeCard({ name: 'Awakening Lite', type_line: 'Sorcery', mana_cost: '{X}', oracle_text: 'Return from your graveyard to the battlefield any number of target creature cards that each have a different mana value X or less.' }),
+  makeCard({ name: 'Run Away Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Choose two target creatures controlled by different players. Return those creatures to their owners' hands." }),
+  makeCard({ name: 'Tunnel Lite', type_line: 'Land', mana_cost: '', oracle_text: "{0}, {T}: Two target creatures you control that share a creature type can't be blocked this turn." }),
+  makeCard({ name: 'Switcheroo Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exchange control of two target creatures.' }),
+  makeCard({ name: 'Gilded Lite', type_line: 'Creature — Drake', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "Flying\nWhen this creature enters, exchange control of this creature and up to one target creature an opponent controls. If you don't or can't make an exchange, sacrifice this creature. This ability still resolves if its target becomes illegal." }),
+  makeCard({ name: 'Stormdrake Lite', type_line: 'Creature — Drake', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: 'When this creature enters, exchange control of this creature and target creature an opponent controls. If you do, you get {E}{E}{E}{E}, then sacrifice that creature unless you pay an amount of {E} equal to its mana value.' }),
+  makeCard({ name: 'Tree Lite', type_line: 'Creature — Plant', mana_cost: '{0}', power: '0', toughness: '13', oracle_text: "Defender\n{T}: Exchange your life total with this creature's toughness." }),
+  makeCard({ name: 'Soul Conduit Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{0}, {T}: Two target players exchange life totals.' }),
+  makeCard({ name: 'Leyline Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Your opponents can't gain life." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -2429,5 +2439,155 @@ describe('staples (slice 203): removing counters from permanents you control as 
     g = settle(act(g, { type: 'activate', player: 'alice', object: ini, ability: 0, costs: { removed: [{ object: bear, counter: '+1/+1', n: 1 }, { object: ini, counter: '+1/+1', n: 1 }] } }));
     expect(g.players.alice!.life).toBe(life + 5);
     expect([g.objects[ini]!.counters['+1/+1'], g.objects[bear]!.counters['+1/+1']]).toEqual([undefined, undefined]);
+  });
+});
+
+describe('staples (slice 205): Maskwood Nexus', () => {
+  it('your creatures, creature spells and creature cards elsewhere are every creature type', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Nexus Lite', 'battlefield');
+    const mine = give(g, 'alice', 'Bear', 'battlefield');
+    const theirs = give(g, 'bob', 'Bear', 'battlefield');
+    const inHand = give(g, 'alice', 'Bear', 'hand');
+    const theirHand = give(g, 'bob', 'Bear', 'hand');
+    expect(chars(g, g.objects[mine]!).subtypes).toContain('Goblin');
+    expect(chars(g, g.objects[inHand]!).subtypes).toContain('Elf');
+    expect(chars(g, g.objects[theirs]!).subtypes).not.toContain('Goblin');
+    expect(chars(g, g.objects[theirHand]!).subtypes).not.toContain('Elf');
+  });
+});
+
+describe("staples (slice 205): Agadeem's Awakening", () => {
+  it('creature cards with mana value X or less, each a different mana value', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b] = [give(g, 'alice', 'Bear', 'graveyard'), give(g, 'alice', 'Bear', 'graveyard')];
+    const ogre = give(g, 'alice', 'Ogre Three', 'graveyard');
+    const spell = give(g, 'alice', 'Awakening Lite', 'hand');
+    g.players.alice!.pool.C = 3;
+    const obj = (id: string) => ({ kind: 'object' as const, object: id });
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, x: 3, targets: [[obj(a), obj(b)]] })).toMatch(/different mana value/);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: spell, x: 3, targets: [[obj(a), obj(ogre)]] }));
+    expect([g.objects[a]!.zone, g.objects[b]!.zone, g.objects[ogre]!.zone]).toEqual(['battlefield', 'graveyard', 'battlefield']);
+  });
+});
+
+describe('staples (slice 205): targets related to each other', () => {
+  it('Run Away Together: two creatures controlled by different players', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [b1, b2] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    const mine = give(g, 'alice', 'Bear', 'battlefield');
+    const spell = give(g, 'alice', 'Run Away Lite', 'hand');
+    const obj = (id: string) => ({ kind: 'object' as const, object: id });
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, targets: [[obj(b1), obj(b2)]] })).toMatch(/different players/);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: spell, targets: [[obj(b1), obj(mine)]] }));
+    expect([g.objects[b1]!.zone, g.objects[mine]!.zone, g.objects[b2]!.zone]).toEqual(['hand', 'hand', 'battlefield']);
+  });
+
+  it('Secret Tunnel: two creatures that share a creature type (and the default picks such a pair)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const tunnel = give(g, 'alice', 'Tunnel Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    const [x, y] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    const obj = (id: string) => ({ kind: 'object' as const, object: id });
+    expect(illegal(g, { type: 'activate', player: 'alice', object: tunnel, ability: 0, targets: [[obj(ogre), obj(x)]] })).toMatch(/share a creature type/);
+    const [a] = kitActions(g, tunnel);
+    expect((a as { targets: { object: string }[][] }).targets[0]!.map((t) => t.object).sort()).toEqual([x, y].sort());
+    g = settle(act(g, a!));
+    expect(chars(g, g.objects[x]!).rules.has('cant_be_blocked')).toBe(true);
+  });
+});
+
+describe('staples (slice 206): exchanges (CR 701.12)', () => {
+  const obj = (id: string) => ({ kind: 'object' as const, object: id });
+  const ply = (p: string) => ({ kind: 'player' as const, player: p });
+
+  it('Switcheroo: two creatures controlled by different players swap; the same player, nothing', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Bear', 'battlefield');
+    const theirs = give(g, 'bob', 'Ogre', 'battlefield');
+    const mine2 = give(g, 'alice', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Switcheroo Lite', 'hand'), targets: [[obj(mine), obj(theirs)]] }));
+    expect([g.objects[mine]!.controller, g.objects[theirs]!.controller]).toEqual(['bob', 'alice']);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Switcheroo Lite', 'hand'), targets: [[obj(theirs), obj(mine2)]] }));
+    expect([g.objects[theirs]!.controller, g.objects[mine2]!.controller]).toEqual(['alice', 'alice']);
+  });
+
+  it('Switcheroo: if one target is gone, no part of the exchange happens', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Bear', 'battlefield');
+    const theirs = give(g, 'bob', 'Ogre', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Switcheroo Lite', 'hand'), targets: [[obj(mine), obj(theirs)]] });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[obj(theirs)]] }));
+    expect(g.objects[theirs]!.zone).toBe('graveyard');
+    expect(g.objects[mine]!.controller).toBe('alice');
+  });
+
+  it('Gilded Drake: trades itself for the target, or is sacrificed with no exchange', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const theirs = give(g, 'bob', 'Ogre', 'battlefield');
+    const drake = give(g, 'alice', 'Gilded Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: drake }));
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(theirs)]] } }));
+    expect([g.objects[drake]!.controller, g.objects[theirs]!.controller]).toEqual(['bob', 'alice']);
+    // None chosen: sacrificed.
+    const drake2 = give(g, 'alice', 'Gilded Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: drake2 }));
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[]] } }));
+    expect(g.objects[drake2]!.zone).toBe('graveyard');
+  });
+
+  it('Gilded Drake: still resolves (and is sacrificed) when its target becomes illegal', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const theirs = give(g, 'bob', 'Ogre', 'battlefield');
+    const drake = give(g, 'alice', 'Gilded Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: drake });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'pass', player: 'bob' });
+    if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(theirs)]] } });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[obj(theirs)]] }));
+    expect(g.objects[theirs]!.zone).toBe('graveyard');
+    expect(g.objects[drake]!.zone).toBe('graveyard');
+  });
+
+  it('Volatile Stormdrake: energy, then pay energy equal to its mana value or sacrifice it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const theirs = give(g, 'bob', 'Ogre Three', 'battlefield');
+    const drake = give(g, 'alice', 'Stormdrake Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: drake });
+    g = settle(g);
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(theirs)]] } }));
+    expect(g.pending?.kind).toBe('pay');
+    expect(g.pending?.kind === 'pay' && g.pending.cost).toBe('{E}{E}{E}');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } }));
+    expect([g.objects[drake]!.controller, g.objects[theirs]!.controller]).toEqual(['bob', 'alice']);
+    expect(g.players.alice!.counters?.energy).toBe(1);
+  });
+
+  it('Tree of Redemption: the life total becomes its toughness and its toughness the old life total', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const tree = give(g, 'alice', 'Tree Lite', 'battlefield');
+    g.objects[tree]!.sick = false;
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: tree, ability: 0 }));
+    expect(g.players.alice!.life).toBe(13);
+    expect(chars(g, g.objects[tree]!).toughness).toBe(life);
+    expect(chars(g, g.objects[tree]!).power).toBe(0);
+  });
+
+  it('Soul Conduit: two players exchange life totals, unless one of them can\'t gain the life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const conduit = give(g, 'alice', 'Soul Conduit Lite', 'battlefield');
+    g.players.alice!.life = 5;
+    g.players.bob!.life = 30;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: conduit, ability: 0, targets: [[ply('alice'), ply('bob')]] }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([30, 5]);
+    // Bob can't gain life: no part of the exchange happens.
+    give(g, 'alice', 'Leyline Lite', 'battlefield');
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'main1', 'alice');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: conduit, ability: 0, targets: [[ply('alice'), ply('bob')]] }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([30, 5]);
   });
 });

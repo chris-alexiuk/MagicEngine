@@ -1,10 +1,10 @@
 import type { EffectNode, ObjectFilter, TargetSpec } from '@mtg/schema';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
-import { filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
+import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TriggerInfo } from './types.js';
 import { playerRule } from './player-rules.js';
-import { livePlayers, nameOf } from './zones.js';
+import { livePlayers, manaValueOf, nameOf } from './zones.js';
 
 /**
  * Targeting (CR 115). `source` is the object the spell or ability comes from: the
@@ -244,7 +244,8 @@ export function canChooseTargets(g: GameState, controller: PlayerId, specs: Targ
 function canChooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number): boolean {
   return specs.every((spec) => {
     const candidates = targetCandidates(g, controller, spec, source);
-    return candidates.length >= targetsRequired(g, controller, spec, candidates, x);
+    const need = targetsRequired(g, controller, spec, candidates, x);
+    return (related(spec) ? relatedPick(g, spec, candidates, need).length : candidates.length) >= need;
   });
 }
 
@@ -323,9 +324,64 @@ function defaultTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec
       out.push(candidates.filter((t) => ownerOf(t) === owner).slice(0, n));
       continue;
     }
+    // Agadeem's Awakening, Run Away Together, Secret Tunnel: a set of targets related as the spec says.
+    if (related(spec)) {
+      const pick = relatedPick(g, spec, candidates, n);
+      if (pick.length < targetsRequired(g, controller, spec, candidates, x)) return null;
+      out.push(pick);
+      continue;
+    }
     out.push(candidates.slice(0, n));
   }
   return out;
+}
+
+/** Whether a spec's targets must be related to each other (CR 115.3: each instance of "target" is checked as a whole). */
+const related = (spec: TargetSpec) => Boolean(spec.distinctManaValues || spec.differentControllers || spec.shareCreatureType || spec.shareCardType);
+
+/** Run Away Together, Secret Tunnel, Agadeem's Awakening: whether these targets are related as the spec says. */
+export function targetsRelated(g: GameState, spec: TargetSpec, list: Target[]): boolean {
+  const objs = list.map((t) => (t.kind === 'object' ? g.objects[t.object] : undefined));
+  if (objs.some((o) => !o)) return !related(spec);
+  const os = objs as GameObject[];
+  if (spec.distinctManaValues && new Set(os.map((o) => manaValueOf(g, o))).size !== os.length) return false;
+  // "controlled by different players" — off the battlefield, owned by (CR 108.4a).
+  if (spec.differentControllers && new Set(os.map((o) => (o.zone === 'battlefield' ? o.controller : o.owner))).size !== os.length) return false;
+  if (spec.shareCreatureType && os.length > 1) {
+    const sets = os.map((o) => creatureTypesOf(chars(g, o)));
+    if (!sets[0]!.some((t) => sets.every((s) => s.includes(t)))) return false;
+  }
+  if (spec.shareCardType && os.length > 1) {
+    const sets = os.map((o) => chars(g, o).types);
+    if (!sets[0]!.some((t) => sets.every((s) => s.includes(t)))) return false;
+  }
+  return true;
+}
+
+/** The largest related set of these candidates, up to `n` (greedy, by type for "share a … type"). */
+export function relatedPick(g: GameState, spec: TargetSpec, candidates: Target[], n: number): Target[] {
+  if (!related(spec)) return candidates.slice(0, n);
+  const greedy = (pool: Target[]) => {
+    const out: Target[] = [];
+    for (const t of pool) {
+      if (out.length >= n) break;
+      if (targetsRelated(g, spec, [...out, t])) out.push(t);
+    }
+    return out;
+  };
+  if (!spec.shareCreatureType && !spec.shareCardType) return greedy(candidates);
+  // Try each type the candidates have: the one with the most of them.
+  const typesOf = (t: Target) => {
+    const o = t.kind === 'object' ? g.objects[t.object] : undefined;
+    return o ? (spec.shareCreatureType ? creatureTypesOf(chars(g, o)) : chars(g, o).types) : [];
+  };
+  let best: Target[] = [];
+  for (const type of new Set(candidates.flatMap(typesOf))) {
+    const pick = greedy(candidates.filter((t) => typesOf(t).includes(type)));
+    if (pick.length > best.length) best = pick;
+    if (best.length >= n) break;
+  }
+  return best;
 }
 
 /** "another target creature": not one chosen for an earlier "target" of the same spell or ability. */
@@ -371,6 +427,12 @@ function chooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
     // "from a single graveyard"
     if (spec.sameOwner && new Set(list.map((t) => (t.kind === 'object' ? g.objects[t.object]?.owner : undefined))).size > 1) {
       throw new RulesError(`The targets for “${spec.text}” must all be in one graveyard.`);
+    }
+    // Agadeem's Awakening: "that each have a different mana value"; "controlled by different players"; "that share a
+    // creature type".
+    if (related(spec) && !targetsRelated(g, spec, list)) {
+      const how = spec.distinctManaValues ? 'each have a different mana value' : spec.differentControllers ? 'be controlled by different players' : spec.shareCreatureType ? 'share a creature type' : 'share a card type';
+      throw new RulesError(`The targets for “${spec.text}” must ${how}.`);
     }
     list.forEach((t, j) => {
       if (list.slice(0, j).some((u) => sameTarget(t, u))) throw new RulesError(`The same target was chosen twice for “${spec.text}”.`);

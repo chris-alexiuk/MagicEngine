@@ -2415,7 +2415,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 118.12a: "[Do something] unless [a player] pays [cost]" — that player chooses whether to pay.
     const payer = refPlayers(ctx, ref(node, 'payer'))[0];
     // "{X}, where X is this creature's power": counted now.
-    const cost = node.costX !== undefined ? `{${Math.max(0, amountOf(ctx, node.costX))}}` : String(node.cost);
+    // Volatile Stormdrake: "an amount of {E} equal to its mana value".
+    const cost = node.costX !== undefined ? `{${Math.max(0, amountOf(ctx, node.costX))}}` : node.costEnergy !== undefined ? '{E}'.repeat(Math.max(0, amountOf(ctx, node.costEnergy))) : String(node.cost);
     if (!payer) return { expand: node.effects as EffectNode[] };
     const answer = answerOf(ctx, 'pay');
     if (!answer) {
@@ -3584,6 +3585,62 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  exchange_control(node, ctx) {
+    // CR 701.12a-b: both permanents still there and controlled by different players, or nothing happens. Each player
+    // gains control of the other's permanent at once (layer 2, CR 613.1b), indefinitely.
+    const pair = exchangePair(ctx, node);
+    if (!pair) return true;
+    const g = ctx.g;
+    const [a, b] = pair;
+    const timestamp = ++g.clock;
+    const source = ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 };
+    for (const [o, to] of [[a, b.controller], [b, a.controller]] as const) {
+      g.effects.push({ id: `e${g.nextId++}`, timestamp, source, controller: ctx.controller, objects: [{ id: o.id, zcc: o.zcc }], control: to, until: 'game' });
+    }
+    applyControlEffects(g, ctx.events);
+    return true;
+  },
+
+  exchange_life(node, ctx) {
+    // CR 701.12c: each player gains or loses the life needed to reach the other's previous total. CR 701.12a: if one of
+    // them can't (a player who can't gain life can't get the higher total), no part of the exchange happens.
+    const plan = lifeExchange(ctx, node);
+    if (!plan) return true;
+    const out: EffectNode[] = [];
+    for (const [p, to] of plan) {
+      const delta = to - ctx.g.players[p]!.life;
+      if (delta > 0) out.push({ type: 'gain_life', amount: delta, who: { ref: 'you' }, asPlayer: p });
+      else if (delta < 0) out.push({ type: 'lose_life', amount: -delta, who: { ref: 'you' }, asPlayer: p });
+    }
+    return out.length ? { expand: out } : true;
+  },
+
+  exchange_life_stat(node, ctx) {
+    // CR 701.12g: "Exchange your life total with this creature's toughness." — the life total becomes the toughness, and
+    // a layer 7b effect sets the toughness to the old life total (CR 613.4b).
+    const g = ctx.g;
+    const [p] = refPlayers(ctx, ref(node, 'who'));
+    const [o] = refObjects(ctx, ref(node, 'what')).filter((x) => x.zone === 'battlefield');
+    if (p === undefined || !o || !chars(g, o).types.includes('Creature')) return true;
+    const stat = node.stat === 'power' ? 'power' : 'toughness';
+    const value = stat === 'power' ? power(g, o) : toughness(g, o);
+    const life = g.players[p]!.life;
+    if (!lifeCanBecome(g, p, value)) return true;
+    g.effects.push({
+      id: `e${g.nextId++}`,
+      timestamp: ++g.clock,
+      source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
+      controller: ctx.controller,
+      objects: [{ id: o.id, zcc: o.zcc }],
+      ...(stat === 'power' ? { setPower: life } : { setToughness: life }),
+      until: 'game',
+    });
+    const delta = value - life;
+    if (delta > 0) return { expand: [{ type: 'gain_life', amount: delta, who: { ref: 'you' }, asPlayer: p }] };
+    if (delta < 0) return { expand: [{ type: 'lose_life', amount: -delta, who: { ref: 'you' }, asPlayer: p }] };
+    return true;
+  },
+
   exile_if_dies(node, ctx) {
     // CR 614.1a: a replacement effect for this turn.
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.exileIfDiesTurn = ctx.g.turn;
@@ -3783,8 +3840,38 @@ function revealUntilCast(ctx: EffectContext, qualifies: (o: GameObject, g: GameS
 }
 
 /** Whether an optional action in "You may [do X]. If you do, …" can be done at all by `chooser`. */
+/** CR 701.12a-b: the two permanents an exchange of control swaps — both on the battlefield, under different players. */
+function exchangePair(ctx: EffectContext, node: EffectNode): [GameObject, GameObject] | null {
+  const refs = (Array.isArray(node.what) ? node.what : [node.what]) as Ref[];
+  const objects = [...new Set(refs.flatMap((r) => refObjects(ctx, r)))].filter((o) => o.zone === 'battlefield');
+  if (objects.length !== 2) return null;
+  const [a, b] = objects as [GameObject, GameObject];
+  return a.controller !== b.controller ? [a, b] : null;
+}
+
+/** CR 119.7-8: whether a player's life total can change to `to` (can't gain life, life total can't change). */
+function lifeCanBecome(g: GameState, p: PlayerId, to: number): boolean {
+  const life = g.players[p]!.life;
+  if (to === life) return true;
+  if (playerRule(g, p, 'life_cant_change')) return false;
+  return to < life || !playerRule(g, p, 'cant_gain_life');
+}
+
+/** CR 701.12c: each player and the life total they're to end with — or null if the exchange can't be completed. */
+function lifeExchange(ctx: EffectContext, node: EffectNode): [PlayerId, number][] | null {
+  const refs = (Array.isArray(node.who) ? node.who : [node.who]) as Ref[];
+  const players = [...new Set(refs.flatMap((r) => refPlayers(ctx, r)))].filter((p) => !ctx.g.players[p]!.lost);
+  if (players.length !== 2) return null;
+  const [a, b] = players as [PlayerId, PlayerId];
+  const plan: [PlayerId, number][] = [[a, ctx.g.players[b]!.life], [b, ctx.g.players[a]!.life]];
+  return plan.every(([p, to]) => lifeCanBecome(ctx.g, p, to)) ? plan : null;
+}
+
 function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
+  // "Exchange control of this creature and target creature an opponent controls. If you do, …" (CR 701.12a).
+  if (e.type === 'exchange_control') return exchangePair(ctx, e) !== null;
+  if (e.type === 'exchange_life') return lifeExchange(ctx, e) !== null;
   if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(chooser)) {
     const filter = bindFilter(ctx, (e.filter ?? {}) as ObjectFilter);
     const n = g.zones.battlefield.filter((id) => {

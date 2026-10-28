@@ -640,7 +640,8 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
       ),
     ),
   );
-  return chosen > 0 && legal === 0 ? null : out;
+  // Gilded Drake: "This ability still resolves if its target becomes illegal."
+  return chosen > 0 && legal === 0 && !program.specs.some((s) => s.stillResolves) ? null : out;
 }
 
 export function startResolution(g: GameState, entry: StackEntry, targets: TargetRef[][]): void {

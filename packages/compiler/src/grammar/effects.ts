@@ -257,7 +257,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Victimize: "Sacrifice a creature. If you do, return the chosen cards …" — not optional, but what follows
       // happens only if it was done (CR 608.2c).
       const ifDone = sentences[i + 1] && !/^(?:You may|Pay) /.test(s) ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
-      if (ifDone && /^Sacrifice /.test(s)) {
+      // Gilded Drake: "Exchange control of this creature and up to one target creature an opponent controls. If you don't
+      // or can't make an exchange, sacrifice this creature." — the exchange isn't optional (CR 701.12a).
+      const noExchange = /^Exchange control of /.test(s) && sentences[i + 1] ? /^If you don't or can't make an exchange, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (noExchange) {
+        const first = parseSentence(s, b);
+        const otherwise = first?.length === 1 && first[0]!.type === 'exchange_control' ? parseSentence(capitalise(noExchange[1]!), b) : null;
+        if (!first || !otherwise) return null;
+        out.push({ type: 'may_do', effects: first, then: [], else: otherwise, mandatory: true });
+        i++;
+        continue;
+      }
+      // CR 608.2b doesn't apply: "This ability still resolves if its target becomes illegal." (Gilded Drake)
+      if (s === 'This ability still resolves if its target becomes illegal' && b.targets.length) {
+        for (const spec of b.targets) spec.stillResolves = true;
+        continue;
+      }
+      // Volatile Stormdrake: "Exchange control of this creature and target creature …. If you do, …" (CR 701.12a).
+      if (ifDone && /^(?:Sacrifice|Exchange control of) /.test(s)) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -1490,6 +1507,20 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Agadeem's Awakening: "Return from your graveyard to the battlefield any number of target creature cards that each have
+  // a different mana value X or less."
+  const distinctMV = /^Return from your graveyard to the battlefield any number of target (.+?) cards that each have a different mana value (X|\d+) or less$/.exec(s);
+  if (distinctMV) {
+    const r = attempt(b, (b) => {
+      const from = b.targets.length;
+      const inner = parseSentence(`Return any number of target ${distinctMV[1]} cards with mana value ${distinctMV[2]} or less from your graveyard to the battlefield`, b);
+      const spec = b.targets[from];
+      if (!inner || !spec || b.targets.length !== from + 1) return null;
+      spec.distinctManaValues = true;
+      return inner;
+    });
+    if (r) return r;
+  }
   // Containment Construct: "If you do, you may play that card this turn." — the card the instruction before moved.
   const playIt = /^[Yy]ou may (play|cast) (that card|it) (this turn|until the end of your next turn)$/.exec(s);
   if (playIt) {
@@ -1694,8 +1725,23 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
-  // CR 118.12a: "[Do something] unless [a player] pays [cost]."
-  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+  // Volatile Stormdrake: "… unless you pay an amount of {E} equal to its mana value" (CR 107.14) — counted as it resolves.
+  const unlessEnergy = /^(.+) unless (.+?) (?:pays|pay) an amount of \{E\} equal to (.+)$/.exec(s);
+  if (unlessEnergy) {
+    const r = attempt(b, (b) => {
+      // "you get {E}{E}{E}{E}, then sacrifice that creature unless …" — the choice is about the last part only.
+      const then = /^(.+), then (.+)$/.exec(unlessEnergy[1]!);
+      const head = then ? parseSentence(then[1]!, b) : [];
+      const before = b.clone();
+      const inner = head ? parseSentence(capitalise(then ? then[2]! : unlessEnergy[1]!), b) : null;
+      const payer = inner ? payerOf(unlessEnergy[2]!, before, b) : null;
+      const n = payer && payer.ref !== 'players' ? parseCount(unlessEnergy[3]!, b) : null;
+      return head && inner && payer && n ? [...head, { type: 'unless_pays', payer, cost: '', costEnergy: n, effects: inner }] : null;
+    });
+    if (r) return r;
+  }
+  // CR 118.12a: "[Do something] unless [a player] pays [cost]." — mana, or energy (CR 107.14).
+  const unless = /^(.+) unless (.+?) (?:pays|pay) ((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
   if (unless) {
     return attempt(b, (b) => {
       const before = b.clone();
@@ -2739,6 +2785,7 @@ interface Clause {
 const HAVE_VERBS: Record<string, string> = {
   deal: 'deals', fight: 'fights', get: 'gets', lose: 'loses', discard: 'discards', mill: 'mills', gain: 'gains', draw: 'draws',
   sacrifice: 'sacrifices', create: 'creates', shuffle: 'shuffles', become: 'becomes', return: 'returns', put: 'puts', exile: 'exiles',
+  exchange: 'exchange',
 };
 
 /** Player verbs: lemma → handler. The subject is the player performing it ("you" when imperative). */
@@ -2764,6 +2811,55 @@ const VERBS: Record<string, VerbHandler> = {
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
+  },
+  exchange(args, who, b, imperative) {
+    // CR 701.12a-b: "Exchange control of two target creatures.", "… of this creature and target creature an opponent
+    // controls" — two permanents (not spells: Sudden Substitution's spell changes hands differently).
+    const control = /^control of (.+)$/.exec(args);
+    if (control) {
+      if (!imperative) return null;
+      const t = control[1]!;
+      const onField = (b: Binder, r: Ref) => {
+        if (r.ref !== 'target') return r.ref === 'self';
+        const spec = b.targets[r.index]!;
+        return spec.what === 'object' && !(spec.filter as ObjectFilter | undefined)?.zone;
+      };
+      const both = attempt(b, (b) => {
+        const r = parseObjectRef(t, b);
+        if (!r || !r.targeted || r.ref.ref !== 'target' || !onField(b, r.ref)) return null;
+        const spec = b.targets[r.ref.index]!;
+        return spec.count === 2 && !spec.upTo && !spec.countX && !spec.perPlayer ? [r.ref] : null;
+      });
+      if (both) return [{ type: 'exchange_control', what: both }];
+      for (const m of t.matchAll(/ and /g)) {
+        const pair = attempt(b, (b) => {
+          const l = parseObjectRef(t.slice(0, m.index), b);
+          const r = l ? parseObjectRef(t.slice(m.index + 5), b) : null;
+          if (!l || !r || l.plural || r.plural || !(l.targeted || r.targeted) || !onField(b, l.ref) || !onField(b, r.ref)) return null;
+          return [l.ref, r.ref];
+        });
+        if (pair) return [{ type: 'exchange_control', what: pair }];
+      }
+      return null;
+    }
+    // CR 701.12c: "Exchange life totals with target opponent." / "Two target players exchange life totals."
+    const withPlayer = /^life totals with (.+)$/.exec(args);
+    if (withPlayer && who.ref === 'you') {
+      const other = parsePlayerRef(withPlayer[1]!, b);
+      return other && ['target', 'chosen_player', 'trigger_player'].includes(other.ref) ? [{ type: 'exchange_life', who: [who, other] }] : null;
+    }
+    if (args === 'life totals' && who.ref === 'target') {
+      const spec = b.targets[who.index]!;
+      return spec.count === 2 && !spec.upTo && !spec.countX && !spec.min ? [{ type: 'exchange_life', who: [who] }] : null;
+    }
+    // CR 701.12g: "Exchange your life total with this creature's toughness." — the life total becomes the other value,
+    // and a layer 7b effect sets the power or toughness to the old life total.
+    const stat = /^(.+?) life total with (~|this creature)'s (power|toughness)$/.exec(args);
+    if (stat && imperative) {
+      const p = stat[1] === 'your' ? who : /^target (?:player|opponent)'s$/.test(stat[1]!) ? parsePlayerRef(stat[1]!.replace(/'s$/, ''), b) : null;
+      return p && p.ref !== 'players' ? [{ type: 'exchange_life_stat', who: p, what: { ref: 'self' }, stat: stat[3]! }] : null;
+    }
+    return null;
   },
   gain(args, who, b, imperative) {
     // Layer 2 (CR 613.1b): "Gain control of target creature until end of turn."

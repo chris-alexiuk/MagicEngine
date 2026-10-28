@@ -567,6 +567,19 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         spec.text = t.replace(/^\w/, (c) => c.toLowerCase());
         return inner;
       }
+      // Run Away Together: "two target creatures controlled by different players"; Secret Tunnel: "Two target creatures you
+      // control that share a creature type"; Shifting Loyalties: "two target permanents that share a card type".
+      const related = /^(.+? target .+?) (controlled by different players|that share a creature type|that share a card type)$/i.exec(t);
+      if (related) {
+        const inner = parseObjectRef(related[1]!, b, mode);
+        const spec = inner?.targeted && inner.ref.ref === 'target' ? b.targets[inner.ref.index] : undefined;
+        if (!inner || !spec || !inner.plural || spec.what !== 'object' || (spec.count ?? 1) < 2 || spec.countX || spec.filter?.zone) return null;
+        if (related[2] === 'controlled by different players') spec.differentControllers = true;
+        else if (/creature type/.test(related[2]!)) spec.shareCreatureType = true;
+        else spec.shareCardType = true;
+        spec.text = t.replace(/^\w/, (c) => c.toLowerCase());
+        return inner;
+      }
       // CR 113.1c: "target activated or triggered ability you control from an artifact source" — an ability on the stack.
       const ability = parseAbilityTarget(t, b);
       if (ability) return set(b, { ref: b.addTarget(ability), plural: false, targeted: true });

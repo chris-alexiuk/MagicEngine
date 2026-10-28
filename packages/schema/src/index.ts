@@ -300,6 +300,15 @@ export interface TargetSpec {
   min?: number;
   /** "up to two target cards from a single graveyard": all of them with the same owner. */
   sameOwner?: true;
+  /** Agadeem's Awakening: "any number of target creature cards that each have a different mana value". */
+  distinctManaValues?: true;
+  /** Gilded Drake: "This ability still resolves if its target becomes illegal." (no CR 608.2b check). */
+  stillResolves?: true;
+  /** Run Away Together: "two target creatures controlled by different players". */
+  differentControllers?: true;
+  /** Secret Tunnel: "two target creatures you control that share a creature type"; Shifting Loyalties: "… a card type". */
+  shareCreatureType?: true;
+  shareCardType?: true;
   /**
    * "For each opponent, exile up to one target creature that player controls": one target for each such player,
    * each controlled by (or, off the battlefield, owned by) a different one of them. `count` is ignored.
@@ -875,7 +884,9 @@ export interface ContinuousEffectNode extends EffectNode {
   loseTypes?: string[];
   /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */
   /** Roaming Throne: "is the chosen type in addition to its other types" (`chosenType`). */
-  addTypes?: { types: string[]; subtypes: string[]; chosenType?: true };
+  /** Maskwood Nexus: `allCreatureTypes` — every creature type; `elsewhere` — creature spells you control and creature cards
+   * you own that aren't on the battlefield too. */
+  addTypes?: { types: string[]; subtypes: string[]; chosenType?: true; allCreatureTypes?: true; elsewhere?: true };
   /** Layer 4: "is a Frog creature" — types and subtypes it becomes, replacing its own (CR 205.1b). */
   setTypes?: { types: string[]; subtypes: string[] };
   /** Layer 4: "is a Bird" — its creature types become these (CR 205.1b). */
@@ -1107,7 +1118,7 @@ export const CORE_NODES = {
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'exile_until', 'tap_choice', 'destroy', 'move', 'counter', 'tap', 'untap',
     'put_from_milled', 'grant_play', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
-    'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
+    'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
