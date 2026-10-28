@@ -292,6 +292,7 @@ export function moveObject(
   // CR 718.4: prototyped only on the stack and the battlefield it resolves onto.
   if (!(from === 'stack' && to === 'battlefield')) delete o.prototyped;
   delete o.exerted;
+  delete o.exertedTurn;
   delete o.activations;
   delete o.activatedOnce;
   delete o.plotted;

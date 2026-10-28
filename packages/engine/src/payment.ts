@@ -303,6 +303,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'exert_self') {
       // CR 701.43a: "Exert this land" — it won't untap during its controller's next untap step.
       o.exerted = true;
+      o.exertedTurn = g.turn;
       events.push({ type: 'exerted', object: o.id, player });
     } else if (c.type === 'mill') {
       // Millikin: "{T}, Mill a card: Add {C}." (CR 701.17a)

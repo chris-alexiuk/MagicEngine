@@ -1009,6 +1009,19 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
+  // Coveted Jewel: "Whenever one or more creatures an opponent controls attack you and aren't blocked" — once; "that
+  // player" is the attacking player.
+  const unblockedYou = /^(?:(a|an) (.+?) attacks you and isn't blocked|one or more (.+?) attack you and aren't blocked)$/.exec(t);
+  if (unblockedYou) {
+    const batch = Boolean(unblockedYou[3]);
+    const pf = parseFilter((unblockedYou[2] ?? unblockedYou[3])!, b);
+    if (!pf || pf.plural !== batch) return null;
+    return {
+      trigger: { type: 'unblocked', subject: { ref: 'all', filter: pf.filter }, you: true, ...(batch ? { batch: true } : {}) },
+      it: batch ? null : { ref: 'trigger_object' },
+      player: { ref: 'trigger_player' },
+    };
+  }
   // CR 509.3g: "Whenever ~ attacks and isn't blocked"
   const unblocked = /^(~|(?:enchanted|equipped) creature|(?:a|an) (.+?)) attacks and isn't blocked$/.exec(t);
   if (unblocked) {
@@ -1236,6 +1249,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
     // Ingenious Artillerist: "… deals that much damage" — how many entered.
     b.eventAmount = true;
+    // Kambal: "for each of them, create a tapped token that's a copy of it" — the ones that entered.
+    b.named['them'] = { ref: 'created' };
     return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
   const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
@@ -3254,9 +3269,12 @@ export const perTargetCostRule: GrammarRule = {
 export const exertRule: GrammarRule = {
   id: 'exert',
   parse(line, original, ctx) {
-    const m = /^You may exert ~ as it attacks\.(?: When you do, (.+))?$/s.exec(line);
+    // Combat Celebrant: "If this creature hasn't been exerted this turn, you may exert it as it attacks."
+    const once = /^If ~ hasn't been exerted this turn, you may exert it as it attacks\./.test(line);
+    const m = /^(?:You may exert ~|If ~ hasn't been exerted this turn, you may exert it) as it attacks\.(?: When you do, (.+))?$/s.exec(line);
     if (!m) return null;
-    if (!m[1]) return { kind: 'static', text: original, effect: { type: 'exert_option' } } satisfies StaticAbility;
+    const flag = once ? { notExertedThisTurn: true } : {};
+    if (!m[1]) return { kind: 'static', text: original, effect: { type: 'exert_option', ...flag } } satisfies StaticAbility;
     const env = envOf(ctx);
     if (!env) return null;
     const r = attempt(new Binder(env), (b) => {
@@ -3264,7 +3282,7 @@ export const exertRule: GrammarRule = {
       return parseProgram(m[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
     });
     if (!r) return null;
-    return { kind: 'triggered', text: original, trigger: { type: 'exerted', subject: { ref: 'self' }, option: true }, ...r } satisfies TriggeredAbility;
+    return { kind: 'triggered', text: original, trigger: { type: 'exerted', subject: { ref: 'self' }, option: true, ...flag }, ...r } satisfies TriggeredAbility;
   },
 };
 

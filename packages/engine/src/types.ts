@@ -249,6 +249,8 @@ export interface GameObject {
   classLevel?: number;
   /** "It doesn't untap during its controller's next untap step": how many untap steps it skips. */
   skipUntap?: number;
+  /** Combat Celebrant: the turn it was last exerted ("if this creature hasn't been exerted this turn"). */
+  exertedTurn?: number;
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */

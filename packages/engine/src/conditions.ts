@@ -373,6 +373,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
+      // Scourge of the Throne: "if it's attacking the player with the most life or tied for most life" (CR 702.105a's test).
+      if (cond.attackingMost) {
+        const a = source ? g.combat?.attackers[source.id] : undefined;
+        if (!a || a.zcc !== source!.zcc || a.target.kind !== 'player') return false;
+        const p = a.target.player;
+        return livePlayers(g).every((q) => g.players[q]!.life <= g.players[p]!.life);
+      }
       // Guild Artisan: "if no opponent has more life than that player".
       if (cond.mostAmongOpponents) {
         const p = refPlayers(ctx, cond.of as Ref)[0];

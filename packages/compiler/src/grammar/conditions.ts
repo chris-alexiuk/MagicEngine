@@ -105,6 +105,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Scourge of the Throne: "if it's attacking the player with the most life or tied for most life".
+  if (/^(?:it's|~ is) attacking the player with the most life or tied for most life$/.test(t)) return { type: 'life', attackingMost: true };
   // Guild Artisan: "if no opponent has more life than that player" — that player has the most life among opponents.
   const noMore = /^no opponent has more life than (that player|defending player)$/.exec(t);
   if (noMore) {
@@ -287,10 +289,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "its power is greater than each other creature's power" && b.it) return { type: 'is', of: b.it, filter: { powerAboveOthers: true } };
   // Tezzeret: "If it's an artifact creature, put a +1/+1 counter on it." — what it is now (the sentence loop makes sure an
   // earlier effect didn't move it).
-  const itsA = /^(?:it|that creature|that permanent)(?:'s| is) (an? .+)$/.exec(t);
+  // Tezzeret, Cruel Captain's emblem: "If it's not a creature, it becomes a 0/0 Robot artifact creature."
+  const itsA = /^(?:it|that creature|that permanent)(?:'s| is)( not)? (an? .+)$/.exec(t);
   if (itsA && b.it && b.it.ref !== 'self') {
-    const pf = parseFilter(itsA[1]!.replace(/^an? /, ''), b);
-    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'is', of: b.it, filter: pf.filter };
+    const pf = parseFilter(itsA[2]!.replace(/^an? /, ''), b);
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) {
+      const cond: ConditionNode = { type: 'is', of: b.it, filter: pf.filter };
+      return itsA[1] ? { type: 'not', cond } : cond;
+    }
   }
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);

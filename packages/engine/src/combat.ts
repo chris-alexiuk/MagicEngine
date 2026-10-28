@@ -129,7 +129,10 @@ function enlistCandidates(g: GameState): ObjectId[] {
 /** CR 701.43d: "You may exert this creature as it attacks" (with or without a linked "When you do" trigger). */
 export function canExert(g: GameState, o: GameObject): boolean {
   return abilitiesOf(g, o).some(
-    (a) => (a.kind === 'static' && a.effect.type === 'exert_option') || (a.kind === 'triggered' && a.trigger.type === 'exerted' && Boolean(a.trigger.option)),
+    (a) =>
+      // Combat Celebrant: "If this creature hasn't been exerted this turn, …"
+      ((a.kind === 'static' && a.effect.type === 'exert_option' && !(a.effect.notExertedThisTurn && o.exertedTurn === g.turn)) ||
+        (a.kind === 'triggered' && a.trigger.type === 'exerted' && Boolean(a.trigger.option) && !(a.trigger.notExertedThisTurn && o.exertedTurn === g.turn))),
   );
 }
 
@@ -339,6 +342,7 @@ export function declareAttackers(
   // CR 701.43a: an exerted creature won't untap during its controller's next untap step.
   for (const id of exert) {
     g.objects[id]!.exerted = true;
+    g.objects[id]!.exertedTurn = g.turn;
     events.push({ type: 'exerted', object: id, player: g.active });
   }
   events.push({ type: 'attacks_declared', attacks });

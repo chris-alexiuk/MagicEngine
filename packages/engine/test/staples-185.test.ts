@@ -175,6 +175,10 @@ const CARDS = [
   makeCard({ name: 'Etali Lite', type_line: 'Legendary Creature — Elder Dinosaur', mana_cost: '{0}', power: '7', toughness: '7', oracle_text: 'When Etali enters, each player exiles cards from the top of their library until they exile a nonland card. You may cast any number of spells from among the nonland cards exiled this way without paying their mana costs.' }),
   makeCard({ name: 'Battlesphere Lite', type_line: 'Artifact Creature — Myr Construct', mana_cost: '{0}', power: '4', toughness: '7', oracle_text: "Whenever this creature attacks, you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and deals X damage to the player or planeswalker it's attacking." }),
   makeCard({ name: 'Myr Lite', type_line: 'Artifact Creature — Myr', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Spellskite Lite', type_line: 'Artifact Creature — Horror', mana_cost: '{0}', power: '0', toughness: '4', oracle_text: '{0}: Change a target of target spell or ability to this creature.' }),
+  makeCard({ name: 'Celebrant Lite', type_line: 'Creature — Human Warrior', mana_cost: '{0}', power: '4', toughness: '1', oracle_text: "Vigilance\nIf this creature hasn't been exerted this turn, you may exert it as it attacks. When you do, untap all other creatures you control and after this phase, there is an additional combat phase." }),
+  makeCard({ name: 'Scourge Lite', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: "Whenever this creature attacks for the first time each turn, if it's attacking the player with the most life or tied for most life, untap all attacking creatures. After this phase, there is an additional combat phase." }),
+  makeCard({ name: 'Kambal Lite', type_line: 'Legendary Creature — Human Advisor', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: "Whenever one or more tokens your opponents control enter, for each of them, create a tapped token that's a copy of it. This ability triggers only once each turn." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1854,5 +1858,73 @@ describe('staples (slice 200): Myr Battlesphere', () => {
     }
     expect(myr.every((id) => g.objects[id]!.tapped)).toBe(true);
     expect(g.players.bob!.life).toBe(life - 2 - 6);
+  });
+});
+
+describe('staples (slice 201): Spellskite', () => {
+  it('changes a target of a spell to itself', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    const skite = give(g, 'alice', 'Spellskite Lite', 'battlefield');
+    const bolt = give(g, 'bob', 'Bolt', 'hand');
+    g = act(g, { type: 'cast', player: 'bob', object: bolt, targets: [[{ kind: 'object', object: ogre }]] });
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = settle(act(g, { type: 'activate', player: 'alice', object: skite, ability: 0, targets: [[{ kind: 'object', object: bolt }]] } as never));
+    expect([g.objects[ogre]!.damage, g.objects[skite]!.damage]).toEqual([0, 3]);
+  });
+});
+
+describe('staples (slice 201): Combat Celebrant', () => {
+  it("exerted once this turn, it can't be exerted again in the extra combat", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cel = give(g, 'alice', 'Celebrant Lite', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    expect(g.pending?.kind === 'declare_attackers' && g.pending.exertable?.includes(cel)).toBe(true);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: cel, target: { kind: 'player', player: 'bob' } }], exert: [cel] } });
+    let second = false;
+    for (let i = 0; i < 60 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_attackers') {
+        second = true;
+        expect(p.exertable?.includes(cel) ?? false).toBe(false);
+        g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [] } });
+      } else if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(second).toBe(true);
+  });
+});
+
+describe('staples (slice 201): Scourge of the Throne', () => {
+  for (const [bobLife, combats] of [[20, 2], [15, 1]] as const) {
+    it(`attacking a player at ${bobLife} life: ${combats} combat(s)`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const sc = give(g, 'alice', 'Scourge Lite', 'battlefield');
+      g.players.bob!.life = bobLife;
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      let n = 0;
+      for (let i = 0; i < 80 && g.step !== 'main2'; i++) {
+        const p = g.pending;
+        if (p?.kind === 'declare_attackers') {
+          n++;
+          g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: n === 1 ? [{ attacker: sc, target: { kind: 'player', player: 'bob' } }] : [] } });
+        } else if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+        else if (p) throw new Error(p.kind);
+        else g = act(g, { type: 'pass', player: g.priority! });
+      }
+      expect(n).toBe(combats);
+    });
+  }
+});
+
+describe('staples (slice 201): Kambal', () => {
+  it('a tapped copy of each token an opponent created', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Kambal Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Make Two', 'hand') }));
+    const mine = g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice');
+    expect(mine.length).toBe(2);
+    expect(mine.every((id) => g.objects[id]!.tapped)).toBe(true);
   });
 });

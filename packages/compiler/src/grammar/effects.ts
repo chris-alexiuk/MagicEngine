@@ -2383,6 +2383,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     createdTokens(b);
     return [{ type: 'create_token', amount: 1, copyOf: { ref: 'all', filter: pf.filter }, copyEach: true, who: { ref: 'you' } }];
   }
+  // Kambal, Profiteering Mayor: "for each of them, create a tapped token that's a copy of it".
+  const eachThem = /^[Ff]or each of them, create a (tapped )?token that's a copy of it$/.exec(s);
+  if (eachThem && b.named['them']) {
+    createdTokens(b);
+    return [{ type: 'create_token', amount: 1, copyOf: b.named['them'], copyEach: true, who: { ref: 'you' }, ...(eachThem[1] ? { tapped: true } : {}) }];
+  }
   // Adeline: "for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a
   // planeswalker they control" (CR 508.4).
   const eachAttacking = /^[Ff]or each opponent, create (.+?) (?:that's|that is|that are) tapped and attacking that player( or a planeswalker they control)?$/.exec(s);
@@ -2624,6 +2630,12 @@ function countedClause(s: string, b: Binder, subject: Ref | null): Clause | null
 function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
   const whole = countedClause(s, b, subject);
   if (whole) return whole.effects;
+  // Coveted Jewel: "that player draws three cards and gains control of this artifact" — the same player.
+  const gains = subject && (subject.ref === 'trigger_player' || subject.ref === 'target' || subject.ref === 'controller_of') ? /^gains control of (.+)$/.exec(s) : null;
+  if (gains) {
+    const what = attempt(b, (b) => parseObjectRef(gains[1]!, b));
+    if (what && !what.plural) return [{ type: 'gain_control', what: what.ref, to: subject! }];
+  }
   // Sword of Light and Shadow: "you gain 3 life and you may return up to one target creature card …" — a choice of its own.
   const youMay = /^you may (.+)$/.exec(s);
   if (youMay) {
@@ -3201,6 +3213,15 @@ const VERBS: Record<string, VerbHandler> = {
   },
   // CR 115.7a: "Change the target of target spell or ability with a single target." (Bolt Bend, Redirect Lightning)
   change(args, who, b, imperative) {
+    // Spellskite: "Change a target of target spell or ability to this creature." (CR 115.7c)
+    const one = imperative ? /^a target of (target .+?) to (?:this creature|~)$/.exec(args) : null;
+    if (one) {
+      const what = parseObjectRef(one[1]!, b);
+      if (!what?.targeted || what.plural || what.ref.ref !== 'target') return null;
+      const spec = b.targets[what.ref.index];
+      if (!spec || (spec.what !== 'ability' && spec.filter?.zone !== 'stack')) return null;
+      return [{ type: 'retarget', what: what.ref, change: true, toSelf: true, oneOf: true }];
+    }
     // Hydroelectric Specimen: "… with a single target to this creature" — to it, if it's a legal target (CR 115.7a).
     const m = imperative ? /^the target of (target .+?) with a single target( to (?:this creature|~))?$/.exec(args) : null;
     if (!m) return null;

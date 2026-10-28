@@ -2575,3 +2575,14 @@ describe('slice 201', () => {
     expect(parse("Whenever this creature attacks, you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and deals X damage to the player or planeswalker it's attacking.", 'Artifact Creature').abilities[0]).toMatchObject({ effects: [{ type: 'tap_choice', filter: { subtypes: ['Myr'] } }, { type: 'modify', power: { kind: 'tapped_this_way' } }, { type: 'deal_damage', amount: { kind: 'tapped_this_way' }, to: { ref: 'attacked_by' } }] });
   });
 });
+
+describe('slice 201 (more)', () => {
+  it('reads Spellskite, exert once a turn, attacking the player with the most life, copies of each, unblocked attackers of yours', () => {
+    expect(parse('{U/P}: Change a target of target spell or ability to this creature.', 'Artifact Creature').abilities[0]).toMatchObject({ effects: [{ type: 'retarget', toSelf: true, oneOf: true }] });
+    expect(parse("If this creature hasn't been exerted this turn, you may exert it as it attacks. When you do, untap all other creatures you control and after this phase, there is an additional combat phase.", 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'exerted', option: true, notExertedThisTurn: true } });
+    expect(parse("Whenever this creature attacks for the first time each turn, if it's attacking the player with the most life or tied for most life, untap all attacking creatures.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'life', attackingMost: true } });
+    expect(parse("Whenever one or more tokens your opponents control enter, for each of them, create a tapped token that's a copy of it.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', copyOf: { ref: 'created' }, copyEach: true, tapped: true }] });
+    expect(parse("Whenever one or more creatures an opponent controls attack you and aren't blocked, that player draws three cards and gains control of this artifact. Untap it.", 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'unblocked', you: true, batch: true }, effects: [{ type: 'draw', who: { ref: 'trigger_player' } }, { type: 'gain_control', to: { ref: 'trigger_player' } }, { type: 'untap' }] });
+    expect(parse("At the beginning of combat on your turn, put three +1/+1 counters on target artifact you control. If it's not a creature, it becomes a 0/0 Robot artifact creature.", 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters' }, { type: 'if', cond: { type: 'not', cond: { type: 'is', filter: { types: ['Creature'] } } } }] });
+  });
+});

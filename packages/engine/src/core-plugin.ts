@@ -2784,15 +2784,40 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 115.7a: "change the target" — to another legal target if there is one; otherwise it stays.
     const current0 = entry.targets.flat()[0];
     // Hydroelectric Specimen: "… to this creature" — only if it's a legal target for that spell; otherwise it stays.
+    // Spellskite: "Change a target of target spell or ability to this creature" — one of its targets (CR 115.7c), chosen
+    // among those it could legally be changed from.
     if (node.toSelf) {
       const me = ctx.source;
-      if (!me || me.zone !== 'battlefield' || (current0?.kind === 'object' && current0.id === me.id)) return true;
-      try {
-        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, [[{ kind: 'object', object: me.id }]], source, entry.x ?? 0);
-        announceTargets(entry, ctx.events);
-      } catch (err) {
-        if (!(err instanceof RulesError)) throw err;
+      if (!me || me.zone !== 'battlefield') return true;
+      const asked = entry.targets.map((list) => list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })));
+      const options: { i: number; j: number; targets: TargetRef[][] }[] = [];
+      asked.forEach((list, i) =>
+        list.forEach((t, j) => {
+          if (t.kind === 'object' && t.object === me.id) return;
+          if (!node.oneOf && (i > 0 || j > 0)) return;
+          const changed = asked.map((l, k) => (k === i ? l.map((x, m) => (m === j ? ({ kind: 'object', object: me.id } as Target) : x)) : l));
+          try {
+            options.push({ i, j, targets: chooseTargets(g, entry.controller, entry.program!.specs, changed, source, entry.x ?? 0) });
+          } catch (err) {
+            if (!(err instanceof RulesError)) throw err;
+          }
+        }),
+      );
+      if (!options.length) return true;
+      let pick = options[0]!;
+      if (options.length > 1) {
+        const said = answerOf(ctx, 'choose_option');
+        const labels = options.map((o, k) => {
+          const t = asked[o.i]![o.j]!;
+          return `${k + 1}. ${t.kind === 'player' ? (g.players[t.player]?.name ?? t.player) : t.kind === 'ability' ? 'an ability' : nameOf(g, g.objects[t.object]!)}`;
+        });
+        if (!said) return { ask: { kind: 'choose_option', player: ctx.controller, options: labels, text: `Choose which target to change to ${nameOf(g, me)}.`, sourceName: sourceName(ctx) } };
+        const k = labels.indexOf(said.choice);
+        if (k < 0) throw new RulesError('Choose one of its targets.');
+        pick = options[k]!;
       }
+      entry.targets = pick.targets;
+      announceTargets(entry, ctx.events);
       return true;
     }
     const sameAs = (t: Target | undefined) => Boolean(t && current0 && (t.kind === 'player' ? current0.kind === 'player' && current0.player === t.player : t.kind === 'ability' ? current0.kind === 'ability' && current0.entry === t.entry : current0.kind === 'object' && current0.id === t.object));
@@ -3937,8 +3962,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
         const xo = xid ? check.g.objects[xid] : undefined;
         return Boolean(xo && xo.zone === 'battlefield' && subjectMatches(check, t.subject as Ref, xo));
       });
-      // "that much": how many of them entered together.
-      return all[0] === e ? [{ amount: all.length }] : [];
+      // "that much": how many of them entered together; Kambal: "for each of them" — which.
+      const created = all.flatMap((x) => {
+        const xid = x.type === 'created' ? x.object : x.type === 'moved' ? x.object : null;
+        const xo = xid ? check.g.objects[xid] : undefined;
+        return xo ? [refTo(xo)] : [];
+      });
+      return all[0] === e ? [{ amount: all.length, created }] : [];
     }
     return [{ object: refTo(o), player: o.controller }];
   },
@@ -4310,12 +4340,16 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     const c = check.g.combat;
     if (e.type !== 'blockers_done' || check.sourceLeft || !c) return [];
-    return Object.entries(c.attackers).flatMap(([id, a]) => {
+    const hits = Object.entries(c.attackers).flatMap(([id, a]) => {
       const o = check.g.objects[id];
       if (!o || o.zcc !== a.zcc || a.blocked || !subjectMatches(check, t.subject as Ref, o)) return [];
+      // Coveted Jewel: "… attack you and aren't blocked" — "that player" is the one attacking.
+      if (t.you) return a.target.kind === 'player' && a.target.player === check.controller ? [{ object: refTo(o), player: o.controller }] : [];
       const player = a.target.kind === 'player' ? a.target.player : check.g.objects[a.target.object]?.controller;
       return [{ object: refTo(o), ...(player ? { player } : {}) }];
     });
+    if (t.batch) return hits.length ? [{ player: hits[0]!.player }] : [];
+    return hits;
   },
   // "Whenever one or more creatures you control deal combat damage to a player": once for each player dealt damage.
   combat_damage_batch(t, check) {
