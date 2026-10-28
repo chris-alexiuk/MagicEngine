@@ -160,9 +160,18 @@ function bottomCount(g: GameState, player: PlayerId): number {
 
 /** CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield." */
 function openingBattlefieldCards(g: GameState, player: PlayerId): ObjectId[] {
-  return zoneList(g, 'hand', player).filter((id) =>
-    (g.cards[g.objects[id]!.card]?.faces[0]?.abilities ?? []).some((a) => a.kind === 'static' && a.effect.type === 'begin_on_battlefield'),
-  );
+  return zoneList(g, 'hand', player).filter((id) => Boolean(openingEffect(g, id, player)));
+}
+
+/** The card's "begin the game on the battlefield" ability, if it can be used by this player (CR 103.6a; Gemstone Caverns: not the starting player). */
+function openingEffect(g: GameState, id: ObjectId, player: PlayerId): { notStarting?: boolean; counter?: string; exileFromHand?: number } | null {
+  for (const a of g.cards[g.objects[id]!.card]?.faces[0]?.abilities ?? []) {
+    if (a.kind !== 'static' || a.effect.type !== 'begin_on_battlefield') continue;
+    const e = a.effect as { notStarting?: boolean; counter?: string; exileFromHand?: number };
+    if (e.notStarting && player === g.firstPlayer) continue;
+    return e;
+  }
+  return null;
 }
 
 function promptOpening(g: GameState): void {
@@ -183,7 +192,8 @@ function promptOpening(g: GameState): void {
     while (o.actions.length) {
       const candidates = openingBattlefieldCards(g, o.actions[0]!);
       if (candidates.length) {
-        g.pending = { kind: 'opening_battlefield', player: o.actions[0]!, candidates };
+        const exileFor = candidates.filter((id) => openingEffect(g, id, o.actions![0]!)?.exileFromHand);
+        g.pending = { kind: 'opening_battlefield', player: o.actions[0]!, candidates, ...(exileFor.length ? { exileFor } : {}) };
         return;
       }
       o.actions.shift();
@@ -244,8 +254,24 @@ export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnsw
     if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
       throw new RulesError('Choose cards from your opening hand that can begin the game on the battlefield.');
     }
+    // Gemstone Caverns: a card from the hand to exile for each one that needs it (not one of those put onto the battlefield).
+    const needed = answer.objects.reduce((n, id) => n + (openingEffect(g, id, player)?.exileFromHand ?? 0), 0);
+    const exile = answer.exile ?? [];
+    const others = zoneList(g, 'hand', player).filter((id) => !answer.objects.includes(id));
+    if (exile.length !== Math.min(needed, others.length) || new Set(exile).size !== exile.length || !exile.every((id) => others.includes(id))) {
+      throw new RulesError(needed ? `Choose ${Math.min(needed, others.length)} other card(s) in your hand to exile.` : 'Nothing needs a card exiled.');
+    }
     // CR 103.6a: the player puts those cards onto the battlefield.
-    for (const id of answer.objects) moveObject(g, id, 'battlefield', events, { controller: player });
+    for (const id of answer.objects) {
+      moveObject(g, id, 'battlefield', events, { controller: player });
+      const counter = openingEffect(g, id, player)?.counter;
+      if (counter) {
+        const obj = g.objects[id]!;
+        obj.counters[counter] = (obj.counters[counter] ?? 0) + 1;
+        events.push({ type: 'counters', object: id, counter, delta: 1 });
+      }
+    }
+    for (const id of exile) moveObject(g, id, 'exile', events);
     o.actions.shift();
   } else {
     throw new RulesError('Unexpected answer during the opening hand.');

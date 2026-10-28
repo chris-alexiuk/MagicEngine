@@ -930,6 +930,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         for (const id of rest) moveObject(g, id, node.rest, ctx.events);
         return done();
       }
+      // Famished Worldsire: "…, then shuffle." — the rest stay in the library, which is shuffled (CR 701.24a).
+      if (node.rest === 'shuffle') {
+        shuffleInPlace(g, library);
+        ctx.events.push({ type: 'shuffled', player: who });
+        return done();
+      }
       if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
         if (node.order === 'random') shuffleInPlace(g, rest);
         if (node.rest !== 'top') for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
@@ -2530,6 +2536,35 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Takenuma: "return a creature or planeswalker card from your graveyard to your hand" — chosen as it resolves.
+  return_chosen(node, ctx) {
+    const g = ctx.g;
+    const filter = node.filter as ObjectFilter;
+    const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
+    if (!candidates.length) return true;
+    const max = Math.min(amountOf(ctx, node.amount ?? 1), candidates.length);
+    const min = node.optional ? 0 : max;
+    const where = node.to === 'hand' ? 'to your hand' : 'to the battlefield';
+    let chosen: string[];
+    if (candidates.length === max && min === max) chosen = candidates;
+    else {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard to return ${where}.` } };
+      if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+        throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
+      }
+      chosen = answer.objects;
+    }
+    const moved: ObjectRef[] = [];
+    for (const id of chosen) {
+      if (node.to === 'hand') moveObject(g, id, 'hand', ctx.events);
+      else moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+      moved.push({ id, zcc: g.objects[id]!.zcc });
+    }
+    if (ctx.resolution) ctx.resolution.created = moved;
+    return true;
+  },
+
   // Emry, Lurker of the Loch: "You may cast that card this turn." (CR 601.3: an effect lets it be cast from there.)
   grant_play(node, ctx) {
     const g = ctx.g;
@@ -2656,6 +2691,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const mv = manaValueOf(g, o);
     ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [top] });
     moveObject(g, top, 'hand', ctx.events);
+    // "that card" in what follows (Yuriko, Twilight Prophet).
+    if (ctx.resolution) ctx.resolution.created = [{ id: top, zcc: o.zcc }];
     if (!node.life || mv <= 0) return true;
     return { expand: [{ type: node.life === 'gain' ? 'gain_life' : 'lose_life', amount: mv, who: { ref: 'you' } }] };
   },

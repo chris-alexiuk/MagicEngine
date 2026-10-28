@@ -68,6 +68,8 @@ export function start(opts: StartOptions = {}): GameState {
   if (opts.mulligan) return state;
   let g = state;
   while (g.pending?.kind === 'mulligan') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'mulligan', keep: true } });
+  // A card a test added may be one that can begin the game on the battlefield (CR 103.6a): it stays in the hand.
+  while (g.pending?.kind === 'opening_battlefield') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'opening_battlefield', objects: [] } });
   return g;
 }
 

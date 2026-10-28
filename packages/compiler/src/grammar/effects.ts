@@ -413,19 +413,27 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "Look at the top five cards of your library. You may reveal a creature card from among them and put it
       // into your hand. Put the rest on the bottom of your library in a random order." — and its relatives.
       // "Look at the top three cards of your library, then put one of those cards into your hand and the rest …"
-      const lookThen = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library, then (put (?!them back).+)$/.exec(s);
+      // Fomori Vault: "Look at the top X cards of your library, where X is the number of artifacts you control."
+      const bindDig = (dig: { node: EffectNode } | null, where: string | undefined): boolean => {
+        if (!dig || !where) return Boolean(dig);
+        const expr = dig.node.amount === 'X' ? parseCount(where.replace(/ as this (?:ability|spell) resolves$/, ''), b) : null;
+        if (!expr) return false;
+        dig.node.amount = expr;
+        return true;
+      };
+      const lookThen = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is ([^,]+))?, then (put (?!them back).+)$/.exec(s);
       if (lookThen) {
-        const dig = parseDig(lookThen[2]!, capitalise(lookThen[3]!), sentences[i + 1], b);
-        if (!dig) return null;
+        const dig = parseDig(lookThen[2]!, capitalise(lookThen[4]!), sentences[i + 1], b);
+        if (!dig || !bindDig(dig, lookThen[3])) return null;
         if (/^[Rr]eveal/.test(lookThen[1]!)) dig.node.reveal = true;
         out.push(dig.node);
         i += dig.used - 1;
         continue;
       }
-      const look = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library$/.exec(s);
+      const look = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is (.+))?$/.exec(s);
       if (look && sentences[i + 1]) {
         const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b);
-        if (!dig) return null;
+        if (!dig || !bindDig(dig, look[3])) return null;
         // Revealed: everyone sees the cards (CR 701.20a).
         if (/^[Rr]eveal/.test(look[1]!)) dig.node.reveal = true;
         out.push(dig.node);
@@ -438,13 +446,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const life = sentences[i + 1] ? /^You (lose|gain) life equal to its mana value$/.exec(sentences[i + 1]!) : null;
         out.push({ type: 'reveal_top', ...(life ? { life: life[1] } : {}) });
         if (life) i += 1;
-        // "where X is that card's mana value" (Twilight Prophet): the card isn't one an effect can find later.
-        b.it = null;
+        // Yuriko: "Each opponent loses life equal to that card's mana value." — the card put into your hand.
+        b.it = { ref: 'created' };
         continue;
       }
       // "Look at the top card of your library. If it's a land card, you may put it onto the battlefield tapped.
       // (Otherwise, put it into your hand.)" — one card, maybe taken.
-      const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(s);
+      // Thrasios: "Scry 1, then reveal the top card of your library."
+      const thenTop = /^(.+?), then ((?:look at|reveal) the top card of your library)$/.exec(s);
+      const topFirstFx = thenTop ? attempt(b, (b) => parseSentence(capitalise(thenTop[1]!), b)) : null;
+      const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(thenTop && topFirstFx ? capitalise(thenTop[2]!) : s);
       // Herald's Horn: "If it's a creature card of the chosen type, you may reveal it and put it into your hand."
       const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card(?: of the chosen type)?, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
       const ofChosen = Boolean(ifIts && / card of the chosen type, /.test(sentences[i + 1]!));
@@ -469,7 +480,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "Look at the top card of your library. You may put that card into your graveyard." (a one-card surveil)
       const mayPut = topCard && sentences[i + 1] ? /^You may put (?:that card|it) (into your graveyard|into your hand)$/.exec(sentences[i + 1]!) : null;
       if (topCard && mayPut) {
-        out.push({ type: 'dig', amount: 1, take: 1, to: mayPut[1] === 'into your hand' ? 'hand' : 'graveyard', rest: 'top', optional: true, ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}) });
+        out.push(...(topFirstFx ?? []), { type: 'dig', amount: 1, take: 1, to: mayPut[1] === 'into your hand' ? 'hand' : 'graveyard', rest: 'top', optional: true, ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}) });
         i += 1;
         continue;
       }
@@ -479,10 +490,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const { zone: _z, owner: _o, ...filter } = pf.filter;
         if (ofChosen) filter.chosenType = true;
         const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't put the card (?:onto the battlefield|into your hand)), put (?:it|that card) (into your hand|into your graveyard|on the bottom of your library)$/.exec(sentences[i + 2]!) : null;
+        // Thrasios: "Otherwise, draw a card." (the card stays on top); Nylea, Keen-Eyed: "Otherwise, you may put it into
+        // your graveyard." — what happens when the card wasn't taken.
+        const otherwiseDraw = !otherwise && sentences[i + 2] ? /^Otherwise, draw a card$/.test(sentences[i + 2]!) : false;
+        const otherwiseMay = !otherwise && sentences[i + 2] ? /^Otherwise, you may put (?:it|that card) into your graveyard$/.test(sentences[i + 2]!) : false;
         const to = ifIts[3]!.startsWith('onto') ? 'battlefield' : ifIts[3] === 'into your hand' ? 'hand' : 'graveyard';
         const rest = otherwise ? (otherwise[1] === 'into your hand' ? 'hand' : otherwise[1] === 'into your graveyard' ? 'graveyard' : 'bottom') : 'top';
-        out.push({ type: 'dig', amount: 1, take: 1, to, filter, rest, ...(ifIts[2] ? { optional: true } : {}), ...(ifIts[4] ? { tapped: true } : {}), ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}) });
-        i += otherwise ? 2 : 1;
+        const ifNone: EffectNode[] | null = otherwiseDraw ? [{ type: 'draw', amount: 1, who: { ref: 'you' } }] : otherwiseMay ? [{ type: 'dig', amount: 1, take: 1, to: 'graveyard', rest: 'top', optional: true }] : null;
+        out.push(...(topFirstFx ?? []), { type: 'dig', amount: 1, take: 1, to, filter, rest, ...(ifIts[2] ? { optional: true } : {}), ...(ifIts[4] ? { tapped: true } : {}), ...(/^[Rr]eveal/.test(topCard[1]!) ? { reveal: true } : {}), ...(ifNone ? { ifNone } : {}) });
+        i += otherwise || ifNone ? 2 : 1;
         continue;
       }
       // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards
@@ -825,6 +841,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
 
 const REST: Record<string, { rest: string; order?: string }> = {
   'into your graveyard': { rest: 'graveyard' },
+  // Genesis Ultimatum: "… onto the battlefield and the rest into your hand."
+  'into your hand': { rest: 'hand' },
   'on the bottom of your library in any order': { rest: 'bottom', order: 'any' },
   'on the bottom of your library in a random order': { rest: 'bottom', order: 'random' },
   'on the bottom of your library': { rest: 'bottom', order: 'any' },
@@ -834,8 +852,13 @@ const REST: Record<string, { rest: string; order?: string }> = {
 
 /** The sentences after "Look at the top N cards of your library." (CR 701.16 isn't a keyword action: just looking). */
 function parseDig(count: string, next: string, after: string | undefined, b: Binder): { node: EffectNode; used: number } | null {
-  const amount = parseAmount(count);
-  if (typeof amount !== 'number' || amount < 1) return null;
+  // "Look at the top X cards of your library" — the X paid, or one the text defines (bound by the caller).
+  const amount = count === 'X' ? 'X' : parseAmount(count);
+  if (amount !== 'X' && (typeof amount !== 'number' || amount < 1)) return null;
+  // Famished Worldsire: "Put any number of land cards from among them onto the battlefield tapped, then shuffle."
+  const shuffled = /, then shuffle$/.test(next);
+  if (shuffled) next = next.replace(/, then shuffle$/, '');
+  if (shuffled && !/^Put (?:a|an|up to \w+|any number of) .+ from among /.test(next)) return null;
   const restOf = (text: string | undefined) => {
     const m = text ? /^(?:Then )?[Pp]ut the (?:rest|others?)(?: of (?:the cards revealed this way|those cards|the cards))? (.+)$/.exec(text) : null;
     return m ? REST[m[1]!] ?? null : null;
@@ -852,31 +875,35 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
   const putSome = /^Put (\w+) of (?:them|those cards) into your (hand|graveyard)$/.exec(next);
   if (putSome) {
     const take = parseAmount(putSome[1]!);
-    if (typeof take !== 'number' || take >= amount) return null;
+    if (typeof take !== 'number' || (typeof amount === 'number' && take >= amount)) return null;
     const rest = restOf(after);
     return { node: { type: 'dig', amount, take, to: putSome[2], ...(rest ?? { rest: 'top', order: 'same' }) }, used: rest ? 2 : 1 };
   }
   // "Put a land card from among them onto the battlefield and the rest into your graveyard.",
   // "Put up to two creature cards with mana value 3 or less from among them onto the battlefield." + "Put the rest …"
-  const putFrom = /^Put (a|an|up to \w+) (.+?) from among (?:them|those cards|the revealed cards) (into your hand|onto the battlefield( tapped)?|into your graveyard)(?: and the (?:rest|others?) (.+))?$/.exec(next);
+  const putFrom = /^Put (a|an|up to \w+|any number of) (.+?) from among (?:them|those cards|the revealed cards) (into your hand|onto the battlefield( tapped)?|into your graveyard)(?: and the (?:rest|others?) (.+))?$/.exec(next);
   if (putFrom) {
-    const rest = putFrom[5] ? REST[putFrom[5]] : restOf(after);
-    const n = putFrom[1]!.startsWith('up to ') ? parseAmount(putFrom[1]!.slice(6)) : 1;
+    const rest = shuffled ? { rest: 'shuffle' } : putFrom[5] ? REST[putFrom[5]] : restOf(after);
+    if (shuffled && putFrom[5]) return null;
+    const n = putFrom[1] === 'any number of' ? 99 : putFrom[1]!.startsWith('up to ') ? parseAmount(putFrom[1]!.slice(6)) : 1;
     const pf = parseFilter(`${putFrom[2]} in your library`, b);
     if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     const to = putFrom[3]!.startsWith('into your hand') ? 'hand' : putFrom[3]!.startsWith('onto') ? 'battlefield' : 'graveyard';
     // "up to N": any number of them; "a land card": one if there is one.
     return {
-      node: { type: 'dig', amount, take: n, to, filter, ...(putFrom[1]!.startsWith('up to ') ? { optional: true } : {}), ...rest, ...(putFrom[4] ? { tapped: true } : {}) },
-      used: putFrom[5] ? 1 : 2,
+      node: { type: 'dig', amount, take: n, to, filter, ...(putFrom[1]!.startsWith('up to ') || putFrom[1] === 'any number of' ? { optional: true } : {}), ...rest, ...(putFrom[4] ? { tapped: true } : {}) },
+      used: putFrom[5] || shuffled ? 1 : 2,
     };
   }
   // "You may reveal a creature card from among them and put it into your hand." + "Put the rest …"
-  const reveal = /^You may (reveal|put) (a|an|up to \w+) (.+?) from among (?:them|those cards)(?: and put (?:it|them))? (into your hand|onto the battlefield( tapped)?|into your graveyard)$/.exec(next);
+  // Calix: "… and put that card into your hand"; Karumonix: "You may reveal any number of Rat cards from among them and put
+  // the revealed cards into your hand."
+  const reveal = /^You may (reveal|put) (a|an|up to \w+|any number of) (.+?) from among (?:them|those cards)(?: and put (?:it|them|that card|the revealed cards))? (into your hand|onto the battlefield( tapped)?|into your graveyard)$/.exec(next);
   if (reveal) {
+    if (shuffled) return null;
     const rest = restOf(after);
-    const n = reveal[2]!.startsWith('up to ') ? parseAmount(reveal[2]!.slice(6)) : 1;
+    const n = reveal[2] === 'any number of' ? 99 : reveal[2]!.startsWith('up to ') ? parseAmount(reveal[2]!.slice(6)) : 1;
     const pf = parseFilter(`${reveal[3]} in your library`, b);
     if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
@@ -2222,6 +2249,18 @@ const VERBS: Record<string, VerbHandler> = {
       const what = each ? parseObjectRef(`${each[1]} from all graveyards`, b) : null;
       return what && what.ref.ref === 'all' ? [{ type: 'move', what: what.ref, to: each![2] === 'the battlefield' ? 'battlefield' : 'hand' }] : null;
     }
+    // Takenuma: "return a creature or planeswalker card from your graveyard to your hand" — chosen as it resolves (no
+    // target). Blossoming Tortoise: "… to the battlefield tapped".
+    const chosenReturn = /^(a|an|up to (?:one|two|three)) ((?!.*\btarget\b).+? cards?) from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
+    if (chosenReturn && who.ref === 'you') {
+      const n = chosenReturn[1]!.startsWith('up to ') ? parseAmount(chosenReturn[1]!.slice(6)) : 1;
+      const pf = parseFilter(`${chosenReturn[2]} in your graveyard`, b);
+      if (typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      // "it" afterwards: the returned card.
+      b.it = { ref: 'created' };
+      return [{ type: 'return_chosen', filter, amount: n, to: chosenReturn[3] === 'your hand' ? 'hand' : 'battlefield', ...(chosenReturn[4] ? { tapped: true } : {}), ...(chosenReturn[1]!.startsWith('up to ') ? { optional: true } : {}) }];
+    }
     const hand = /^(.+?) to (its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {
       const what = parseObjectRef(hand[1]!, b);
@@ -2965,6 +3004,8 @@ export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
     const rest = parseManaSpend(text, b);
     return rest ? { ...rest, special } : null;
   }
+  // Secluded Courtyard: "an ability of a creature source of the chosen type"
+  text = text.replace(/(an ability of (?:a|an) \w+) source (of the chosen type)$/, '$1 $2');
   const m = /^to cast (.+?)(?:,? or (?:to )?activate (?:abilities of (.+)|an ability of (?:a|an) (.+?)(?: source)?))?$/.exec(text);
   if (!m) return null;
   const what = m[1]!.replace(/^(\w+) and(?:\/or)? (\w+) spells$/, '$1 or $2 spells');

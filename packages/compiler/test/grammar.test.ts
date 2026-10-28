@@ -1946,3 +1946,21 @@ describe('slice 165', () => {
     expect(parse('{1}, {T}: Move a counter from target permanent you control onto a second target permanent.', 'Land', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'move_counters', counter: 'any' }] });
   });
 });
+
+describe('slice 166', () => {
+  it('reads digs of X cards, any number, the rest into your hand or shuffled, and one-card reveals', () => {
+    expect(parse('{3}, {T}, Discard a card: Look at the top X cards of your library, where X is the number of artifacts you control. Put one of those cards into your hand and the rest on the bottom of your library in a random order.', 'Artifact', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'dig', amount: { kind: 'count', filter: { types: ['Artifact'], controller: 'you' } }, take: 1, to: 'hand' }] });
+    expect(parse('When ~ enters, look at the top five cards of your library. You may reveal any number of Rat cards from among them and put the revealed cards into your hand. Put the rest on the bottom of your library in a random order.', 'Legendary Creature — Rat', 'K').abilities[0]).toMatchObject({ effects: [{ type: 'dig', take: 99, optional: true, filter: { subtypes: ['Rat'] } }] });
+    expect(parse('Look at the top five cards of your library. Put any number of permanent cards from among them onto the battlefield and the rest into your hand.', 'Sorcery', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'dig', take: 99, to: 'battlefield', rest: 'hand' }] });
+    expect(parse("When this creature enters, look at the top X cards of your library, where X is this creature's power. Put any number of land cards from among them onto the battlefield tapped, then shuffle.", 'Creature — Worm', 'W').abilities[0]).toMatchObject({ effects: [{ type: 'dig', rest: 'shuffle', tapped: true }] });
+    expect(parse("{4}: Scry 1, then reveal the top card of your library. If it's a land card, put it onto the battlefield tapped. Otherwise, draw a card.", 'Legendary Creature — Merfolk Wizard', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'scry' }, { type: 'dig', to: 'battlefield', ifNone: [{ type: 'draw' }] }] });
+    expect(parse("Whenever a Ninja you control deals combat damage to a player, reveal the top card of your library and put that card into your hand. Each opponent loses life equal to that card's mana value.", 'Legendary Creature — Human Ninja', 'Y').abilities[0]).toMatchObject({ effects: [{ type: 'reveal_top' }, { type: 'lose_life', amount: { kind: 'stat', stat: 'mana_value', of: { ref: 'created' } } }] });
+  });
+  it('reads a card chosen from your graveyard, Gemstone Caverns and Secluded Courtyard', () => {
+    expect(parse('Mill three cards, then you may return a creature or land card from your graveyard to your hand.', 'Sorcery', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'may', effects: [{ type: 'return_chosen', filter: { types: ['Creature', 'Land'] }, to: 'hand' }] }] });
+    expect(parse('Return up to three target land cards from your graveyard to your hand.', 'Sorcery', 'L').abilities[0]).toMatchObject({ targets: [{ upTo: true }] });
+    expect(parse("If this card is in your opening hand and you're not the starting player, you may begin the game with ~ on the battlefield with a luck counter on it. If you do, exile a card from your hand.", 'Legendary Land', 'G').abilities[0]).toMatchObject({ effect: { type: 'begin_on_battlefield', notStarting: true, counter: 'luck', exileFromHand: 1 } });
+    expect(parse('{T}: Add {C}. If ~ has a luck counter on it, instead add one mana of any color.', 'Legendary Land', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'if' }] });
+    expect(parse('{T}: Add one mana of any color. Spend this mana only to cast a creature spell of the chosen type or activate an ability of a creature source of the chosen type.', 'Land', 'S').unparsed).toHaveLength(0);
+  });
+});

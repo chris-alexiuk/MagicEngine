@@ -503,7 +503,8 @@ export const activatedRule: GrammarRule = {
       }
       // Urza's Tower: "{T}: Add {C}. If you control an Urza's Mine and an Urza's Power-Plant, add {C}{C}{C} instead."
       // Incubation Druid: "If this creature has a +1/+1 counter on it, add three mana of that type instead."
-      const insteadMana = mana && effect && mana[2] ? /^If (.+?), add ((?:\{[WUBRGC]\})+|(?:two|three) mana of that (?:type|color)) instead\.$/.exec(mana[2]) : null;
+      // Gemstone Caverns: "If ~ has a luck counter on it, instead add one mana of any color."
+      const insteadMana = mana && effect && mana[2] ? (/^If (.+?), add ((?:\{[WUBRGC]\})+|(?:two|three) mana of that (?:type|color)) instead\.$/.exec(mana[2]) ?? /^If (.+?), instead add ((?:\{[WUBRGC]\})+|one mana of any color)\.$/.exec(mana[2])) : null;
       if (mana && effect && insteadMana) {
         const cond = parseCondition(insteadMana[1]!, new Binder(env));
         const many = /^(two|three) mana of that/.exec(insteadMana[2]!);
@@ -2592,6 +2593,10 @@ export const exertRule: GrammarRule = {
 export const openingHandRule: GrammarRule = {
   id: 'opening_hand',
   parse(line, original) {
+    // Gemstone Caverns: "If this card is in your opening hand and you're not the starting player, you may begin the game with
+    // ~ on the battlefield with a luck counter on it. If you do, exile a card from your hand." (CR 103.6a)
+    const caverns = /^If (?:~|this card) is in your opening hand and you're not the starting player, you may begin the game with (?:it|~) on the battlefield with a (\S+) counter on it\. If you do, exile a card from your hand\.$/.exec(line);
+    if (caverns) return { kind: 'static', text: original, effect: { type: 'begin_on_battlefield', notStarting: true, counter: caverns[1]!, exileFromHand: 1 } } satisfies StaticAbility;
     if (!/^If (?:~|this card) is in your opening hand, you may begin the game with (?:it|~) on the battlefield\.$/.test(line)) return null;
     return { kind: 'static', text: original, effect: { type: 'begin_on_battlefield' } } satisfies StaticAbility;
   },

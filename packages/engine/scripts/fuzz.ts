@@ -170,8 +170,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'mulligan', keep: rnd() < 0.85 || g.players[me]!.mulligans >= 2 } };
     case 'bottom_cards':
       return { player: me, answer: { kind: 'bottom_cards', objects: shuffle(hand()).slice(0, p.count) } };
-    case 'opening_battlefield':
-      return { player: me, answer: { kind: 'opening_battlefield', objects: p.candidates.filter(() => rnd() < 0.8) } };
+    case 'opening_battlefield': {
+      const objects = p.candidates.filter(() => rnd() < 0.8);
+      const needed = objects.filter((id) => p.exileFor?.includes(id)).length;
+      const exile = shuffle(hand().filter((id) => !objects.includes(id))).slice(0, needed);
+      return { player: me, answer: { kind: 'opening_battlefield', objects, ...(needed ? { exile } : {}) } };
+    }
     case 'dredge':
       return { player: me, answer: { kind: 'dredge', object: rnd() < 0.5 && p.candidates.length ? pick(p.candidates) : null } };
     case 'keep_tapped':

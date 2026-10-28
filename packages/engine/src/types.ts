@@ -502,7 +502,8 @@ export type PendingChoice =
   | { kind: 'mulligan'; player: PlayerId }
   | { kind: 'bottom_cards'; player: PlayerId; count: number }
   /** CR 103.6a: cards in the opening hand that may begin the game on the battlefield (leylines). */
-  | { kind: 'opening_battlefield'; player: PlayerId; candidates: ObjectId[] }
+  /** `exileFor`: Gemstone Caverns — candidates that need a card from the hand exiled if chosen (CR 103.6a). */
+  | { kind: 'opening_battlefield'; player: PlayerId; candidates: ObjectId[]; exileFor?: ObjectId[] }
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
   /** CR 502.3: permanents its controller may choose not to untap ("You may choose not to untap ~ during your untap step"). */
   | { kind: 'keep_tapped'; player: PlayerId; candidates: ObjectId[] }
@@ -582,7 +583,8 @@ export type PendingChoice =
 export type ChoiceAnswer =
   | { kind: 'mulligan'; keep: boolean }
   | { kind: 'bottom_cards'; objects: ObjectId[] }
-  | { kind: 'opening_battlefield'; objects: ObjectId[] }
+  /** `exile`: a card from the hand for each chosen card that needs one (Gemstone Caverns), in order. */
+  | { kind: 'opening_battlefield'; objects: ObjectId[]; exile?: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
   | { kind: 'keep_tapped'; objects: ObjectId[] }
   | { kind: 'dredge'; object: ObjectId | null }
