@@ -317,7 +317,7 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
   if (!face) throw new RulesError('That card has no such face.');
-  const fromExile = (o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'land');
+  const fromExile = (o.zone === 'exile' || o.zone === 'library' || o.zone === 'graveyard') && mayPlayFrom(g, player, o, 'land');
   // "You may play lands from your graveyard."
   const fromGraveyard = o.zone === 'graveyard' && o.owner === player && playerRule(g, player, 'lands_from_graveyard');
   if (!fromExile && !fromGraveyard && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
@@ -441,6 +441,19 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
       const filter = (grant.effect.filter ?? {}) as ObjectFilter;
       if (!matchesFilter(g, o, filter, { controller: player, source: src, anyZone: true })) continue;
       base.push({ type: 'cast_option', id: 'escape', kind: 'alternative', zone: 'graveyard', cost: { mana: face.manaCost, other: [{ type: 'exile_cards', amount: Number(grant.effect.exile ?? 0), other: true }] } });
+      break;
+    }
+  }
+  // Six: "During your turn, nonland permanent cards in your graveyard have retrace." (CR 702.81a)
+  if (o.zone === 'graveyard' && o.owner === player && !face.types.includes('Land') && !base.some((x) => x.id === 'retrace')) {
+    for (const id of abilitySources(g)) {
+      const src = g.objects[id]!;
+      if (src.controller !== player) continue;
+      const grant = objectAbilities(g, src).find(
+        (a) => a.kind === 'static' && a.effect.type === 'grant_retrace' && (!a.effect.yourTurn || g.active === player) && matchesFilter(g, o, (a.effect.filter ?? {}) as ObjectFilter, { controller: player, source: src, anyZone: true }),
+      );
+      if (!grant) continue;
+      base.push({ type: 'cast_option', id: 'retrace', kind: 'alternative', zone: 'graveyard', withManaCost: true, cost: { other: [{ type: 'discard', amount: 1, filter: { types: ['Land'] } }] } });
       break;
     }
   }
@@ -595,11 +608,13 @@ function cast(
     o.owner === player &&
     ((alt?.id === 'foretell' && o.foretold !== undefined && o.foretold < g.turn) ||
       (alt?.id === 'plot' && o.plotted !== undefined && o.plotted < g.turn && g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0));
-  const flashback = o.zone === 'graveyard' && o.owner === player && !escape ? flashbackCostOf(g, o, face) : null;
+  // Emry, Lurker of the Loch: "You may cast that card this turn." — from a graveyard, for its mana cost.
+  const permitted = o.zone === 'graveyard' && !escape && mayPlayFrom(g, player, o, 'spell');
+  const flashback = o.zone === 'graveyard' && o.owner === player && !escape && !permitted ? flashbackCostOf(g, o, face) : null;
   // CR 702.127a: "You may cast this half of this split card from your graveyard."
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
   // "Until the end of your next turn, you may play that card."
-  const fromExile = (o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'spell');
+  const fromExile = ((o.zone === 'exile' || o.zone === 'library') && mayPlayFrom(g, player, o, 'spell')) || permitted;
   // Bolas's Citadel: from the top of the library, life equal to its mana value instead of its mana cost (CR 118.9;
   // CR 107.3b: X is 0).
   const lifeInstead = !during && !alt && o.zone === 'library' && topLifeOnly(g, player, o);
@@ -754,7 +769,7 @@ function cast(
   if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
   o.cast = {
     by: player,
-    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? (castFrom === 'library' ? 'library' : 'exile') : 'hand',
+    from: during ? castFrom : fromCommandZone ? 'command' : flashback || escape || aftermath ? 'graveyard' : fromExile || prepared ? (castFrom === 'library' || castFrom === 'graveyard' ? castFrom : 'exile') : 'hand',
     before,
     ...(kicked ? { kicked: true as const, kicks } : {}),
     ...(paid.length ? { paid } : {}),

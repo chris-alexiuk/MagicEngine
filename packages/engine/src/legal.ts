@@ -15,7 +15,7 @@ import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
-import { freePermission, mayPlayFrom, playableFromExile, playableFromTop, topLifeOnly } from './permissions.js';
+import { freePermission, mayPlayFrom, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { activationsThisTurn, targetLifeTax } from './actions.js';
 import { bestowedFace, manaValueOf } from './zones.js';
@@ -58,7 +58,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     }
   }
   // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library.
-  for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player), ...playableFromTop(g, player)]) {
+  for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player), ...playableFromTop(g, player), ...playableFromGraveyard(g, player)]) {
     const o = g.objects[id]!;
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
@@ -66,7 +66,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         // CR 722.3c: only its prepare spell can be cast.
         if (faceIndex !== 1) return;
       } else {
-        if ((o.zone === 'exile' || o.zone === 'library') && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
+        if ((o.zone === 'exile' || o.zone === 'library' || o.zone === 'graveyard') && !mayPlayFrom(g, player, o, face.types.includes('Land') ? 'land' : 'spell')) return;
         if (faceIndex > 0 && !['split', 'modal_dfc', 'adventure'].includes(def.layout)) return;
         // CR 702.127a: an aftermath half is cast only from a graveyard.
         if (face.keywords.some((k) => k.id === 'aftermath')) return;

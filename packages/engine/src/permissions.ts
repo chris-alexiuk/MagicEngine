@@ -81,6 +81,14 @@ export function playableFromExile(g: GameState, player: PlayerId): string[] {
   });
 }
 
+/** Cards in graveyards a player may play right now ("Choose target artifact card in your graveyard. You may cast that card this turn."). */
+export function playableFromGraveyard(g: GameState, player: PlayerId): string[] {
+  return [...new Set((g.mayPlay ?? []).filter((p) => p.player === player).map((p) => p.object.id))].filter((id) => {
+    const o = g.objects[id];
+    return o?.zone === 'graveyard' && (mayPlayFrom(g, player, o, 'spell') || mayPlayFrom(g, player, o, 'land'));
+  });
+}
+
 /** Drops permissions that have run out or whose card has moved. */
 export function prunePermissions(g: GameState): void {
   if (!g.mayPlay?.length) return;

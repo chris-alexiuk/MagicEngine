@@ -82,6 +82,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
   [/ named ~$/, (f, _m, b) => !f.name && ((f.name = b.env.cardName), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
+  // Gyruda, Void Winnower: "with an even mana value", "with even mana values" (CR 202.3: 0 is even).
+  [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
@@ -295,6 +297,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     else if (w === 'multicolored') f.multicolored = true;
     // CR 700.6
     else if (w === 'historic') f.historic = true;
+    // CR 700.9: equipped, enchanted by an Aura its controller controls, or with a counter on it.
+    else if (w === 'modified') f.modified = true;
     else if (w === 'tapped') f.tapped = true;
     else if (w === 'untapped') f.tapped = false;
     else if (w === 'attacking') f.combat = 'attacking';

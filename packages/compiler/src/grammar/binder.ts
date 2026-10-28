@@ -42,6 +42,8 @@ export class Binder {
   votes: string[] = [];
   /** Set when the text uses something the engine can't do (the line stays unread). */
   unsupported = false;
+  /** The ability mills cards, so "from among them" can mean the milled cards. */
+  milled = false;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -58,6 +60,7 @@ export class Binder {
     b.damaged = this.damaged;
     b.votes = this.votes;
     b.unsupported = this.unsupported;
+    b.milled = this.milled;
     return b;
   }
 
@@ -73,6 +76,7 @@ export class Binder {
     this.damaged = other.damaged;
     this.votes = other.votes;
     this.unsupported = other.unsupported;
+    this.milled = other.milled;
   }
 
   addTarget(spec: TargetSpec): Ref {

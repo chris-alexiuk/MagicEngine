@@ -1928,3 +1928,21 @@ describe('slice 164', () => {
     expect(parse('When this enchantment enters, create an X/X green Treefolk creature token.', 'Enchantment', 'A').unparsed).toHaveLength(0);
   });
 });
+
+describe('slice 165', () => {
+  it('reads cards put from among the milled cards, and paying life to do something', () => {
+    expect(parse('Whenever ~ attacks, mill three cards. You may put a land card from among them into your hand.', 'Legendary Creature — Wolf', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'mill', amount: 3 }, { type: 'put_from_milled', filter: { types: ['Land'] }, amount: 1, to: 'hand', optional: true }] });
+    expect(parse('Mill ten cards. Put up to two creature cards from among the milled cards onto the battlefield.', 'Sorcery', 'V').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'put_from_milled', amount: 2, to: 'battlefield', optional: true }] });
+    expect(parse('Whenever this creature enters or attacks, mill five cards. You may put a creature card and/or a land card from among them into your hand.', 'Creature — Zombie Giant', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'put_from_milled', each: [{ types: ['Creature'] }, { types: ['Land'] }], amount: 2 }] });
+    expect(parse('At the beginning of your upkeep, you may pay {1} and 3 life. If you do, draw a card.', 'Enchantment', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{1}', life: 3 }] });
+    expect(parse('Whenever another creature you control dies, you may pay 2 life. If you do, draw a card.', 'Legendary Enchantment Creature — God', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '', life: 2 }] });
+  });
+  it('reads modified, even mana values, granted retrace, Emry, Urza and Nesting Grounds', () => {
+    expect(parse('Modified creatures you control have trample.', 'Legendary Creature — Spirit', 'K').abilities[0]).toMatchObject({ effect: { affected: { filter: { modified: true, controller: 'you' } }, keywords: [{ id: 'trample' }] } });
+    expect(parse("Your opponents can't block with creatures with even mana values.", 'Creature — Eldrazi', 'V').abilities[0]).toMatchObject({ effect: { affected: { filter: { manaValueParity: 'even', controller: 'opponent' } }, rules: ['cant_block'] } });
+    expect(parse('During your turn, nonland permanent cards in your graveyard have retrace.', 'Legendary Creature — Wolf', 'S').abilities[0]).toMatchObject({ effect: { type: 'grant_retrace', yourTurn: true, filter: { notTypes: ['Land'] } } });
+    expect(parse('{T}: Choose target artifact card in your graveyard. You may cast that card this turn.', 'Legendary Creature — Merfolk Wizard', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'grant_play', what: { ref: 'target', index: 0 }, mode: 'cast' }] });
+    expect(parse('{5}: Shuffle your library, then exile the top card. Until end of turn, you may play that card without paying its mana cost.', 'Legendary Artifact Creature — Human Artificer', 'U').abilities[0]).toMatchObject({ effects: [{ type: 'shuffle' }, { type: 'exile_top', play: { mode: 'play', until: 'eot', free: true } }] });
+    expect(parse('{1}, {T}: Move a counter from target permanent you control onto a second target permanent.', 'Land', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'move_counters', counter: 'any' }] });
+  });
+});

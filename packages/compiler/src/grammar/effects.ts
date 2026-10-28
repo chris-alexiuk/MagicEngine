@@ -195,7 +195,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
       // Mana the engine can pay as a resolution-time cost (no {X}, snow or Phyrexian symbols), or energy (CR 107.14).
-      const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
+      // CR 119.4: "You may pay 3 life", Ripples of Undeath: "you may pay {1} and 3 life" — life only if you have that much.
+      const payParts = /^You may pay (?:((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)(?: and (\d+) life)?|(\d+) life)$/.exec(s);
+      const pay = payParts ? ([payParts[0], payParts[1] ?? ''] as const) : null;
+      const payLife = payParts ? Number(payParts[2] ?? payParts[3] ?? 0) : 0;
       const then = sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && then) {
         const inner = parseSentence(capitalise(then[1]!), b);
@@ -204,7 +207,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't), (.+)$/.exec(sentences[i + 2]!) : null;
         const no = otherwise ? parseSentence(capitalise(otherwise[1]!), b) : null;
         if (otherwise && !no) return null;
-        out.push({ type: 'may_pay', cost: pay[1]!, effects: inner, ...(no ? { else: no } : {}) });
+        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), effects: inner, ...(no ? { else: no } : {}) });
         i += otherwise ? 2 : 1;
         continue;
       }
@@ -213,7 +216,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (pay && payDont) {
         const no = parseSentence(capitalise(payDont[1]!), b);
         if (!no) return null;
-        out.push({ type: 'may_pay', cost: pay[1]!, effects: [], else: no });
+        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), effects: [], else: no });
         i++;
         continue;
       }
@@ -580,7 +583,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Impulse draw: "Exile the top card of your library. Until the end of your next turn, you may play that card."
       // Ragavan: "create a Treasure token and exile the top card of that player's library. Until end of turn, you may
       // cast that card." — from another player's library too; the permission is yours.
-      const topAny = /^(?:(.+?) and )?[Ee]xile the top (card|(\w+) cards) of (your|that player's|target opponent's|target player's|defending player's|each opponent's) library$/.exec(s);
+      // Urza, Lord High Artificer: "Shuffle your library, then exile the top card." — of your library.
+      const topAny = /^(?:(.+?)(?: and|, then) )?[Ee]xile the top (card|(\w+) cards)(?: of (your|that player's|target opponent's|target player's|defending player's|each opponent's) library)?$/.exec(s);
+      if (topAny && !topAny[4]) topAny[4] = 'your';
       const top = topAny ? [topAny[0], topAny[2], topAny[3]] as const : null;
       let topWho: Ref | null = topAny && topAny[4] !== 'your' ? null : { ref: 'you' };
       let topFirst: EffectNode[] = [];
@@ -603,18 +608,31 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // CR 118.9: "Until end of turn, you may play that card without paying its mana cost."
+      const freeSuffix = / without paying (?:its|their) mana costs?$/;
+      const free = freeSuffix.test(next);
       const untilPlay =
-        /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next) ??
+        /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next.replace(freeSuffix, '')) ??
         /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards)$/.exec(next) ??
         /^Until (end of turn|the end of your next turn), you may (play) lands and cast spells from among (?:them|those cards)$/.exec(next);
-      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn)$/.exec(next);
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn)$/.exec(next.replace(freeSuffix, ''));
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
         const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         if (!topWho) return null;
-        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until } });
+        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until, ...(free ? { free: true } : {}) } });
+        i++;
+        continue;
+      }
+      // Emry, Lurker of the Loch: "Choose target artifact card in your graveyard. You may cast that card this turn."
+      const chooseTarget = /^Choose target (.+? card in (?:your|a|an opponent's) graveyard)$/.exec(s);
+      const castIt = chooseTarget ? /^You may (cast|play) (?:that card|it) this turn$/.exec(next) : null;
+      if (chooseTarget && castIt) {
+        const what = parseObjectRef(`target ${chooseTarget[1]}`, b);
+        if (!what || what.plural || !what.targeted) return null;
+        out.push({ type: 'grant_play', what: what.ref, mode: castIt[1] });
         i++;
         continue;
       }
@@ -1012,6 +1030,31 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Six: "Mill three cards. You may put a land card from among them into your hand." Gyruda: "Put a creature card with
+  // an even mana value from among the milled cards onto the battlefield under your control." — the cards milled this way.
+  const fromMilled = /^(You may )?(?:[Tt]hen )?[Pp]ut (a|an|up to (?:one|two|three)|any number of) (.+?) from among (them|those cards|the milled cards) (into your hand|onto the battlefield( tapped)?( under your control)?)$/.exec(s);
+  if (fromMilled && (b.milled || fromMilled[4] === 'the milled cards')) {
+    const many = fromMilled[2]!;
+    const to = fromMilled[5]!.startsWith('into') ? 'hand' : 'battlefield';
+    const strip = (f: ObjectFilter) => {
+      const { zone: _z, owner: _o, ...rest } = f;
+      return rest;
+    };
+    // Sludge Titan: "a creature card and/or a land card" — up to one of each.
+    const eachOf = /^(.+? card) and\/or (?:a|an) (.+? card)$/.exec(fromMilled[3]!);
+    if (eachOf && (many === 'a' || many === 'an')) {
+      const one = parseFilter(`${eachOf[1]} in your library`, b);
+      const two = one ? parseFilter(`${eachOf[2]} in your library`, b) : null;
+      if (!one || !two || one.plural || two.plural) return null;
+      return [{ type: 'put_from_milled', filter: {}, each: [strip(one.filter), strip(two.filter)], amount: 2, to, optional: true, ...(fromMilled[6] ? { tapped: true } : {}) }];
+    }
+    const n = many === 'any number of' ? 99 : many.startsWith('up to ') ? parseAmount(many.slice(6)) : 1;
+    const pf = parseFilter(`${fromMilled[3]} in your library`, b);
+    if (typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
+    const filter = strip(pf.filter);
+    const optional = Boolean(fromMilled[1]) || n > 1;
+    return [{ type: 'put_from_milled', filter, amount: n, to, ...(optional ? { optional: true } : {}), ...(fromMilled[6] ? { tapped: true } : {}) }];
+  }
   // Sea Gate Restoration: "You have no maximum hand size for the rest of the game."
   if (/^You have no maximum hand size for the rest of the game$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', until: 'game' }];
   // Emergence Zone: "You may cast spells this turn as though they had flash." (CR 702.8a)
@@ -1298,6 +1341,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const from = parseObjectRef(moveAll[1]!, b);
       const to = from ? parseObjectRef(moveAll[2]!, b) : null;
       return from && to && !from.plural && !to.plural ? [{ type: 'move_counters', from: from.ref, to: to.ref, counter: 'all' }] : null;
+    });
+    if (r) return r;
+  }
+  // Nesting Grounds: "Move a counter from target permanent you control onto a second target permanent." — any kind.
+  const moveAny = /^[Mm]ove a counter from (target .+?) onto a second (target .+)$/.exec(s);
+  if (moveAny) {
+    const r = attempt(b, (b) => {
+      const from = parseObjectRef(moveAny[1]!, b);
+      const to = from ? parseObjectRef(moveAny[2]!, b) : null;
+      return from && to && !from.plural && !to.plural && from.targeted && to.targeted ? [{ type: 'move_counters', from: from.ref, to: to.ref, counter: 'any', amount: 1 }] : null;
     });
     if (r) return r;
   }
@@ -1942,10 +1995,12 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
   },
-  mill(args, who) {
+  mill(args, who, b) {
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
-    return amount !== null && amount !== undefined ? [{ type: 'mill', amount, who }] : null;
+    if (amount === null || amount === undefined) return null;
+    b.milled = true;
+    return [{ type: 'mill', amount, who }];
   },
   // CR 701.68a: "blight 2", "target opponent blights 2"
   blight(args, who) {

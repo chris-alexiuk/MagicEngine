@@ -19,6 +19,19 @@ import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import { abilitySources, faceOf, manaValueOf } from './zones.js';
 
+/** CR 700.9: it has a counter on it, is equipped, or is enchanted by an Aura its controller controls. */
+export function isModified(g: GameState, o: GameObject): boolean {
+  if (Object.values(o.counters).some((n) => n > 0)) return true;
+  if (o.zone !== 'battlefield') return false;
+  return g.zones.battlefield.some((id) => {
+    const a = g.objects[id]!;
+    if (a.attachedTo?.id !== o.id || a.attachedTo.zcc !== o.zcc) return false;
+    // The printed subtypes: an attachment's own characteristics may depend on what's modified (no loops).
+    const sub = faceOf(g, a).subtypes;
+    return sub.includes('Equipment') || (sub.includes('Aura') && a.controller === o.controller);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Characteristics through the layer system (CR 613)
 // ---------------------------------------------------------------------------
@@ -633,6 +646,8 @@ export interface FilterContext {
   anyZone?: boolean;
   /** The object's controller at the time, if it has since left the battlefield. */
   lastController?: PlayerId;
+  /** CR 603.10a: a leaves-the-battlefield trigger looks back — counters and modifications as it last existed there. */
+  lookBack?: boolean;
 }
 
 // An X or a counted amount not yet worked out (only as an effect resolves) matches nothing.
@@ -695,17 +710,22 @@ export function matchesFilter(
   if (f.power && !compare(c.power, f.power)) return false;
   if (f.toughness && !compare(c.toughness, f.toughness)) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  if (f.manaValueParity && manaValueOf(g, o) % 2 !== (f.manaValueParity === 'even' ? 0 : 1)) return false;
   // "that was dealt damage this turn"
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
   // "a card named …" (CR 201.2)
   if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
   if (f.manaCostIs && !f.manaCostIs.includes(faceOf(g, o).manaCost)) return false;
-  // "with a +1/+1 counter on it" (CR 122.1)
-  if (f.counter && !(f.counter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.counter] ?? 0) > 0)) return false;
-  if (f.notCounter && (f.notCounter === 'any' ? Object.values(o.counters).some((n) => n > 0) : (o.counters[f.notCounter] ?? 0) > 0)) return false;
+  // "with a +1/+1 counter on it" (CR 122.1); looking back, the counters it had on the battlefield (CR 603.10a).
+  const last = ctx.lookBack && o.zone !== 'battlefield' ? g.lastKnown?.[o.id] : undefined;
+  const then = last && last.zcc === o.zcc - 1 ? last : undefined;
+  const counters = then ? (then.counters ?? {}) : o.counters;
+  if (f.counter && !(f.counter === 'any' ? Object.values(counters).some((n) => n > 0) : (counters[f.counter] ?? 0) > 0)) return false;
+  if (f.notCounter && (f.notCounter === 'any' ? Object.values(counters).some((n) => n > 0) : (counters[f.notCounter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
+  if (f.modified && !(then ? then.modified : isModified(g, o))) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;
   if (f.attachedTo) {
     const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;

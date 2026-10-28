@@ -1305,7 +1305,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       return true;
     }
-    const counter = String(node.counter);
+    let counter = String(node.counter);
+    // Nesting Grounds: "Move a counter from …" — of whichever kind it has, the controller's choice.
+    if (counter === 'any') {
+      if (!from || from.zone !== 'battlefield') return true;
+      const kinds = Object.keys(from.counters).filter((k) => (from.counters[k] ?? 0) > 0);
+      if (!kinds.length) return true;
+      if (kinds.length === 1) counter = kinds[0]!;
+      else {
+        const answer = answerOf(ctx, 'choose_option');
+        if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: kinds, text: 'Choose a kind of counter to move.', sourceName: sourceName(ctx) } };
+        if (!kinds.includes(answer.choice)) throw new RulesError('Choose a kind of counter it has.');
+        counter = answer.choice;
+      }
+    }
     if (!from || from.zone !== 'battlefield' || !(from.counters[counter] ?? 0)) return true;
     const to = refObjects(ctx, ref(node, 'to')).filter((o) => o.zone === 'battlefield' && o.id !== from.id);
     if (!to.length) return true;
@@ -1654,7 +1667,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Exile the top card of your library. Until the end of your next turn, you may play that card."
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' } | undefined;
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn'; free?: true } | undefined;
     const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
@@ -1669,7 +1682,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
           const lastTurn = lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
-          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}) });
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}) });
         }
       }
     }
@@ -2517,6 +2530,55 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Emry, Lurker of the Loch: "You may cast that card this turn." (CR 601.3: an effect lets it be cast from there.)
+  grant_play(node, ctx) {
+    const g = ctx.g;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone === 'battlefield' || o.zone === 'stack') continue;
+      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn: g.turn });
+    }
+    return true;
+  },
+
+  // Six: "Mill three cards. You may put a land card from among them into your hand." — from the cards this resolution
+  // milled that are still in a graveyard (CR 400.7: one that moved on is a new object).
+  put_from_milled(node, ctx) {
+    const g = ctx.g;
+    const filter = node.filter as ObjectFilter;
+    // Sludge Titan: "a creature card and/or a land card" — each chosen card stands for a different one of these.
+    const each = node.each as ObjectFilter[] | undefined;
+    const fctx = { controller: ctx.controller, source: ctx.source ?? null, anyZone: true };
+    const fits = (id: string, f: ObjectFilter) => matchesFilter(g, g.objects[id]!, f, fctx);
+    const assignable = (ids: string[], used: boolean[] = []): boolean =>
+      !ids.length || (each ?? []).some((f, i) => !used[i] && fits(ids[0]!, f) && assignable(ids.slice(1), Object.assign([...used], { [i]: true })));
+    const candidates = movedThisWay(ctx, { how: 'milled' })
+      .map((m) => m.id)
+      .filter((id) => g.objects[id]?.zone === 'graveyard' && (each ? each.some((f) => fits(id, f)) : fits(id, filter)));
+    if (!candidates.length) return true;
+    const max = Math.min(amountOf(ctx, node.amount), candidates.length);
+    const min = node.optional ? 0 : max;
+    const where = node.to === 'hand' ? 'into your hand' : 'onto the battlefield';
+    let chosen = candidates.length === 1 && min === 1 ? [candidates[0]!] : null;
+    if (!chosen) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the milled cards to put ${where}.`, seen: candidates } };
+      if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
+        throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
+      }
+      if (each && !assignable(answer.objects)) throw new RulesError('Choose at most one card of each kind.');
+      chosen = answer.objects;
+    }
+    const moved: ObjectRef[] = [];
+    for (const id of chosen) {
+      if (node.to === 'hand') moveObject(g, id, 'hand', ctx.events);
+      else moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+      moved.push({ id, zcc: g.objects[id]!.zcc });
+    }
+    // "it", "that card" in what follows.
+    if (ctx.resolution) ctx.resolution.created = moved;
+    return true;
+  },
+
   // Dauthi Voidwalker: "Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without
   // paying its mana cost."
   play_exiled(node, ctx) {
@@ -3111,7 +3173,7 @@ function describeSearch(node: EffectNode, count: number): string {
 // ---------------------------------------------------------------------------
 
 /** Does `o` satisfy a trigger's subject ("~" or "a creature you control")? */
-function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: { lastController?: PlayerId; anyZone?: boolean } = {}): boolean {
+function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: { lastController?: PlayerId; anyZone?: boolean; lookBack?: boolean } = {}): boolean {
   if (subject.ref === 'self') return o.id === check.source.id;
   // "enchanted creature", "equipped creature" — as it was attached when the event happened: "When enchanted
   // creature dies" looks back at the creature that left (CR 603.10a), even if the Aura left with it.
@@ -3127,6 +3189,7 @@ function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: 
     source: check.source,
     ...(opts.anyZone ? { anyZone: true } : {}),
     ...(opts.lastController ? { lastController: opts.lastController } : {}),
+    ...(opts.lookBack ? { lookBack: true } : {}),
   });
 }
 
@@ -3161,13 +3224,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
-    if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller })) return [];
+    if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true })) return [];
     // "Whenever one or more other creatures die": once for the creatures that died at the same time.
     if (t.batch) {
       const first = (check.batch ?? [e]).find((x) => {
         if (x.type !== 'moved' || x.from !== 'battlefield' || x.to !== 'graveyard') return false;
         const xo = check.g.objects[x.object];
-        return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller }));
+        return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller, lookBack: true }));
       });
       return first === e ? [{}] : [];
     }
@@ -3183,7 +3246,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller }) ? [{ object: refTo(o), lki, player: e.controller }] : [];
+    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true }) ? [{ object: refTo(o), lki, player: e.controller }] : [];
   },
   attacks(t, check) {
     const e = check.event;
@@ -3774,7 +3837,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'target_life_tax', 'ability_cost_reduction'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

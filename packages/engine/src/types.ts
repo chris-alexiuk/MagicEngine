@@ -880,7 +880,7 @@ export interface GameState {
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */

@@ -3,7 +3,7 @@ import { faceDownFace } from './face-down.js';
 import type { CastOptionNode, ExileInsteadNode, FaceDef } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
-import { chars, matchesFilter, objectAbilities } from './characteristics.js';
+import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
 
@@ -182,6 +182,9 @@ export function moveObject(
       zcc: o.zcc,
       power: c.power,
       toughness: c.toughness,
+      // CR 603.10a: "Whenever a creature with a +1/+1 counter on it dies", "a modified creature" — as it last existed.
+      ...(Object.keys(o.counters).length ? { counters: { ...o.counters } } : {}),
+      ...(isModified(g, o) ? { modified: true } : {}),
       types: [...c.types],
       subtypes: [...c.subtypes],
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),

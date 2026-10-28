@@ -1443,6 +1443,9 @@ export const continuousRule: GrammarRule = {
     // Champion of Lambholt: "Creatures with power less than this creature's power can't block creatures you control."
     const cantBlockYours = /^(Creatures .+?) can't block creatures you control$/.exec(rest);
     if (cantBlockYours) rest = `Creatures you control can't be blocked by ${cantBlockYours[1]!.replace(/^C/, 'c').replace(/\bthis creature's\b/, "~'s")}`;
+    // Void Winnower: "Your opponents can't block with creatures with even mana values."
+    const blockWith = /^Your opponents can't block with (creatures .+)$/.exec(rest);
+    if (blockWith) rest = `${blockWith[1]!.replace(/^creatures/, 'Creatures your opponents control')} can't block`;
     rest = rest.replace(/^(~ doesn't untap during (?:your|its controller's) untap step) if (.+)$/, '$1 as long as $2');
     // Razorkin Needlehead: "This creature has first strike during your turn." — the same as "During your turn, …".
     // (Cast prohibitions keep their own "during your turn" reading.)
@@ -2732,6 +2735,20 @@ export const grantedEscapeRule: GrammarRule = {
   },
 };
 
+/** Six: "During your turn, nonland permanent cards in your graveyard have retrace." (CR 702.81a) */
+export const grantedRetraceRule: GrammarRule = {
+  id: 'granted_retrace',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^(During your turn, )?(?:Each )?(.+?) in your graveyard (?:has|have) retrace\.$/.exec(line);
+    if (!env || !m) return null;
+    const pf = parseFilter(`${m[2]} in your graveyard`, new Binder(env));
+    if (!pf) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { kind: 'static', text: original, effect: { type: 'grant_retrace', filter, ...(m[1] ? { yourTurn: true } : {}) } } as StaticAbility;
+  },
+};
+
 /** Lier, Disciple of the Drowned: "Each instant and sorcery card in your graveyard has flashback. The flashback cost is equal to that card's mana cost." */
 export const grantedFlashbackRule: GrammarRule = {
   id: 'granted_flashback',
@@ -2847,6 +2864,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   manaTriggerRule,
   grantedFlashbackRule,
   grantedEscapeRule,
+  grantedRetraceRule,
   targetLifeTaxRule,
   abilityCostReductionRule,
   chapterRule,
