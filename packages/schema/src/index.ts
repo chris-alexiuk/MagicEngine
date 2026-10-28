@@ -223,6 +223,8 @@ export interface Cost {
   untap?: true;
   /** CR 606.4: a loyalty ability's cost, e.g. +1 or -3. */
   loyalty?: number;
+  /** CR 606.4 / 107.3: "−X" — X loyalty counters removed, the X announced as it's activated (with `loyalty: 0`). */
+  loyaltyX?: -1 | 1;
   /** Non-mana costs, e.g. { type: 'sacrifice_self' } or { type: 'pay_life', amount: 2 }. */
   other?: EffectNode[];
 }
@@ -294,6 +296,8 @@ export interface ObjectFilter {
   zone?: ZoneWord;
   /** CR 700.6: historic — legendary, an artifact, or a Saga. */
   historic?: true;
+  /** Desynchronization: "that's not historic". */
+  notHistoric?: true;
   /** CR 700.9: modified — equipped, enchanted by an Aura its controller controls, or with a counter on it. */
   modified?: true;
   /** "with an even mana value" (CR 202.3). */
@@ -336,6 +340,8 @@ export interface ObjectFilter {
   powerBelowSource?: true;
   /** Selvala: "its power is greater than each other creature's power" — the greatest, not tied. */
   powerAboveOthers?: true;
+  /** The Darkness Crystal: "exiled with ~" — cards its abilities exiled (CR 607.2a). */
+  exiledWithSource?: true;
   /** Kutzil: "with power greater than its base power" (CR 208.4b: base power is set by layers 7a–7b). */
   powerAboveBase?: true;
   /** CR 702.78a (conspire): "that each share a color with it" — the source. */
@@ -488,6 +494,8 @@ export type AmountExpr = (
   | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled'; types?: string[]; notTypes?: string[] }
   /** "You gain life equal to the damage dealt this way": what this resolution's damage effects dealt. */
   | { kind: 'damage_this_way' }
+  /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
+  | { kind: 'excess_this_way' }
   /** "for each creature that died this turn", "the number of Zubera that died this turn" (as they last existed). */
   | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent' }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
@@ -895,6 +903,8 @@ export interface ExileInsteadNode extends EffectNode {
   dies?: true;
   /** Dauthi Voidwalker: "instead exile it with a void counter on it". */
   withCounter?: string;
+  /** The Darkness Crystal: "instead exile it and you gain 2 life". */
+  gainLife?: number;
 }
 
 /**
@@ -904,7 +914,7 @@ export interface ExileInsteadNode extends EffectNode {
 export interface QuantityReplacementNode extends EffectNode {
   type: 'replace_quantity';
   /** `mill`: The Water Crystal — "If an opponent would mill one or more cards, they mill that many cards plus four instead." */
-  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life';
+  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate';
   /** Bloodletter of Aclazotz: only during its controller's turn. */
   yourTurn?: true;
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn). */
@@ -949,6 +959,8 @@ export const PLAYER_RULES = [
   'sorcery_timing',
   /** Trouble in Pairs: "If an opponent would begin an extra turn, that player skips that turn instead." (CR 614.10) */
   'skip_extra_turns',
+  /** Aven Mindcensor: "If an opponent would search a library, that player searches the top four cards of that library instead." */
+  'search_top_four',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -983,7 +995,7 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger',
   ],
   conditions: [
     'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -1003,7 +1015,7 @@ export const CORE_NODES = {
   ],
   costs: ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

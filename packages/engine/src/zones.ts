@@ -6,6 +6,8 @@ import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
+import { replaceQuantity } from './quantities.js';
+import { playerRule } from './player-rules.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -209,7 +211,7 @@ export function moveObject(
   o.damage = 0;
   o.counters = {};
   // Dauthi Voidwalker: "instead exile it with a void counter on it".
-  if (instead && typeof instead === 'object' && instead.withCounter) o.counters[instead.withCounter] = 1;
+  if (instead?.node.withCounter) o.counters[instead.node.withCounter] = 1;
   o.sick = to === 'battlefield';
   // CR 613.7d: an object receives a timestamp as it enters a zone.
   o.timestamp = ++g.clock;
@@ -267,6 +269,19 @@ export function moveObject(
   else delete o.cast;
   o.controller = to === 'battlefield' || to === 'stack' ? (opts.controller ?? o.controller) : o.owner;
   o.face = opts.face ?? (to === 'battlefield' || to === 'stack' ? o.face : 0);
+  if (instead && o.zone === 'exile') {
+    // The Darkness Crystal: "… instead exile it and you gain 2 life." — exiled with it (CR 607.2a).
+    o.exiledBy = { id: instead.source.id, zcc: battlefieldZcc(g, instead.source) };
+    if (instead.node.gainLife) {
+      const p = instead.source.controller;
+      const n = replaceQuantity(g, 'gain_life', instead.node.gainLife, { player: p });
+      const ps = g.players[p]!;
+      if (n > 0 && !playerRule(g, p, 'cant_gain_life') && !playerRule(g, p, 'life_cant_change')) {
+        ps.life += n;
+        events.push({ type: 'life', player: p, delta: n, life: ps.life });
+      }
+    }
+  }
 
   // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.
   if (g.resolving && to !== 'library' && to !== 'hand') (g.resolving.found ??= {})[id] = o.zcc;
@@ -380,12 +395,26 @@ function drawReplacements(g: GameState, player: PlayerId): number {
     const source = g.objects[id]!;
     if (source.controller !== player) continue;
     for (const a of objectAbilities(g, source)) {
-      if (a.kind !== 'static' || a.effect.type !== 'draw_replacement' || a.effect.emptyWin) continue;
+      if (a.kind !== 'static' || a.effect.type !== 'draw_replacement' || a.effect.emptyWin || a.effect.steal) continue;
       if (a.effect.exceptFirst && firstInDrawStep) continue;
       n++;
     }
   }
   return n;
+}
+
+/**
+ * Notion Thief: "If an opponent would draw a card except the first one they draw in each of their draw steps, instead that
+ * player skips that draw and you draw a card." — who draws instead, if anyone (CR 614.1a).
+ */
+function drawThief(g: GameState, player: PlayerId): PlayerId | null {
+  if (g.step === 'draw' && g.active === player && !(g.turnLog.drawStepDrew ?? []).includes(player)) return null;
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    if (source.controller === player || g.players[source.controller]?.lost) continue;
+    if (objectAbilities(g, source).some((a) => a.kind === 'static' && a.effect.type === 'draw_replacement' && a.effect.steal)) return source.controller;
+  }
+  return null;
 }
 
 /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." */
@@ -412,6 +441,12 @@ function emptyDrawWins(g: GameState, player: PlayerId): boolean {
 export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], replaced = false): void {
   // CR 121.2: a draw that can't happen doesn't (Narset) — it isn't a draw from an empty library either.
   if (drawLimited(g, player)) return;
+  // Notion Thief: that player skips the draw; its controller draws instead.
+  const thief = drawThief(g, player);
+  if (thief) {
+    drawCard(g, thief, events);
+    return;
+  }
   if (g.step === 'draw' && g.active === player) {
     const replacements = replaced ? 0 : drawReplacements(g, player);
     const drew = (g.turnLog.drawStepDrew ??= []);
@@ -448,7 +483,7 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
 
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
 /** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
-function exiledInstead(g: GameState, o: GameObject, from: ZoneName): ExileInsteadNode | null {
+function exiledInstead(g: GameState, o: GameObject, from: ZoneName): { node: ExileInsteadNode; source: GameObject } | null {
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {
@@ -457,7 +492,7 @@ function exiledInstead(g: GameState, o: GameObject, from: ZoneName): ExileInstea
       if (e.dies && from !== 'battlefield') continue;
       if (e.owner === 'you' ? o.owner !== source.controller : e.owner === 'opponents' ? o.owner === source.controller : false) continue;
       if (e.filter && !matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true })) continue;
-      return e;
+      return { node: e, source };
     }
   }
   return null;
@@ -471,6 +506,13 @@ function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {
 export function setTapped(g: GameState, id: ObjectId, tapped: boolean, events: GameEvent[]): void {
   const o = obj(g, id);
   if (o.tapped === tapped) return;
+  // CR 122.1d: "If a permanent with a stun counter on it would become untapped, instead remove a stun counter from it."
+  if (!tapped && (o.counters.stun ?? 0) > 0) {
+    o.counters.stun!--;
+    if (!o.counters.stun) delete o.counters.stun;
+    events.push({ type: 'counters', object: id, counter: 'stun', delta: -1 });
+    return;
+  }
   o.tapped = tapped;
   events.push({ type: 'tapped', object: id, tapped });
 }

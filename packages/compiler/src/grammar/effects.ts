@@ -137,6 +137,29 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
+      // Hunter's Insight: "Choose target creature you control. Whenever that creature deals combat damage to a player or
+      // planeswalker this turn, draw that many cards."; Massacre Girl: "Whenever a creature dies this turn, …" — a triggered
+      // ability for the rest of the turn (CR 603.7).
+      const turnTrig = b.env.parseAbilities ? /^(Until end of turn, )?[Ww]henever (.+?)( this turn)?, (.+)$/.exec(s) : null;
+      if (turnTrig && (turnTrig[1] || turnTrig[3]) && !/\bthis turn\b/.test(turnTrig[2]!)) {
+        // Dalkovan Encampment: "… create two … tokens that are tapped and attacking. Sacrifice them at the beginning of the
+        // next end step." — what follows may belong to the ability; only a last sentence is read this way.
+        if (i !== sentences.length - 1) return null;
+        let cond = turnTrig[2]!;
+        let effect = turnTrig[4]!;
+        if (b.it?.ref === 'target') {
+          cond = cond.replace(/^(?:that creature|that permanent|it)(?= )/, `TARGETREF${b.it.index}`);
+          // Jaya, Fiery Negotiator: "Whenever you attack this turn, Jaya deals damage … to that creature." — the target.
+          if (!cond.includes('TARGETREF')) effect = effect.replace(/\b(?:that creature|that permanent)\b/g, `TARGETREF${b.it.index}`);
+        }
+        const r = b.env.parseAbilities!(`Whenever ${cond}, ${effect}.`, b.env.cardName, b.env.typeLine);
+        const ability = r.abilities[0];
+        if (r.unparsed.length || r.manualKeywords.length || r.abilities.length !== 1 || ability?.kind !== 'triggered' || ability.trigger.type === 'tapped_for_mana') return null;
+        if ((cond.includes('TARGETREF') || effect.includes('TARGETREF')) && ability.targets?.length) return null;
+        out.push({ type: 'turn_trigger', ability });
+        previous = [];
+        continue;
+      }
       // CR 702.34a: "target instant or sorcery card in your graveyard gains flashback until end of turn. The flashback
       // cost is equal to its mana cost." (Snapcaster Mage, Past in Flames)
       const fbGrant = /^(.+?) (?:gains?|has|have) flashback( until end of turn)?$/.exec(s);
@@ -584,7 +607,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // New targets would be chosen whether or not the condition holds (Tear Asunder's kicker picks
         // different targets): not this shape.
         const targetsBefore = b.targets.length;
-        let yes = parseSentence(capitalise(instead), b);
+        // Delayed Blast Fireball: "it deals 5 damage to each opponent and each creature they control instead" — the spell,
+        // as in the sentence before.
+        const spellDeals = /^it deals /.test(instead) && previous.every((x) => x.type === 'deal_damage' && !x.from);
+        let yes = parseSentence(capitalise(spellDeals ? instead.replace(/^it deals /, '~ deals ') : instead), b);
         if (b.targets.length !== targetsBefore) return null;
         // "If this spell was kicked, it deals 5 damage instead." — the same damage, a new amount.
         // "…, it deals 4 damage to that creature instead." names the same recipient.
@@ -698,6 +724,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const r = parseEffectText('You may discard a card. If you do, draw a card.', b);
         if (!r) return null;
         out.push(...r);
+        continue;
+      }
+      // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
+      // instead." — the damage just dealt (CR 120.4a).
+      if (/^If the creature you control has trample, excess damage is dealt to that creature's controller instead$/.test(s)) {
+        const last = out[out.length - 1];
+        if (out.length !== 1 || last?.type !== 'deal_damage' || !last.from) return null;
+        last.excessToController = true;
         continue;
       }
       // CR 707.10c: "You may choose new targets for the copy."
@@ -2176,6 +2210,11 @@ type VerbHandler = (args: string, who: Ref, b: Binder, imperative: boolean) => E
 
 const VERB_FORMS: Record<string, string> = {};
 const VERBS: Record<string, VerbHandler> = {
+  // Guide of Souls: "you gain 1 life and get {E}" — the subject shared (CR 107.14).
+  get(args, who) {
+    const energy = /^((?:\{E\})+)$/.exec(args);
+    return energy && who.ref !== 'players' ? [{ type: 'get_counters', who, counter: 'energy', amount: energy[1]!.length / 3 }] : null;
+  },
   draw(args, who) {
     // "draw up to two cards"
     const upTo = /^up to (\w+) cards?$/.exec(args);
@@ -2365,8 +2404,10 @@ const VERBS: Record<string, VerbHandler> = {
       return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: n, then: 'battlefield', ...(fromHand[3] ? { tapped: true } : {}), ...(/^(?:up to|any number)/.test(fromHand[1]!) ? { optional: true } : {}) }];
     }
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
-    const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) \S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$/.test(onto[1]!)) || onto[1] === '~ from your hand')) {
+    // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
+    // additional +1/+1 counters on it."
+    const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand')) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -2376,6 +2417,17 @@ const VERBS: Record<string, VerbHandler> = {
       const amount = counted[2] === 'the power of the card you exiled' ? { kind: 'stat', stat: 'power', of: { ref: 'self' } } : parseCount(counted[2]!, b);
       const what = amount ? parseObjectRef(counted[3]!, b) : null;
       return amount && what ? [{ type: 'add_counters', what: what.ref, counter: counted[1]!.replace(/−/g, '-'), amount }] : null;
+    }
+    // Guide of Souls: "put two +1/+1 counters and a flying counter on target attacking creature" — both on it.
+    const twoKinds = /^(a|an|one|two|three|four|five) (\S+) counters? and (a|an|one|two|three|four|five) (\S+) counters? on (.+)$/.exec(args);
+    if (twoKinds) {
+      const [n1, n2] = [parseAmount(twoKinds[1]!), parseAmount(twoKinds[3]!)];
+      const what = typeof n1 === 'number' && typeof n2 === 'number' ? parseObjectRef(twoKinds[5]!, b) : null;
+      if (!what) return null;
+      return [
+        { type: 'add_counters', what: what.ref, counter: twoKinds[2]!.replace(/−/g, '-'), amount: n1 },
+        { type: 'add_counters', what: what.ref, counter: twoKinds[4]!.replace(/−/g, '-'), amount: n2 },
+      ];
     }
     const counters = /^(\S+) (\S+) counters? on (.+)$/.exec(args);
     if (counters) {
@@ -2464,7 +2516,7 @@ const VERBS: Record<string, VerbHandler> = {
       return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
     }
     // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
-    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (\S+) counters? on it)?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on it)?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;

@@ -84,6 +84,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
   if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
+  // CR 120.10: "If excess damage was dealt this way", "… to that creature this way", "… to a permanent this way".
+  if (/^excess damage was dealt (?:to (?:that creature|that permanent|a permanent|a creature) )?this way$/.test(t)) return { type: 'amount', amount: { kind: 'excess_this_way' }, op: 'ge', n: 1 };
   // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
   const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed) this way$/.exec(t);
   if (movedOne) {
@@ -157,6 +159,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.174: "if the gift was promised", "if the gift wasn't promised"
   const promised = /^the gift (was|wasn't|was not) promised$/.exec(t);
   if (promised) return { type: 'paid', cost: 'gift', ...(promised[1] !== 'was' ? { not: true } : {}) };
+  // CR 702.138c: "unless it escaped" — cast with its escape cost.
+  if (/^(?:it|~) escaped$/.test(t)) return { type: 'paid', cost: 'escape' };
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
@@ -372,6 +376,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (events[t]) return { type: 'this_turn', event: events[t] };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
   // The Enduring cycle: "it was a creature" (a leaves-the-battlefield trigger looks back, CR 603.10a)
+  // Scavenging Ooze: "Exile target card from a graveyard. If it was a creature card, …" — the card, now in exile.
+  const wasCard = /^it was an? (creature|artifact|enchantment|land|planeswalker|instant|sorcery) card$/.exec(t);
+  if (wasCard && b.it && (b.it.ref === 'target' || b.it.ref === 'created')) return { type: 'is', of: b.it, filter: { types: [wasCard[1]!.replace(/^\w/, (c) => c.toUpperCase())] } };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Minas Tirith: "you attacked with two or more creatures this turn"
@@ -436,6 +443,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (counters && b.it) return { type: 'counters', of: b.it, counter: counters[1]!, max: 0 };
   // The Ozolith: "if it had counters on it" (as it last existed), "if ~ has counters on it".
   if (t === 'it had counters on it' && b.it) return { type: 'counters', of: b.it, min: 1 };
+  // Unstoppable Slasher: "if it had no counters on it" — any kind.
+  if (t === 'it had no counters on it' && b.it) return { type: 'counters', of: b.it, max: 0 };
   if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
   const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);

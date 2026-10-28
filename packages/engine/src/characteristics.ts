@@ -17,7 +17,7 @@ import type {
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
-import { abilitySources, faceOf, manaValueOf } from './zones.js';
+import { abilitySources, battlefieldZcc, faceOf, manaValueOf } from './zones.js';
 
 /**
  * CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of
@@ -69,6 +69,9 @@ export interface Characteristics {
   basePower?: number;
   baseToughness?: number;
 }
+
+/** CR 122.1b: keyword counters the engine applies (each a keyword it knows). */
+const KEYWORD_COUNTERS = new Set(['flying', 'deathtouch', 'haste', 'hexproof', 'indestructible', 'lifelink', 'menace', 'reach', 'shadow', 'trample', 'vigilance']);
 
 /** One continuous effect that might apply, with what's needed to order and scope it. */
 interface ActiveEffect {
@@ -529,6 +532,10 @@ function layered(g: GameState, o: GameObject): Characteristics {
   }
   // CR 613.1e: layer 5 — color-changing effects.
   for (const e of effects) if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
+  // CR 122.1b: keyword counters ("a flying counter") — it has that keyword (layer 6; here before other layer-6 effects).
+  if (o.zone === 'battlefield') {
+    for (const [k, n] of Object.entries(o.counters)) if (n > 0 && KEYWORD_COUNTERS.has(k)) c.keywords.push({ id: k });
+  }
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
   const inLayer6 = effects.filter((e) => (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
   for (const e of inLayer6) {
@@ -700,6 +707,7 @@ export function matchesFilter(
   if (f.sameManaValueAs === 'self' && (!ctx.source || manaValueOf(g, o) !== manaValueOf(g, ctx.source))) return false;
   // CR 700.6: historic
   if (f.historic && !(c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
+  if (f.notHistoric && (c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   // "a creature dealt damage by ~ this turn"
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
@@ -745,6 +753,8 @@ export function matchesFilter(
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
+  // "exiled with ~" (CR 607.2a): what this object's abilities exiled while it was on the battlefield (or on its way).
+  if (f.exiledWithSource && !(o.zone === 'exile' && ctx.source && o.exiledBy?.id === ctx.source.id && o.exiledBy.zcc === battlefieldZcc(g, ctx.source))) return false;
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
   if (f.modified && !(then ? then.modified : isModified(g, o))) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;

@@ -31,6 +31,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f.manaValue = { op: 'le', n };
     return true;
   }],
+  // The Darkness Crystal: "target creature card exiled with The Darkness Crystal" (CR 607.2a).
+  [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
@@ -84,7 +86,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
   // All Is Dust: "permanents … that are one or more colors" — not colorless.
-  [/ that (?:are|is) one or more colors$/, (f) => !f.colors && ((f.colors = ['W', 'U', 'B', 'R', 'G']), true)],
+  [/ that(?: are|'s| is) one or more colors$/, (f) => !f.colors && ((f.colors = ['W', 'U', 'B', 'R', 'G']), true)],
   // Oran-Rief: "each green creature that entered this turn"
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
   // "creature that was dealt damage this turn"
@@ -106,6 +108,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Kutzil: "creatures you control each with power greater than its base power"
   [/ (?:each )?with power greater than (?:its|their) base power$/, (f) => !f.powerAboveBase && ((f.powerAboveBase = true), true)],
   // Gyruda, Void Winnower: "with an even mana value", "with even mana values" (CR 202.3: 0 is even).
+  // Desynchronization: "each nonland permanent that's not historic"
+  [/ that's not historic$/, (f) => !f.notHistoric && ((f.notHistoric = true), true)],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
@@ -416,6 +420,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
   return attempt(b, (b) => {
     const t = text.trim();
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
+    // A "this turn" ability's reference to what its creator targeted (see the sentence loop in effects.ts).
+    const outer = /^TARGETREF(\d+)$/.exec(t);
+    if (outer) return set(b, { ref: { ref: 'target', index: Number(outer[1]) }, plural: false, targeted: false });
     const named = b.named[t.toLowerCase()];
     if (named) return set(b, { ref: named, plural: /^(?:the|those) tokens$|most votes$|^(?:each of )?those creatures$/i.test(t), targeted: false });
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
@@ -433,8 +440,10 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     }
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
-      // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target).
+      // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target), nor is a
+      // noncreature permanent "that creature" (Jaya's "… to that creature" is what she targeted).
       if (it?.ref === 'self' && /^(?:that|those|the) (?:creatures?|permanents?|artifact|enchantment|land|planeswalker)$/i.test(t) && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
+      if (it?.ref === 'self' && /^(?:that|those) creatures?$/i.test(t) && !/\b(?:Creature|Vehicle)\b/.test(b.env.typeLine)) return null;
       return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
@@ -596,7 +605,8 @@ const ANY_TARGET_TYPES = ['Creature', 'Planeswalker', 'Battle'];
 /** Damage recipients: "any target", "target creature or player", "each creature and each player". */
 export function parseRecipients(text: string, b: Binder): Ref[] | null {
   return attempt(b, (b) => {
-    const t = text.trim();
+    // Delayed Blast Fireball: "each opponent and each creature they control" — the opponents' creatures.
+    const t = text.trim().replace(/^each opponent and each (creature|planeswalker|creature and planeswalker) they control$/, 'each opponent and each $1 your opponents control');
     const any = /^(?:any (other )?target|(another )?target (creature|player|opponent|planeswalker|battle)(?:,? (?:creature|player|planeswalker|battle))*,? or (creature|player|planeswalker|battle))$/i.exec(t);
     if (any) {
       if (/^any/i.test(t)) {

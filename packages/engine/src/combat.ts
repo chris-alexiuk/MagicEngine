@@ -821,6 +821,22 @@ function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent
 }
 
 /** CR 120.3: what damage does, depending on the recipient and the source's abilities. Returns the damage dealt. */
+/**
+ * CR 120.4a / 120.10: how much damage this source would need to deal to a permanent before the rest is excess — lethal
+ * damage for a creature (1 from a deathtouch source, CR 702.2c), loyalty for a planeswalker, defense for a battle; with
+ * more than one of those types, the least (the excess is the greatest).
+ */
+export function damageBeforeExcess(g: GameState, source: GameObject, o: GameObject): number {
+  const caps: number[] = [];
+  if (hasType(g, o, 'Creature')) {
+    const left = Math.max(0, toughness(g, o) - o.damage);
+    caps.push(hasKeyword(g, source, 'deathtouch') ? Math.min(1, left) : left);
+  }
+  if (hasType(g, o, 'Planeswalker')) caps.push(o.counters.loyalty ?? 0);
+  if (hasType(g, o, 'Battle')) caps.push(o.counters.defense ?? 0);
+  return caps.length ? Math.min(...caps) : Infinity;
+}
+
 export function dealDamage(
   g: GameState,
   source: GameObject,

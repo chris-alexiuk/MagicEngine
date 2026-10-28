@@ -183,7 +183,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const face = g.cards[o.card]!.faces[0]!;
     const fb = flashbackCostOf(g, o, face);
     if (!fb || hasCostChoice(face)) continue;
-    const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+    // Teferi, Time Raveler: "Each opponent can cast spells only any time they could cast a sorcery." (CR 307.5)
+    const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash'));
     if (!instantSpeed && !mainPhaseEmptyStack) continue;
     if (castRestrictionProblem(g, player, face, o)) continue;
     const fbCost = parseManaCost(fb);
@@ -209,7 +210,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
       if (!face.keywords.some((k) => k.id === 'aftermath') || hasCostChoice(face)) return;
-      const instantSpeed = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
+      const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash'));
       if (!instantSpeed && !mainPhaseEmptyStack) return;
       if (castRestrictionProblem(g, player, face, o)) return;
       const cost = parseManaCost(face.manaCost);
@@ -311,6 +312,12 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])], { kind: 'ability', source: o })) return;
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
+      // "−X": as much loyalty as it has, and 1 (CR 606.6); "+X": 1.
+      if (cost.loyaltyX) {
+        const most = cost.loyaltyX < 0 ? (o.counters.loyalty ?? 0) : 1;
+        for (const x of [...new Set([1, most])]) if (x >= 1) out.push({ type: 'activate', player, object: id, ability, autoTap: true, x, ...choice, ...withCosts(costs) });
+        return;
+      }
       out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
     });
     if (mine) faceOf(g, o).unparsed.forEach((line, i) => {

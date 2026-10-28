@@ -981,8 +981,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn.
     if (!sorcerySpeed) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
     if (o.loyaltyActivatedTurn === g.turn) throw new RulesError(`You’ve already activated a loyalty ability of ${name} this turn.`);
-    // CR 606.6: a negative loyalty cost needs at least that many loyalty counters.
-    if ((o.counters.loyalty ?? 0) + cost.loyalty < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
+    // CR 606.6: a negative loyalty cost needs at least that many loyalty counters ("−X": X of them).
+    if ((o.counters.loyalty ?? 0) + cost.loyalty + (cost.loyaltyX ?? 0) * choices.x < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
   }
   // CR 602.5d: "Activate only as a sorcery."
   if (ability.timing === 'sorcery' && !sorcerySpeed) throw new RulesError(`That ability can only be activated as a sorcery.`);
@@ -1021,9 +1021,10 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (cost.untap) setTapped(g, id, false, events);
   if (cost.loyalty !== undefined) {
     // CR 606.4: the cost is putting on or removing loyalty counters.
-    o.counters.loyalty = (o.counters.loyalty ?? 0) + cost.loyalty;
+    const delta = cost.loyalty + (cost.loyaltyX ?? 0) * choices.x;
+    o.counters.loyalty = (o.counters.loyalty ?? 0) + delta;
     o.loyaltyActivatedTurn = g.turn;
-    events.push({ type: 'counters', object: id, counter: 'loyalty', delta: cost.loyalty, by: player });
+    events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
   if (ability.maxPerTurn) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };

@@ -9,7 +9,7 @@ import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { extraTokens, lifeLoss, replaceQuantity } from './quantities.js';
 import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
-import { dealDamage } from './combat.js';
+import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
@@ -209,7 +209,21 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
       return true;
     }
-    for (const to of refRecipients(ctx, ref(node, 'to'))) dealt += dealDamage(ctx.g, source, to, n, false, ctx.events);
+    for (const to of refRecipients(ctx, ref(node, 'to'))) {
+      const o = to.kind === 'permanent' ? ctx.g.objects[to.object] : undefined;
+      const before = o && o.zone === 'battlefield' ? damageBeforeExcess(ctx.g, source, o) : Infinity;
+      // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
+      // instead." (CR 120.4a: the damage event is modified first)
+      if (o && node.excessToController && hasKeyword(ctx.g, source, 'trample') && n > before) {
+        dealt += dealDamage(ctx.g, source, to, before, false, ctx.events);
+        dealt += dealDamage(ctx.g, source, { kind: 'player', player: o.controller }, n - before, false, ctx.events);
+        continue;
+      }
+      const d = dealDamage(ctx.g, source, to, n, false, ctx.events);
+      dealt += d;
+      // CR 120.10: "the amount of excess damage dealt to that creature this way".
+      if (ctx.resolution && d > before) ctx.resolution.excess = (ctx.resolution.excess ?? 0) + (d - before);
+    }
     if (ctx.resolution) ctx.resolution.damageDealt = (ctx.resolution.damageDealt ?? 0) + dealt;
     // CR 702.15b: lifelink — the source's controller gains that much life.
     if (dealt > 0 && hasKeyword(ctx.g, source, 'lifelink')) gainLife(ctx, source.controller, dealt);
@@ -787,6 +801,24 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // High Tide: "Until end of turn, whenever a player taps an Island for mana, …" — a triggered mana ability for the turn.
+  turn_trigger(node, ctx) {
+    // CR 603.7: a triggered ability that lasts for the rest of the turn.
+    const ability = node.ability as TriggeredAbility;
+    const src = ctx.source;
+    if (!src) return true;
+    const bind = JSON.stringify(ability).includes('"ref":"target"') && !ability.targets?.length;
+    (ctx.g.turnTriggers ??= []).push({
+      id: `tt${ctx.g.nextId++}`,
+      controller: ctx.controller,
+      source: { id: src.id, zcc: src.zcc },
+      sourceName: sourceName(ctx),
+      ability,
+      turn: ctx.g.turn,
+      ...(bind ? { targets: ctx.targets.map((list) => [...list]) } : {}),
+    });
+    return true;
+  },
+
   mana_trigger_this_turn(node, ctx) {
     (ctx.g.manaTriggers ??= []).push({ controller: ctx.controller, ability: node.ability as TriggeredAbility, turn: ctx.g.turn });
     ctx.g.manaTriggers = ctx.g.manaTriggers.filter((f) => f.turn === ctx.g.turn);
@@ -1767,9 +1799,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
-  proliferate(_node, ctx) {
+  proliferate(node, ctx) {
     // CR 701.34a: choose any number of permanents and/or players with counters; each gets one more of each kind.
     const g = ctx.g;
+    // Tekuthal, Inquiry Dominus: "If you would proliferate, proliferate twice instead." (CR 614.1a; each once, CR 614.5)
+    if (!node.replaced) {
+      const k = abilitySources(g).filter((id) => g.objects[id]!.controller === ctx.controller && objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'replace_quantity' && a.effect.event === 'proliferate')).length;
+      if (k) return { expand: Array.from({ length: 2 ** k }, () => ({ type: 'proliferate', replaced: true })) };
+    }
     const objects = g.zones.battlefield.filter((id) => Object.values(g.objects[id]!.counters).some((n) => n > 0));
     const players = livePlayers(g).filter((p) => g.players[p]!.poison > 0 || Object.values(g.players[p]!.counters ?? {}).some((n) => n > 0));
     const answer = answerOf(ctx, 'proliferate');
@@ -2133,7 +2170,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), ...anyOf, zone: 'library' as const });
     // "Search your library and/or graveyard": cards in those zones too.
     const zones = ((node.zones as string[] | undefined) ?? ['library']) as ('library' | 'graveyard' | 'hand')[];
-    const candidates = zones.flatMap((z) => zoneList(g, z, owner).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
+    // Aven Mindcensor: "If an opponent would search a library, that player searches the top four cards of that library
+    // instead." (CR 701.23a, 614.1a)
+    const searchable = (z: string) => (z === 'library' && playerRule(g, player, 'search_top_four') ? zoneList(g, 'library', owner).slice(0, 4) : zoneList(g, z as 'library', owner));
+    const candidates = zones.flatMap((z) => searchable(z).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
     const count = amountOf(ctx, node.amount);
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');
@@ -3349,6 +3389,11 @@ function describeSearch(node: EffectNode, count: number): string {
 /** Does `o` satisfy a trigger's subject ("~" or "a creature you control")? */
 function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: { lastController?: PlayerId; anyZone?: boolean; lookBack?: boolean } = {}): boolean {
   if (subject.ref === 'self') return o.id === check.source.id;
+  // Hunter's Insight: "Whenever that creature deals combat damage … this turn" — the object its creator targeted.
+  if (subject.ref === 'target') {
+    const t = check.targets?.[subject.index]?.[0];
+    return Boolean(t && t.kind === 'object' && t.id === o.id && (t.zcc === o.zcc || t.zcc === battlefieldZcc(check.g, o)));
+  }
   // "enchanted creature", "equipped creature" — as it was attached when the event happened: "When enchanted
   // creature dies" looks back at the creature that left (CR 603.10a), even if the Aura left with it.
   if (subject.ref === 'attached') {
@@ -3760,7 +3805,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // batch). CR 702.29d: "cycles or discards" triggers once when a card is cycled (cycling discards it).
   discard(t, check) {
     const e = check.event;
-    if (e.type !== 'discarded' || check.sourceLeft) return [];
+    if (e.type !== 'discarded' || check.sourceLeft || (t.other && e.object === check.source.id)) return [];
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
     const ok = (id: ObjectId) => {

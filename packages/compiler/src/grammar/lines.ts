@@ -337,6 +337,9 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     cost.loyalty = (loyalty[1] === '+' || loyalty[1] === '' ? 1 : -1) * Number(loyalty[2]);
     return cost;
   }
+  // "−X: …" — X announced as it's activated (CR 107.3, 606.4).
+  const loyaltyX = /^([+−-])X$/.exec(text.trim());
+  if (loyaltyX && planeswalker) return { loyalty: 0, loyaltyX: loyaltyX[1] === '+' ? 1 : -1 };
   for (const item of text.split(/,\s*/)) {
     if (item === '{T}') cost.tap = true;
     else if (item === '{Q}') cost.untap = true;
@@ -616,6 +619,16 @@ const STEP_WORDS: Record<string, string> = {
 
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
   const t = text.trim();
+  // A "this turn" ability about what its creator targeted (Hunter's Insight: "Whenever that creature deals combat damage
+  // … this turn"): read as the source's own event, about that object instead.
+  const outer = /^TARGETREF(\d+) (.+)$/.exec(t);
+  if (outer) {
+    const r = parseTrigger(word, `~ ${outer[2]}`, b);
+    if (!r) return null;
+    const target: Ref = { ref: 'target', index: Number(outer[1]) };
+    const swap = <T>(x: T): T => JSON.parse(JSON.stringify(x).split('{"ref":"self"}').join(JSON.stringify(target))) as T;
+    return { trigger: swap(r.trigger), it: r.it?.ref === 'self' ? target : r.it, player: r.player };
+  }
   if (word === 'At') {
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
     const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
@@ -623,6 +636,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // CR 511.1: "At end of combat"
     if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
     if (t === "the beginning of the upkeep of enchanted creature's controller") {
+      // Apathy, Unstable Mutation: "… untap that creature", "put a -1/-1 counter on that creature" — the enchanted creature.
+      b.named['that creature'] = { ref: 'attached' };
       return { trigger: { type: 'phase', step: 'upkeep', whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     }
     if (t === 'the beginning of each of your postcombat main phases' || t === 'the beginning of each of your second main phases') {
@@ -814,6 +829,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (youAttack) {
     const min = youAttack[1] ? (NUMBER_WORDS[youAttack[1]] ?? Number(youAttack[1])) : undefined;
     if (youAttack[1] && !min) return null;
+    // Champions from Beyond: "Whenever you attack with eight or more creatures, those creatures get +4/+4" — the attackers.
+    b.named['those creatures'] = { ref: 'all', filter: { types: ['Creature'], controller: 'you', combat: 'attacking' } };
     return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
   }
   // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures"; Mangara: "Whenever an opponent
@@ -1132,7 +1149,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // CR 701.9 / 702.29d: "Whenever you discard a card", "an opponent discards a card", "you cycle or discard a card",
   // "you discard one or more cards", "you discard a creature card".
-  const discard = /^(you|an opponent|a player) (?:cycles? or )?discards? (a card|one or more cards|(?:a|an) (.+?) card|one or more (.+?) cards)$/.exec(t);
+  // Archfiend of Ifnir: "Whenever you cycle or discard another card" — cycling is discarding (CR 702.29a): one event.
+  const discard = /^(you|an opponent|a player) (?:cycles? or )?discards? (a card|another card|one or more cards|(?:a|an) (.+?) card|one or more (.+?) cards)$/.exec(t);
   if (discard) {
     const kind = discard[3] ?? discard[4];
     let filter: ObjectFilter | undefined;
@@ -1145,7 +1163,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const batch = /^one or more/.test(discard[2]!);
     if (!batch) b.named['that card'] = { ref: 'trigger_object' };
     return {
-      trigger: { type: 'discard', who: discard[1] === 'you' ? 'you' : discard[1] === 'an opponent' ? 'opponent' : 'any', ...(batch ? { batch: true } : {}), ...(filter ? { filter } : {}) },
+      trigger: { type: 'discard', who: discard[1] === 'you' ? 'you' : discard[1] === 'an opponent' ? 'opponent' : 'any', ...(batch ? { batch: true } : {}), ...(filter ? { filter } : {}), ...(discard[2] === 'another card' ? { other: true } : {}) },
       it: batch ? { ref: 'self' } : { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -1728,6 +1746,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
   if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
+  // Aven Mindcensor (CR 614.1a).
+  if (/^If an opponent would search a library, that player searches the top four cards of that library instead$/.test(body)) return { type: 'player_rule', who: 'opponents', rule: 'search_top_four' };
   // Trouble in Pairs (CR 614.10: skipping is a replacement).
   const skipExtra = /^If (an opponent|a player|you) would begin an extra turn, (?:that player skips|you skip) that turn instead$/.exec(body);
   if (skipExtra) return { type: 'player_rule', who: skipExtra[1] === 'an opponent' ? 'opponents' : skipExtra[1] === 'you' ? 'you' : 'each', rule: 'skip_extra_turns' };
@@ -2162,6 +2182,8 @@ export const quantityReplacementRule: GrammarRule = {
       const op = quantityOp(mill[2]!);
       return op ? make({ event: 'mill', who: mill[1] === 'you' ? 'you' : mill[1] === 'a player' ? 'each' : 'opponents', ...op }) : null;
     }
+    // Tekuthal, Inquiry Dominus: "If you would proliferate, proliferate twice instead."
+    if (/^If you would proliferate, proliferate twice instead\.$/.test(line)) return make({ event: 'proliferate', who: 'you', op: 'double' });
     // Bloodletter of Aclazotz: "If an opponent would lose life during your turn, they lose twice that much life instead."
     const lose = /^If (an opponent|a player) would lose life( during your turn)?, (?:they|that player) loses? (.+?) instead\.$/.exec(line);
     if (lose) {
@@ -2194,6 +2216,11 @@ export const quantityReplacementRule: GrammarRule = {
     // two cards instead."; Thought Reflection: "If you would draw a card, draw two cards instead."
     const drawTwo = /^If you would draw a card( except the first one you draw in each of your draw steps)?, draw two cards instead\.$/.exec(line);
     if (drawTwo) return { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1] ? { exceptFirst: true } : {}) } };
+    // Notion Thief: "If an opponent would draw a card except the first one they draw in each of their draw steps, instead that
+    // player skips that draw and you draw a card."
+    if (/^If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card\.$/.test(line)) {
+      return { kind: 'static', text: original, effect: { type: 'draw_replacement', exceptFirst: true, steal: true } };
+    }
     // Laboratory Maniac, Jace, Wielder of Mysteries
     if (/^If you would draw a card while your library has no cards in it, you win the game instead\.$/.test(line)) return { kind: 'static', text: original, effect: { type: 'draw_replacement', emptyWin: true } };
     // Doubling Season: "If an effect would put one or more counters on a permanent you control, it puts twice that many
@@ -2321,12 +2348,14 @@ export const exileInsteadRule: GrammarRule = {
     const env = envOf(ctx);
     if (!env) return null;
     const make = (node: Omit<ExileInsteadNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'exile_instead', ...node } });
-    const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line);
+    const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line) ?? /^If (?:a|an|another) (.+?) would die, instead exile it and you gain (\w+) life\.$/.exec(line);
     if (dies) {
       const pf = parseFilter(dies[1]!, new Binder(env));
       if (!pf || pf.plural) return null;
       if (/^another /.test(line.slice(3))) pf.filter.other = true;
-      return make({ dies: true, filter: pf.filter });
+      const life = dies[2] ? parseAmount(dies[2]) : null;
+      if (dies[2] && typeof life !== 'number') return null;
+      return make({ dies: true, filter: pf.filter, ...(typeof life === 'number' ? { gainLife: life } : {}) });
     }
     const gy =
       /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line) ??

@@ -2064,3 +2064,49 @@ describe('slice 170 (targets chosen as it is cast; each creature deals damage)',
     expect(parse('As ~ enters, choose artifact, creature, enchantment, instant, or sorcery.', 'Artifact', 'K').abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'card_type', options: ['Artifact', 'Creature', 'Enchantment', 'Instant', 'Sorcery'] } });
   });
 });
+
+describe('slice 171', () => {
+  it('reads three events for one player, lands entering untapped, base power and counted mana values', () => {
+    expect(parse('Whenever an opponent attacks you with two or more creatures, draws their second card each turn, or casts their second spell each turn, you draw a card.', 'Enchantment', 'T').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'you_attack' }, { type: 'draw', nth: 2 }, { type: 'cast', nth: 2 }] } });
+    expect(parse('If an opponent would begin an extra turn, that player skips that turn instead.', 'Enchantment', 'T').abilities[0]).toMatchObject({ effect: { type: 'player_rule', who: 'opponents', rule: 'skip_extra_turns' } });
+    expect(parse('Lands you control enter untapped.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effect: { type: 'enter_untapped_others', filter: { types: ['Land'], controller: 'you' } } });
+    expect(parse('Whenever one or more creatures you control each with power greater than its base power deals combat damage to a player, draw a card.', 'Legendary Creature — Cat Warrior', 'K').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', filter: { powerAboveBase: true } } });
+    expect(parse('Search your library for a card with mana value less than or equal to the number of lands you control, reveal it, put it into your hand, then shuffle.', 'Sorcery', 'B').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { op: 'le', n: { kind: 'count', filter: { types: ['Land'], controller: 'you' } } } } }] });
+    // Not as a target: it couldn't be checked as targets are chosen.
+    expect(parse('Destroy target creature with mana value less than or equal to the number of lands you control.', 'Sorcery', 'D').unparsed).toHaveLength(1);
+    expect(parse('At the beginning of your upkeep, you may move any number of +1/+1 counters from ~ onto other creatures.', 'Creature — Elemental', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'move_counters', distribute: true }] }] });
+  });
+});
+
+describe('slice 172', () => {
+  it('reads "this turn" triggered abilities, excess damage and draw stealing', () => {
+    expect(parse('Choose target creature you control. Whenever that creature deals combat damage to a player or planeswalker this turn, draw that many cards.', 'Instant', 'H').abilities[0]).toMatchObject({
+      targets: [{}],
+      effects: [{ type: 'turn_trigger', ability: { trigger: { type: 'deals_combat_damage', subject: { ref: 'target', index: 0 } }, effects: [{ type: 'draw', amount: { kind: 'event' } }] } }],
+    });
+    expect(parse('−2: Choose target creature an opponent controls. Whenever you attack this turn, ~ deals 1 damage to that creature.', 'Legendary Planeswalker — Jaya', 'J').abilities[0]).toMatchObject({ effects: [{ type: 'turn_trigger', ability: { effects: [{ type: 'deal_damage', to: { ref: 'target', index: 0 } }] } }] });
+    // What follows may belong to the ability: unread.
+    expect(parse('Whenever you attack this turn, create two 1/1 red Warrior creature tokens that are tapped and attacking. Sacrifice them at the beginning of the next end step.', 'Sorcery', 'D').unparsed).toHaveLength(1);
+    expect(parse("Target creature you control deals damage equal to its power to target creature you don't control. If the creature you control has trample, excess damage is dealt to that creature's controller instead.", 'Instant', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', excessToController: true }] });
+    expect(parse('Hell to Pay deals X damage to target creature. Create a number of tapped Treasure tokens equal to the amount of excess damage dealt to that creature this way.', 'Sorcery', 'Hell to Pay').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage' }, { type: 'create_token', amount: { kind: 'excess_this_way' } }] });
+    expect(parse('If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card.', 'Creature — Human Rogue', 'N').abilities[0]).toMatchObject({ effect: { type: 'draw_replacement', steal: true, exceptFirst: true } });
+  });
+  it('reads exile-instead riders, the enchanted creature and the attackers', () => {
+    expect(parse('If a nontoken creature an opponent controls would die, instead exile it and you gain 2 life.', 'Legendary Artifact', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', dies: true, gainLife: 2 } });
+    expect(parse("At the beginning of the upkeep of enchanted creature's controller, put a -1/-1 counter on that creature.", 'Enchantment — Aura', 'U').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'attached' } }] });
+    expect(parse('Whenever you attack with eight or more creatures, those creatures get +4/+4 until end of turn.', 'Enchantment', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'modify', what: { ref: 'all', filter: { combat: 'attacking' } } }] });
+    // An enchantment is never "that creature".
+    expect(parse('At the beginning of your upkeep, that creature gains haste until end of turn.', 'Enchantment', 'K').unparsed).toHaveLength(1);
+  });
+});
+
+describe('slice 173', () => {
+  it('reads loyalty −X, keyword counters, "unless it escaped" and what an exile found', () => {
+    expect(parse("−X: Exile each permanent with mana value X or less that's one or more colors.", 'Legendary Planeswalker — Ugin', 'U').abilities[0]).toMatchObject({ cost: { loyalty: 0, loyaltyX: -1 }, effects: [{ type: 'move', what: { filter: { manaValue: { op: 'le', n: 'X' } } } }] });
+    expect(parse('Put two +1/+1 counters and a flying counter on target creature.', 'Instant', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', counter: '+1/+1', amount: 2 }, { type: 'add_counters', counter: 'flying', amount: 1 }] });
+    expect(parse('When ~ enters, sacrifice it unless it escaped.', 'Legendary Creature — Elder Giant', 'U').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'paid', cost: 'escape' } }] });
+    expect(parse('{G}: Exile target card from a graveyard. If it was a creature card, you gain 1 life.', 'Creature — Ooze', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'if', cond: { type: 'is', of: { ref: 'target', index: 0 }, filter: { types: ['Creature'] } } }] });
+    expect(parse("Return each nonland permanent that's not historic to its owner's hand.", 'Instant', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'move', what: { filter: { notHistoric: true } } }] });
+    expect(parse('When this creature enters, you gain 3 life and get {E}{E}{E}.', 'Creature — Elemental', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'get_counters', counter: 'energy', amount: 3 }] });
+  });
+});

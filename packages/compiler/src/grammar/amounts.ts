@@ -247,6 +247,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (t === 'the greatest number of cards a player discarded this way') return { kind: 'discarded_this_way', max: true };
   if (t === 'the number of cards discarded this way') return { kind: 'discarded_this_way' };
   if (t === 'the damage dealt this way') return { kind: 'damage_this_way' };
+  // CR 120.10: "the amount of excess damage dealt to that creature this way", "the excess damage dealt this way",
+  // "that excess damage" (after "If excess damage was dealt this way").
+  if (/^(?:the amount of excess damage|the excess damage|that excess damage)(?: dealt(?: to (?:that|the) (?:creature|permanent))?(?: this way)?)?$/.test(t)) return { kind: 'excess_this_way' };
   // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
   const greatest = /^the greatest (power|toughness|mana value) among (.+)$/.exec(t);
   if (greatest) {

@@ -483,6 +483,8 @@ export interface Resolution {
   lifeLost?: number;
   /** Damage this resolution's effects dealt ("You gain life equal to the damage dealt this way"). */
   damageDealt?: number;
+  /** CR 120.10: excess damage this resolution dealt to permanents ("the amount of excess damage dealt this way"). */
+  excess?: number;
   /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
   /** `controller`: who controlled it as it moved ("its controller creates a 2/2 green Boar creature token"). */
   moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; controller: PlayerId }[];
@@ -828,6 +830,11 @@ export type GameEvent =
 export interface GameState {
   /** High Tide: triggered mana abilities a resolved spell set up for the rest of this turn. */
   manaTriggers?: { controller: PlayerId; ability: TriggeredAbility; turn: number }[];
+  /**
+   * CR 603.7: "Whenever that creature deals combat damage to a player this turn, …" — triggered abilities a resolved spell
+   * or ability created for the rest of the turn. `targets`: the creator's targets, which the ability refers to.
+   */
+  turnTriggers?: { id: string; controller: PlayerId; source: ObjectRef; sourceName: string; ability: TriggeredAbility; turn: number; targets?: TargetRef[][] }[];
   config: GameConfig;
   /** Definitions of every card in this game, so a game is self-contained and replayable. */
   cards: Record<string, CardDef>;

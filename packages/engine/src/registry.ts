@@ -66,6 +66,8 @@ export interface TriggerCheck {
   sourceLeft: boolean;
   /** Every event in the batch, for triggers that add up simultaneous events ("deals damage"). */
   batch?: GameEvent[];
+  /** A "this turn" ability's creator's targets ("Whenever that creature deals combat damage … this turn"). */
+  targets?: TargetRef[][];
 }
 
 /**

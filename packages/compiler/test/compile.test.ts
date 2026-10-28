@@ -74,8 +74,8 @@ describe('compileCards', () => {
     expect(byName('Rhystic Study').automation).toBe('full'); // "you may draw a card unless that player pays {1}"
     expect(byName('Kinnan, Bonder Prodigy').automation).toBe('partial'); // mana-ability triggers aren't compiled yet
     expect(byName('Breeding Pool').automation).toBe('full'); // intrinsic mana, and the shock clause (CR 614.12)
-    // Escape is applied (CR 702.138a); the other lines are unparsed.
-    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('partial');
+    // Escape is applied (CR 702.138a); "sacrifice it unless it escaped" too (slice 173).
+    expect(byName('Uro, Titan of Nature\'s Wrath').automation).toBe('full');
     expect(byName('Uro, Titan of Nature\'s Wrath').faces[0]!.manualKeywords ?? []).toEqual([]);
   });
 });

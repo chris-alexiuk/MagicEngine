@@ -71,6 +71,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   const batch = fresh.filter((e) => TRIGGER_EVENTS.has(e.type));
   if (!batch.length) return;
   collectDelayed(g, batch);
+  collectTurnTriggers(g, batch);
   collectMonarch(g, batch);
   collectSpeed(g, batch);
   collectDungeonTriggers(g, batch);
@@ -553,6 +554,23 @@ function collectExileKeywords(g: GameState, batch: GameEvent[]): void {
 }
 
 /** CR 603.7b: delayed triggers fire the next time their moment comes, once. */
+/** CR 603.7: "this turn" triggered abilities created by resolved spells and abilities. */
+function collectTurnTriggers(g: GameState, batch: GameEvent[]): void {
+  if (!g.turnTriggers?.length) return;
+  if (g.turnTriggers.some((t) => t.turn !== g.turn)) g.turnTriggers = g.turnTriggers.filter((t) => t.turn === g.turn);
+  for (const event of batch) {
+    for (const t of g.turnTriggers ?? []) {
+      const source = g.objects[t.source.id];
+      if (!source || !programRuns(t.ability)) continue;
+      const infos = matchTrigger(t.ability.trigger, { g, event, source, controller: t.controller, sourceLeft: false, batch, ...(t.targets ? { targets: t.targets } : {}) });
+      for (const info of infos) {
+        if (t.ability.condition && !evalCondition(t.ability.condition, { ...triggerContext(g, t.controller, source, info, t.ability), ...(t.targets ? { targets: t.targets } : {}) })) continue;
+        g.triggers.push({ id: `t${g.nextId++}`, controller: t.controller, source: t.source, sourceName: t.sourceName, ability: t.ability, info, ...(t.targets ? { boundTargets: t.targets } : {}) });
+      }
+    }
+  }
+}
+
 function collectDelayed(g: GameState, batch: GameEvent[]): void {
   // "this turn" ones that didn't fire are gone.
   if (g.delayed.some((d) => d.on && d.createdTurn !== g.turn)) g.delayed = g.delayed.filter((d) => !d.on || d.createdTurn === g.turn);
