@@ -23,16 +23,20 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Loot, Exuberant Explorer: "a creature card with mana value less than or equal to the number of lands you control" —
   // counted as the effect applies. Before "you control": that's
   // the count's.
-  [/ with mana value less than or equal to (the number of .+)$/, (f, m, b) => {
+  // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power".
+  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than) (the number of .+|(?:~|this creature)'s (?:power|toughness))$/, (f, m, b) => {
     // "… in your library" is the card's zone: peeled first.
-    if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[1]!)) return false;
-    const n = parseCount(m[1]!, b);
+    if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[2]!)) return false;
+    const n = parseCount(m[2]!, b);
     if (!n) return false;
-    f.manaValue = { op: 'le', n };
+    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt' } as const)[m[1] as 'less than'];
+    f.manaValue = { op, n };
     return true;
   }],
   // The Darkness Crystal: "target creature card exiled with The Darkness Crystal" (CR 607.2a).
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
+  // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).
+  [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
@@ -577,7 +581,16 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'each player') return { ref: 'players', who: 'each' };
   // In a free-for-all game (CR 806), every other player is an opponent: "each other player sacrifices a creature".
   if (t === 'each opponent' || t === 'each of your opponents' || t === 'your opponents' || t === 'each other player') return { ref: 'players', who: 'opponents' };
+  // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
+  if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.
+  // Priest of Forgotten Gods: "Any number of target players each lose 2 life …" (CR 115.1d).
+  const anyPlayers = /^any number of target (players|opponents)$/.exec(t);
+  if (anyPlayers) {
+    // Not "that player" / "their" later: each of them would need counting for themselves.
+    const spec: TargetSpec = { what: 'player', text: t, count: 100, upTo: true, ...(anyPlayers[1] === 'opponents' ? { player: 'opponent' as const } : {}) };
+    return b.addTarget(spec);
+  }
   const playerTarget = /^(up to one )?target (player|opponent)$/.exec(t);
   if (playerTarget) {
     const spec: TargetSpec = { what: 'player', text: t };

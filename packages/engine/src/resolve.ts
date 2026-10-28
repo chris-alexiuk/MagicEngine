@@ -141,7 +141,8 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
     case 'you':
       return live.includes(ctx.controller) ? [ctx.controller] : [];
     case 'players': {
-      const all = apnap(g).filter((p) => ref.who === 'each' || p !== ctx.controller);
+      const not = ref.except ? refPlayers(ctx, ref.except) : [];
+      const all = apnap(g).filter((p) => (ref.who === 'each' || p !== ctx.controller) && !not.includes(p));
       if (!ref.attacking) return all;
       // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
       const defenders = refPlayers(ctx, ref.attacking);
@@ -206,7 +207,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -265,11 +266,32 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'stat':
       return statOf(ctx, e.of, e.stat);
+    case 'mana_spent':
+      return refObjects(ctx, e.of)[0]?.cast?.manaSpent ?? 0;
     case 'life':
       return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
     case 'counters': {
+      // "the number of experience counters you have": counters on a player (CR 122.1).
+      if (e.of.ref === 'you') {
+        const pc = g.players[ctx.controller]?.counters ?? {};
+        return e.counter ? (pc[e.counter] ?? 0) : Object.values(pc).reduce((a, b) => a + (b ?? 0), 0);
+      }
       const [o] = refObjects(ctx, e.of);
-      const counters = o?.counters ?? {};
+      // CR 608.2h: "Sacrifice this creature: … for each counter on this creature" — as it last existed on the battlefield.
+      let counters = o?.counters;
+      // Destroyed or died just now (the resolution or trigger still finds it, CR 400.7j): as it was on the battlefield.
+      if (o && o.zone !== 'battlefield' && !Object.keys(o.counters).length) {
+        const lk = g.lastKnown?.[o.id];
+        if (lk && lk.zcc + 1 === o.zcc) counters = lk.counters ?? {};
+      }
+      // Cleopatra: "Whenever a legendary creature with counters on it dies, draw a card for each counter on it" (CR 603.10a).
+      if (!o && e.of.ref === 'trigger_object' && ctx.trigger?.lki) counters = ctx.trigger.lki.counters;
+      if (!o && !counters) {
+        const was = e.of.ref === 'self' && ctx.source ? { id: ctx.source.id, zcc: ctx.sourceZcc } : e.of.ref === 'target' ? (ctx.targets[e.of.index] ?? []).map((t) => (t.kind === 'object' ? { id: t.id, zcc: t.zcc } : null))[0] : null;
+        const lk = was ? g.lastKnown?.[was.id] : undefined;
+        if (lk && (was!.zcc === undefined || lk.zcc === was!.zcc)) counters = lk.counters;
+      }
+      counters ??= {};
       return e.counter ? (counters[e.counter] ?? 0) : Object.values(counters).reduce((a, b) => a + b, 0);
     }
     case 'players':
@@ -459,7 +481,9 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
           ? m.to === 'exile'
           : how === 'sacrificed'
             ? /^sacrifice/.test(m.effect) && m.from === 'battlefield'
-            : m.effect === 'mill' && m.from === 'library';
+            : how === 'graveyard'
+              ? m.to === 'graveyard'
+              : m.effect === 'mill' && m.from === 'library';
     return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t));
   });
 }

@@ -2,7 +2,7 @@ import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects, refPlayers } from './resolve.js';
-import type { GameEvent, GameState, ObjectId, PlayerId } from './types.js';
+import type { GameEvent, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -161,7 +161,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
 const cmp = (v: number, c: ConditionNode) =>
   (c.min === undefined || v >= Number(c.min)) &&
   (c.max === undefined || v <= Number(c.max)) &&
-  (c.op === undefined || (c.op === 'ge' ? v >= Number(c.n) : c.op === 'le' ? v <= Number(c.n) : v === Number(c.n)));
+  (c.op === undefined || (c.op === 'ge' ? v >= Number(c.n) : c.op === 'le' ? v <= Number(c.n) : c.op === 'gt' ? v > Number(c.n) : c.op === 'lt' ? v < Number(c.n) : v === Number(c.n)));
 
 /** Whether a condition is true now, for the spell or ability in `ctx`. */
 export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean {
@@ -218,6 +218,21 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'city_blessing':
       return Boolean(g.players[controller]?.cityBlessing);
     // The Enduring cycle: "if it was a creature" — as it last existed on the battlefield (CR 603.10a).
+    // "If the discarded card wasn't a land card", "If the sacrificed creature was a Human" (CR 608.2h): as a cost was
+    // paid, or as this effect sacrificed or discarded it.
+    case 'lki_was': {
+      const what = cond.what as 'discarded' | 'sacrificed';
+      const list = ctx.resolution?.entry.costLKI?.[what] ?? ctx.resolution?.lkiThisWay?.[what] ?? ctx.trigger?.lkiThisWay?.[what] ?? [];
+      if (!list.length) return false;
+      const f = cond.filter as ObjectFilter;
+      const fits = (s: LKIStats) =>
+        (!f.types || f.types.some((t) => s.types?.includes(t))) &&
+        (!f.subtypes || f.subtypes.some((t) => s.subtypes?.includes(t))) &&
+        (!f.supertypes || f.supertypes.every((t) => s.supertypes?.includes(t))) &&
+        (!f.colors || f.colors.some((c) => s.colors?.includes(c))) &&
+        (!f.multicolored || (s.colors?.length ?? 0) > 1);
+      return list.some(fits) !== Boolean(cond.not);
+    }
     case 'was_type': {
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;

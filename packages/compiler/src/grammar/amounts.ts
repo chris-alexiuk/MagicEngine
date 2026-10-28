@@ -64,10 +64,11 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
 
 /** "creature destroyed this way", "cards exiled this way": what the resolution moved (by card type only). */
 export function movedThisWay(text: string, b: Binder): AmountExpr | null {
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled) this way$/.exec(text.trim());
+  // Terastodon: "each permanent put into a graveyard this way" — from the battlefield to a graveyard.
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard) this way$/.exec(text.trim());
   if (!m) return null;
   const noun = m[1]!.replace(/^(?:a|an) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = m[2] as 'destroyed' | 'exiled' | 'sacrificed' | 'milled';
+  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how };
   const pf = parseFilter(noun, b.clone());
   if (!pf) return null;
@@ -139,10 +140,11 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (paidTimes) return { kind: 'paid_times', cost: paidTimes[1]!.toLowerCase() };
   // CR 702.40a: "for each other spell that was cast before it this turn"
   if (/^other spell that was cast before (?:it|~) this turn$/.test(t)) return { kind: 'cast_before', of: b.it ?? { ref: 'self' } };
-  const counter = /^(\S+) counter on (.+)$/.exec(t);
+  // Twitching Doll: "for each counter on this creature" — of any kind.
+  const counter = /^(?:(\S+) )?counter on (.+)$/.exec(t);
   if (counter) {
     const of = parseObjectRef(counter[2]!, b.clone(), 'static');
-    return of && !of.plural ? { kind: 'counters', of: of.ref, counter: counter[1]! } : null;
+    return of && !of.plural ? { kind: 'counters', of: of.ref, ...(counter[1] ? { counter: counter[1] } : {}) } : null;
   }
   return objects(t, b, false);
 }
@@ -206,10 +208,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const moved = movedThisWay(what, b) ?? diedThisTurn(what, b);
     if (moved) return moved;
     if (what === 'opponents you have') return { kind: 'players', who: 'opponents' };
-    const counters = /^(\S+) counters on (.+)$/.exec(what);
+    // Meren: "the number of experience counters you have" (CR 122.1: counters on a player).
+    const playerCounters = /^(\w+) counters you have$/.exec(what);
+    if (playerCounters) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounters[1]! };
+    const counters = /^(?:(\S+) )?counters on (.+)$/.exec(what);
     if (counters) {
       const of = parseObjectRef(counters[2]!, b.clone(), 'static');
-      return of && !of.plural ? { kind: 'counters', of: of.ref, counter: counters[1]! } : null;
+      return of && !of.plural ? { kind: 'counters', of: of.ref, ...(counters[1] ? { counter: counters[1] } : {}) } : null;
     }
     return objects(what, b, true);
   }

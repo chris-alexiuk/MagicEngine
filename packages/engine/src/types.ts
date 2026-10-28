@@ -106,11 +106,23 @@ export interface PlayerState {
 }
 
 /** What paid costs were, for "the sacrificed creature's power" (CR 608.2h: as it last existed). */
+/** CR 608.2h: what a sacrificed or discarded object was, as it last existed ("the sacrificed creature's power",
+ * "if the discarded card wasn't a land card"). */
+export interface LKIStats {
+  power: number;
+  toughness: number;
+  mana_value: number;
+  types?: string[];
+  subtypes?: string[];
+  supertypes?: string[];
+  colors?: string[];
+}
+
 export interface CostLKI {
-  sacrificed?: { power: number; toughness: number; mana_value: number }[];
-  discarded?: { power: number; toughness: number; mana_value: number }[];
+  sacrificed?: LKIStats[];
+  discarded?: LKIStats[];
   /** The creature tapped for a station ability. */
-  tapped?: { power: number; toughness: number; mana_value: number }[];
+  tapped?: LKIStats[];
   /** What the creature returned for ninjutsu or sneak was attacking (CR 702.49c, 702.190b). */
   attackTarget?: AttackTarget;
 }
@@ -204,7 +216,7 @@ export interface GameObject {
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -758,7 +770,8 @@ export type GameEvent =
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
-  | { type: 'countered'; object: ObjectId }
+  /** `by`: who controls the spell or ability that countered it. */
+  | { type: 'countered'; object: ObjectId; by?: PlayerId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
   | { type: 'fizzled'; entry: StackEntry }
   | { type: 'regenerated'; object: ObjectId }

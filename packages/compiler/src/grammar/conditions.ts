@@ -200,7 +200,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   if (/^it's your turn$/.test(t)) return { type: 'your_turn', value: true };
   // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
-  const statIs = /^(its|~'s|that creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t);
+  const statIs = /^(its|~'s|that creature's|that card's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t);
   if (statIs) {
     const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : b.it;
     const n = parseAmount(statIs[3]!);
@@ -312,6 +312,20 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   const freerun = /^a player was dealt combat damage this turn by a creature that, at the time it dealt that damage, was an? (\w+) creature or a commander under your control$/.exec(t);
   if (freerun) return { type: 'combat_damage_by', subtype: freerun[1]!, orCommander: true };
+  // Meren: "that card's mana value is less than or equal to the number of experience counters you have"; "its power is 3
+  // or less" — the object the text named, as the instruction is followed.
+  // Liberator: "the amount of mana spent to cast that spell is greater than ~'s power".
+  const spentVs = /^the amount of mana spent to cast (?:that spell|it) is greater than (.+)$/.exec(t);
+  if (spentVs && b.it?.ref === 'trigger_object') {
+    const n = parseCount(spentVs[1]!, b);
+    return n ? { type: 'amount', amount: { kind: 'mana_spent', of: b.it }, op: 'gt', n } : null;
+  }
+  const statVs = /^(that card|that creature|it)(?:'s|s) (mana value|power|toughness) is (less|greater) than or equal to (.+)$/.exec(t);
+  if (statVs && b.it && b.it.ref !== 'self') {
+    const amount = { kind: 'stat' as const, stat: statVs[2] === 'mana value' ? ('mana_value' as const) : (statVs[2] as 'power' | 'toughness'), of: b.it };
+    const n = parseCount(statVs[4]!, b);
+    return n ? { type: 'amount', amount, op: statVs[3] === 'less' ? 'le' : 'ge', n } : null;
+  }
   // CR 702.156a (ravenous): "if X is 5 or more"
   const xIs = /^X is (\w+ or (?:more|greater|less|fewer))$/.exec(t);
   if (xIs) {
@@ -381,6 +395,21 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (wasCard && b.it && (b.it.ref === 'target' || b.it.ref === 'created')) return { type: 'is', of: b.it, filter: { types: [wasCard[1]!.replace(/^\w/, (c) => c.toUpperCase())] } };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
+  // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
+  // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
+  const lkiWas = /^the (discarded|sacrificed) (?:card|creature|permanent|artifact) (was|wasn't) (an? )?(.+)$/.exec(t);
+  if (lkiWas) {
+    const quality = lkiWas[4]!;
+    const pf = parseFilter(/ card$/.test(quality) ? `${quality} in your graveyard` : lkiWas[3] ? quality : `${quality} permanent`, b.clone());
+    const f = pf && !pf.plural ? pf.filter : null;
+    if (f) {
+      delete f.zone;
+      delete f.owner;
+    }
+    const allowed = ['types', 'subtypes', 'supertypes', 'colors', 'multicolored'];
+    if (!f || !Object.keys(f).length || Object.keys(f).some((k) => !allowed.includes(k))) return null;
+    return { type: 'lki_was', what: lkiWas[1], filter: f, ...(lkiWas[2] === "wasn't" ? { not: true } : {}) };
+  }
   // Minas Tirith: "you attacked with two or more creatures this turn"
   const attackedWith = /^you attacked with (\w+) or more creatures this turn$/.exec(t);
   if (attackedWith) {

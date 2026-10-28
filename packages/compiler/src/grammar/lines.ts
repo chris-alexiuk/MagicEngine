@@ -75,7 +75,18 @@ function modeCount(word: string, options: number): { min: number; max: number } 
  */
 export function parseProgram(text: string, b: Binder): Program | null {
   const program = parseProgramText(text, b);
-  return program && !b.unsupported ? program : null;
+  return program && !b.unsupported && !countsEachTarget(program, b) ? program : null;
+}
+
+/**
+ * Singularity Rupture: "any number of target players each mill half their library" — each of them counts their own;
+ * a count of "their" cards with several target players would add them up, so such text is left to players.
+ */
+function countsEachTarget(program: Program, b: Binder): boolean {
+  const many = b.targets.flatMap((t, i) => (t.what === 'player' && (t.count ?? 1) > 1 ? [i] : []));
+  if (!many.length) return false;
+  const json = JSON.stringify(program.effects);
+  return many.some((i) => json.includes(`"player":{"ref":"target","index":${i}}`));
 }
 
 function parseProgramText(text: string, b: Binder): Program | null {
@@ -489,10 +500,12 @@ export const activatedRule: GrammarRule = {
       return { ...node, effects: [{ type: 'add_mana', anyColor: 1, colorsAmong: pf.filter }], mana: true };
     }
     // Nykthos, Three Tree City: "Choose a color. Add an amount of mana of that color equal to your devotion to that color."
-    const chooseAdd = cost.loyalty === undefined ? /^Choose a color\. Add an amount of mana of that color equal to (.+)\.$/.exec(effectText) : null;
+    // Astral Cornucopia: "Choose a color. Add one mana of that color for each charge counter on this artifact."
+    const chooseAdd = cost.loyalty === undefined ? /^Choose a color\. Add an amount of mana of that color equal to (.+)\.$/.exec(effectText) ?? /^Choose a color\. Add one mana of that color for (each .+)\.$/.exec(effectText) : null;
     if (chooseAdd) {
       const cb = new Binder(env);
-      const times = chooseAdd[1] === 'your devotion to that color' ? { kind: 'devotion' as const, colors: [], manaColor: true as const } : parseCount(chooseAdd[1]!, cb);
+      const each = /^each (.+)$/.exec(chooseAdd[1]!);
+      const times = chooseAdd[1] === 'your devotion to that color' ? { kind: 'devotion' as const, colors: [], manaColor: true as const } : each ? parseForEach(each[1]!, cb) : parseCount(chooseAdd[1]!, cb);
       if (!times || cb.targets.length) return null;
       return { ...node, effects: [{ type: 'add_mana', anyColor: 1, times }], mana: true };
     }
@@ -654,6 +667,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: whose === 'you' ? null : { ref: 'trigger_player' } };
   }
 
+  // Baral: "Whenever a spell or ability you control counters a spell" (CR 701.6a).
+  if (t === 'a spell or ability you control counters a spell') return { trigger: { type: 'counters_spell', who: 'you' }, it: null, player: null };
   // CR 731.1a: "Whenever day becomes night or night becomes day"
   if (t === 'day becomes night or night becomes day') return { trigger: { type: 'day_night_changed' }, it: { ref: 'self' }, player: null };
   // CR 702.63a (vanishing): "When the last time counter is removed from ~"
@@ -1280,6 +1295,21 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // CR 309.4c: a room ability's trigger (the dungeon parser fills in the room).
   if (t === 'you move your venture marker into this room' || t === 'you move your venture marker into ~') return { trigger: { type: 'room' }, it: { ref: 'self' }, player: null };
+  // Dour Port-Mage: "Whenever one or more other creatures you control leave the battlefield without dying" (once per
+  // batch); "Whenever another creature you control leaves the battlefield without dying".
+  const manyLeave = /^(?:one or more (other )?(.+?) leave|(another|a|an) (.+?) leaves) the battlefield( without dying)?$/.exec(t);
+  if (manyLeave) {
+    const batch = manyLeave[2] !== undefined;
+    const pf = parseFilter(batch ? manyLeave[2]! : manyLeave[4]!, b);
+    if (!pf || pf.plural !== batch || pf.filter.zone) return null;
+    if (manyLeave[1] || manyLeave[3] === 'another') pf.filter.other = true;
+    if (!batch && !manyLeave[5]) return null;
+    return {
+      trigger: { type: 'leaves', subject: { ref: 'all', filter: pf.filter }, ...(batch ? { batch: true } : {}), ...(manyLeave[5] ? { withoutDying: true } : {}) },
+      it: batch ? { ref: 'self' } : { ref: 'trigger_object' },
+      player: null,
+    };
+  }
   // "Whenever one or more other creatures die", "Whenever one or more creatures you control die" (once per batch).
   const manyDie = /^one or more (other )?(.+?) die$/.exec(t);
   if (manyDie) {

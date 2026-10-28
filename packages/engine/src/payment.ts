@@ -4,7 +4,7 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planAutoTap } from './autotap.js';
-import { canActivateTapAbilities, hasType, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { canActivateTapAbilities, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
@@ -248,10 +248,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
 
 /** CR 608.2h: what the chosen sacrifice and discard costs were, before they're paid. */
 export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}): CostLKI | undefined {
-  const stats = (id: string) => {
-    const o = g.objects[id]!;
-    return { power: power(g, o), toughness: toughness(g, o), mana_value: manaValueOf(g, o) };
-  };
+  const stats = (id: string) => lkiStats(g, g.objects[id]!);
   const sacrificed = (cost.other ?? []).some((c) => c.type === 'sacrifice') ? (choices.sacrifice ?? []).map(stats) : [];
   const discarded = (cost.other ?? []).some((c) => c.type === 'discard') ? (choices.discard ?? []).map(stats) : [];
   // Station: "equal to the tapped creature's power" (CR 702.184a).

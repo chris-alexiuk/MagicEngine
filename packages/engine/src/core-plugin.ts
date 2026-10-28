@@ -8,7 +8,7 @@ import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } 
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { extraTokens, lifeLoss, replaceQuantity } from './quantities.js';
-import { bindQualityKeywords, chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
+import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -63,7 +63,7 @@ function discardRecorded(ctx: EffectContext, id: string): void {
   const o = ctx.g.objects[id];
   if (o && ctx.resolution) {
     const lki = (ctx.resolution.lkiThisWay ??= {});
-    lki.discarded = [...(lki.discarded ?? []), { power: power(ctx.g, o), toughness: toughness(ctx.g, o), mana_value: manaValueOf(ctx.g, o) }];
+    lki.discarded = [...(lki.discarded ?? []), lkiStats(ctx.g, o)];
   }
   discardCard(ctx.g, id, ctx.events);
 }
@@ -389,7 +389,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (hasRule(ctx.g, o, 'cant_be_countered') || uncounterable(ctx.g, o)) continue;
       // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so.
       moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
-      ctx.events.push({ type: 'countered', object: o.id });
+      ctx.events.push({ type: 'countered', object: o.id, by: ctx.controller });
     }
     return true;
   },
@@ -2301,7 +2301,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const sacrifice = (o: GameObject, p: PlayerId) => {
       if (ctx.resolution) {
         const lki = (ctx.resolution.lkiThisWay ??= {});
-        lki.sacrificed = [...(lki.sacrificed ?? []), { power: power(g, o), toughness: toughness(g, o), mana_value: manaValueOf(g, o) }];
+        lki.sacrificed = [...(lki.sacrificed ?? []), lkiStats(g, o)];
       }
       sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
     };
@@ -3488,13 +3488,25 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 603.6c: leaves-the-battlefield abilities.
   leaves(t, check) {
     const e = check.event;
-    if (e.type !== 'moved' || e.from !== 'battlefield') return [];
     // Kaya's Ghostform: "When enchanted permanent dies or is put into exile" — only to those zones.
-    if (Array.isArray(t.toZones) && !(t.toZones as string[]).includes(e.to)) return [];
+    // Dour Port-Mage: "… leave the battlefield without dying" — anywhere but a graveyard (CR 700.4).
+    const fits = (x: GameEvent) =>
+      x.type === 'moved' && x.from === 'battlefield' && (!Array.isArray(t.toZones) || (t.toZones as string[]).includes(x.to)) && !(t.withoutDying && x.to === 'graveyard');
+    if (!fits(e) || e.type !== 'moved') return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
-    return subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true }) ? [{ object: refTo(o), lki, player: e.controller }] : [];
+    if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true })) return [];
+    // "Whenever one or more other creatures you control leave the battlefield": once for those that left together.
+    if (t.batch) {
+      const first = (check.batch ?? [e]).find((x) => {
+        if (!fits(x) || x.type !== 'moved') return false;
+        const xo = check.g.objects[x.object];
+        return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller, lookBack: true }));
+      });
+      return first === e ? [{}] : [];
+    }
+    return [{ object: refTo(o), lki, player: e.controller }];
   },
   attacks(t, check) {
     const e = check.event;
@@ -3724,6 +3736,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
     if (t.who === 'you' ? e.player !== check.controller : e.player === check.controller) return [];
     return [{ player: e.player, amount: -e.delta }];
+  },
+  // Baral: "Whenever a spell or ability you control counters a spell" (CR 701.6a).
+  counters_spell(t, check) {
+    const e = check.event;
+    if (e.type !== 'countered' || !e.by || check.sourceLeft) return [];
+    if (t.who === 'you' ? e.by !== check.controller : t.who === 'opponent' ? e.by === check.controller : false) return [];
+    return [{ player: e.by }];
   },
   // CR 603.2b: "at the beginning of" a step triggers as the step begins.
   phase(t, check) {

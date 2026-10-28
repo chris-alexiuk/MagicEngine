@@ -217,8 +217,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (rb.player && !['you', 'trigger_player'].includes(rb.player.ref)) rb.player = null;
         const restText = `${[whenYouDo[1]!, ...sentences.slice(i + 2)].join('. ')}.`;
         const inner = parseEffectText(capitalise(restText), rb);
-        // "the exiled card" after "you may exile it" isn't something this ability can find.
-        if (!inner || (!pay && JSON.stringify(inner).includes('"exiled_with"'))) return null;
+        // "the exiled card" after "you may exile it" isn't something this ability can find; nor can its targets use counts
+        // (Sandbender Scavengers: "with mana value less than or equal to this creature's power").
+        if (!inner || rb.unsupported || (!pay && JSON.stringify(inner).includes('"exiled_with"'))) return null;
         const ability = { kind: 'triggered', text: `When you do, ${restText}`, trigger: { type: 'reflexive' }, effects: inner, ...(rb.targets.length ? { targets: rb.targets } : {}) };
         const reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
         if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive] });
@@ -687,6 +688,19 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Twinflame: "Choose any number of target creatures you control. For each of them, create a token that's a copy of
+      // that creature, except it has haste." — a copy of each (CR 707.2).
+      const chooseMany = /^Choose (any number of target .+)$/.exec(s);
+      const copyEach = chooseMany ? /^For each of them, create a token that's a copy of that creature((?:, except .+)?)$/.exec(next) : null;
+      if (chooseMany && copyEach) {
+        const what = parseObjectRef(chooseMany[1]!, b);
+        const made = what?.plural && what.targeted ? parseSentence(`Create a token that's a copy of ~${copyEach[1]}`, b) : null;
+        const node = made?.length === 1 && made[0]!.type === 'create_token' && (made[0]!.copyOf as Ref | undefined)?.ref === 'self' ? made[0]! : null;
+        if (!node) return null;
+        out.push({ ...node, copyOf: what!.ref, copyEach: true });
+        i++;
+        continue;
+      }
       // Emry, Lurker of the Loch: "Choose target artifact card in your graveyard. You may cast that card this turn."
       const chooseTarget = /^Choose target (.+? card in (?:your|a|an opponent's) graveyard)$/.exec(s);
       const castIt = chooseTarget ? /^You may (cast|play) (?:that card|it) this turn$/.exec(next) : null;
@@ -987,7 +1001,11 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
   if (shuffled) next = next.replace(/, then shuffle$/, '');
   if (shuffled && !/^Put (?:a|an|up to \w+|any number of) .+ from among /.test(next)) return null;
   const restOf = (text: string | undefined) => {
-    const m = text ? /^(?:Then )?[Pp]ut the (?:rest|others?)(?: of (?:the cards revealed this way|those cards|the cards))? (.+)$/.exec(text) : null;
+    // Genesis Wave: "Then put all cards revealed this way that weren't put onto the battlefield into your graveyard."
+    const m = text
+      ? /^(?:Then )?[Pp]ut the (?:rest|others?)(?: of (?:the cards revealed this way|those cards|the cards))? (.+)$/.exec(text) ??
+        /^(?:Then )?[Pp]ut all (?:other )?cards revealed this way that weren't put (?:onto the battlefield|into your hand) (.+)$/.exec(text)
+      : null;
     return m ? REST[m[1]!] ?? null : null;
   };
   // "Put two of them into your hand and the rest into your graveyard."
@@ -1946,6 +1964,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Priest of Forgotten Gods: "You add {B}{B} and draw a card." — two instructions.
+  const youAdd = /^You add ((?:\{[^}]+\})+) and (draw .+)$/.exec(s);
+  if (youAdd) {
+    const r = attempt(b, (b) => {
+      const add = parseSentence(`Add ${youAdd[1]}`, b);
+      const draw = add ? parseSentence(`D${youAdd[2]!.slice(1)}`, b) : null;
+      return add && draw ? [...add, ...draw] : null;
+    });
+    if (r) return r;
+  }
+  // Priest of Forgotten Gods: "Any number of target players each lose 2 life and sacrifice a creature of their choice."
+  const anyEach = /^Any number of target (players|opponents) each (.+)$/.exec(s);
+  if (anyEach) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(`any number of target ${anyEach[1]}`, b);
+      return who ? parseSentenceWithSubject(anyEach[2]!, b, who) : null;
+    });
+    if (r) return r;
+  }
   // Loran of the Third Path: "You and target opponent each draw a card."
   const youAnd = /^You and (target opponent|target player|that player|defending player) each (.+)$/.exec(s);
   if (youAnd) {
@@ -1978,7 +2015,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     return [{ type: 'vote', options, ...(secret ? { secret: true } : {}) }];
   }
   // Curse of the Swine: "For each creature exiled this way, its controller creates a 2/2 green Boar creature token."
-  const perMover = /^For each (.+? (?:destroyed|exiled|sacrificed) this way), its controller creates (.+)$/.exec(s);
+  const perMover = /^For each (.+? (?:destroyed|exiled|sacrificed|put into a graveyard) this way), its controller creates (.+)$/.exec(s);
   if (perMover) {
     const each = parseForEach(perMover[1]!, b);
     const made = each && typeof each === 'object' && each.kind === 'moved_this_way' ? parseSentence(`Create ${perMover[2]}`, b) : null;
@@ -2407,7 +2444,7 @@ const VERBS: Record<string, VerbHandler> = {
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand')) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (onto[1] === 'that card' && b.it?.ref === 'trigger_object'))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -2689,6 +2726,13 @@ const VERBS: Record<string, VerbHandler> = {
     return imperative && args === '~' ? [{ type: 'unattach', what: { ref: 'self' } }] : null;
   },
   attach(args, who, b, imperative) {
+    // Codsworth: "Attach target Aura or Equipment you control to target creature you control." (CR 701.3)
+    const both = imperative ? /^(target (?:Aura|Equipment|Aura or Equipment) you control) to (target .+)$/.exec(args) : null;
+    if (both) {
+      const what = parseObjectRef(both[1]!, b);
+      const to = what && !what.plural ? parseObjectRef(both[2]!, b) : null;
+      return what && to && !to.plural ? [{ type: 'attach', what: what.ref, to: to.ref }] : null;
+    }
     const m = /^(~|it|that Equipment) to (.+)$/.exec(args);
     if (!m || !imperative) return null;
     // Sigarda's Aid: "Whenever an Equipment you control enters, you may attach it to target creature you control."

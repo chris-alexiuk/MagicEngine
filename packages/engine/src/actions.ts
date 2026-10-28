@@ -799,6 +799,8 @@ function cast(
   g.stack.push({ kind: 'spell', object: id, controller: player, x, targets, ...(program ? { program } : {}), ...(lki ? { costLKI: lki } : {}), ...(division ? { division } : {}) });
   // CR 700.14: the mana spent to cast spells this turn, before and after this one ("Whenever you expend 4").
   const spentNow = Object.values(spent).reduce((a, b) => a + b, 0);
+  // Liberator: "if the amount of mana spent to cast that spell is greater than ~'s power".
+  if (o.cast) o.cast.manaSpent = spentNow;
   const manaBefore = g.turnLog.manaSpent?.[player] ?? 0;
   (g.turnLog.manaSpent ??= {})[player] = manaBefore + spentNow;
   events.push({ type: 'cast', player, object: id, nth: (g.turnLog.spellsCast[player] ?? 0) + 1, manaBefore, manaSpent: spentNow });

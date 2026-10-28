@@ -2120,3 +2120,24 @@ describe('slice 174', () => {
     expect(parse('{T}: Choose target permanent you control. Creatures you control gain protection from each of that permanent\'s colors until end of turn.', 'Creature — Human Cleric', 'Samite Elder').unparsed.length).toBe(1);
   });
 });
+
+describe('slice 175', () => {
+  it('reads counters a spell, leaving without dying, "any number of target players", what was sacrificed or discarded', () => {
+    expect(parse('Whenever a spell or ability you control counters a spell, you may draw a card. If you do, discard a card.', 'Legendary Creature — Human Wizard', 'Baral, Chief of Compliance').abilities[0]).toMatchObject({ trigger: { type: 'counters_spell', who: 'you' } });
+    expect(parse('Whenever one or more other creatures you control leave the battlefield without dying, draw a card.', 'Creature — Frog Wizard', 'Dour Port-Mage').abilities[0]).toMatchObject({ trigger: { type: 'leaves', batch: true, withoutDying: true } });
+    expect(parse('{T}, Sacrifice two other creatures: Any number of target players each lose 2 life and sacrifice a creature of their choice. You add {B}{B} and draw a card.', 'Creature — Human Cleric', 'Priest of Forgotten Gods').abilities[0]).toMatchObject({ targets: [{ what: 'player', count: 100, upTo: true }], effects: [{ type: 'lose_life' }, { type: 'sacrifice_choice' }, { type: 'add_mana' }, { type: 'draw' }] });
+    expect(parse("Draw two cards. If the discarded card wasn't a land card, ~ deals 2 damage to each opponent.", 'Sorcery', 'Grab the Prize').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'if', cond: { type: 'lki_was', what: 'discarded', filter: { types: ['Land'] }, not: true } }] });
+    expect(parse("Whenever an opponent casts a noncreature spell with mana value less than this creature's power, draw a card.", 'Creature — Frog Wizard', 'Pollywog Prodigy').abilities[0]).toMatchObject({ trigger: { filter: { manaValue: { op: 'lt', n: { kind: 'stat', stat: 'power' } } } } });
+    // Each of several target players counting their own cards isn't read.
+    expect(parse('Destroy all creatures, then any number of target players each mill half their library, rounded down.', 'Sorcery', 'Singularity Rupture').unparsed.length).toBe(1);
+  });
+});
+
+describe('slice 176', () => {
+  it('reads targeted attach, "attacking you", "each other opponent", mana spent', () => {
+    expect(parse('{T}: Attach target Aura or Equipment you control to target creature you control. Activate only as a sorcery.', 'Legendary Artifact Creature — Robot', 'Codsworth, Handy Helper').abilities[0]).toMatchObject({ effects: [{ type: 'attach', what: { ref: 'target', index: 0 }, to: { ref: 'target', index: 1 } }] });
+    expect(parse('You gain 3 life for each creature attacking you.', 'Instant', 'Blessed Reversal').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life', amount: { filter: { attackingYou: true } } }] });
+    expect(parse('Whenever a commander you control deals combat damage to an opponent, it deals that much damage to each other opponent.', 'Legendary Creature — Elemental Lizard', 'Kediss, Emberclaw Familiar').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', to: { ref: 'players', who: 'opponents', except: { ref: 'trigger_player' } } }] });
+    expect(parse("Whenever you cast a spell, if the amount of mana spent to cast that spell is greater than ~'s power, put a +1/+1 counter on ~.", 'Legendary Artifact Creature — Thopter', 'Liberator').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'mana_spent' }, op: 'gt' } });
+  });
+});

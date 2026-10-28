@@ -17,7 +17,7 @@ import type {
 } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
-import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
+import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
 import { abilitySources, battlefieldZcc, faceOf, manaValueOf } from './zones.js';
 
 /**
@@ -734,12 +734,19 @@ export function matchesFilter(
     if (f.combat === 'attacking' && !attacking) return false;
     if (f.combat === 'blocking' && !blocking) return false;
     if (f.combat === 'attacking_or_blocking' && !attacking && !blocking) return false;
+    if (f.attackingYou) {
+      const t = g.combat?.attackers[o.id]?.target;
+      if (t?.kind !== 'player' || t.player !== ctx.controller) return false;
+    }
   }
   if (f.keywords && !f.keywords.some((k) => c.keywords.some((x) => x.id === k))) return false;
   if (f.notKeywords?.some((k) => c.keywords.some((x) => x.id === k))) return false;
-  if (f.power && !compare(c.power, f.power)) return false;
-  if (f.toughness && !compare(c.toughness, f.toughness)) return false;
-  if (f.manaValue && !compare(manaValueOf(g, o), f.manaValue)) return false;
+  // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power" — in a trigger or static
+  // ability, counted now from its source (as an effect resolves, bindFilter has counted it already).
+  const counted = (k: { op: string; n: unknown }) => (typeof k.n === 'object' && k.n && ctx.source ? { op: k.op, n: staticAmount(g, k.n as Amount, ctx.source) } : k);
+  if (f.power && !compare(c.power, counted(f.power))) return false;
+  if (f.toughness && !compare(c.toughness, counted(f.toughness))) return false;
+  if (f.manaValue && !compare(manaValueOf(g, o), counted(f.manaValue))) return false;
   if (f.manaValueParity && manaValueOf(g, o) % 2 !== (f.manaValueParity === 'even' ? 0 : 1)) return false;
   // "that was dealt damage this turn"
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
@@ -915,6 +922,12 @@ export function canActivateTapAbilities(g: GameState, o: GameObject): boolean {
 }
 
 const COLOR_NAMES: Record<Color, string> = { W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' };
+
+/** CR 608.2h: an object's characteristics as it is now, remembered for after it's sacrificed or discarded. */
+export function lkiStats(g: GameState, o: GameObject): LKIStats {
+  const c = chars(g, o);
+  return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors] };
+}
 
 /** CR 702.16g: "protection from A and from B" is two protection abilities. */
 export function protectionQualities(g: GameState, o: GameObject): string[] {
