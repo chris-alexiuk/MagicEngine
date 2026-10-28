@@ -354,6 +354,7 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     if (COLOR_WORDS[w]) (f.colors ??= []).push(COLOR_WORDS[w]!);
     else if (w === 'colorless') f.colorless = true;
     else if (w === 'multicolored') f.multicolored = true;
+    else if (w === 'monocolored') f.monocolored = true;
     // CR 700.6
     else if (w === 'historic') f.historic = true;
     // CR 700.9: equipped, enchanted by an Aura its controller controls, or with a counter on it.

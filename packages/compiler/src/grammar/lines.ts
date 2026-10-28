@@ -431,6 +431,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Any player may activate this ability\.$/, (a) => (a.anyPlayer = true)],
   // CR 702.177a (exhaust)
   [/ Activate only once\.$/, (a) => (a.oncePerGame = true)],
+  // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability."
+  [/ Spend only mana of the chosen color to activate this ability\.$/, (a) => (a.payOnly = 'chosen')],
 ];
 
 /** "[Cost]: [Effect]." (CR 602.1). Mana abilities are handled by the mana rule. */
@@ -2585,6 +2587,22 @@ export const asEntersRule: GrammarRule = {
  * CR 707.5 / CR 614.1c: "You may have ~ enter as a copy of any creature on the battlefield[, except …]."
  * The choice is made as it enters (CR 614.12), like the other "as ~ enters" choices.
  */
+/**
+ * Animate Dead, Dance of the Dead: "When ~ enters, if it's on the battlefield, it loses "enchant creature card in a
+ * graveyard" and gains "enchant creature put onto the battlefield with ~." Return enchanted creature card to the
+ * battlefield under your control and attach ~ to it." (The quoted words are set aside as QUOTED_n.)
+ */
+export const reanimateAuraRule: GrammarRule = {
+  id: 'reanimate_aura',
+  parse(line, original, ctx) {
+    const m = /^When ~ enters, if it's on the battlefield, it loses QUOTED_(\d+) and gains QUOTED_(\d+)\. (?:Return enchanted creature card to the battlefield|Put enchanted creature card onto the battlefield( tapped)?) under your control and attach ~ to it\.$/.exec(line);
+    const quotes = (ctx as { quotes?: string[] }).quotes;
+    if (!m || !quotes) return null;
+    if (quotes[Number(m[1])] !== 'enchant creature card in a graveyard' || !/^enchant creature put onto the battlefield with (?:this Aura|.+)\.?$/.test(quotes[Number(m[2])] ?? '')) return null;
+    return { kind: 'triggered', text: original, trigger: { type: 'enters', subject: { ref: 'self' } }, effects: [{ type: 'reanimate_attach', ...(m[3] ? { tapped: true } : {}) }] } as TriggeredAbility;
+  },
+};
+
 export const entersAsCopyRule: GrammarRule = {
   id: 'enters_as_copy',
   parse(line, original, ctx) {
@@ -3210,6 +3228,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   entersTappedUnlessRule,
   asEntersRule,
   entersAsCopyRule,
+  reanimateAuraRule,
   deckRule,
   optionalUntapRule,
   prototypeRule,

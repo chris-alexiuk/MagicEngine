@@ -64,6 +64,9 @@ export function parseManaProduction(text: string): AddManaEffect | null {
   // "one mana of the chosen color" (CR 614.12: chosen as the source entered).
   const CHOSEN = 'one mana of the chosen color';
   if (text === CHOSEN) return { type: 'add_mana', options: [['chosen']] };
+  // Throne of Eldraine: "four mana of the chosen color".
+  const chosenMany = /^(two|three|four|five) mana of the chosen color$/.exec(text);
+  if (chosenMany) return { type: 'add_mana', options: [Array.from({ length: COUNT[chosenMany[1]!]! }, () => 'chosen')] };
   const alternatives = text.split(/,? or |, /);
   if (alternatives.length > 1 && alternatives.every((a) => PRODUCED_RUN.test(a) || a === CHOSEN)) {
     return { type: 'add_mana', options: alternatives.map((a) => (a === CHOSEN ? ['chosen'] : symbols(a))) };

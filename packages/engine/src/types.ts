@@ -915,6 +915,8 @@ export interface GameState {
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
+  /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
+  reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
   lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */

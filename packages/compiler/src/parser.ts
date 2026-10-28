@@ -169,6 +169,22 @@ export class ParserRegistry {
         continue;
       }
 
+      // Animate Dead: "… attach this Aura to it. When this Aura leaves the battlefield, that creature's controller sacrifices
+      // it." — two triggered abilities in one paragraph, the second linked to the first (CR 607.2): it sacrifices the
+      // creature the first put onto the battlefield.
+      const linked = /^(When .+ attach this Aura to it\.) When this Aura leaves the battlefield, that creature's controller sacrifices it\.$/.exec(line);
+      if (linked) {
+        const first = this.parseBlock([linked[1]!], env);
+        if (first?.kind === 'triggered' && first.effects.some((e) => e.type === 'reanimate_attach')) {
+          result.abilities.push(first, {
+            kind: 'triggered',
+            text: "When this Aura leaves the battlefield, that creature's controller sacrifices it.",
+            trigger: { type: 'leaves', subject: { ref: 'self' } },
+            effects: [{ type: 'sacrifice_linked' }],
+          } as AbilityNode);
+        } else result.unparsed.push(line);
+        continue;
+      }
       // CR 702.178a: "Max speed — [Ability]" means "As long as your speed is 4, this object has '[Ability].'"
       // CR 721.2a: "{N+} | [abilities]" means "As long as this permanent has N or more charge counters on it, it has [abilities]."
       const maxSpeed = /^Max speed — (.+)$/.exec(line);

@@ -66,6 +66,10 @@ const CARDS = [
   makeCard({ name: 'Mockingbird', type_line: 'Creature — Bird Bard', mana_cost: '{X}{U}', power: '1', toughness: '1', oracle_text: "Flying\nYou may have this creature enter as a copy of any creature on the battlefield with mana value less than or equal to the amount of mana spent to cast this creature, except it's a Bird in addition to its other types and it has flying." }),
   makeCard({ name: 'Titan', type_line: 'Creature — Giant', mana_cost: '{5}', cmc: 5, power: '6', toughness: '6', oracle_text: '' }),
   makeCard({ name: 'Cursed Mirror', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Add {R}.\nAs this artifact enters, you may have it become a copy of any creature on the battlefield until end of turn, except it has haste.' }),
+  makeCard({ name: 'Animate Dead', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature card in a graveyard\nWhen this Aura enters, if it\'s on the battlefield, it loses "enchant creature card in a graveyard" and gains "enchant creature put onto the battlefield with this Aura." Return enchanted creature card to the battlefield under your control and attach this Aura to it. When this Aura leaves the battlefield, that creature\'s controller sacrifices it.\nEnchanted creature gets -1/-0.' }),
+  makeCard({ name: 'Disenchant', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target artifact or enchantment.' }),
+  makeCard({ name: 'Throne of Eldraine', type_line: 'Legendary Artifact', mana_cost: '{5}', oracle_text: 'As Throne of Eldraine enters, choose a color.\n{T}: Add four mana of the chosen color. Spend this mana only to cast monocolored spells of that color.\n{3}, {T}: Draw two cards. Spend only mana of the chosen color to activate this ability.' }),
+  makeCard({ name: 'Red Ogre', type_line: 'Creature — Ogre', mana_cost: '{3}{R}', cmc: 4, power: '4', toughness: '4', oracle_text: '' }),
   makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
@@ -651,5 +655,64 @@ describe('staples (slice 180): Cursed Mirror', () => {
     expect(chars(g, mirror).keywords.some((k) => k.id === 'haste')).toBe(true);
     g = toStep(g, 'main1', 'bob');
     expect(chars(g, g.objects[mirror.id]!).types).toEqual(['Artifact']);
+  });
+});
+
+describe('staples (slice 180): Animate Dead', () => {
+  const cast = (g: GameState, target: string) => {
+    const aura = give(g, 'alice', 'Animate Dead', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: aura, targets: [[obj(target)]] });
+    return { g: settle(g), aura };
+  };
+  it('returns the creature card under your control, -1/-0; it\'s sacrificed when the Aura leaves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const titan = give(g, 'bob', 'Titan', 'graveyard');
+    let aura: string;
+    ({ g, aura } = cast(g, titan));
+    g = settle(g);
+    expect(g.objects[titan]!.zone).toBe('battlefield');
+    expect(g.objects[titan]!.controller).toBe('alice');
+    expect(chars(g, g.objects[titan]!).power).toBe(5);
+    expect(g.objects[aura]!.zone).toBe('battlefield');
+    expect(g.objects[aura]!.attachedTo?.id).toBe(titan);
+    // State-based actions leave it attached (it enchants what it put onto the battlefield now).
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.objects[aura]!.zone).toBe('battlefield');
+    g = toStep(g, 'main1', 'bob');
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Disenchant', 'hand'), targets: [[obj(aura)]] }));
+    expect(g.objects[aura]!.zone).toBe('graveyard');
+    expect(g.objects[titan]!.zone).toBe('graveyard');
+    expect(g.zones.graveyard.bob).toContain(titan);
+  });
+
+  it('the creature dying takes the Aura with it; nothing is sacrificed', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const titan = give(g, 'bob', 'Titan', 'graveyard');
+    let aura: string;
+    ({ g, aura } = cast(g, titan));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Murder', 'hand'), targets: [[obj(titan)]] }));
+    expect(g.objects[titan]!.zone).toBe('graveyard');
+    expect(g.objects[aura]!.zone).toBe('graveyard');
+  });
+});
+
+describe('staples (slice 181): Throne of Eldraine', () => {
+  it('four mana of the chosen color for monocolored spells of that color; its draw paid only in that color', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const throne = give(g, 'alice', 'Throne of Eldraine', 'battlefield');
+    g.objects[throne]!.chosen = { color: 'R' };
+    g = act(g, { type: 'activate_mana', player: 'alice', object: throne, ability: 0 });
+    // Restricted: not for Bear (green).
+    expect(() => act(structuredClone(g), { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') })).toThrow();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Red Ogre', 'hand') }));
+    expect(g.zones.battlefield.some((id) => g.cards[g.objects[id]!.card]?.name === 'Red Ogre' && g.objects[id]!.controller === 'alice')).toBe(true);
+    // The draw ability: {3} in red only.
+    g = toStep(toStep(g, 'main1', 'bob'), 'main1', 'alice');
+    Object.assign(g.players.alice!.pool, { C: 3 });
+    expect(() => act(structuredClone(g), { type: 'activate', player: 'alice', object: throne, ability: 0 })).toThrow();
+    Object.assign(g.players.alice!.pool, { C: 0, R: 3 });
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: throne, ability: 0 }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 2);
   });
 });

@@ -80,8 +80,16 @@ export function sacrifice(g: GameState, o: GameObject, player: PlayerId, events:
  * CR 303.4: an Aura per its enchant ability (CR 303.4d: never to itself).
  */
 export function canAttach(g: GameState, attachment: GameObject, target: GameObject): boolean {
-  if (target.zone !== 'battlefield' || target.id === attachment.id) return false;
+  if (target.id === attachment.id) return false;
+  // Animate Dead: "enchant creature put onto the battlefield with this Aura" — that creature only.
+  const link = g.reanimated?.find((l) => l.aura.id === attachment.id && l.aura.zcc === attachment.zcc);
+  if (link) return target.zone === 'battlefield' && target.id === link.creature.id && target.zcc === link.creature.zcc && !protectedFromAttachment(g, target, attachment);
   const face = faceOf(g, attachment);
+  // "Enchant creature card in a graveyard" (CR 303.4: an Aura can enchant what its enchant ability allows).
+  if (target.zone !== 'battlefield') {
+    const enchant = face.subtypes.includes('Aura') ? chars(g, attachment).keywords.find((k) => k.id === 'enchant') : undefined;
+    return Boolean(enchant?.filter?.zone && enchant.filter.zone === target.zone && matchesFilter(g, target, enchant.filter, { controller: attachment.controller, source: attachment }));
+  }
   if (face.subtypes.includes('Equipment')) {
     // CR 301.5c: an Equipment that's also a creature can't equip a creature unless it has reconfigure (CR 702.151b).
     // CR 702.16d: nor a creature with protection from it.

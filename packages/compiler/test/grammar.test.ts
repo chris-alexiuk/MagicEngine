@@ -2205,3 +2205,11 @@ describe('slice 180', () => {
     expect(parse("Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.", 'Instant', 'Saw in Half').abilities[0]).toMatchObject({ effects: [{ type: 'destroy' }, { type: 'if', effects: [{ type: 'create_token', amount: 2, except: { halfStats: 'up' } }] }] });
   });
 });
+
+describe('slice 181', () => {
+  it('reads Animate Dead as two linked triggered abilities', () => {
+    const p = parse('Enchant creature card in a graveyard\nWhen this Aura enters, if it\'s on the battlefield, it loses "enchant creature card in a graveyard" and gains "enchant creature put onto the battlefield with this Aura." Return enchanted creature card to the battlefield under your control and attach this Aura to it. When this Aura leaves the battlefield, that creature\'s controller sacrifices it.\nEnchanted creature gets -1/-0.', 'Enchantment — Aura', 'Animate Dead');
+    expect(p.unparsed).toEqual([]);
+    expect(p.abilities.map((a) => (a.kind === 'triggered' ? a.effects[0]!.type : a.kind))).toEqual(['reanimate_attach', 'sacrifice_linked', 'static']);
+  });
+});

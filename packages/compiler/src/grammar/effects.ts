@@ -3387,6 +3387,8 @@ export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
   }
   // Secluded Courtyard: "an ability of a creature source of the chosen type"
   text = text.replace(/(an ability of (?:a|an) \w+) source (of the chosen type)$/, '$1 $2');
+  // Throne of Eldraine: "to cast monocolored spells of that color" — the color chosen for its source.
+  text = text.replace(/ spells of that color$/, ' spells of the chosen color');
   const m = /^to cast (.+?)(?:,? or (?:to )?activate (?:abilities of (.+)|an ability of (?:a|an) (.+?)(?: source)?))?$/.exec(text);
   if (!m) return null;
   const what = m[1]!.replace(/^(\w+) and(?:\/or)? (\w+) spells$/, '$1 or $2 spells');

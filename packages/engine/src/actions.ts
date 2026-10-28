@@ -909,6 +909,19 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
       }
     }
   }
+  // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability" — generic mana must be that color
+  // too (and without a chosen color it can't be paid).
+  if (ability.payOnly === 'chosen') {
+    const c = o.chosen?.color as ManaColor | undefined;
+    if (!c) mana.unsupported.push('chosen');
+    else {
+      const other = Object.entries(mana.specific).some(([k, n]) => k !== c && (n ?? 0) > 0) || mana.hybrid.some((h) => !h.includes(c));
+      if (other) mana.unsupported.push('chosen');
+      mana.specific[c] = (mana.specific[c] ?? 0) + mana.generic + mana.hybrid.length;
+      mana.generic = 0;
+      mana.hybrid = [];
+    }
+  }
   if (!ability.powerUp) return;
   const entered = Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id));
   if (entered) reduceCostBy(mana, parseManaCost(faceOf(g, o).manaCost));

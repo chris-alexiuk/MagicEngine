@@ -2967,6 +2967,42 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // Chandra, Torch of Defiance: "You may cast that card. If you don't, …" — cast now, paying its costs (CR 608.2g).
+  // Animate Dead: "When this Aura enters, if it's on the battlefield, it loses "enchant creature card in a graveyard" and
+  // gains "enchant creature put onto the battlefield with this Aura." Return enchanted creature card to the battlefield
+  // under your control and attach this Aura to it."
+  reanimate_attach(node, ctx) {
+    const g = ctx.g;
+    const aura = ctx.source;
+    if (!aura || aura.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && aura.zcc !== ctx.sourceZcc)) return true;
+    const r = aura.attachedTo;
+    const card = r ? g.objects[r.id] : undefined;
+    // The card left its graveyard: nothing returns, and the Aura (attached to nothing) goes (CR 704.5m).
+    if (!card || card.zcc !== r!.zcc || card.zone !== 'graveyard') return true;
+    moveObject(g, card.id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+    const back = g.objects[card.id]!;
+    if (back.zone !== 'battlefield') return true;
+    (g.reanimated ??= []).push({ aura: { id: aura.id, zcc: aura.zcc }, creature: { id: back.id, zcc: back.zcc } });
+    aura.attachedTo = { id: back.id, zcc: back.zcc };
+    aura.timestamp = ++g.clock;
+    ctx.events.push({ type: 'attached', object: aura.id, to: back.id });
+    return true;
+  },
+
+  // "When this Aura leaves the battlefield, that creature's controller sacrifices it." — the one it put onto the battlefield.
+  sacrifice_linked(_node, ctx) {
+    const g = ctx.g;
+    const src = ctx.source;
+    if (!src) return true;
+    // A leaves-the-battlefield trigger knows the object the Aura became; the link is to the one on the battlefield.
+    const zcc = ctx.sourceZcc ?? src.zcc;
+    const link = g.reanimated?.find((l) => l.aura.id === src.id && (l.aura.zcc === zcc || l.aura.zcc === zcc - 1));
+    if (!link) return true;
+    g.reanimated = g.reanimated!.filter((l) => l !== link);
+    const o = g.objects[link.creature.id];
+    if (o && o.zone === 'battlefield' && o.zcc === link.creature.zcc) sacrifice(g, o, o.controller, ctx.events);
+    return true;
+  },
+
   cast_paid(node, ctx) {
     const o = refObjects(ctx, ref(node, 'what'))[0];
     const otherwise = { expand: (node.else as EffectNode[] | undefined) ?? [] };
