@@ -2231,4 +2231,20 @@ describe('slice 182', () => {
     expect(parse("Enchanted creature can't attack or block, and its activated abilities can't be activated.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack', 'cant_block', 'cant_activate'] } });
     expect(parse("At the beginning of the upkeep of enchanted creature's controller, that player may pay {4}. If the player does, untap the creature.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', effects: [{ type: 'untap', what: { ref: 'attached' } }] }] });
   });
+  it('reads upkeep and end step conditions', () => {
+    expect(parse("At the beginning of each player's upkeep, if that player has no cards in hand, that player draws three cards.", 'Artifact').abilities[0]).toMatchObject({ condition: { type: 'hand', who: { ref: 'trigger_player' } }, effects: [{ type: 'draw', amount: 3, who: { ref: 'trigger_player' } }] });
+    expect(parse("At the beginning of your end step, if you control three or more permanents you don't own, draw three cards.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'count', filter: { owner: 'opponent' }, min: 3 } });
+    expect(parse("At the beginning of your end step, if you didn't activate a loyalty ability of a planeswalker this turn, you lose 2 life.", 'Legendary Artifact').abilities[0]).toMatchObject({ condition: { type: 'not', cond: { type: 'this_turn', event: 'you_activated_loyalty' } } });
+    expect(parse('At the beginning of your end step, draw a card if your life total is greater than your starting life total. Otherwise, you gain 2 life.', 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'life', op: 'gt', starting: true } }] });
+    expect(parse('At the beginning of your upkeep, you may discard all the cards in your hand. If you do, draw that many cards.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'wheel', mode: 'all' }] }] });
+  });
+});
+
+describe('slice 183', () => {
+  it('counts for each player', () => {
+    expect(parse('At the beginning of each end step, each opponent loses life equal to the life that player lost this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', amount: { kind: 'life_this_turn', player: { ref: 'each_player' }, stat: 'lost' }, who: { ref: 'players' } }] });
+    expect(parse('Each player draws cards equal to the number of creatures they control.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: { kind: 'count', filter: { controlledBy: { ref: 'each_player' } } } }] });
+    // Not for effects the engine doesn't count per player.
+    expect(parse('Each player creates a 1/1 white Soldier creature token for each creature they control.', 'Sorcery').unparsed).toHaveLength(1);
+  });
 });

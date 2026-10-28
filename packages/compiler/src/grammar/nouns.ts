@@ -58,6 +58,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
+  // Agent of Treachery: "permanents you don't own" (CR 108.3: the other players own them).
+  [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
   // "a land card with a basic land type" (Boseiju)
   [/ with a basic land type$/, (f) => !f.subtypes && ((f.subtypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']), true)],
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".

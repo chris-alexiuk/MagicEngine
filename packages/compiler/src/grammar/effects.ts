@@ -1,4 +1,4 @@
-import type { AddManaEffect, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
+import type { AddManaEffect, AmountExpr, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
 import { SUBTYPES } from '@mtg/schema';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, type Binder } from './binder.js';
@@ -398,6 +398,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const otherwise = first ? parseSentence(capitalise(youDont[1]!), b) : null;
         if (!first || !otherwise) return null;
         out.push({ type: 'may_do', effects: first, then: [], else: otherwise });
+        i++;
+        continue;
+      }
+      // Forgotten Creation: "you may discard all the cards in your hand. If you do, draw that many cards." — a wheel.
+      if (mayDo && then && /^discard all the cards in your hand$/.test(mayDo[1]!) && then[1] === 'draw that many cards') {
+        out.push({ type: 'may', effects: [{ type: 'wheel', who: { ref: 'you' }, mode: 'all' }] });
         i++;
         continue;
       }
@@ -1191,13 +1197,21 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         attempt(b, (b) => {
           const expr = parseForEach(what, b);
           const inner = expr && parseInner(s.slice(0, at) + rest, b);
+          // "each opponent … for each creature that player controls": "that player" is each of them (below).
+          if (inner?.length === 1 && (inner[0] as { who?: Ref }).who?.ref === 'players' && /\b(?:that player|they|their)\b/.test(what)) return null;
           return inner && expr ? scaleBy(inner, expr) : null;
         }) ??
         // "Target player loses 1 life for each artifact that player controls": the count refers back to the subject.
         (/\b(?:that player|they|their)\b/.test(what)
           ? attempt(b, (b) => {
               const inner = parseInner(s.slice(0, at) + rest, b);
-              const expr = inner && parseForEach(what, b);
+              // "Each opponent loses 1 life for each creature that player controls": each of them (perPlayerCount).
+              const who = inner?.length === 1 ? (inner[0] as { who?: Ref }).who : undefined;
+              const saved = b.player;
+              if (who?.ref === 'players') b.player = who;
+              const counted = inner && parseForEach(what, b);
+              b.player = saved;
+              const expr = inner && counted ? perPlayerCount(inner, counted) : null;
               return inner && expr ? scaleBy(inner, expr) : null;
             })
           : null);
@@ -1228,16 +1242,24 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         }
         const expr = parseCount(what, b);
         const inner = expr && parseInner(text, b);
+        // "each opponent loses life equal to … that player's …": each of them (below).
+        if (inner?.length === 1 && (inner[0] as { who?: Ref }).who?.ref === 'players' && /\b(?:that player|they|their)\b/.test(what)) return null;
         return inner && expr ? bindX(inner, expr) : null;
       });
       if (r) return r;
       // "~ deals damage to target player equal to the number of cards in that player's hand": the count names a
       // player the instruction targets.
       // Peer into the Abyss: "Target player draws cards equal to … cards in their library" — that player's.
-      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b/.test(what)
+      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b|\bthey (?:control|lost|gained)\b/.test(what)
         ? attempt(b, (b) => {
             const inner = parseInner(text, b);
-            const expr = inner && parseCount(what, b);
+            // "Each opponent loses life equal to the life that player lost this turn": "that player" is each of them.
+            const who = inner?.length === 1 ? (inner[0] as { who?: Ref }).who : undefined;
+            const saved = b.player;
+            if (who?.ref === 'players') b.player = who;
+            const counted = inner && parseCount(what, b);
+            b.player = saved;
+            const expr = inner && counted ? perPlayerCount(inner, counted) : null;
             return inner && expr ? bindX(inner, expr) : null;
           })
         : null;
@@ -2313,6 +2335,9 @@ const VERBS: Record<string, VerbHandler> = {
     if (upTo) return typeof n === 'number' && n > 0 && who.ref !== 'players' ? [{ type: 'draw', amount: n, who, upTo: true }] : null;
     // Anvil of Bogardan: "that player draws an additional card, then discards a card"
     if (args === 'an additional card') return [{ type: 'draw', amount: 1, who }];
+    // Font of Mythos: "that player draws two additional cards".
+    const extra = /^(two|three|four) additional cards$/.exec(args);
+    if (extra) return [{ type: 'draw', amount: parseAmount(extra[1]!) as number, who }];
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'draw', amount, who }] : null;
@@ -2517,6 +2542,17 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(nth[1]!, b);
       const n = ['second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'].indexOf(nth[2]!) + 2;
       return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: n }] : null;
+    }
+    // Brokers Ascendancy: "put a +1/+1 counter on each creature you control and a loyalty counter on each planeswalker you
+    // control" — two placements.
+    const twoPlaces = /^((?:a|an|one|two|three) \S+ counters? on each .+?) and ((?:a|an|one|two|three) \S+ counters? on each .+)$/.exec(args);
+    if (twoPlaces) {
+      const r = attempt(b, (b) => {
+        const one = VERBS.put!(twoPlaces[1]!, who, b, imperative);
+        const two = one ? VERBS.put!(twoPlaces[2]!, who, b, imperative) : null;
+        return one && two ? [...one, ...two] : null;
+      });
+      if (r) return r;
     }
     // "Put a number of +1/+1 counters equal to the power of the card you exiled on target creature." (scavenge)
     const counted = /^a number of (\S+) counters equal to (.+?) on (.+)$/.exec(args);
@@ -3197,6 +3233,24 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
     if (r) return r;
   }
   return null;
+}
+
+/** Effects the engine counts separately for each player they're for (Ref 'each_player'). */
+const PER_PLAYER = ['lose_life', 'gain_life', 'draw', 'mill'];
+
+/**
+ * Archfiend of Despair: "each opponent loses life equal to the life that player lost this turn" — a count that names the
+ * players the instruction is for ("they", "their", "that player") means each of them in turn (Ref 'each_player'), for
+ * the effects the engine counts that way; null for any other.
+ */
+function perPlayerCount(inner: EffectNode[], expr: AmountExpr): AmountExpr | null {
+  const who = inner.length === 1 ? ((inner[0] as { who?: Ref }).who) : undefined;
+  if (!who || who.ref !== 'players') return expr;
+  const w = JSON.stringify(who);
+  const js = JSON.stringify(expr);
+  if (!js.includes(w)) return expr;
+  if (!PER_PLAYER.includes(inner[0]!.type)) return null;
+  return JSON.parse(js.split(w).join('{"ref":"each_player"}')) as AmountExpr;
 }
 
 /** "~ deals 3 damage to any target", "… to target creature and 2 damage to its controller". */

@@ -8,7 +8,7 @@ import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
-  'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
+  'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before',
 ];
@@ -64,6 +64,8 @@ export interface TurnLog {
   attacks?: Record<ObjectId, number>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
   discarded?: { id: ObjectId; zcc: number }[];
+  /** Players who activated a loyalty ability this turn (The Chain Veil). */
+  loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
   combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean }[];
 }
@@ -77,6 +79,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
   for (const e of events) {
     switch (e.type) {
+      case 'ability_activated':
+        if (e.loyalty && !(log.loyaltyActivated ??= []).includes(e.player)) log.loyaltyActivated.push(e.player);
+        break;
       case 'moved': {
         const types = g.cards[e.card]?.faces[e.face]?.types ?? [];
         if (e.from === 'battlefield' && e.to === 'graveyard') {
@@ -337,9 +342,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // "an opponent has 10 or less life"
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
+      // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
+      if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife });
       return cmp(g.players[controller]!.life, cond);
     case 'hand': {
-      const mine = zoneList(g, 'hand', controller).length;
+      // Ghirapur Orrery: "if that player has no cards in hand".
+      const whose = cond.who ? (refPlayers(ctx, cond.who as Ref)[0] ?? controller) : controller;
+      const mine = zoneList(g, 'hand', whose).length;
       if (cond.than) {
         // "more cards in hand than each opponent" / "than an opponent"
         const theirs = livePlayers(g).filter((p) => p !== controller).map((p) => zoneList(g, 'hand', p).length);
@@ -385,6 +394,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'first_combat':
       return (g.turnLog.combatPhases ?? 0) <= 1;
     // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
+    case 'greatest_power': {
+      // "the creature with the greatest power or tied for the greatest power"
+      const all = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
+      if (!all.length) return false;
+      const most = Math.max(...all.map((o) => power(g, o)));
+      return all.some((o) => o.controller === controller && power(g, o) === most);
+    }
     case 'greatest_mv': {
       const all = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
       if (!all.length) return false;
@@ -427,6 +443,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return log.attacked.includes(controller);
         case 'you_gained_life':
           return log.gainedLife.includes(controller);
+        case 'you_activated_loyalty':
+          return Boolean(log.loyaltyActivated?.includes(controller));
         case 'opponent_gained_life':
           return log.gainedLife.some((p) => p !== controller);
         case 'you_created_token':
@@ -506,7 +524,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'monarch':
       // CR 725: "if you're the monarch" / "if there is no monarch".
-      return cond.none ? !g.monarch : g.monarch === controller;
+      return cond.none ? !g.monarch : cond.opponent ? Boolean(g.monarch) && g.monarch !== controller : g.monarch === controller;
     case 'opponents':
       // CR 102.3: in multiplayer games, every other player is an opponent.
       return cmp(livePlayers(g).filter((p) => p !== controller).length, cond);

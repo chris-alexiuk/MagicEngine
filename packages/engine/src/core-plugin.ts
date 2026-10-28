@@ -41,6 +41,18 @@ function answerOf<K extends ChoiceAnswer['kind']>(ctx: EffectContext, kind: K): 
   return ctx.answer?.kind === kind ? (ctx.answer as Extract<ChoiceAnswer, { kind: K }>) : null;
 }
 
+/**
+ * An effect's amount for each of the players it's for: the same for all, or — when the amount names "each_player"
+ * ("each opponent loses life equal to the life that player lost this turn") — counted for each one in turn.
+ */
+function perPlayerAmounts(ctx: EffectContext, amount: unknown, players: readonly PlayerId[], once?: number): number[] {
+  if (!JSON.stringify(amount ?? null).includes('"each_player"')) {
+    const n = once ?? amountOf(ctx, amount);
+    return players.map(() => n);
+  }
+  return players.map((p) => Math.max(0, amountOf({ ...ctx, eachPlayer: p }, amount)));
+}
+
 function sourceName(ctx: EffectContext): string {
   return ctx.source ? nameOf(ctx.g, ctx.source) : 'an ability';
 }
@@ -266,9 +278,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       memo.players = [p];
     }
     memo.n ??= amountOf(ctx, node.amount);
+    // "Each player draws cards equal to …(their)…": counted for each of them (Ref 'each_player').
+    const counts = (memo as { counts?: number[] }).counts ??= perPlayerAmounts(ctx, node.amount, memo.players, memo.n);
+    const total = counts.reduce((a, b) => a + b, 0);
+    const whose = (k: number) => {
+      let i = 0;
+      while (k >= counts[i]!) k -= counts[i++]!;
+      return memo.players![i]!;
+    };
     let answer = answerOf(ctx, 'choose_objects');
-    for (let k = memo.done ?? 0; k < memo.players.length * memo.n; k++) {
-      const p = memo.players[Math.floor(k / memo.n)]!;
+    for (let k = memo.done ?? 0; k < total; k++) {
+      const p = whose(k);
       const options = dredgeOptions(ctx.g, p);
       if (options.length && !answer) {
         memo.done = k;
@@ -283,14 +303,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   gain_life(node, ctx) {
-    for (const p of refPlayers(ctx, ref(node, 'who'))) gainLife(ctx, p, amountOf(ctx, node.amount));
+    const players = refPlayers(ctx, ref(node, 'who'));
+    const n = perPlayerAmounts(ctx, node.amount, players);
+    players.forEach((p, i) => gainLife(ctx, p, n[i]!));
     return true;
   },
 
   lose_life(node, ctx) {
     // CR 119.3: the life total is adjusted.
-    const n = amountOf(ctx, node.amount);
-    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+    const players = refPlayers(ctx, ref(node, 'who'));
+    const each = perPlayerAmounts(ctx, node.amount, players);
+    for (const [i, p] of players.entries()) {
+      const n = each[i]!;
       const ps = ctx.g.players[p]!;
       // CR 119.8: "your life total can't change" — no life is lost.
       if (n > 0 && playerRule(ctx.g, p, 'life_cant_change')) continue;
@@ -790,10 +814,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   mill(node, ctx) {
     // CR 701.17a: the top N cards go into the graveyard.
-    const n = amountOf(ctx, node.amount);
-    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+    const players = refPlayers(ctx, ref(node, 'who'));
+    const each = perPlayerAmounts(ctx, node.amount, players);
+    for (const [i, p] of players.entries()) {
       // The Water Crystal: "they mill that many cards plus four instead" (CR 614.1a).
-      const k = replaceQuantity(ctx.g, 'mill', n, { player: p });
+      const k = replaceQuantity(ctx.g, 'mill', each[i]!, { player: p });
       for (const id of zoneList(ctx.g, 'library', p).slice(0, k)) moveObject(ctx.g, id, 'graveyard', ctx.events);
     }
     return true;

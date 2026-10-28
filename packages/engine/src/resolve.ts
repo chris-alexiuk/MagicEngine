@@ -147,6 +147,8 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
   switch (ref.ref) {
     case 'you':
       return live.includes(ctx.controller) ? [ctx.controller] : [];
+    case 'each_player':
+      return ctx.eachPlayer && live.includes(ctx.eachPlayer) ? [ctx.eachPlayer] : [];
     case 'players': {
       const not = ref.except ? refPlayers(ctx, ref.except) : [];
       const all = apnap(g).filter((p) => (ref.who === 'each' || p !== ctx.controller) && !not.includes(p));
@@ -342,9 +344,10 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
     case 'life_this_turn': {
       const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.lifeGained;
-      const players = e.who === 'you' ? [ctx.controller] : g.order.filter((p) => p !== ctx.controller);
+      // Archfiend of Despair: "the life that player lost this turn".
+      const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : e.who === 'a_player' ? [...g.order] : g.order.filter((p) => p !== ctx.controller);
       const each = players.map((p) => log?.[p] ?? 0);
-      return e.who === 'an_opponent' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
+      return e.who === 'an_opponent' || e.who === 'a_player' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
     }
     case 'discarded_this_way': {
       // Windfall: "the greatest number of cards a player discarded this way"

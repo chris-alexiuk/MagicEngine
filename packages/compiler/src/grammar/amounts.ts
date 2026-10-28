@@ -45,7 +45,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
       const { zone: _z, owner: _o, ...rest } = pf.filter;
       filter = rest as ObjectFilter;
     } else if (head.endsWith('s') !== plural) return null;
-    const player = theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'players' && b.player.ref !== 'you' ? b.player : null;
+    // "each opponent … the number of cards in their graveyard": each of them (see perPlayerCount).
+    const player = theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'you' ? b.player : null;
     if (!player) return null;
     return { kind: 'cards', zone: theirs[3] as 'hand' | 'graveyard' | 'library', who: 'each', player, ...(filter ? { filter } : {}) };
   }
@@ -169,6 +170,9 @@ function lifeThisTurn(who: string): AmountExpr | null {
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // Archfiend of Despair: "the life that player lost this turn" — each of the players in turn.
+  const theirLife = /^the life (?:they|that player) (lost|gained) this turn$/.exec(t);
+  if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // "the amount of life you gained this turn", "the total amount of life your opponents have lost this turn"
   const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);

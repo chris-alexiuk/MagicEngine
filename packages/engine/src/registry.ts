@@ -44,6 +44,8 @@ export interface EffectContext {
   resolution?: Resolution;
   /** A static ability's amount counted for one object it applies to (Ref 'affected', Coat of Arms). */
   affected?: GameObject;
+  /** An amount counted for one of the players an effect is for (Ref 'each_player', Archfiend of Despair). */
+  eachPlayer?: PlayerId;
 }
 
 /**

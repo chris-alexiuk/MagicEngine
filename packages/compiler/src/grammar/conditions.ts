@@ -75,14 +75,36 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 function parseOne(t: string, b: Binder): ConditionNode | null {
   // Haliya: "if you've gained 3 or more life this turn"; Bloodchief Ascension: "if an opponent lost 2 or more life this
   // turn"; Spinerock Knoll: "if an opponent was dealt 7 or more damage this turn".
+  // Y'shtola, Night's Blessed: "if a player lost 4 or more life this turn".
   const lifeN =
-    /^(you|an opponent)(?:'ve| has| have)? (gained|lost) (\w+) or more life this turn$/.exec(t) ??
+    /^(you|an opponent|a player)(?:'ve| has| have)? (gained|lost) (\w+) or more life this turn$/.exec(t) ??
     /^(you|an opponent) (?:were|was) (dealt) (\w+) or more damage this turn$/.exec(t);
   if (lifeN) {
     const n = parseAmount(lifeN[3]!);
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
-    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : lifeN[1] === 'a player' ? 'a_player' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
+  // Lunar Convocation: "if you gained and lost life this turn".
+  if (t === 'you gained and lost life this turn') {
+    return { type: 'and', all: [{ type: 'amount', amount: { kind: 'life_this_turn', who: 'you' }, op: 'ge', n: 1 }, { type: 'amount', amount: { kind: 'life_this_turn', who: 'you', stat: 'lost' }, op: 'ge', n: 1 }] };
+  }
+  // Queen Marchesa: "if an opponent is the monarch" (CR 725).
+  if (t === 'an opponent is the monarch') return { type: 'monarch', opponent: true };
+  // Pyrohemia: "if no creatures are on the battlefield".
+  const noneThere = /^(?:no (.+?) are on the battlefield|there are no (.+?) on the battlefield)$/.exec(t);
+  if (noneThere) {
+    const pf = parseFilter(noneThere[1] ?? noneThere[2]!, b);
+    if (pf && pf.plural && !pf.filter.zone) return { type: 'count', who: 'all', filter: pf.filter, max: 0 };
+  }
+  // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
+  const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
+  if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Thickest in the Thicket: "if you control the creature with the greatest power or tied for the greatest power".
+  if (t === 'you control the creature with the greatest power or tied for the greatest power') return { type: 'greatest_power', filter: { types: ['Creature'] } };
+  // The Chain Veil: "if you didn't activate a loyalty ability of a planeswalker this turn".
+  if (t === "you didn't activate a loyalty ability of a planeswalker this turn") return { type: 'not', cond: { type: 'this_turn', event: 'you_activated_loyalty' } };
+  // Ghirapur Orrery: "if that player has no cards in hand" — the player the trigger is about.
+  if (t === 'that player has no cards in hand' && b.player) return { type: 'hand', op: 'le', n: 0, who: b.player };
   if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
   // CR 120.10: "If excess damage was dealt this way", "… to that creature this way", "… to a permanent this way".
   if (/^excess damage was dealt (?:to (?:that creature|that permanent|a permanent|a creature) )?this way$/.test(t)) return { type: 'amount', amount: { kind: 'excess_this_way' }, op: 'ge', n: 1 };

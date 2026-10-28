@@ -76,6 +76,11 @@ const CARDS = [
   makeCard({ name: 'Archetype of Endurance', type_line: 'Enchantment Creature — Boar', mana_cost: '{0}', power: '6', toughness: '5', oracle_text: "Creatures you control have hexproof.\nCreatures your opponents control lose hexproof and can't have or gain hexproof." }),
   makeCard({ name: 'Arcane Lighthouse', type_line: 'Land', mana_cost: '', oracle_text: "{T}: Add {C}.\n{1}, {T}: Until end of turn, creatures your opponents control lose hexproof and shroud and can't have hexproof or shroud." }),
   makeCard({ name: 'Hexproof Bear', type_line: 'Creature — Bear', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Hexproof' }),
+  makeCard({ name: 'Ghirapur Orrery', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "Each player may play an additional land on each of their turns.\nAt the beginning of each player's upkeep, if that player has no cards in hand, that player draws three cards." }),
+  makeCard({ name: 'Cosmos Elixir', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'At the beginning of your end step, draw a card if your life total is greater than your starting life total. Otherwise, you gain 2 life.' }),
+  makeCard({ name: 'The Chain Veil', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: "At the beginning of your end step, if you didn't activate a loyalty ability of a planeswalker this turn, you lose 2 life." }),
+  makeCard({ name: 'Archfiend of Despair', type_line: 'Creature — Demon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'Flying\nYour opponents can\'t gain life.\nAt the beginning of each end step, each opponent loses life equal to the life that player lost this turn.' }),
+  makeCard({ name: 'Census', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player draws cards equal to the number of creatures they control.' }),
   makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
@@ -791,5 +796,67 @@ describe('staples (slice 182): can\'t have or gain', () => {
     expect(hex(g, bear)).toBe(false);
     g = toStep(g, 'main1', 'bob');
     expect(hex(g, bear)).toBe(true);
+  });
+});
+
+describe('staples (slice 182): end step and upkeep conditions', () => {
+  it('Ghirapur Orrery: the player whose upkeep it is, with an empty hand, draws three', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Ghirapur Orrery', 'battlefield');
+    for (const id of [...g.zones.hand.bob!]) { g.zones.hand.bob = g.zones.hand.bob!.filter((x) => x !== id); g.zones.graveyard.bob!.push(id); g.objects[id]!.zone = 'graveyard'; }
+    g = toStep(g, 'draw', 'bob');
+    // Three from the Orrery (upkeep), then the draw step's card.
+    expect(g.zones.hand.bob!.length).toBe(4);
+    const alice = g.zones.hand.alice!.length;
+    g = toStep(g, 'draw', 'alice');
+    expect(g.zones.hand.alice!.length).toBe(alice + 1);
+  });
+
+  it('Cosmos Elixir: 2 life at or below the starting life total, a card above it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Cosmos Elixir', 'battlefield');
+    const life = g.players.alice!.life;
+    g = toStep(g, 'main1', 'bob');
+    expect(g.players.alice!.life).toBe(life + 2);
+    const hand = g.zones.hand.alice!.length;
+    g = toStep(g, 'end', 'alice');
+    g = settle(g);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1 + 1);
+  });
+
+  it('The Chain Veil: 2 life unless you activated a loyalty ability this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'The Chain Veil', 'battlefield');
+    const chandra = give(g, 'alice', 'Chandra, Torch of Defiance', 'battlefield');
+    g.objects[chandra]!.counters.loyalty = 4;
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: chandra, ability: 0 }));
+    if (g.pending?.kind === 'cast_free') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: false } }));
+    g = toStep(g, 'main1', 'bob');
+    expect(g.players.alice!.life).toBe(life);
+    g = toStep(g, 'main1', 'alice');
+    g = toStep(g, 'main1', 'bob');
+    expect(g.players.alice!.life).toBe(life - 2);
+  });
+});
+
+describe('staples (slice 183): counted for each player', () => {
+  it('Archfiend of Despair: each opponent loses the life they lost this turn', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'alice', 'Archfiend of Despair', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    const [bob, carol] = [g.players.bob!.life, g.players.carol!.life];
+    g = toStep(g, 'main1', 'bob');
+    expect(g.players.bob!.life).toBe(bob - 3);
+    expect(g.players.carol!.life).toBe(carol);
+  });
+  it('each player draws cards equal to the number of creatures they control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Bear', 'battlefield');
+    for (let i = 0; i < 3; i++) give(g, 'bob', 'Bear', 'battlefield');
+    const [a, b] = [g.zones.hand.alice!.length, g.zones.hand.bob!.length];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Census', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(a + 1);
+    expect(g.zones.hand.bob!.length).toBe(b + 3);
   });
 });

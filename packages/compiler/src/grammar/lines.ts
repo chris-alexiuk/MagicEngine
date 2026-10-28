@@ -648,7 +648,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   if (word === 'At') {
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
-    const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
+    // Tenuous Truce: "At the beginning of enchanted opponent's end step".
+    const cursed = /^the beginning of enchanted (?:player|opponent)'s (upkeep|draw step|end step)$/.exec(t);
     if (cursed) return { trigger: { type: 'phase', step: STEP_WORDS[cursed[1]!]!, whose: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
     // Black Vise: "At the beginning of the chosen player's upkeep" — "that player" is the chosen player.
     const chosenStep = /^the beginning of the chosen player's (upkeep|draw step|end step)$/.exec(t);

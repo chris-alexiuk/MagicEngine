@@ -440,6 +440,8 @@ export type Ref =
   | { ref: 'attached' }
   /** Coat of Arms: "… that shares at least one creature type with it" — each object a static effect applies to, in turn. */
   | { ref: 'affected' }
+  /** Archfiend of Despair: "each opponent loses life equal to the life that player lost this turn" — each of them in turn. */
+  | { ref: 'each_player' }
   /** Every object matching (CR 608.2h: determined as the effect is applied). */
   | { ref: 'all'; filter: ObjectFilter }
   | { ref: 'you' }
@@ -540,7 +542,7 @@ export type AmountExpr = (
    * opponents have lost this turn" (lost, summed); Spinerock Knoll's "an opponent was dealt 7 or more damage this turn"
    * (damage, the most any one opponent was dealt).
    */
-  | { kind: 'life_this_turn'; who: 'you' | 'opponents' | 'an_opponent'; stat?: 'gained' | 'lost' | 'damage' }
+  | { kind: 'life_this_turn'; who: 'you' | 'opponents' | 'an_opponent' | 'a_player'; stat?: 'gained' | 'lost' | 'damage'; player?: Ref }
   /** "for each opponent you attacked with a creature this combat" (melee, CR 702.121a). */
   | { kind: 'opponents_attacked' }
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
@@ -1048,7 +1050,7 @@ export const CORE_NODES = {
     'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked',
   ],
   conditions: [
-    'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
+    'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
     'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before',
   ],
