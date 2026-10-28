@@ -698,6 +698,8 @@ export interface CostChoices {
   forageFood?: boolean;
   /** CR 701.67a: artifacts and creatures tapped to pay a waterbend cost's generic mana. */
   waterbend?: ObjectId[];
+  /** "Remove a counter from a permanent you control": which counters, from which permanents. */
+  removed?: { object: ObjectId; counter: string; n: number }[];
 }
 
 export type Action =

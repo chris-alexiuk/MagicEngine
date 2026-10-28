@@ -3,6 +3,13 @@ import { matchesFilter, objectAbilities, staticConditionHolds } from './characte
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 
+/** Whom a player rule applies to, from its source's point of view (Grievous Wound: "Enchanted player can't gain life"). */
+function rulesFor(who: string, source: GameObject, player: PlayerId): boolean {
+  if (who === 'each') return true;
+  if (who === 'enchanted') return source.attachedToPlayer === player;
+  return who === 'you' ? player === source.controller : player !== source.controller;
+}
+
 /**
  * Static abilities that change the rules for players rather than objects:
  * "You have no maximum hand size" (CR 402.2), "You may play an additional land on each
@@ -24,7 +31,7 @@ export function flashPermission(g: GameState, player: PlayerId, card: GameObject
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       if (e.rule !== 'flash') continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      const applies = rulesFor(e.who, source, player);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       if (!e.filter || matchesFilter(g, card, e.filter, { controller: player, source, anyZone: true })) return true;
     }
@@ -43,7 +50,7 @@ export function spendAnyColor(g: GameState, player: PlayerId, spell?: GameObject
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       if (e.rule !== 'spend_any_color') continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      const applies = rulesFor(e.who, source, player);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       if (!e.filter || (spell && matchesFilter(g, spell, e.filter, { controller: player, source, anyZone: true }))) return true;
     }
@@ -60,7 +67,7 @@ export function keptManaColors(g: GameState, player: PlayerId): Set<string> {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode & { colors?: string[] };
       if (e.rule !== 'keep_mana') continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      const applies = rulesFor(e.who, source, player);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       for (const c of e.colors ?? ['W', 'U', 'B', 'R', 'G', 'C']) out.add(c);
     }
@@ -85,7 +92,7 @@ export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): nu
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       // A rule for some spells only ("Aura and Equipment spells … flash") is checked per spell (flashPermission).
       if (e.rule !== rule || e.filter) continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      const applies = rulesFor(e.who, source, player);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       n += e.amount ?? 1;
     }
@@ -106,7 +113,7 @@ export function maxHandSize(g: GameState, player: PlayerId): number | null {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       if (e.rule !== 'max_hand_size' && e.rule !== 'hand_size_delta') continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      const applies = rulesFor(e.who, source, player);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       changes.push({ t: source.timestamp, ...(e.rule === 'max_hand_size' ? { set: e.amount ?? 7 } : { delta: e.amount ?? 0 }) });
     }
@@ -124,7 +131,7 @@ export function legendRuleExempt(g: GameState, o: GameObject): boolean {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
       if (e.rule !== 'no_legend_rule') continue;
-      const applies = e.who === 'each' || (e.who === 'you' ? o.controller === source.controller : o.controller !== source.controller);
+      const applies = rulesFor(e.who, source, o.controller);
       if (!applies || !staticConditionHolds(g, e, source)) continue;
       if (!e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source })) return true;
     }

@@ -261,7 +261,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // "each instant and sorcery card": each card that's either (as with "or").
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
   // "each Fungus and Saproling you control": either subtype.
-  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) === a && subtypeOf(z) === z ? `${a} or ` : m));
+  // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
+  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) && subtypeOf(z) && (subtypeOf(a) === a) === (subtypeOf(z) === z) ? `${a} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
   // describe every alternative.

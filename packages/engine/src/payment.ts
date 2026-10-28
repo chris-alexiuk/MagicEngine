@@ -15,7 +15,7 @@ import { lifeLoss, replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self'];
+export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -124,6 +124,40 @@ export function lifeCost(g: GameState, player: PlayerId, source: GameObject, c: 
   return Number(c.amount);
 }
 
+/**
+ * Training Grounds, Zirda: "Activated abilities of creatures you control cost {2} less to activate. This effect can't
+ * reduce the mana in that cost to less than one mana." (CR 601.2f, 118.7: generic mana only); Blossoming Tortoise:
+ * "Activated abilities of lands you control cost {1} less to activate." — mana abilities too.
+ */
+export function abilityCostReductions(g: GameState, o: GameObject, ability: { cost: Cost; text?: string; mana?: boolean }, mana: ManaCost, player: PlayerId): void {
+  if (ability.cost.loyalty !== undefined) return;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'ability_cost_reduction') continue;
+      // Zirda: "Abilities you activate that aren't mana abilities …"
+      if (a.effect.byYou ? player !== src.controller : !matchesFilter(g, o, a.effect.filter as ObjectFilter, { controller: src.controller, source: src })) continue;
+      if (a.effect.byYou && ability.mana) continue;
+      // Fighter Class: "Equip abilities you activate …" (CR 702.6a).
+      if (a.effect.equipOnly && !/^Equip\b/.test(ability.text ?? '')) continue;
+      const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.x;
+      if (mana.generic + others === 0) continue;
+      const floor = a.effect.minOne && others === 0 ? 1 : 0;
+      mana.generic = Math.max(floor, mana.generic - Number(a.effect.amount ?? 0));
+    }
+  }
+}
+
+/** "Remove a counter from a nonland permanent you control" as a cost: permanents you control like that with such a counter. */
+export function counterCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
+  const filter = (c.filter ?? {}) as ObjectFilter;
+  const kind = c.counter as string | undefined;
+  return g.zones.battlefield.filter((id) => {
+    const p = g.objects[id]!;
+    return p.controller === player && matchesFilter(g, p, filter, { controller: player, source: o }) && Object.entries(p.counters).some(([k, n]) => (n ?? 0) > 0 && (!kind || k === kind));
+  });
+}
+
 /** "Return an Island you control to its owner's hand" as a cost: permanents you control like that. */
 export function returnCostCandidates(g: GameState, player: PlayerId, o: GameObject, c: EffectNode): ObjectId[] {
   const filter = (c.filter ?? {}) as ObjectFilter;
@@ -180,6 +214,23 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       if (o.zone !== 'battlefield' || !count || new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) {
         throw new RulesError(`Choose ${c.anyNumber ? `${n} or more` : n} material(s) to craft with.`);
       }
+    } else if (c.type === 'remove_counters') {
+      // CR 118.3: "Remove two +1/+1 counters from among creatures you control" — the counters chosen, on permanents like that.
+      const n = Number(c.amount ?? 1);
+      const picks = choices.removed ?? [];
+      const ok = counterCostCandidates(g, player, o, c);
+      const kind = c.counter as string | undefined;
+      const total = picks.reduce((t, p) => t + p.n, 0);
+      const taken = new Map<string, number>();
+      for (const p of picks) {
+        const key = `${p.object}|${p.counter}`;
+        taken.set(key, (taken.get(key) ?? 0) + p.n);
+        const have = g.objects[p.object]?.counters[p.counter] ?? 0;
+        if (!ok.includes(p.object) || (kind && p.counter !== kind) || !Number.isInteger(p.n) || p.n < 1 || taken.get(key)! > have) {
+          throw new RulesError(`Choose ${n} ${kind ?? ''} counter(s) to remove from permanents you control.`.replace('  ', ' '));
+        }
+      }
+      if (total !== n) throw new RulesError(`Choose ${n} counter(s) to remove.`);
     } else if (c.type === 'remove_counters_self') {
       // CR 118.3: a cost can be paid only if it's possible — enough counters of that kind.
       const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
@@ -331,6 +382,13 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       for (const id of choices.exile ?? []) moveObject(g, id, 'exile', events);
     } else if (c.type === 'pay_energy') {
       payEnergy(g, player, Number(c.amount), events);
+    } else if (c.type === 'remove_counters') {
+      for (const p of choices.removed ?? []) {
+        const t = g.objects[p.object]!;
+        t.counters[p.counter] = (t.counters[p.counter] ?? 0) - p.n;
+        if (t.counters[p.counter]! <= 0) delete t.counters[p.counter];
+        events.push({ type: 'counters', object: t.id, counter: p.counter, delta: -p.n });
+      }
     } else if (c.type === 'remove_counters_self') {
       const counter = String(c.counter);
       const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
@@ -406,7 +464,9 @@ export function runManaAbility(
   if (ability.oncePerTurn && o.activatedTurn?.[onceKey] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[onceKey] = g.turn;
   checkOtherCosts(g, player, o, ability.cost, costChoices);
-  if (ability.cost.mana && !payMana(g, player, parseManaCost(ability.cost.mana), 0, { kind: 'ability', source: o })) {
+  const manaCost = ability.cost.mana ? parseManaCost(ability.cost.mana) : null;
+  if (manaCost) abilityCostReductions(g, o, ability, manaCost, player);
+  if (manaCost && !payMana(g, player, manaCost, 0, { kind: 'ability', source: o })) {
     throw new RulesError('Not enough mana in your pool to activate that.');
   }
   if (ability.cost.tap) setTapped(g, id, true, events);

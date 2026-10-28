@@ -1,4 +1,4 @@
-import type { Color, CostModifierNode, FaceDef, StaticAbility } from '@mtg/schema';
+import type { Color, CostModifierNode, FaceDef, ObjectFilter, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import type { ManaCost } from './mana.js';
@@ -7,6 +7,15 @@ import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import type { TargetRef } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
+
+/** "… if it targets a tapped creature": one of the chosen targets is like that. */
+function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: ObjectFilter, controller: PlayerId, source: GameObject): boolean {
+  return (targets ?? []).flat().some((t) => {
+    if (t.kind !== 'object') return false;
+    const o = g.objects[t.id];
+    return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, filter, { controller, source, anyZone: true }));
+  });
+}
 
 /**
  * CR 601.2f: the total cost of a spell is its mana cost (or an alternative cost), plus additional
@@ -26,14 +35,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (!e.self) continue;
     const ctx = ctxFor(player, spell);
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
-    if (e.ifTargets) {
-      const hit = (targets ?? []).flat().some((t) => {
-        if (t.kind !== 'object') return false;
-        const o = g.objects[t.id];
-        return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, e.ifTargets!, { controller: player, source: spell, anyZone: true }));
-      });
-      if (!hit) continue;
-    }
+    if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, player, spell)) continue;
     changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
   }
   for (const id of abilitySources(g)) {
@@ -55,6 +57,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
         if (before.length) continue;
       }
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
+      // Killian: "Spells you cast that target a creature cost {2} less to cast."
+      if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
       changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
     }
   }

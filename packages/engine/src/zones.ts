@@ -480,6 +480,7 @@ function drawLimited(g: GameState, player: PlayerId): boolean {
     return objectAbilities(g, source).some((a) => {
       if (a.kind !== 'static' || a.effect.type !== 'player_rule' || a.effect.rule !== 'max_one_draw') return false;
       const who = a.effect.who;
+      if (who === 'enchanted') return source.attachedToPlayer === player;
       return who === 'each' || (who === 'you' ? player === source.controller : player !== source.controller);
     });
   });

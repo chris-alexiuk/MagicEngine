@@ -9,7 +9,7 @@ import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
-import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
+import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -449,6 +449,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   let forageFood = false;
   // "Remove any number of storage counters": all of them, by default.
   let counters: number | undefined;
+  const removed: { object: ObjectId; counter: string; n: number }[] = [];
   for (const c of other) {
     const n = Number(c.amount ?? 1);
     if (c.type === 'sacrifice') {
@@ -482,7 +483,25 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     // CR 701.17b: "Mill a card" as a cost needs a card to mill.
     else if (c.type === 'mill' && zoneList(g, 'library', player).length < n) return null;
-    else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
+    else if (c.type === 'remove_counters') {
+      // The kind asked for; otherwise any counter but loyalty and +1/+1 first (they matter most).
+      let left = n;
+      const rank = (k: string) => (k === 'loyalty' ? 2 : k === '+1/+1' ? 1 : 0);
+      for (const id of counterCostCandidates(g, player, source, c)) {
+        const kinds = Object.entries(g.objects[id]!.counters).filter(([k, v]) => (v ?? 0) > 0 && (!c.counter || k === c.counter)).sort((a, b) => rank(a[0]) - rank(b[0]));
+        for (const [k, v] of kinds) {
+          if (left <= 0) break;
+          const used = removed.filter((r) => r.object === id && r.counter === k).reduce((t, r) => t + r.n, 0);
+          const take = Math.min(left, (v ?? 0) - used);
+          if (take > 0) {
+            removed.push({ object: id, counter: k, n: take });
+            left -= take;
+          }
+        }
+        if (left <= 0) break;
+      }
+      if (left > 0) return null;
+    } else if (c.type === 'remove_counters_self' && c.amount === 'X') counters = source.counters[String(c.counter)] ?? 0;
     else if (c.type === 'remove_counters_self' && (source.counters[String(c.counter)] ?? 0) < n) return null;
     else if (c.type === 'return_permanents') {
       // Tapped ones first (their mana is already spent).
@@ -542,10 +561,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}), ...(removed.length ? { removed } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.counters !== undefined ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.removed || costs.counters !== undefined ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {

@@ -161,10 +161,11 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const lifeEach = /^1 life (.+?) this turn$/.exec(t);
   if (lifeEach) return lifeThisTurn(lifeEach[1]!);
   // Faeburrow Elder: "for each color among permanents you control"
-  const colorAmong = /^color among (.+)$/.exec(t);
+  // Sisay, Weatherlight Captain: "for each color among other legendary permanents you control".
+  const colorAmong = /^color among (other )?(.+)$/.exec(t);
   if (colorAmong) {
-    const pf = parseFilter(colorAmong[1]!, b);
-    return pf && pf.plural && !pf.filter.zone ? { kind: 'colors_among', filter: pf.filter } : null;
+    const pf = parseFilter(colorAmong[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'colors_among', filter: { ...pf.filter, ...(colorAmong[1] ? { other: true } : {}) } } : null;
   }
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
@@ -310,7 +311,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Skyclave Apparition: "the mana value of the exiled card"
   const statOfThe = /^the (power|toughness|mana value) of (.+)$/.exec(t);
   if (statOfThe) {
-    const of = parseObjectRef(statOfThe[2]!, b.clone(), 'static');
+    // Soul's Majesty: "Draw cards equal to the power of target creature you control." — the target is the instruction's.
+    const targeted = /^target /.test(statOfThe[2]!);
+    const of = targeted ? parseObjectRef(statOfThe[2]!, b) : parseObjectRef(statOfThe[2]!, b.clone(), 'static');
     const s = statOfThe[1] === 'mana value' ? 'mana_value' : (statOfThe[1] as 'power' | 'toughness');
     if (of && !of.plural) return { kind: 'stat', stat: s, of: of.ref };
   }

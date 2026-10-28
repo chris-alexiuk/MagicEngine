@@ -221,6 +221,8 @@ const CARDS = [
   makeCard({ name: 'Den Lite', type_line: 'Land', mana_cost: '', oracle_text: 'If you control two or more other lands, this land enters tapped.\n{T}: Add {R}.' }),
   makeCard({ name: 'Stretch Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Target player takes two extra turns after this one.' }),
   makeCard({ name: 'Bloom Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'You may play up to three additional lands this turn.' }),
+  makeCard({ name: 'Merchant Lite', type_line: 'Creature — Human Citizen', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{T}, Remove a counter from a nonland permanent you control: Draw a card.' }),
+  makeCard({ name: 'Initiate Lite', type_line: 'Creature — Human Warlock', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: '{0}, Remove two +1/+1 counters from among creatures you control: You gain 5 life.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -2397,5 +2399,35 @@ describe('staples (slice 203): Fatal Push and friends', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bloom Lite', 'hand') }));
     for (let i = 0; i < 4; i++) g = settle(act(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') }));
     expect(illegal(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') })).toBeTruthy();
+  });
+});
+
+describe('staples (slice 203): removing counters from permanents you control as a cost', () => {
+  it("O'aka: any counter from a nonland permanent you control", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const m = give(g, 'alice', 'Merchant Lite', 'battlefield');
+    g.objects[m]!.sick = false;
+    expect(kitActions(g, m).length).toBe(0);
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g.objects[bear]!.counters.oil = 2;
+    const hand = g.zones.hand.alice!.length;
+    const [a] = kitActions(g, m);
+    expect(a).toBeDefined();
+    g = settle(act(g, a!));
+    expect(g.objects[bear]!.counters.oil).toBe(1);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Hopeful Initiate: two +1/+1 counters from among creatures you control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ini = give(g, 'alice', 'Initiate Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g.objects[ini]!.counters['+1/+1'] = 1;
+    g.objects[bear]!.counters['+1/+1'] = 1;
+    expect(illegal(g, { type: 'activate', player: 'alice', object: ini, ability: 0, costs: { removed: [{ object: bear, counter: '+1/+1', n: 2 }] } })).toBeTruthy();
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: ini, ability: 0, costs: { removed: [{ object: bear, counter: '+1/+1', n: 1 }, { object: ini, counter: '+1/+1', n: 1 }] } }));
+    expect(g.players.alice!.life).toBe(life + 5);
+    expect([g.objects[ini]!.counters['+1/+1'], g.objects[bear]!.counters['+1/+1']]).toEqual([undefined, undefined]);
   });
 });

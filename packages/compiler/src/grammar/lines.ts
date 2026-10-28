@@ -331,6 +331,21 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     if (!pf || pf.plural || pf.filter.zone || pf.filter.controller) return null;
     return { type: 'behold', amount: 1, filter: pf.filter };
   }
+  // O'aka: "Remove a counter from a nonland permanent you control"; Hopeful Initiate: "Remove two +1/+1 counters from among
+  // creatures you control"; Tekuthal: "Remove three counters from among other artifacts, creatures, and planeswalkers you
+  // control" (CR 118.3: any counters, of any kind unless one is named).
+  const removeFrom = /^[Rr]emove (a|an|one|two|three|four|five) (?:(\S+) )?counters? from (a|an|among) (.+? you control)$/.exec(item);
+  if (removeFrom && b && !/^(?:counters?)$/.test(removeFrom[2] ?? '')) {
+    const amount = parseAmount(removeFrom[1]!.replace(/^an$/, 'a'));
+    const among = removeFrom[3] === 'among';
+    const other = /^other /.test(removeFrom[4]!);
+    const pf = parseFilter(removeFrom[4]!.replace(/^other /, '').replace(/, and /g, ', or ').replace(/ and (?=\w+ you control$)/, ' or '), b);
+    if (typeof amount !== 'number' || !pf || pf.plural !== among || pf.filter.zone || pf.filter.controller !== 'you') return null;
+    if (other) pf.filter.other = true;
+    if (!among && amount > 1) return null;
+    const counter = removeFrom[2]?.replace(/−/g, '-');
+    return { type: 'remove_counters', amount, filter: pf.filter, ...(counter ? { counter } : {}) };
+  }
   // "Return an Island you control to its owner's hand", "return two Islands you control to their owner's hand"
   const ret = /^[Rr]eturn (a|an|one|two|three) (.+?) you control to (?:its|their) owners?'s? hands?$/.exec(item);
   if (ret && b) {
@@ -366,7 +381,9 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
   // "−X: …" — X announced as it's activated (CR 107.3, 606.4).
   const loyaltyX = /^([+−-])X$/.exec(text.trim());
   if (loyaltyX && planeswalker) return { loyalty: 0, loyaltyX: loyaltyX[1] === '+' ? 1 : -1 };
-  for (const item of text.split(/,\s*/)) {
+  // Items start with a capital or a symbol; a comma before a lowercase word is a list inside one ("Remove a counter from an
+  // artifact, creature, land, or planeswalker you control").
+  for (const item of text.split(/,\s*(?=[^\sa-z])/)) {
     // CR 701.67a: "Waterbend {3}" — mana, each generic of which may be paid by tapping an artifact or creature.
     const waterbend = /^[Ww]aterbend ((?:\{\d+\})+)$/.exec(item);
     if (waterbend) {
@@ -1166,7 +1183,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
 
   // CR 603.8: a state trigger — "When you control no Islands, sacrifice ~."
   // Dark Depths: "When Dark Depths has no ice counters on it, …"
-  if (word === 'When' && (/^you control no /.test(t) || /^~ has no \S+ counters on it$/.test(t))) {
+  // Endrek Sahr: "When you control seven or more Thrulls, sacrifice Endrek Sahr."
+  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t))) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
   }
@@ -2113,8 +2131,8 @@ function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
 
 function parsePlayerRule(body: string): PlayerRuleNode | null {
   const who = (w: string): PlayerRuleNode['who'] | null =>
-    w === 'You' || w === 'you' ? 'you' : /^(?:each player|players)$/i.test(w) ? 'each' : /^(?:each opponent|your opponents)$/i.test(w) ? 'opponents' : null;
-  const subject = /^(You|Players|Each player|Each opponent|Your opponents) (.+)$/.exec(body);
+    w === 'You' || w === 'you' ? 'you' : /^(?:each player|players)$/i.test(w) ? 'each' : /^(?:each opponent|your opponents)$/i.test(w) ? 'opponents' : /^enchanted player$/i.test(w) ? 'enchanted' : null;
+  const subject = /^(You|Players|Each player|Each opponent|Your opponents|Enchanted player) (.+)$/.exec(body);
   const simple: Record<string, PlayerRule> = {
     'have hexproof': 'hexproof',
     'has hexproof': 'hexproof',
@@ -2574,6 +2592,14 @@ export const costModifierRule: GrammarRule = {
       } else if (a.amount === 'X') return null;
       const ability: StaticAbility = { kind: 'static', text: original, effect: node };
       return ability;
+    }
+    // Killian, Ink Duelist: "Spells you cast that target a creature cost {2} less to cast." (CR 601.2f: targets first)
+    const thatTarget = /^Spells you cast that target (?:a|an) (.+?) cost (\{\d+\}) (less|more) to cast$/.exec(body);
+    if (thatTarget) {
+      const a = amountOf(thatTarget[2]!);
+      const pf = a ? parseFilter(thatTarget[1]!, b) : null;
+      if (!a || !pf || pf.plural) return null;
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', change: thatTarget[3] as 'less' | 'more', ifTargets: pf.filter, ...a } as CostModifierNode };
     }
     // Herald's Horn, Urza's Incubator: "Creature spells you cast of the chosen type cost {1} less to cast."
     // Goblin Anarchomancer: "Each spell you cast that's red or green costs {1} less to cast."
@@ -3513,10 +3539,11 @@ export const abilityCostReductionRule: GrammarRule = {
     const equip = /^Equip abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
     if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1]) } } as StaticAbility;
     const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
-    if (!env || !m || !m[3]) return null;
+    if (!env || !m) return null;
     const pf = parseFilter(m[1]!.replace(/ and /g, ' or '), new Binder(env));
     if (!pf || !pf.plural || pf.filter.zone) return null;
-    return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', filter: pf.filter, amount: Number(m[2]), minOne: true } } as StaticAbility;
+    // Blossoming Tortoise: without the clause, down to nothing.
+    return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', filter: pf.filter, amount: Number(m[2]), ...(m[3] ? { minOne: true } : {}) } } as StaticAbility;
   },
 };
 
