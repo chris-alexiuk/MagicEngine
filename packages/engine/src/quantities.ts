@@ -133,5 +133,5 @@ export function putPlayerCounters(g: GameState, by: PlayerId, p: PlayerId, count
   if (amount <= 0) return;
   if (counter === 'poison') ps.poison += amount;
   else (ps.counters ??= {})[counter] = (ps.counters?.[counter] ?? 0) + amount;
-  events.push({ type: 'player_counters', player: p, counter, delta: amount });
+  events.push({ type: 'player_counters', player: p, counter, delta: amount, by });
 }

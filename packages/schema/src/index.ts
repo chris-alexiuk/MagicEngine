@@ -524,7 +524,9 @@ export type Ref =
   // Baleful Mastery: "an opponent draws a card" — the opponent this resolution chose (choose_opponent).
   | { ref: 'chosen_opponent' }
   /** "Put a +1/+1 counter on a creature you control. It gains …" — the object that effect chose. */
-  | { ref: 'chosen_object' };
+  | { ref: 'chosen_object' }
+  /** CR 702.51c: "each creature that convoked this spell" — the creatures tapped to cast it (Lethal Scheme). */
+  | { ref: 'convoked' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -552,6 +554,10 @@ export type AmountExpr = (
   | { kind: 'stat'; stat: 'power' | 'toughness' | 'mana_value' | 'colors'; of: Ref }
   /** "the amount of mana spent to cast that spell" (CR 601.2h). */
   | { kind: 'mana_spent'; of: Ref }
+  /** Ancient Imperiosaur: "for each creature that convoked it" (CR 702.51c). */
+  | { kind: 'convoked'; of: Ref }
+  /** Plumb the Forbidden: "for each creature sacrificed this way" — as the spell was cast. */
+  | { kind: 'sacrificed_to_cast'; of: Ref }
   /** Multani: "for each land you control and each land card in your graveyard" — counts added together. */
   | { kind: 'sum'; parts: AmountExpr[] }
   | { kind: 'life'; who: Ref }
@@ -1050,6 +1056,22 @@ export interface CostModifierNode extends EffectNode {
   nthEachTurn?: number;
   /** Defense Grid: "except during its controller's turn". */
   exceptCastersTurn?: true;
+  /** Morophon: "cost {W}{U}{B}{R}{G} less to cast" — one of each of these colors (`amount` each); `coloredOnly`: "This effect
+   * reduces only the amount of colored mana you pay." */
+  colors?: Color[];
+  coloredOnly?: true;
+  /** Torgaar: "This spell costs {2} less to cast for each creature sacrificed this way" (`amount` each). */
+  perSacrificed?: true;
+}
+
+/**
+ * Defiler of Vigor: "As an additional cost to cast green permanent spells, you may pay 2 life. Those spells cost {G} less to
+ * cast if you paid life this way." — one {G} of each such spell may be paid with 2 life, like a Phyrexian symbol (CR 107.4f).
+ */
+export interface PhyrexianGrantNode extends EffectNode {
+  type: 'phyrexian_grant';
+  filter: ObjectFilter;
+  color: Color;
 }
 
 /**
@@ -1195,7 +1217,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw', 'damage_prevented',
@@ -1206,7 +1228,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

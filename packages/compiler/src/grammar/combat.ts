@@ -32,6 +32,8 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     const pf = parseFilter(except[1]!, b);
     return pf && pf.plural ? { blockableOnlyBy: pf.filter } : null;
   }
+  // Skrelv, Defector Mite: "Choose a color. … It can't be blocked by creatures of that color this turn." — the color chosen.
+  if (p === "can't be blocked by creatures of that color" && b.choseColor) return { cantBeBlockedBy: { types: ['Creature'], colors: ['chosen' as never] } };
   const by = /^can't be blocked by (.+)$/.exec(p);
   if (by) {
     const pf = parseFilter(by[1]!, b);

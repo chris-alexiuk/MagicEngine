@@ -151,6 +151,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       return (ctx.resolution?.moves ?? [])
         .filter((m) => m.effect === 'discard' && m.from === 'hand')
         .flatMap((m) => (g.objects[m.id] && g.objects[m.id]!.zone === m.to ? [g.objects[m.id]!] : []));
+    case 'convoked': {
+      // CR 702.51c: the creatures that convoked the spell (or the spell this permanent was) — as they are now.
+      const src = ctx.source;
+      return (src?.cast?.convoked ?? []).flatMap((r) => (g.objects[r.id]?.zcc === r.zcc && g.objects[r.id]!.zone === 'battlefield' ? [g.objects[r.id]!] : []));
+    }
     case 'exiled_with': {
       // CR 607.2a: cards in exile that this object's linked ability put there.
       const s = ctx.source;
@@ -257,7 +262,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -328,6 +333,10 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return statOf(ctx, e.of, e.stat);
     case 'mana_spent':
       return refObjects(ctx, e.of)[0]?.cast?.manaSpent ?? 0;
+    case 'convoked':
+      return refObjects(ctx, e.of)[0]?.cast?.convoked?.length ?? 0;
+    case 'sacrificed_to_cast':
+      return refObjects(ctx, e.of)[0]?.cast?.sacrificed ?? 0;
     case 'sum':
       return e.parts.reduce((n, p) => n + amountOf(ctx, p), 0);
     case 'life':

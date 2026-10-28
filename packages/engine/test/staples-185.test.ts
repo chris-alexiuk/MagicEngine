@@ -409,6 +409,20 @@ const CARDS = [
   makeCard({ name: 'Promise Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Each player puts a vow counter on a creature they control and sacrifices the rest. Each of those creatures can't attack you or planeswalkers you control for as long as it has a vow counter on it." }),
   makeCard({ name: 'Necromancy Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'You may cast this spell as though it had flash. If you cast it any time a sorcery couldn\'t have been cast, the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step.\nWhen this enchantment enters, if it\'s on the battlefield, it becomes an Aura with "enchant creature put onto the battlefield with Necromancy Lite." Put target creature card from a graveyard onto the battlefield under your control and attach this enchantment to it. When this enchantment leaves the battlefield, that creature\'s controller sacrifices it.' }),
   makeCard({ name: 'Disenchant Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target artifact or enchantment.' }),
+  makeCard({ name: 'Morophon Lite', type_line: 'Legendary Creature — Shapeshifter', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'As Morophon Lite enters, choose a creature type.\nSpells of the chosen type you cast cost {W}{U}{B}{R}{G} less to cast. This effect reduces only the amount of colored mana you pay.' }),
+  makeCard({ name: 'Rainbow Bear', type_line: 'Creature — Bear', mana_cost: '{2}{W}{U}{B}{R}{G}', cmc: 7, colors: ['W', 'U', 'B', 'R', 'G'], power: '7', toughness: '7', oracle_text: '' }),
+  makeCard({ name: 'Defiler of Vigor Lite', type_line: 'Creature — Phyrexian Dragon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'As an additional cost to cast green permanent spells, you may pay 2 life. Those spells cost {G} less to cast if you paid life this way. This effect reduces only the amount of green mana you pay.' }),
+  makeCard({ name: 'Muldrotha Lite', type_line: 'Legendary Creature — Elemental Avatar', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'During each of your turns, you may play a land and cast a permanent spell of each permanent type from your graveyard.' }),
+  makeCard({ name: 'Broodship Lite', type_line: 'Artifact — Spacecraft', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Station (Tap another creature you control: Put charge counters equal to its power on this Spacecraft. Station only as a sorcery. It's an artifact creature at 8+.)\n8+ | Flying\nOnce during each of your turns, you may cast a permanent spell from your graveyard by sacrificing a land in addition to paying its other costs." }),
+  makeCard({ name: 'Hearthhull Lite', type_line: 'Legendary Artifact — Spacecraft', mana_cost: '{0}', power: '6', toughness: '7', oracle_text: "Station (Tap another creature you control: Put charge counters equal to its power on this Spacecraft. Station only as a sorcery. It's an artifact creature at 8+.)\n2+ | {0}, Sacrifice a land: You gain 1 life.\n8+ | Flying, vigilance, haste\nWhenever you sacrifice a land, each opponent loses 2 life." }),
+  makeCard({ name: 'Lethal Scheme Lite', type_line: 'Instant', mana_cost: '{2}{B}{B}', cmc: 4, colors: ['B'], oracle_text: 'Convoke\nDestroy target creature or planeswalker. Each creature that convoked this spell connives.' }),
+  makeCard({ name: 'Black Cub', type_line: 'Creature — Bear', mana_cost: '{0}', colors: ['B'], power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Loxodon Lite', type_line: 'Creature — Elephant Cleric', mana_cost: '{4}{W}', cmc: 5, colors: ['W'], power: '4', toughness: '4', oracle_text: 'Convoke\nWhen this creature enters, put a +1/+1 counter on each creature that convoked it.' }),
+  makeCard({ name: 'Imperiosaur Lite', type_line: 'Creature — Dinosaur', mana_cost: '{5}{G}{G}', cmc: 7, colors: ['G'], power: '2', toughness: '2', oracle_text: 'Convoke\nThis creature enters with two +1/+1 counters on it for each creature that convoked it.' }),
+  makeCard({ name: 'All Will Be One Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever you put one or more counters on a permanent or player, this enchantment deals that much damage to target opponent, creature an opponent controls, or planeswalker an opponent controls.' }),
+  makeCard({ name: 'Skrelv Lite', type_line: 'Legendary Artifact Creature — Phyrexian Mite', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{W/P}, {T}: Choose a color. Another target creature you control gains toxic 1 and hexproof from that color until end of turn. It can\'t be blocked by creatures of that color this turn.' }),
+  makeCard({ name: 'Plumb Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'As an additional cost to cast this spell, you may sacrifice one or more creatures. When you do, copy this spell for each creature sacrificed this way.\nYou draw a card and you lose 1 life.' }),
+  makeCard({ name: 'Torgaar Lite', type_line: 'Legendary Creature — Avatar', mana_cost: '{6}{B}{B}', cmc: 8, colors: ['B'], power: '7', toughness: '6', oracle_text: 'As an additional cost to cast this spell, you may sacrifice any number of creatures. This spell costs {2} less to cast for each creature sacrificed this way.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4756,6 +4770,177 @@ describe('staples (slice 219): Phyrexian mana (CR 107.4f)', () => {
     }
     expect([g.active, atEnd]).toEqual(['alice', 'battlefield']);
     expect([g.objects[necro]!.zone, g.objects[bear]!.zone]).toEqual(['graveyard', 'graveyard']);
+  });
+
+  it('Morophon: spells of the chosen type cost {W}{U}{B}{R}{G} less, only their colored mana', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const m = give(g, 'alice', 'Morophon Lite', 'battlefield');
+    g.objects[m]!.chosen = { creatureType: 'Bear' };
+    const rainbow = give(g, 'alice', 'Rainbow Bear', 'hand');
+    g.players.alice!.pool.C = 1;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: rainbow })).toBeTruthy();
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: rainbow }));
+    expect(g.objects[rainbow]!.zone).toBe('battlefield');
+    const bear = give(g, 'alice', 'Bear', 'hand');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+  });
+
+  it('Defiler of Vigor: one {G} of a green permanent spell may be paid with 2 life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Defiler of Vigor Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'hand');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect([g.objects[bear]!.zone, g.players.alice!.life]).toEqual(['battlefield', 18]);
+    const bear2 = give(g, 'alice', 'Bear', 'hand');
+    g.players.alice!.pool.C = 1;
+    g.players.alice!.pool.G = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear2 }));
+    expect([g.objects[bear2]!.zone, g.players.alice!.life]).toEqual(['battlefield', 18]);
+  });
+
+  it('Muldrotha: a land and one permanent spell of each permanent type from your graveyard, during each of your turns', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Muldrotha Lite', 'battlefield');
+    const [cub1, cub2, trinket, forest] = ['Cub', 'Cub', 'Trinket', 'Forest'].map((n) => give(g, 'alice', n, 'graveyard'));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: cub1! }));
+    expect(g.objects[cub1!]!.zone).toBe('battlefield');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: cub2! })).toBeTruthy();
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: trinket! }));
+    expect(g.objects[trinket!]!.zone).toBe('battlefield');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'play_land' && a.object === forest)).toBe(true);
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: forest! }));
+    expect(g.objects[forest!]!.zone).toBe('battlefield');
+    g = toStep(g, 'main1', 'bob');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: cub2! })).toBeTruthy();
+    g = toStep(g, 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: cub2! }));
+    expect(g.objects[cub2!]!.zone).toBe('battlefield');
+  });
+
+  it('Exploration Broodship: at 8+, a permanent spell from your graveyard by sacrificing a land — once each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ship = give(g, 'alice', 'Broodship Lite', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    const [cub1, cub2] = [give(g, 'alice', 'Cub', 'graveyard'), give(g, 'alice', 'Cub', 'graveyard')];
+    expect(illegal(g, { type: 'cast', player: 'alice', object: cub1, costs: { sacrifice: [forest] } })).toBeTruthy();
+    g.objects[ship]!.counters.charge = 8;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: cub1 })).toBeTruthy();
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === cub1)).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: cub1, costs: { sacrifice: [forest] } }));
+    expect([g.objects[cub1]!.zone, g.objects[forest]!.zone]).toEqual(['battlefield', 'graveyard']);
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === cub2)).toBe(false);
+  });
+
+  it("a Spacecraft's later lines are in its last striation's box (Hearthhull: the life loss only at 8+)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ship = give(g, 'alice', 'Hearthhull Lite', 'battlefield');
+    g.objects[ship]!.counters.charge = 2;
+    give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: ship, ability: 0, costs: { sacrifice: [g.zones.battlefield.find((id) => g.objects[id]!.card === 'Forest')!] } }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([21, 20]);
+    g.objects[ship]!.counters.charge = 8;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: ship, ability: 0, costs: { sacrifice: [g.zones.battlefield.find((id) => g.objects[id]!.card === 'Forest')!] } }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([22, 18]);
+  });
+
+  it('Lethal Scheme: each creature that convoked it connives, one at a time', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cubs = [0, 1, 2, 3].map(() => give(g, 'alice', 'Black Cub', 'battlefield'));
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g.players.alice!.pool.B = 1;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Lethal Scheme Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]], costs: { convoke: cubs.slice(0, 3) } });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'discard') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [g.zones.hand.alice![0]!] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+    expect(cubs.slice(0, 3).every((id) => g.objects[id]!.tapped)).toBe(true);
+    const grown = cubs.filter((id) => (g.objects[id]!.counters['+1/+1'] ?? 0) > 0);
+    expect(grown.every((id) => cubs.slice(0, 3).includes(id))).toBe(true);
+  });
+
+  it('Venerated Loxodon and Ancient Imperiosaur: counters for the creatures that convoked them', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cubs = [0, 1, 2, 3, 4, 5].map(() => give(g, 'alice', 'Cub', 'battlefield'));
+    g.players.alice!.pool.W = 1;
+    g.players.alice!.pool.C = 2;
+    const lox = give(g, 'alice', 'Loxodon Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: lox, costs: { convoke: cubs.slice(0, 2) } }));
+    expect(cubs.map((id) => g.objects[id]!.counters['+1/+1'] ?? 0)).toEqual([1, 1, 0, 0, 0, 0]);
+    g.players.alice!.pool.G = 2;
+    g.players.alice!.pool.C = 2;
+    const dino = give(g, 'alice', 'Imperiosaur Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: dino, costs: { convoke: cubs.slice(2, 5) } }));
+    expect(g.objects[dino]!.counters['+1/+1']).toBe(6);
+  });
+
+  it('All Will Be One: counters you put on a permanent or a player deal that much damage', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'All Will Be One Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const answer = (gg: typeof g) => {
+      let x = gg;
+      for (let i = 0; i < 20 && (x.stack.length || x.pending); i++) {
+        if (x.pending?.kind === 'trigger_targets') x = act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } });
+        else if (x.pending) break;
+        else x = act(x, { type: 'pass', player: x.priority! });
+      }
+      return x;
+    };
+    g = answer(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolster Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(g.players.bob!.life).toBe(17);
+    g = answer(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Energy Lite', 'hand') }));
+    expect(g.players.bob!.life).toBe(14);
+  });
+
+  it('Skrelv: toxic 1, hexproof from the chosen color, and unblockable by creatures of that color', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const skrelv = give(g, 'alice', 'Skrelv Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const [black, green] = [give(g, 'bob', 'Black Cub', 'battlefield'), give(g, 'bob', 'Cub', 'battlefield')];
+    g.players.alice!.pool.W = 1;
+    g = act(g, { type: 'activate', player: 'alice', object: skrelv, ability: 0, targets: [[{ kind: 'object', object: bear }]] });
+    for (let i = 0; i < 10 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'choose_option') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'B' } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(chars(g, g.objects[bear]!).keywords.some((k) => k.id === 'toxic')).toBe(true);
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 10 && g.pending?.kind !== 'declare_blockers'; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: black, attacker: bear }] } })).toBeTruthy();
+    expect(() => act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: green, attacker: bear }] } })).not.toThrow();
+  });
+
+  it('Plumb the Forbidden: a copy for each creature sacrificed as it was cast', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cubs = [0, 1].map(() => give(g, 'alice', 'Cub', 'battlefield'));
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Plumb Lite', 'hand'), costs: { sacrifice: cubs } }));
+    expect(cubs.map((id) => g.objects[id]!.zone)).toEqual(['graveyard', 'graveyard']);
+    expect([g.zones.hand.alice!.length - hand, g.players.alice!.life]).toEqual([3, 17]);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Plumb Lite', 'hand') }));
+    expect([g.zones.hand.alice!.length - hand, g.players.alice!.life]).toEqual([4, 16]);
+  });
+
+  it('Torgaar: {2} less for each creature sacrificed as it was cast', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cubs = [0, 1, 2].map(() => give(g, 'alice', 'Cub', 'battlefield'));
+    const torgaar = give(g, 'alice', 'Torgaar Lite', 'hand');
+    g.players.alice!.pool.B = 2;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: torgaar, costs: { sacrifice: cubs.slice(0, 2) } })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: torgaar, costs: { sacrifice: cubs } }));
+    expect(g.objects[torgaar]!.zone).toBe('battlefield');
+    expect(cubs.every((id) => g.objects[id]!.zone === 'graveyard')).toBe(true);
   });
 });
 

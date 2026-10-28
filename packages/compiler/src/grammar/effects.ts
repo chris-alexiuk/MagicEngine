@@ -2412,7 +2412,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // "Choose a creature type." / "Choose a color." as it resolves: "the chosen type" afterwards.
   const chooseValue = /^[Cc]hoose a (creature type|color)$/.exec(s);
-  if (chooseValue) return [{ type: 'choose_value', choice: chooseValue[1] === 'color' ? 'color' : 'creature_type' }];
+  if (chooseValue) {
+    if (chooseValue[1] === 'color') b.choseColor = true;
+    return [{ type: 'choose_value', choice: chooseValue[1] === 'color' ? 'color' : 'creature_type' }];
+  }
   // CR 701.24a: "Shuffle.", "That player shuffles.", "then shuffle" (after a draw).
   if (/^(?:Then )?[Ss]huffle(?: your library)?$/.test(s)) return [{ type: 'shuffle', who: { ref: 'you' } }];
   const shuffles = /^(.+?) shuffles(?: their library)?$/.exec(s);
@@ -4302,7 +4305,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   if (connive) {
     const what = parseObjectRef(connive[1]!, b);
     const amount = connive[2] ? parseAmount(connive[2]) : null;
-    return what && !what.plural ? [{ type: 'connive', what: what.ref, ...(amount !== null && amount !== undefined ? { amount } : {}) }] : null;
+    // CR 701.50c: several connive one at a time ("Each creature that convoked this spell connives", "Each creature you control
+    // connives").
+    return what && (!what.plural || ['all', 'convoked'].includes(what.ref.ref)) ? [{ type: 'connive', what: what.ref, ...(amount !== null && amount !== undefined ? { amount } : {}) }] : null;
   }
   // CR 701.47a: "Amass Orcs 2" (older cards: "Amass 2", Zombies).
   const amass = /^amass(?: (\w+))? (\S+)$/i.exec(c);

@@ -7,7 +7,7 @@ import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { helperKeywords, payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
-import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
+import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canActivateTapAbilities, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
@@ -56,7 +56,7 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { exileOnLeavePermission, freePermission, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
 import { lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
@@ -322,7 +322,9 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const fromExile = (o.zone === 'exile' || o.zone === 'library' || o.zone === 'graveyard') && mayPlayFrom(g, player, o, 'land');
   // "You may play lands from your graveyard."
   const fromGraveyard = o.zone === 'graveyard' && o.owner === player && ruleAllows(g, player, 'lands_from_graveyard', o);
-  if (!fromExile && !fromGraveyard && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
+  // Muldrotha: "you may play a land … from your graveyard" during each of your turns.
+  const landKey = !fromExile && !fromGraveyard ? graveyardLandPermission(g, player, o) : null;
+  if (!fromExile && !fromGraveyard && !landKey && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
   if (!face.types.includes('Land')) throw new RulesError(`${face.name} isn’t a land.`);
   // CR 712.12: a modal double-faced card is played as a land with a land face up.
   if (faceIndex > 0 && def.layout !== 'modal_dfc') throw new RulesError('Only modal double-faced cards can be played back face up.');
@@ -334,6 +336,7 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   if (g.players[player]!.landsPlayedThisTurn >= landsAllowed(g, player)) throw new RulesError('You’ve already played a land this turn.');
 
   g.players[player]!.landsPlayedThisTurn++;
+  if (landKey) (g.turnLog.graveyardCasts ??= []).push(landKey);
   const from = o.zone;
   // CR 116.2a: playing a land is a special action — it goes straight onto the battlefield.
   moveObject(g, id, 'battlefield', events, { controller: player, face: faceIndex });
@@ -744,10 +747,20 @@ function cast(
       ...added.flatMap((a) => a.cost.other ?? []),
       ...(lifeInstead && manaValueOf(g, o) > 0 ? [{ type: 'pay_life', amount: manaValueOf(g, o) }] : []),
       ...(phyrexianLife ? [{ type: 'pay_life', amount: phyrexianLife }] : []),
+      // Exploration Broodship: "by sacrificing a land in addition to paying its other costs".
+      ...graveyardPermissionCosts(g, graveyardKey),
       // Terror of the Peaks: "Spells your opponents cast that target this creature cost an additional 3 life to cast."
       ...(targetLifeTax(g, player, targets) > 0 ? [{ type: 'pay_life', amount: targetLifeTax(g, player, targets) }] : []),
     ].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
   };
+  // Torgaar, Plumb the Forbidden: "you may sacrifice any number of creatures" — as many as were chosen (CR 601.2b).
+  const fixedSacrifices = (additional.other ?? []).filter((c) => c.type === 'sacrifice' && c.amount !== 'any').reduce((n, c) => n + Number(c.amount ?? 1), 0);
+  const anySacrificed = (additional.other ?? []).some((c) => c.type === 'sacrifice' && c.amount === 'any') ? Math.max(0, (costChoices.sacrifice?.length ?? 0) - fixedSacrifices) : 0;
+  additional.other = (additional.other ?? []).map((c) => (c.type === 'sacrifice' && c.amount === 'any' ? { ...c, amount: anySacrificed } : c));
+  // "This spell costs {2} less to cast for each creature sacrificed this way." (CR 601.2f)
+  for (const a of castFace.abilities) {
+    if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perSacrificed) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anySacrificed);
+  }
   checkOtherCosts(g, player, o, additional, costChoices);
   // CR 119.4: all the life it costs at once.
   const lifeTotal = (additional.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
@@ -825,6 +838,10 @@ function cast(
     ...(uncounterableCast ? { uncounterable: true as const } : {}),
     ...(hasteUntil !== undefined ? { hasteUntil } : {}),
     ...(palace ? { enterCounters: { '+1/+1': palace } } : {}),
+    // Plumb the Forbidden: "copy this spell for each creature sacrificed this way".
+    ...(anySacrificed ? { sacrificed: anySacrificed } : {}),
+    // CR 702.51c: the creatures that convoked it.
+    ...(costChoices.convoke?.length ? { convoked: costChoices.convoke.map((c) => ({ id: c, zcc: g.objects[c]!.zcc })) } : {}),
     // CR 702.150a: compleated — how many Phyrexian symbols were paid with life.
     ...(phyrexianLife ? { phyrexianLife: phyrexianLife / 2 } : {}),
     // Addendum: cast during the caster's own main phase.

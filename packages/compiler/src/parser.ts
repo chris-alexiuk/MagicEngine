@@ -190,6 +190,31 @@ export class ParserRegistry {
         continue;
       }
 
+      // Torgaar, Famine Incarnate: "As an additional cost to cast this spell, you may sacrifice any number of creatures. This
+      // spell costs {2} less to cast for each creature sacrificed this way."; Plumb the Forbidden: "… you may sacrifice one or
+      // more creatures. When you do, copy this spell for each creature sacrificed this way." — as many as you choose.
+      const sacAny = /^As an additional cost to cast (?:this spell|~), you may sacrifice (?:any number of|one or more) (.+?)\. (?:(?:This spell|~) costs \{(\d+)\} less to cast for each (?:[a-z]+) sacrificed this way|When you do, (copy (?:this spell|~) for each [a-z]+ sacrificed this way))\.$/.exec(line);
+      if (sacAny) {
+        const base = this.parseBlock([`As an additional cost to cast this spell, sacrifice X ${sacAny[1]}.`], env, line);
+        const cost = base?.kind === 'static' && base.effect.type === 'additional_cost' ? (base.effect as unknown as { cost: { type: string; amount?: unknown } }).cost : null;
+        if (cost?.type === 'sacrifice' && cost.amount === 'X') {
+          cost.amount = 'any';
+          result.abilities.push(base!);
+          if (sacAny[2]) {
+            result.abilities.push({ kind: 'static', text: line, effect: { type: 'cost_modifier', self: true, change: 'less', amount: Number(sacAny[2]), perSacrificed: true } } as AbilityNode);
+          } else {
+            result.abilities.push({
+              kind: 'triggered',
+              text: line,
+              trigger: { type: 'cast', who: 'you', self: true },
+              condition: { type: 'amount', amount: { kind: 'sacrificed_to_cast', of: { ref: 'self' } }, op: 'ge', n: 1 },
+              effects: [{ type: 'copy_spell', what: { ref: 'self' }, amount: { kind: 'sacrificed_to_cast', of: { ref: 'self' } } }],
+              zone: 'stack',
+            } as AbilityNode);
+          }
+          continue;
+        }
+      }
       // Necromancy: "You may cast this spell as though it had flash. If you cast it any time a sorcery couldn't have been cast,
       // the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step." — flash, and (as
       // the permanent it became) a delayed trigger for the next cleanup step (CR 514.3a).
@@ -249,6 +274,9 @@ export class ParserRegistry {
       const stationSymbol = /^(\d+)\+ \| (.+)$/.exec(line);
       if (maxSpeed || stationSymbol) {
         const speedGate: ConditionNode = maxSpeed ? (line.startsWith('∞') ? { type: 'harnessed' } : { type: 'max_speed' }) : { type: 'counters', of: { ref: 'self' }, counter: 'charge', min: Number(stationSymbol![1]) };
+        // CR 721.2a: the lines after a striation's first are in its box too (Hearthhull, the Worldseed: "8+ | Flying,
+        // vigilance" then "Whenever you sacrifice a land, …").
+        if (stationSymbol) gate = speedGate;
         const rest = maxSpeed ? maxSpeed[1]! : stationSymbol![2]!;
         const inner = this.keywords.parseLine(rest);
         if (inner) {

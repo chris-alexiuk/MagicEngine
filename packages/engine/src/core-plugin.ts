@@ -138,6 +138,17 @@ function discardRecorded(ctx: EffectContext, id: string): void {
 }
 
 /** Splits "+1/+1" counters from others and fires the event. */
+/**
+ * A resolving effect's combat rules with what it refers to filled in: Promise of Loyalty's "you" (its controller); Skrelv's
+ * "creatures of that color" (the color chosen as it resolves).
+ */
+function bindCombat(combat: CombatRules, controller: PlayerId, color: string | undefined): CombatRules {
+  let out = combat.cantAttackYou ? { ...combat, cantAttackPlayer: controller } : combat;
+  const by = out.cantBeBlockedBy?.colors;
+  if (by?.includes('chosen' as never)) out = { ...out, cantBeBlockedBy: { ...out.cantBeBlockedBy, colors: color && color !== 'colorless' ? [color as Color] : [] } };
+  return out;
+}
+
 function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: number): void {
   // CR 614.1a: "that many plus one +1/+1 counters are put on it instead", counter doublers.
   n = replaceQuantity(ctx.g, 'counters', n, { player: ctx.controller, object: o, counter });
@@ -860,7 +871,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.cantHave) ? { cantHave: node.cantHave as string[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       // Promise of Loyalty: "can't attack you or planeswalkers you control" — this effect's controller.
-      ...(node.combat ? { combat: (node.combat as CombatRules).cantAttackYou ? { ...(node.combat as CombatRules), cantAttackPlayer: ctx.controller } : (node.combat as CombatRules) } : {}),
+      ...(node.combat ? { combat: bindCombat(node.combat as CombatRules, ctx.controller, chosen.color ?? ctx.source?.chosen?.color) } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
       // Mirror Entity: "… and gain all creature types" (layer 4).
@@ -2301,41 +2312,51 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   connive(node, ctx) {
     // CR 701.50a: draw a card, then discard a card; if it was a nonland card, put a +1/+1 counter on the conniver.
-    const memo = ctx.memo as { drew?: boolean; who?: PlayerId; n?: number; conniver?: { id: string; zcc: number } };
-    const answer = answerOf(ctx, 'discard');
-    if (!memo.drew) {
+    // CR 701.50c: several connive one at a time (Lethal Scheme: "Each creature that convoked this spell connives.").
+    const g = ctx.g;
+    const memo = ctx.memo as { queue?: { id: string; zcc: number; who: PlayerId }[]; drew?: boolean; n?: number };
+    let answer = answerOf(ctx, 'discard');
+    if (!memo.queue) {
       // CR 701.50d: "connives N" — draw N, discard N; CR 701.50e: connive 0 is nothing.
       const n = node.amount !== undefined ? Math.max(0, amountOf(ctx, node.amount)) : 1;
       if (n === 0) return true;
-      const [o] = refObjects(ctx, ref(node, 'what'));
-      // CR 701.50b: if it's gone, its last known controller still connives.
-      const who = o?.controller ?? ctx.controller;
-      memo.drew = true;
-      memo.who = who;
       memo.n = n;
-      if (o) memo.conniver = { id: o.id, zcc: o.zcc };
-      for (let i = 0; i < n; i++) drawCard(ctx.g, who, ctx.events);
+      const objs = refObjects(ctx, ref(node, 'what'));
+      const order = apnap(g);
+      // CR 701.50b: if it's gone, its last known controller still connives.
+      // "Each creature that convoked this spell connives" — none, if none did.
+      const several = ['all', 'convoked'].includes((ref(node, 'what') as { ref: string }).ref);
+      memo.queue = objs.length ? objs.map((o) => ({ id: o.id, zcc: o.zcc, who: o.controller })).sort((a, b) => order.indexOf(a.who) - order.indexOf(b.who)) : several ? [] : [{ id: '', zcc: 0, who: ctx.controller }];
     }
-    const who = memo.who!;
     const n = memo.n ?? 1;
-    const hand = zoneList(ctx.g, 'hand', who);
-    const count = Math.min(n, hand.length);
-    let discarded: string[];
-    if (answer) {
-      if (answer.objects.length !== count || new Set(answer.objects).size !== count || !answer.objects.every((id) => hand.includes(id))) throw new RulesError(count === 1 ? 'Choose one card from your hand to discard.' : `Choose ${count} cards from your hand to discard.`);
-      discarded = answer.objects;
-    } else if (hand.length > count) {
-      return { ask: { kind: 'discard', player: who, count } };
-    } else discarded = [...hand];
-    if (!discarded.length) return true;
-    let nonland = 0;
-    for (const id of discarded) {
-      const card = ctx.g.objects[id]!;
-      if (!ctx.g.cards[card.card]!.faces[card.face]!.types.includes('Land')) nonland++;
-      discardCard(ctx.g, id, ctx.events);
+    while (memo.queue.length) {
+      const c = memo.queue[0]!;
+      const who = c.who;
+      if (!memo.drew) {
+        memo.drew = true;
+        for (let i = 0; i < n; i++) drawCard(g, who, ctx.events);
+      }
+      const hand = zoneList(g, 'hand', who);
+      const count = Math.min(n, hand.length);
+      let discarded: string[];
+      if (answer) {
+        if (answer.objects.length !== count || new Set(answer.objects).size !== count || !answer.objects.every((id) => hand.includes(id))) throw new RulesError(count === 1 ? 'Choose one card from your hand to discard.' : `Choose ${count} cards from your hand to discard.`);
+        discarded = answer.objects;
+        answer = null;
+      } else if (hand.length > count) {
+        return { ask: { kind: 'discard', player: who, count } };
+      } else discarded = [...hand];
+      let nonland = 0;
+      for (const id of discarded) {
+        const card = g.objects[id]!;
+        if (!g.cards[card.card]!.faces[card.face]!.types.includes('Land')) nonland++;
+        discardCard(g, id, ctx.events);
+      }
+      const o = c.id ? g.objects[c.id] : undefined;
+      if (nonland && o && o.zcc === c.zcc && o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', nonland);
+      memo.queue.shift();
+      memo.drew = false;
     }
-    const c = memo.conniver && ctx.g.objects[memo.conniver.id];
-    if (nonland && c && c.zcc === memo.conniver!.zcc && c.zone === 'battlefield') addCounters(ctx, c, '+1/+1', nonland);
     return true;
   },
 
@@ -5047,6 +5068,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
   counters_put(t, check) {
     const e = check.event;
+    // All Will Be One: "… on a permanent or player" — counters you put on a player too (CR 122.1).
+    if (e.type === 'player_counters' && t.players && t.byYou && e.by === check.controller && e.delta > 0 && !check.sourceLeft && (t.counter === undefined || e.counter === t.counter)) {
+      const together = (check.batch ?? [e]).filter((x) => x.type === 'player_counters' && x.player === e.player && x.by === e.by && x.delta > 0 && (t.counter === undefined || x.counter === t.counter));
+      if (together[0] !== e) return [];
+      return [{ player: e.player, amount: together.reduce((n, x) => n + (x.type === 'player_counters' ? x.delta : 0), 0) }];
+    }
     // Generous Patron: "one or more counters" — of any kind.
     if (e.type !== 'counters' || e.delta <= 0 || check.sourceLeft || (t.counter !== undefined && e.counter !== t.counter)) return [];
     // "Whenever you put one or more +1/+1 counters on …"
@@ -5255,7 +5282,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

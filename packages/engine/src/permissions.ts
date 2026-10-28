@@ -1,7 +1,7 @@
-import type { ObjectFilter } from '@mtg/schema';
+import type { Cost, EffectNode, ObjectFilter } from '@mtg/schema';
 import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
-import { abilitySources } from './zones.js';
+import { abilitySources, faceOf } from './zones.js';
 
 /**
  * Permissions to play cards from somewhere other than the hand ("Until the end of your next turn,
@@ -26,12 +26,38 @@ export function permissionLive(g: GameState, p: { lastTurn: number; firstTurn?: 
  */
 export function graveyardPermission(g: GameState, player: PlayerId, o: GameObject): string | null {
   if (o.zone !== 'graveyard' || o.owner !== player) return null;
+  // Exploration Broodship: a permission with a cost of its own ("by sacrificing a land") is used only when no free one is.
+  return graveyardPermissionPass(g, player, o, false) ?? graveyardPermissionPass(g, player, o, true);
+}
+
+/** Exploration Broodship: the costs a graveyard permission adds ("by sacrificing a land in addition to paying its other costs"). */
+export function graveyardPermissionCosts(g: GameState, key: string | null): EffectNode[] {
+  const [id, zcc] = (key ?? '').split(':');
+  const src = id ? g.objects[id] : undefined;
+  if (!src || String(src.zcc) !== zcc) return [];
+  for (const a of objectAbilities(g, src)) {
+    if (a.kind === 'static' && a.effect.type === 'graveyard_cast' && a.effect.cost) return ((a.effect.cost as Cost).other ?? []) as EffectNode[];
+  }
+  return [];
+}
+
+function graveyardPermissionPass(g: GameState, player: PlayerId, o: GameObject, withCost: boolean): string | null {
   for (const id of abilitySources(g)) {
     const src = g.objects[id];
     if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || a.effect.type !== 'graveyard_cast') continue;
+      if (Boolean(a.effect.cost) !== withCost) continue;
       if (!staticConditionHolds(g, a.effect as never, src)) continue;
+      // Muldrotha, the Gravetide: "During each of your turns, you may … cast a permanent spell of each permanent type from
+      // your graveyard." — one for each type this card has that hasn't been used (a creature last: it's the one most wanted).
+      if (a.effect.eachType) {
+        if (g.active !== player) continue;
+        const types = faceOf(g, o).types;
+        const slot = ['Artifact', 'Battle', 'Enchantment', 'Planeswalker', 'Creature'].find((t) => types.includes(t) && !(g.turnLog.graveyardCasts ?? []).includes(`${src.id}:${src.zcc}:${t}`));
+        if (slot) return `${src.id}:${src.zcc}:${slot}`;
+        continue;
+      }
       const key = `${src.id}:${src.zcc}`;
       if (a.effect.oncePerTurn && (g.active !== player || (g.turnLog.graveyardCasts ?? []).includes(key))) continue;
       const filter = a.effect.filter as ObjectFilter | undefined;
@@ -43,6 +69,21 @@ export function graveyardPermission(g: GameState, player: PlayerId, o: GameObjec
   for (const grant of g.graveyardGrants ?? []) {
     if (grant.player !== player || grant.turn !== g.turn || (g.turnLog.graveyardCasts ?? []).includes(grant.key)) continue;
     if (matchesFilter(g, o, grant.filter, { controller: player, source: null, anyZone: true })) return grant.key;
+  }
+  return null;
+}
+
+/** Muldrotha, the Gravetide: "During each of your turns, you may play a land … from your graveyard." — once each turn. */
+export function graveyardLandPermission(g: GameState, player: PlayerId, o: GameObject): string | null {
+  if (o.zone !== 'graveyard' || o.owner !== player || g.active !== player || !faceOf(g, o).types.includes('Land')) return null;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'graveyard_cast' || !a.effect.lands) continue;
+      const key = `${src.id}:${src.zcc}:Land`;
+      if (!(g.turnLog.graveyardCasts ?? []).includes(key)) return key;
+    }
   }
   return null;
 }

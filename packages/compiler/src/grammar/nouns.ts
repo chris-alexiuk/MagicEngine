@@ -581,6 +581,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       const pf = parseFilter(`${exiledKind[2]} cards`, b);
       if (pf && !pf.filter.zone) return set(b, { ref: { ref: 'all', filter: { ...pf.filter, zone: 'exile', exiledWithSource: true } }, plural: true, targeted: false });
     }
+    // Lethal Scheme: "Each creature that convoked this spell connives."; Venerated Loxodon: "each creature that convoked it".
+    if (/^(?:each|all) creatures? that convoked (?:~|it|this spell)$/i.test(t)) return set(b, { ref: { ref: 'convoked' }, plural: true, targeted: false });
     // "return ~ from your graveyard to your hand": the ability functions from the graveyard (CR 113.6m).
     if (t === '~ from your graveyard') {
       b.selfZone = 'graveyard';
@@ -824,6 +826,14 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
     if (attacked) {
       const of = parseObjectRef(attacked[1]!, b);
       return of && !of.plural ? [{ ref: 'attacked_by', of: of.ref }] : null;
+    }
+    // All Will Be One: "target opponent, creature an opponent controls, or planeswalker an opponent controls".
+    const opponents = /^target opponent, (creature|planeswalker|battle) an opponent controls,? or (creature|planeswalker|battle) an opponent controls$/.exec(t);
+    if (opponents) {
+      const ref = b.addTarget({ what: 'any', player: 'opponent', filter: { controller: 'opponent', types: [TYPE_NOUNS[opponents[1]!]!, TYPE_NOUNS[opponents[2]!]!] }, text: t });
+      b.it = ref;
+      b.player = ref;
+      return [ref];
     }
     // Wrathful Red Dragon: "any target that isn't a Dragon".
     const notKind = /^any target that isn't an? ([A-Z][a-z]+)$/.exec(t);

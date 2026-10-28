@@ -227,7 +227,7 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true; convoked?: ObjectRef[]; sacrificed?: number };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -876,7 +876,7 @@ export type GameEvent =
   | { type: 'revealed'; player: PlayerId; objects: ObjectId[] }
   /** CR 614.12: a choice made as a permanent entered. */
   | { type: 'chosen'; object: ObjectId; choice: string }
-  | { type: 'player_counters'; player: PlayerId; counter: string; delta: number }
+  | { type: 'player_counters'; player: PlayerId; counter: string; delta: number; by?: PlayerId }
   | { type: 'class_level'; object: ObjectId; level: number }
   /** CR 725.3: a player became the monarch. */
   | { type: 'monarch'; player: PlayerId }

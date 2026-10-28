@@ -1,6 +1,8 @@
 import { activationProhibited } from './cast-bans.js';
 import type { AddManaEffect } from '@mtg/schema';
-import { canActivateTapAbilities, manaAbilities, manaMultiplier } from './characteristics.js';
+import { canActivateTapAbilities, manaAbilities, manaMultiplier, matchesFilter, objectAbilities } from './characteristics.js';
+import { abilitySources } from './zones.js';
+import type { ObjectFilter } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOnly, manaOption, shortfall } from './mana.js';
 import { playerRule } from './player-rules.js';
@@ -102,11 +104,30 @@ export function phyrexianLifeOptions(g: GameState, player: PlayerId, cost: ManaC
   return out.sort((a, b) => a.length - b.length);
 }
 
-/** K'rrik, Son of Yawgmoth: the cost with its {B} symbols Phyrexian (each payable with 2 life instead). */
-export function withPlayerPhyrexian(g: GameState, player: PlayerId, cost: ManaCost): ManaCost {
-  const b = cost.specific.B ?? 0;
-  if (!b || !playerRule(g, player, 'black_as_phyrexian')) return cost;
-  return { ...cost, specific: { ...cost.specific, B: 0 }, phyrexian: [...cost.phyrexian, ...Array.from({ length: b }, () => ['B' as ManaColor])] };
+/**
+ * K'rrik, Son of Yawgmoth: the cost with its {B} symbols Phyrexian (each payable with 2 life instead). Defiler of Vigor: one
+ * {G} of a green permanent spell, for each Defiler.
+ */
+export function withPlayerPhyrexian(g: GameState, player: PlayerId, cost: ManaCost, purpose: ManaPurpose = OTHER_PURPOSE): ManaCost {
+  let out = cost;
+  const convert = (color: ManaColor, n: number) => {
+    const have = out.specific[color] ?? 0;
+    const k = Math.min(have, n);
+    if (k > 0) out = { ...out, specific: { ...out.specific, [color]: have - k }, phyrexian: [...out.phyrexian, ...Array.from({ length: k }, () => [color])] };
+  };
+  if (purpose.kind === 'spell') {
+    for (const id of abilitySources(g)) {
+      const src = g.objects[id]!;
+      if (src.zone !== 'battlefield' || src.controller !== player) continue;
+      for (const a of objectAbilities(g, src)) {
+        if (a.kind !== 'static' || a.effect.type !== 'phyrexian_grant') continue;
+        const e = a.effect as unknown as { filter: ObjectFilter; color: ManaColor };
+        if (matchesFilter(g, purpose.object, e.filter, { controller: player, source: src, anyZone: true })) convert(e.color, 1);
+      }
+    }
+  }
+  if (playerRule(g, player, 'black_as_phyrexian')) convert('B', out.specific.B ?? 0);
+  return out;
 }
 
 /**
@@ -114,7 +135,7 @@ export function withPlayerPhyrexian(g: GameState, player: PlayerId, cost: ManaCo
  * else mana when they can and 2 life for as few as they must. Makes `cost` the mana left to pay; returns the life to pay.
  */
 export function settlePhyrexian(g: GameState, player: PlayerId, cost: ManaCost, choice: readonly ('life' | 'mana')[] | undefined, x: number, autoTapping: boolean, exclude: readonly ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): number {
-  const full = withPlayerPhyrexian(g, player, cost);
+  const full = withPlayerPhyrexian(g, player, cost, purpose);
   if (!full.phyrexian.length) return 0;
   let life: number[] = [];
   if (choice) {
@@ -130,7 +151,7 @@ export function settlePhyrexian(g: GameState, player: PlayerId, cost: ManaCost, 
 
 export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): PlannedActivation[] | null {
   // CR 107.4f: Phyrexian symbols — mana if that's payable, else 2 life for as few of them as needed.
-  const phy = withPlayerPhyrexian(g, player, cost);
+  const phy = withPlayerPhyrexian(g, player, cost, purpose);
   if (phy.phyrexian.length) {
     for (const life of phyrexianLifeOptions(g, player, phy)) {
       const plan = planAutoTap(g, player, manaOnly(phy, life), x, exclude, purpose);

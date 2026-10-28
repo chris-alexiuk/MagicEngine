@@ -1579,6 +1579,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const countersOn = /^one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters are put on (~|(?:a|an|another) (.+?))$/.exec(t) ?? youPut;
   if (countersOn) {
     let subject: Ref = { ref: 'self' };
+    // All Will Be One: "Whenever you put one or more counters on a permanent or player" — players too (CR 122.1).
+    const orPlayer = youPut && countersOn[3] === 'permanent or player';
+    if (orPlayer) countersOn[3] = 'permanent';
     if (countersOn[3]) {
       const pf = parseFilter(countersOn[3], b);
       if (!pf || pf.plural) return null;
@@ -1591,7 +1594,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       b.named['that permanent'] = { ref: 'trigger_object' };
     }
     return {
-      trigger: { type: 'counters_put', ...(countersOn[1] ? { counter: countersOn[1] } : {}), subject, ...(youPut ? { byYou: true } : {}) },
+      trigger: { type: 'counters_put', ...(countersOn[1] ? { counter: countersOn[1] } : {}), subject, ...(youPut ? { byYou: true } : {}), ...(orPlayer ? { players: true } : {}) },
       it: subject.ref === 'self' ? subject : { ref: 'trigger_object' },
       player: null,
     };
@@ -2726,6 +2729,22 @@ export const costModifierRule: GrammarRule = {
       if (m[1] === 'X') return { amount: 'X' };
       return { amount: 1, color: m[1] as Color };
     };
+    // Defiler of Vigor: "As an additional cost to cast green permanent spells, you may pay 2 life. Those spells cost {G} less to
+    // cast if you paid life this way. This effect reduces only the amount of green mana you pay." — one {G} paid with 2 life.
+    const defiler = /^As an additional cost to cast (white|blue|black|red|green) permanent spells, you may pay 2 life\. Those spells cost \{([WUBRG])\} less to cast if you paid life this way\. This effect reduces only the amount of \1 mana you pay$/.exec(body);
+    if (defiler && COLOR_WORDS[defiler[1]!] === defiler[2]) {
+      return { kind: 'static', text: original, effect: { type: 'phyrexian_grant', filter: { colors: [defiler[2] as Color], types: ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] }, color: defiler[2] as Color } } as StaticAbility;
+    }
+    // Morophon, the Boundless: "Spells of the chosen type you cast cost {W}{U}{B}{R}{G} less to cast. This effect reduces only
+    // the amount of colored mana you pay."
+    const colored = /^(.+?) cost ((?:\{[WUBRG]\})+) less to cast\. This effect reduces only the amount of colored mana you pay$/.exec(body);
+    if (colored) {
+      const inner = costModifierRule.parse(`${colored[1]} cost {1} less to cast.`, `${colored[1]} cost {1} less to cast.`, ctx) as StaticAbility | null;
+      const e = inner?.kind === 'static' && inner.effect.type === 'cost_modifier' ? (inner.effect as CostModifierNode) : null;
+      if (!e || e.amount !== 1 || e.color || e.condition) return null;
+      const colors = [...colored[2]!.matchAll(/\{([WUBRG])\}/g)].map((m) => m[1] as Color);
+      return { kind: 'static', text: original, effect: { ...e, colors, coloredOnly: true } as CostModifierNode };
+    }
     const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| if (.+?)|, where X is (.+?))?$/.exec(body);
     if (own) {
       const a = amountOf(own[1]!);
@@ -2810,6 +2829,8 @@ export const costModifierRule: GrammarRule = {
     if (duringYours) rest = rest.replace(/^During your turn, /, '').replace(/^\w/, (c) => c.toUpperCase());
     const perEach = / to cast for each (.+)$/.exec(rest);
     if (perEach) rest = `${rest.slice(0, perEach.index)} to cast`;
+    // Morophon: "Spells of the chosen type you cast" — the same as "Spells you cast of the chosen type".
+    rest = rest.replace(/^((?:[A-Z][a-z]+ )?[Ss]pells) of the chosen type you cast /, '$1 you cast of the chosen type ');
     // Warden of Evos Isle: "Creature spells with flying you cast cost {1} less to cast." — the quality before "you cast".
     rest = rest.replace(/^(.*?\bspells) (with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender)) (you cast) /i, '$1 $3 $2 ');
     const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater|with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender)) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
@@ -3761,14 +3782,23 @@ export const graveyardCastRule: GrammarRule = {
   id: 'graveyard_cast',
   parse(line, original, ctx) {
     const env = envOf(ctx);
-    const m = /^Once during each of your turns, you may cast (?:a|an) (.+? spell(?: with [^,]+)?) from your graveyard\.$/.exec(line);
+    // Muldrotha, the Gravetide: "During each of your turns, you may play a land and cast a permanent spell of each permanent
+    // type from your graveyard."
+    if (env && /^During each of your turns, you may play a land and cast a permanent spell of each permanent type from your graveyard\.$/.test(line)) {
+      return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter: {}, eachType: true, lands: true } } as StaticAbility;
+    }
+    // Exploration Broodship: "… from your graveyard by sacrificing a land in addition to paying its other costs."
+    const m = /^Once during each of your turns, you may cast (?:a|an) (.+? spell(?: with [^,]+)?) from your graveyard(?: by (sacrificing (?:a|an) [a-z]+) in addition to paying its other costs)?\.$/.exec(line);
     if (!env || !m) return null;
     const words = m[1]!.split(' ');
     const phrase = isSubtype(words[0]!) ? m[1]! : m[1]!.replace(/^\w/, (c) => c.toLowerCase());
-    const pf = parseFilter(phrase.replace(/ or /, ' or ').replace(/^(\w+) and (\w+) spell/, '$1 or $2 spell'), new Binder(env));
+    const b = new Binder(env);
+    const pf = parseFilter(phrase.replace(/ or /, ' or ').replace(/^(\w+) and (\w+) spell/, '$1 or $2 spell'), b);
     if (!pf || pf.plural || pf.filter.zone !== 'stack') return null;
     const { zone: _z, ...filter } = pf.filter;
-    return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter, oncePerTurn: true } } as StaticAbility;
+    const extra = m[2] ? choiceCost(m[2].replace(/^sacrificing/, 'Sacrifice'), b) : undefined;
+    if (extra === null) return null;
+    return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter, oncePerTurn: true, ...(extra ? { cost: { other: [extra] } } : {}) } } as StaticAbility;
   },
 };
 

@@ -59,6 +59,8 @@ export class Binder {
   halfDir: 'up' | 'down' | null = null;
   /** The Ten Rings: "if you have fewer than ten cards in hand, draw cards equal to the difference" — what "the difference" is. */
   difference: AmountExpr | null = null;
+  /** Skrelv: "Choose a color. … creatures of that color" — a color was chosen as this resolves. */
+  choseColor = false;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -81,6 +83,7 @@ export class Binder {
     b.milled = this.milled;
     b.halfDir = this.halfDir;
     b.difference = this.difference;
+    b.choseColor = this.choseColor;
     return b;
   }
 
@@ -102,6 +105,7 @@ export class Binder {
     this.milled = other.milled;
     this.halfDir = other.halfDir;
     this.difference = other.difference;
+    this.choseColor = other.choseColor;
   }
 
   addTarget(spec: TargetSpec): Ref {

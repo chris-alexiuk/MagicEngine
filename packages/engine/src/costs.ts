@@ -25,18 +25,19 @@ function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: 
  */
 /** `targets`: the spell's chosen targets, for "costs {2} less to cast if it targets a tapped creature". */
 export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef, cost: ManaCost, targets?: TargetRef[][]): void {
-  const changes: { n: number; color?: Color; change: 'less' | 'more' }[] = [];
+  const changes: { n: number; color?: Color; change: 'less' | 'more'; coloredOnly?: true }[] = [];
   const ctxFor = (controller: PlayerId, source: GameObject): EffectContext => ({ g, controller, source, events: [], targets: [], x: 0, memo: {} });
 
   // CR 113.6e: the spell's own ability works wherever it's cast from (including keywords like affinity, CR 702.41a).
   for (const a of printedAbilities(face)) {
     if (a.kind !== 'static' || a.effect.type !== 'cost_modifier') continue;
     const e = a.effect as CostModifierNode;
-    if (!e.self) continue;
+    // Torgaar: "for each creature sacrificed this way" — counted from the cost choices as it's cast (see cast()).
+    if (!e.self || e.perSacrificed) continue;
     const ctx = ctxFor(player, spell);
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
     if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, player, spell)) continue;
-    changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
+    for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
   }
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
@@ -62,7 +63,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
       // Killian: "Spells you cast that target a creature cost {2} less to cast."
       if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
-      changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
+      for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
     }
   }
 
@@ -87,6 +88,14 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       const off = Math.min(have, n);
       cost.specific[c.color as ManaColor] = have - off;
       n -= off;
+      // Morophon: "reduces only the amount of colored mana you pay" — a Phyrexian symbol of that color too (CR 107.4f).
+      for (let i = cost.phyrexian.length - 1; i >= 0 && n > 0 && c.coloredOnly; i--) {
+        if (cost.phyrexian[i]!.includes(c.color as ManaColor)) {
+          cost.phyrexian = cost.phyrexian.filter((_, j) => j !== i);
+          n--;
+        }
+      }
+      if (c.coloredOnly) continue;
     }
     cost.generic = Math.max(0, cost.generic - n);
   }

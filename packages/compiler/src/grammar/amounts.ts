@@ -118,6 +118,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
   if (moved) return moved;
+  // Ancient Imperiosaur: "for each creature that convoked it" (CR 702.51c).
+  if (/^creature that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
   // Moraug: "for each time it has attacked this turn".
@@ -223,6 +225,8 @@ function lifeThisTurn(who: string): AmountExpr | null {
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = text.trim();
+  // Knight-Errant of Eos: "the number of creatures that convoked it" (CR 702.51c).
+  if (/^the number of creatures that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Cavern-Hoard Dragon: "the greatest number of artifacts an opponent controls" — the most any one opponent controls.
   const most = /^the greatest number of (.+ (?:an opponent controls|your opponents control))$/.exec(t);
   if (most) {

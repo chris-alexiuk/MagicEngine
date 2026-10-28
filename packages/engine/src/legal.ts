@@ -15,7 +15,7 @@ import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
-import { freePermission, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
+import { freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
 import { activationsThisTurn, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
@@ -55,7 +55,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player)) {
     for (const id of zoneList(g, 'graveyard', player)) {
       const def = g.cards[g.objects[id]!.card]!;
-      if (def.faces[0]!.types.includes('Land') && ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!)) out.push({ type: 'play_land', player, object: id });
+      if (def.faces[0]!.types.includes('Land') && (ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!) || graveyardLandPermission(g, player, g.objects[id]!))) out.push({ type: 'play_land', player, object: id });
     }
   }
   // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library.
@@ -97,7 +97,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const helpers = helperKeywords(g, player, o, face);
       let help: CostChoices = {};
       const purpose = { kind: 'spell' as const, object: o };
-      const costs = defaultCostChoices(g, player, o, additionalCosts(face));
+      // Exploration Broodship: the cost its permission adds.
+      const permissionCosts = o.zone === 'graveyard' ? graveyardPermissionCosts(g, graveyardPermissionUsed(g, player, o)) : [];
+      const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...permissionCosts]);
       if (!costs) return;
       // Creatures tapped for an additional cost can't also tap for mana.
       const tappedForCost = costs.crew ?? [];
