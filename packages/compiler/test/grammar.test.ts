@@ -1912,3 +1912,19 @@ describe('slice 163', () => {
     expect(parse('Exile the top card of your library. You may put that card into your hand unless it has the same name as another card exiled this way. Repeat this process until you put a card into your hand or you exile two cards with the same name, whichever comes first.', 'Instant', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'tainted_pact' }] });
   });
 });
+
+describe('slice 164', () => {
+  it('reads X/X tokens, the exiled card, Soul Shatter, Scapeshift and Ad Nauseam', () => {
+    expect(parse("When this creature leaves the battlefield, the exiled card's owner creates an X/X blue Illusion creature token, where X is the mana value of the exiled card.", 'Creature — Kor Spirit', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', who: { ref: 'owner_of', of: { ref: 'exiled_with' } }, size: { kind: 'stat', stat: 'mana_value', of: { ref: 'exiled_with' } } }] });
+    expect(parse('Create X X/X green Ooze creature tokens.', 'Sorcery', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: 'X', size: 'X' }] });
+    expect(parse('Each opponent sacrifices a creature or planeswalker with the greatest mana value among creatures and planeswalkers they control.', 'Instant', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice', filter: { types: ['Creature', 'Planeswalker'] }, greatest: 'mana_value' }] });
+    expect(parse('Sacrifice any number of lands. Search your library for up to that many land cards, put them onto the battlefield tapped, then shuffle.', 'Sorcery', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice', anyNumber: true }, { type: 'search', amount: { kind: 'moved_this_way', how: 'sacrificed' }, upTo: true, tapped: true }] });
+    expect(parse('Reveal the top card of your library and put that card into your hand. You lose life equal to its mana value. You may repeat this process any number of times.', 'Instant', 'A').abilities[0]).toMatchObject({ effects: [{ type: 'repeat_may', effects: [{ type: 'reveal_top', life: 'lose' }] }] });
+  });
+  it("reads what was sacrificed, and leaves an X nothing defines unread", () => {
+    expect(parse("Target opponent sacrifices a creature of their choice. You gain life equal to that creature's toughness.", 'Instant', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice' }, { type: 'gain_life', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'toughness' } }] });
+    expect(parse('Whenever this creature attacks, you may sacrifice a Blood token. If you do, it gets +2/+2 until end of turn.', 'Creature — Vampire', 'B').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'modify', what: { ref: 'self' } }] }] });
+    expect(parse('Whenever a creature dies, draw X cards.', 'Enchantment', 'D').unparsed).toHaveLength(1);
+    expect(parse('When this enchantment enters, create an X/X green Treefolk creature token.', 'Enchantment', 'A').unparsed).toHaveLength(0);
+  });
+});

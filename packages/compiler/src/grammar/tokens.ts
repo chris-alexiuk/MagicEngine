@@ -41,6 +41,8 @@ export interface ParsedToken {
   amount: Amount;
   face: FaceDef;
   tapped: boolean;
+  /** "an X/X … token": its power and toughness are X, worked out as the effect resolves. */
+  size?: 'X';
 }
 
 /**
@@ -51,7 +53,7 @@ export interface ParsedToken {
 export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // CR 111.4: "named X" gives it that name instead.
   // Koma: "a 3/3 blue Serpent creature token named Koma's Coil" — the card's own name was shortened to "~".
-  const m = /^(\w+) (tapped )?(?:(\d+)\/(\d+) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
+  const m = /^(\w+) (tapped )?(?:(\d+|X)\/(\d+|X) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
   if (m?.[6]?.startsWith('~')) m[6] = m[6].replace(/^~/, b.env.faceName.split(',')[0]!);
   if (!m) return null;
   const amount = parseAmount(m[1]!);
@@ -61,6 +63,9 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if ((amount === 1) === plural && amount !== 'X' && !/^\d+$/.test(m[1]!)) return null;
   const tapped = Boolean(m[2]);
   const words = m[5]!;
+  // Only "X/X": one number for both.
+  const sizeX = m[3] === 'X' || m[4] === 'X';
+  if (sizeX && (m[3] !== 'X' || m[4] !== 'X')) return null;
 
   const predefined = PREDEFINED[words];
   if (predefined) {
@@ -96,7 +101,7 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   const face = tokenFace(b, m[6] ?? `${subtypes.join(' ')} Token`, typeLine, extra.text, colors, isCreature ? [m[3]!, m[4]!] : undefined);
   // A quoted ability the grammar can't read leaves the whole phrase unread, rather than a token resolved by hand.
   if (extra.quoted.some((q) => face.unparsed.includes(q))) return null;
-  return { amount, tapped, face };
+  return { amount, tapped, face, ...(sizeX ? { size: 'X' as const } : {}) };
 }
 
 /** What a "with …" clause adds to a token: keywords on one line, each quoted ability on its own. */

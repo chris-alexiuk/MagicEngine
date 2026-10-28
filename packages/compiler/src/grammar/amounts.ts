@@ -208,12 +208,21 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
   const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t);
   if (lki) return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
+  // Skyclave Apparition: "the mana value of the exiled card"
+  const statOfThe = /^the (power|toughness|mana value) of (.+)$/.exec(t);
+  if (statOfThe) {
+    const of = parseObjectRef(statOfThe[2]!, b.clone(), 'static');
+    const s = statOfThe[1] === 'mana value' ? 'mana_value' : (statOfThe[1] as 'power' | 'toughness');
+    if (of && !of.plural) return { kind: 'stat', stat: s, of: of.ref };
+  }
   // "its power", "~'s toughness", "that creature's power", "the sacrificed creature's power".
   const stat = /^(.+?)(?:'s?)? (power|toughness|mana value)$/.exec(t);
   if (stat) {
     const subject = stat[1] === 'its' ? 'it' : stat[1]!.replace(/'s?$/, '');
     const of = parseObjectRef(subject, b.clone(), 'static');
     const s = stat[2] === 'mana value' ? 'mana_value' : (stat[2] as 'power' | 'toughness');
+    // CR 608.2h: what was sacrificed, as it last existed on the battlefield.
+    if (of?.ref.ref === 'sacrificed_this_way') return { kind: 'cost_lki', cost: 'sacrificed', stat: s };
     return of && !of.plural ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };

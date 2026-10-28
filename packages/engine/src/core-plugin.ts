@@ -603,7 +603,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   create_token(node, ctx) {
     const n = amountOf(ctx, node.amount);
-    const face = node.token as FaceDef | undefined;
+    // CR 107.3: "an X/X … token" — X is worked out as the effect resolves, and the token is made that size.
+    const sized = node.size !== undefined ? Math.max(0, amountOf(ctx, node.size)) : null;
+    const face = sized !== null && node.token ? { ...(node.token as FaceDef), power: String(sized), toughness: String(sized) } : (node.token as FaceDef | undefined);
     // Adeline: "for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a
     // planeswalker they control" (CR 508.4) — for each opponent in turn, attacking them or one of their planeswalkers.
     if (node.attackingEach && face) {
@@ -2068,7 +2070,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ctx.events.push({ type: 'searched', player, owner });
           return true;
         }
-        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
+        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
@@ -2132,8 +2134,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const filter = (node.filter ?? {}) as ObjectFilter;
     const players = refPlayers(ctx, ref(node, 'who'));
     const done = (ctx.memo.done as PlayerId[] | undefined) ?? [];
-    const candidatesOf = (p: PlayerId) =>
+    const matching = (p: PlayerId) =>
       g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, filter, { controller: p, source: ctx.source ?? null }));
+    // Soul Shatter: "… with the greatest mana value among creatures and planeswalkers they control" (ties: their choice).
+    const statOf = (id: ObjectId) => (node.greatest === 'power' ? power(g, g.objects[id]!) : manaValueOf(g, g.objects[id]!));
+    const candidatesOf = (p: PlayerId) => {
+      const all = matching(p);
+      if (!node.greatest || !all.length) return all;
+      const most = Math.max(...all.map(statOf));
+      return all.filter((id) => statOf(id) === most);
+    };
     const answer = answerOf(ctx, 'sacrifice');
     // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
     const sacrifice = (o: GameObject, p: PlayerId) => {
@@ -2143,6 +2153,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
     };
+    // Scapeshift: "Sacrifice any number of lands."
+    if (node.anyNumber) {
+      const [p] = players;
+      if (!p) return true;
+      const candidates = candidatesOf(p);
+      const pick = answerOf(ctx, 'choose_objects');
+      if (!pick) {
+        if (!candidates.length) return true;
+        return { ask: { kind: 'choose_objects', player: p, candidates, min: 0, max: candidates.length, text: 'Choose any number of permanents to sacrifice.' } };
+      }
+      if (new Set(pick.objects).size !== pick.objects.length || !pick.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose among those permanents.');
+      for (const id of pick.objects) sacrifice(g.objects[id]!, p);
+      return true;
+    }
     if (answer) {
       const p = ctx.memo.asking as PlayerId;
       const candidates = candidatesOf(p);
@@ -2342,6 +2366,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller });
     ctx.events.push({ type: 'land_played', player: ctx.controller, object: o.id });
     return true;
+  },
+
+  // Ad Nauseam: do it, then the player may do it again, as many times as they like.
+  repeat_may(node, ctx) {
+    const effects = node.effects as EffectNode[];
+    const again: EffectNode = { type: 'repeat_may', effects, ask: true };
+    if (!node.ask) return { expand: [...structuredClone(effects), again] };
+    const answer = answerOf(ctx, 'may');
+    if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: 'Repeat the process?', sourceName: sourceName(ctx) } };
+    return answer.yes ? { expand: [...structuredClone(effects), again] } : true;
   },
 
   // Demonic Consultation: name a card, exile six, then reveal until that name; it goes to hand, the rest are exiled.
@@ -3067,9 +3101,9 @@ function describeEffects(list: EffectNode[]): string {
   return list.map((e) => e.type.replace(/_/g, ' ')).join(', ');
 }
 
-function describeSearch(node: EffectNode): string {
+function describeSearch(node: EffectNode, count: number): string {
   const to = { hand: 'into your hand', battlefield: 'onto the battlefield', graveyard: 'into your graveyard', library: 'on top', exile: 'into exile' }[String(node.to)];
-  return `search your library for ${node.upTo ? 'up to ' : ''}${node.amount} card(s), put ${to}`;
+  return `search your library for ${node.upTo ? 'up to ' : ''}${count} card(s), put ${to}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -3616,7 +3650,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   land_played(t, check) {
     const e = check.event;
-    if (e.type !== 'land_played' || check.sourceLeft) return [];
+    if (e.type !== 'land_played' || check.sourceLeft || (t.other && e.object === check.source.id)) return [];
     if (t.who === 'you' ? e.player !== check.controller : t.who === 'opponent' ? e.player === check.controller : false) return [];
     const o = check.g.objects[e.object];
     return [{ ...(o ? { object: refTo(o) } : {}), player: e.player }];

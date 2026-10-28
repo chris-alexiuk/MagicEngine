@@ -72,6 +72,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const t = parseAmount(mirror[3]!);
     return what && what.plural && p !== null && t !== null ? [{ type: 'modify', what: what.ref, setPower: p, setToughness: t, allCreatureTypes: true, until: 'eot' }] : null;
   }
+  // Scapeshift: "Sacrifice any number of lands. Search your library for up to that many land cards, put them onto the
+  // battlefield tapped, then shuffle."
+  const shift = /^Sacrifice any number of (.+?)\. Search your library for up to that many (.+?), put them onto the battlefield( tapped)?, then shuffle\.$/.exec(text.trim());
+  if (shift) {
+    const sac = parseFilter(shift[1]!, b);
+    const find = parseFilter(`${shift[2]} in your library`, b);
+    if (!sac || !sac.plural || sac.filter.zone || !find || !find.plural) return null;
+    return [
+      { type: 'sacrifice_choice', who: { ref: 'you' }, filter: sac.filter, amount: 99, anyNumber: true },
+      { type: 'search', filter: find.filter, amount: { kind: 'moved_this_way', how: 'sacrificed' }, upTo: true, to: 'battlefield', ...(shift[3] ? { tapped: true } : {}) },
+    ];
+  }
+  // Ad Nauseam: "… You may repeat this process any number of times."
+  const repeatMay = /^(.+?) You may repeat this process any number of times\.$/.exec(text.trim());
+  if (repeatMay) {
+    const inner = attempt(b, (b) => parseEffectText(repeatMay[1]!, b));
+    return inner && !b.targets.length ? [{ type: 'repeat_may', effects: inner }] : null;
+  }
   // Demonic Consultation (CR 201.3: any card name may be chosen).
   if (/^Choose a card name\. Exile the top six cards of your library, then reveal cards from the top of your library until you reveal a card with the chosen name\. Put that card into your hand and exile all other cards revealed this way\.$/.test(text.trim())) {
     return [{ type: 'name_and_dig', exileFirst: 6 }];
@@ -1976,7 +1994,7 @@ const VERBS: Record<string, VerbHandler> = {
       const many = amount ? parseTokenPhrase(`two ${numberOf[1]}`, b) : null;
       if (!amount || !many) return null;
       createdTokens(b);
-      return [{ type: 'create_token', amount, token: many.face, who, ...(many.tapped ? { tapped: true } : {}) }];
+      return [{ type: 'create_token', amount, token: many.face, who, ...(many.tapped ? { tapped: true } : {}), ...(many.size ? { size: many.size } : {}) }];
     }
     const attached = /^(.+?) attached to (.+)$/.exec(args);
     const token = parseTokenPhrase(attached ? attached[1]! : args, b);
@@ -1988,6 +2006,7 @@ const VERBS: Record<string, VerbHandler> = {
           const one = parseTokenPhrase(args.slice(0, m.index), b);
           const two = one ? parseTokenPhrase(args.slice(m.index! + m[0].length), b) : null;
           if (!one || !two) return null;
+          if (one.size || two.size) return null;
           return [one, two].map((t): EffectNode => ({ type: 'create_token', amount: t.amount, token: t.face, who, ...(t.tapped ? { tapped: true } : {}) }));
         });
         if (r) {
@@ -1999,6 +2018,8 @@ const VERBS: Record<string, VerbHandler> = {
     }
     const node: EffectNode = { type: 'create_token', amount: token.amount, token: token.face, who };
     if (token.tapped) node.tapped = true;
+    // CR 107.3: "an X/X … token" — its size is the X of the spell or ability, or the one the text defines.
+    if (token.size) node.size = token.size;
     if (attacking) {
       node.tapped = true;
       node.attacking = true;
@@ -2020,6 +2041,16 @@ const VERBS: Record<string, VerbHandler> = {
       const filter: ObjectFilter = { ...pf.filter, ...(who.ref === 'you' ? { controller: 'you' as const } : who.who === 'opponents' ? { controller: 'opponent' as const } : {}) };
       return [{ type: 'sacrifice', what: { ref: 'all', filter }, byController: true }];
     }
+    // Soul Shatter: "Each opponent sacrifices a creature or planeswalker with the greatest mana value among creatures and
+    // planeswalkers they control." — the greatest among their own, ties their choice.
+    const greatest = /^(a|an) (.+?) with the greatest (mana value|power) among (.+?) (?:they|you) control$/.exec(args);
+    if (greatest) {
+      const pf = parseFilter(greatest[2]!, b);
+      const among = pf ? parseFilter(greatest[4]!.replace(/ and /, ' or '), b) : null;
+      if (!pf || pf.plural || !among || !among.plural || JSON.stringify(pf.filter) !== JSON.stringify(among.filter)) return null;
+      if (pf.filter.types?.includes('Creature')) b.it = { ref: 'sacrificed_this_way' };
+      return [{ type: 'sacrifice_choice', who, filter: pf.filter, amount: 1, greatest: greatest[3] === 'power' ? 'power' : 'mana_value' }];
+    }
     // CR 701.21a. "Each opponent sacrifices a creature": each of those players chooses one.
     // "sacrifices a creature of their choice" (the 2024 wording; CR 701.21a: the player chooses either way).
     const choice = /^(a|an|one|two|three|four|five|six|seven|eight|nine|ten|thirteen|\d+|another) (.+?)(?: of (?:their|your) choice)?$/.exec(args);
@@ -2029,6 +2060,9 @@ const VERBS: Record<string, VerbHandler> = {
       // A numeral comes from a keyword definition ("sacrifices N permanents" with N = 1), so either number is fine.
       if (!pf || typeof amount !== 'number' || (pf.plural !== amount > 1 && !/^\d+$/.test(choice[1]!))) return null;
       if (choice[1] === 'another') pf.filter.other = true;
+      // "… sacrifices a creature. You gain life equal to that creature's toughness." — the one sacrificed.
+      // Not "sacrifice a Blood token. If you do, it gets +2/+2" — a creature pronoun still means the creature.
+      if (amount === 1 && pf.filter.types?.includes('Creature')) b.it = { ref: 'sacrificed_this_way' };
       return [{ type: 'sacrifice_choice', who, filter: pf.filter, amount }];
     }
     // Specific objects: "sacrifice ~", "sacrifice it".

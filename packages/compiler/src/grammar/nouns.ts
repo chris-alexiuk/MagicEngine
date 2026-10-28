@@ -541,6 +541,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'that player' || t === 'they') return b.player;
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };
+  // Skyclave Apparition: "the exiled card's owner" (CR 607.2a)
+  if (t === "the exiled card's owner") return { ref: 'owner_of', of: { ref: 'exiled_with' } };
   if (b.named[t]) return b.named[t]!;
   const owner = /^(?:its|that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token)'s) (controller|owner)$/.exec(t);
   if (owner && b.it) return { ref: owner[1] === 'controller' ? 'controller_of' : 'owner_of', of: b.it };

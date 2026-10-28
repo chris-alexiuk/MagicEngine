@@ -118,6 +118,9 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         return o && o.zcc === r.zcc ? [o] : [];
       });
     }
+    case 'sacrificed_this_way':
+      // What this resolution sacrificed, where it is now ("… sacrifices a creature. Return it to the battlefield").
+      return movedThisWay(ctx, { how: 'sacrificed' }).flatMap((m) => (g.objects[m.id] ? [g.objects[m.id]!] : []));
     case 'exiled_with': {
       // CR 607.2a: cards in exile that this object's linked ability put there.
       const s = ctx.source;

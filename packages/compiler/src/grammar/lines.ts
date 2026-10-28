@@ -164,6 +164,19 @@ export const spellRule: GrammarRule = {
 /** Whether a program has a target count that is "X" (TargetSpec.countX). */
 const hasCountX = (program: object): boolean => JSON.stringify(program).includes('"countX":true');
 
+/**
+ * Whether an effect uses an X nothing defines (CR 107.3): "draw X cards" with no "where X is …". A spell or an
+ * activated ability has X announced; a triggered ability has only the X its permanent entered with (CR 107.3m).
+ * Granted abilities and token definitions have X of their own.
+ */
+function hasFreeX(v: unknown): boolean {
+  if (v === 'X') return true;
+  if (!v || typeof v !== 'object') return false;
+  if (Array.isArray(v)) return v.some(hasFreeX);
+  if ((v as { kind?: unknown }).kind === 'x') return true;
+  return Object.entries(v).some(([k, x]) => k !== 'token' && k !== 'abilities' && k !== 'grant' && hasFreeX(x));
+}
+
 // ---------------------------------------------------------------------------
 // Activated abilities
 // ---------------------------------------------------------------------------
@@ -816,10 +829,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const searches = /^(an opponent|a player) searches their library$/.exec(t);
   if (searches) return { trigger: { type: 'searched', who: searches[1] === 'an opponent' ? 'opponent' : 'any' }, it: null, player: { ref: 'trigger_player' } };
   // Burgeoning: "Whenever an opponent plays a land", Fastbond-style "Whenever you play a land"
-  const plays = /^(you|an opponent|a player) plays? a land$/.exec(t);
-  if (plays && word === 'Whenever') {
+  // City of Traitors: "When you play another land" (any land played, other than this one).
+  const plays = /^(you|an opponent|a player) plays? (a|another) land$/.exec(t);
+  if (plays && (word === 'Whenever' || plays[2] === 'another')) {
     const who = plays[1] === 'you' ? 'you' : plays[1] === 'an opponent' ? 'opponent' : 'any';
-    return { trigger: { type: 'land_played', who }, it: { ref: 'trigger_object' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
+    return { trigger: { type: 'land_played', who, ...(plays[2] === 'another' ? { other: true } : {}) }, it: { ref: 'trigger_object' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
   }
   // Mirkwood Bats: "Whenever you create or sacrifice a token"; "Whenever you create a token", "… one or more creature
   // tokens" — tokens are created on the battlefield (CR 111.1), so as they enter under your control.
@@ -1366,6 +1380,9 @@ export const triggeredRule: GrammarRule = {
         if (r.condition) node.condition = r.condition;
         // CR 701.37c: in "When ~ becomes monstrous", X is the N it became monstrous with.
         if (node.trigger.type === 'becomes_monstrous' && node.effects) node.effects = bindX(node.effects, { kind: 'event' });
+        // CR 107.3m: otherwise X is the X this permanent entered with, which only its own "enters" trigger sees.
+        const ownEnters = node.trigger.type === 'enters' && (node.trigger as { subject?: { ref?: string } }).subject?.ref === 'self';
+        if (!ownEnters && hasFreeX([node.effects, node.modes, node.condition])) return null;
         return node;
       }
     }
