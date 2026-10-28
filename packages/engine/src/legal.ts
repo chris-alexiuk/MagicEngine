@@ -16,7 +16,7 @@ import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameS
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { freePermission, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
-import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
+import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
 import { activationsThisTurn, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { faceOf, zoneList } from './zones.js';
@@ -51,10 +51,11 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   const mainPhaseEmptyStack = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
 
   // "You may play lands from your graveyard."
-  if (mainPhaseEmptyStack && playerRule(g, player, 'lands_from_graveyard') && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player)) {
+  // Titania, Nature's Force: "You may play Forests from your graveyard."
+  if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player)) {
     for (const id of zoneList(g, 'graveyard', player)) {
       const def = g.cards[g.objects[id]!.card]!;
-      if (def.faces[0]!.types.includes('Land')) out.push({ type: 'play_land', player, object: id });
+      if (def.faces[0]!.types.includes('Land') && ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!)) out.push({ type: 'play_land', player, object: id });
     }
   }
   // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library.

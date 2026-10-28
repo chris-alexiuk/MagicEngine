@@ -1952,6 +1952,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const once = parseSentence(again[1]!, b);
     if (once) return Array.from({ length: again[2] === 'twice' ? 2 : 3 }, () => structuredClone(once)).flat();
   }
+  // Ethereal Investigator: "investigate X times, where X is the number of opponents you have".
+  const xTimes = /^([Ii]nvestigate|[Pp]roliferate|[Pp]opulate|[Ee]xplore|[Cc]onnive) X times$/.exec(s);
+  if (xTimes) {
+    const once = parseSentence(xTimes[1]!, b);
+    if (once) return [{ type: 'repeat', times: 'X', effects: once }];
+  }
   // CR 104.2a / 104.3: "You win the game." / "You lose the game." / "Target player loses the game."
   const result = /^(.+?) (wins?|loses?) the game$/.exec(s);
   if (result) {
@@ -2594,6 +2600,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return scaleBy(inner, { kind: 'votes', option }) ?? [{ type: 'repeat', times: { kind: 'votes', option }, effects: inner }];
     });
   }
+  // Sandstone Oracle: "Choose an opponent. If that player has more cards in hand than you, …" — chosen as it resolves.
+  if (/^[Cc]hoose an opponent$/.test(s)) {
+    const who: Ref = { ref: 'chosen_opponent' };
+    b.player = who;
+    b.named = { ...b.named, 'the chosen player': who, 'that opponent': who };
+    return [{ type: 'choose_opponent' }];
+  }
   // Great Train Heist: "Choose target opponent." — the player, for what follows ("that player").
   if (/^[Cc]hoose target (?:opponent|player)$/.test(s)) {
     const r = attempt(b, (b) => {
@@ -2923,11 +2936,14 @@ const VERBS: Record<string, VerbHandler> = {
   gain(args, who, b, imperative) {
     // Layer 2 (CR 613.1b): "Gain control of target creature until end of turn."
     // Treasure Nabber: "… until the end of your next turn".
-    const control = /^control of (.+?)( until end of turn| until the end of your next turn)?$/.exec(args);
+    // Sower of Temptation: "… for as long as this creature remains on the battlefield"; Roil Elemental: "… for as long as
+    // you control this creature" (CR 611.2b).
+    const control = /^control of (.+?)( until end of turn| until the end of your next turn| for as long as (?:~|this \w+) remains on the battlefield| for as long as you control (?:~|this \w+))?$/.exec(args);
     if (control) {
       if (!imperative) return null;
       const what = parseObjectRef(control[1]!, b);
-      const until = control[2] === ' until end of turn' ? 'eot' : control[2] ? 'end_of_your_next_turn' : null;
+      const until = control[2] === ' until end of turn' ? 'eot' : /remains on the battlefield$/.test(control[2] ?? '') ? 'source_present' : /you control/.test(control[2] ?? '') ? 'source_controlled' : control[2] ? 'end_of_your_next_turn' : null;
+      if (until?.startsWith('source_') && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
       return what ? [{ type: 'gain_control', what: what.ref, ...(until ? { until } : {}) }] : null;
     }
     // Heliod's Intervention: "Target player gains twice X life."
@@ -3280,14 +3296,15 @@ const VERBS: Record<string, VerbHandler> = {
       return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: 1, then: 'exile' }];
     }
     // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
-    const until = / until ~ leaves the battlefield$/.exec(args);
+    // Palace Jailer: "… until an opponent becomes the monarch" (CR 610.3, with an event instead of leaving).
+    const until = / until (?:~ leaves the battlefield|an opponent becomes the monarch)$/.exec(args);
     const what = parseObjectRef(until ? args.slice(0, until.index) : args, b);
     if (!what) {
       // "Exile target creature and target artifact."
       const list = until ? null : targetList(args, b);
       return list ? list.map((r) => ({ type: 'move', what: r, to: 'exile' })) : null;
     }
-    return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: 'source_leaves' } : {}) }];
+    return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: /monarch$/.test(until[0]) ? 'opponent_monarch' : 'source_leaves' } : {}) }];
   },
   return(args, who, b, imperative) {
     // Scrap Trawler: "return to your hand target artifact card in your graveyard with lesser mana value".
@@ -3668,7 +3685,8 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   const explore = /^(.+?) explores$/i.exec(c);
   if (explore) {
     const what = parseObjectRef(explore[1]!, b);
-    return what && !what.plural ? [{ type: 'explore', what: what.ref }] : null;
+    // Hakbal: "each Merfolk creature you control explores" — each in turn.
+    return what && (!what.plural || what.ref.ref === 'all') ? [{ type: 'explore', what: what.ref }] : null;
   }
   // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
   const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);

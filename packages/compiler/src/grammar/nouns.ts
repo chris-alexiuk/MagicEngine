@@ -300,7 +300,9 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
   // "each Fungus and Saproling you control": either subtype.
   // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
-  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) && subtypeOf(z) && (subtypeOf(a) === a) === (subtypeOf(z) === z) ? `${a} or ` : m));
+  // Sapling Nursery: "Treefolk and Forests you control" — a word that's its own plural goes with either.
+  const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr'];
+  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a)) ? `${a} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
   // describe every alternative.
@@ -331,6 +333,13 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
       const anyOf: ObjectFilter[] = [];
       for (const part of parts) {
         const alt: ObjectFilter = base.zone ? { zone: base.zone } : {};
+        // Firespitter Whelp: "a noncreature or Dragon spell" — the bare adjective takes the last part's noun.
+        const noun = last.split(' ').pop()!;
+        // (Only for two parts: "a white or blue instant or sorcery spell" is colors and types both.)
+        if (parts.length === 2 && part !== last && !part.includes(' ') && /^(?:spells?|cards?|permanents?)$/.test(noun) && !parseHeadPhrase(part, { ...alt }) && parseHeadPhrase(`${part} ${noun}`, alt)) {
+          anyOf.push(alt);
+          continue;
+        }
         if (!parseHeadPhrase(part, alt)) {
           // Moonsilver Key: "an artifact card with a mana ability or a basic land card" — an alternative with its own
           // qualities.

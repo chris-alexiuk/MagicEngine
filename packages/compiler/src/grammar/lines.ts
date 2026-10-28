@@ -1487,6 +1487,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const who = cycles[1] === 'you' ? 'you' : cycles[1] === 'an opponent' ? 'opponent' : 'any';
     return { trigger: { type: 'activate', who, keyword: 'cycling', ...(cycles[2] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
+  // CR 705: "Whenever you win a coin flip" (Tavern Scoundrel), "Whenever you lose a coin flip", "… flip a coin".
+  const flip = /^you (win|lose|flip) a coin(?: flip)?$/.exec(t);
+  if (flip) return { trigger: { type: 'coin_flipped', ...(flip[1] !== 'flip' ? { won: flip[1] === 'win' } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   // CR 701.22 / 701.25: "Whenever you scry", "Whenever you surveil", "Whenever you scry or surveil"
   const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
@@ -1741,7 +1744,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!spell || spell.plural || (what !== 'spell' && spell.filter.zone !== 'stack')) return null;
     delete spell.filter.zone;
     const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : cast[1] === 'the chosen player' ? 'chosen' : 'any';
-    // "that player" is whoever cast the spell.
+    // "that player" is whoever cast the spell; Scytheclaw Raptor's "deals 4 damage to them" too (one spell is never "them").
+    if (who !== 'you') b.named['them'] = { ref: 'trigger_player' };
     return { trigger: { type: 'cast', who, filter: spell.filter, ...extra }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   return null;
@@ -2206,6 +2210,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
   if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
+  // Titania, Nature's Force: "You may play Forests from your graveyard."
+  const someLands = /^You may play (Plains|Islands|Swamps|Mountains|Forests) from your graveyard$/.exec(body);
+  if (someLands) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard', filter: { subtypes: [someLands[1]!.replace(/s$/, '').replace(/^Plain$/, 'Plains')] } };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
   // Sulfuric Vortex: "If a player would gain life, that player gains no life instead." (CR 614.1a: no life is gained.)
   const noGain = /^If (a player|an opponent|you) would gain life, (?:that player gains|you gain) no life instead$/.exec(body);
@@ -2307,7 +2314,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2838,6 +2845,16 @@ export const quantityReplacementRule: GrammarRule = {
       const target = put[2]!.replace(/^(?:a|an) /, '');
       const pf = target === 'permanent or player' ? { filter: {}, plural: false } : parseFilter(target, b);
       return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
+    }
+    // The Sound of Drums: "If enchanted creature would deal combat damage to a permanent or player, it deals double that
+    // damage instead."; Mjölnir: "Double all damage equipped creature would deal."
+    const attachedDmg =
+      /^If (equipped|enchanted) creature would deal (combat )?damage to a permanent or player, it deals (double|triple) that damage instead\.$/.exec(line) ??
+      /^(Double|Triple)() all (combat )?damage (equipped|enchanted) creature would deal\.$/.exec(line);
+    if (attachedDmg) {
+      const word = attachedDmg[3] === 'double' || attachedDmg[3] === 'triple' ? attachedDmg[3] : attachedDmg[1]!.toLowerCase();
+      const combatOnly = attachedDmg[3] === 'double' || attachedDmg[3] === 'triple' ? Boolean(attachedDmg[2]) : Boolean(attachedDmg[3]);
+      return make({ event: 'damage', fromAttached: true, op: word as 'double' | 'triple', ...(combatOnly ? { combatOnly: true as const } : {}) });
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
     // Gisela, Blade of Goldnight: "… that source deals double that damage to that player or permanent instead."

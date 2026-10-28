@@ -412,6 +412,8 @@ export interface ContinuousEffect {
   until: 'eot' | 'game';
   /** CR 611.2b: "for as long as ~ remains tapped" — it ends once that object isn't tapped (or is gone). */
   whileTapped?: ObjectRef;
+  /** Sower of Temptation: "for as long as ~ remains on the battlefield"; `player`: "for as long as you control ~". */
+  whilePresent?: ObjectRef & { player?: PlayerId };
   /** "until your next turn": it ends as this player's next turn begins. */
   untilTurnOf?: PlayerId;
   /** "until the end of your next turn": it ends in the cleanup step of this turn. */
@@ -944,7 +946,8 @@ export interface GameState {
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[] }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
-  exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
+  /** `monarch`: Palace Jailer's "until an opponent becomes the monarch" (the monarch when it was exiled, then as it changes). */
+  exiledUntil?: { source: ObjectRef; object: ObjectRef; monarch?: { controller: PlayerId; was: PlayerId | null } }[];
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */

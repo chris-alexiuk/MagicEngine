@@ -148,6 +148,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Rug of Smothering: "they lose 1 life for each spell they've cast this turn" — the player the trigger is about.
+  if (/^spell (?:they've|that player has) cast this turn$/.test(t) && b.player && b.player.ref !== 'players' && b.player.ref !== 'you') return { kind: 'spells_cast_this_turn', player: b.player };
   // Thousand-Year Storm: "for each other instant and sorcery spell you've cast before it this turn"
   const castBefore = /^other (.+?) spell you've cast before it this turn$/.exec(t);
   if (castBefore) {
@@ -219,6 +221,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Archfiend of Despair: "the life that player lost this turn" — each of the players in turn.
   const theirLife = /^the life (?:they|that player) (lost|gained) this turn$/.exec(t);
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
+  // Volcanic Torrent: "the number of spells you've cast this turn".
+  if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // The Ten Rings: "equal to the difference" — as the condition before it said.
+  if (t === 'the difference' && b.difference) return b.difference;
   // Maester Seymour: "the number of counters among creatures you control" — every counter on them.
   const among = /^the (?:total )?number of counters among (.+)$/.exec(t);
   if (among) {

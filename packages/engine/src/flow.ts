@@ -80,8 +80,18 @@ function returnExiledUntil(g: GameState, events: GameEvent[]): boolean {
   if (!g.exiledUntil?.length) return false;
   let changed = false;
   for (const link of [...g.exiledUntil]) {
-    const src = g.objects[link.source.id];
-    if (src && src.zone === 'battlefield' && src.zcc === link.source.zcc) continue;
+    if (link.monarch) {
+      // Palace Jailer: only an opponent becoming the monarch ends it (the controller becoming it doesn't).
+      const now = g.monarch ?? null;
+      if (now === link.monarch.was) continue;
+      if (now === null || now === link.monarch.controller) {
+        link.monarch.was = now;
+        continue;
+      }
+    } else {
+      const src = g.objects[link.source.id];
+      if (src && src.zone === 'battlefield' && src.zcc === link.source.zcc) continue;
+    }
     g.exiledUntil = g.exiledUntil.filter((l) => l !== link);
     const o = g.objects[link.object.id];
     if (!o || o.zone !== 'exile' || o.zcc !== link.object.zcc) continue;
@@ -579,7 +589,12 @@ export function pruneDurations(g: GameState, events: GameEvent[]): boolean {
     return Boolean(s && s.zone === 'battlefield' && s.zcc === r.zcc && s.tapped);
   };
   const before = g.effects.length;
-  g.effects = g.effects.filter((e) => !e.whileTapped || held(e.whileTapped));
+  // Sower of Temptation: for as long as it remains on the battlefield (under your control).
+  const present = (r: { id: string; zcc: number; player?: PlayerId }) => {
+    const s = g.objects[r.id];
+    return Boolean(s && s.zone === 'battlefield' && s.zcc === r.zcc && (!r.player || s.controller === r.player));
+  };
+  g.effects = g.effects.filter((e) => (!e.whileTapped || held(e.whileTapped)) && (!e.whilePresent || present(e.whilePresent)));
   if (g.effects.length === before) return false;
   applyControlEffects(g, events);
   return true;

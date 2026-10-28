@@ -1,4 +1,4 @@
-import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
+import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
@@ -346,8 +346,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^there is no monarch$/.test(t)) return { type: 'monarch', none: true };
   if (/^it's not your turn$|^it isn't your turn$/.test(t)) return { type: 'your_turn', value: false };
   // Tataru Taru: "if it isn't that player's turn" — the player the trigger is about.
-  if (/^it(?:'s not| isn't) that player's turn$/.test(t)) return { type: 'your_turn', value: false, who: { ref: 'trigger_player' } };
-  if (/^it's that player's turn$/.test(t)) return { type: 'your_turn', value: true, who: { ref: 'trigger_player' } };
+  // March of the World Ooze: "Whenever an opponent casts a spell, if it's not their turn" — the same player.
+  if (/^it(?:'s not| isn't) (?:that player's|their) turn$/.test(t)) return { type: 'your_turn', value: false, who: { ref: 'trigger_player' } };
+  if (/^it's (?:that player's|their) turn$/.test(t)) return { type: 'your_turn', value: true, who: { ref: 'trigger_player' } };
 
   // Coven: "you control three or more creatures with different powers"
   const coven = /^you control (\w+ or more) creatures with different powers$/.exec(t);
@@ -410,6 +411,26 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "you have more cards in hand than each opponent"
   const moreHand = /^you have (more|fewer) cards in hand than (each|an) opponent$/.exec(t);
   if (moreHand) return { type: 'hand', than: moreHand[2] === 'each' ? 'each_opponent' : 'an_opponent', op: moreHand[1] === 'more' ? 'gt' : 'lt' };
+  // Sandstone Oracle: "choose an opponent. If that player has more cards in hand than you, draw cards equal to the
+  // difference."; Balance of Power: "If target opponent has more cards in hand than you, …"
+  const moreThanYou = /^(that player|that opponent|target opponent|target player) has more cards in hand than you$/.exec(t);
+  if (moreThanYou) {
+    const who = parsePlayerRef(moreThanYou[1]!, b);
+    if (!who || who.ref === 'you' || who.ref === 'players') return null;
+    const theirs: AmountExpr = { kind: 'cards', zone: 'hand', who: 'you', player: who };
+    const mine: AmountExpr = { kind: 'cards', zone: 'hand', who: 'you' };
+    b.difference = { kind: 'sum', parts: [theirs, { ...mine, times: -1 }] };
+    return { type: 'amount', amount: theirs, op: 'gt', n: mine } as ConditionNode;
+  }
+  // The Ten Rings: "if you have fewer than ten cards in hand, draw cards equal to the difference" — "the difference" is
+  // then that number minus the cards in hand.
+  const fewerHand = /^you have fewer than (\w+) cards in hand$/.exec(t);
+  if (fewerHand) {
+    const n = parseAmount(fewerHand[1]!);
+    if (typeof n !== 'number') return null;
+    b.difference = { kind: 'cards', zone: 'hand', who: 'you', times: -1, plus: n };
+    return { type: 'hand', op: 'lt', n };
+  }
   const hand = /^you have (\w+ or (?:more|fewer)) cards in hand$/.exec(t);
   if (hand) {
     const c = compare(hand[1]!);

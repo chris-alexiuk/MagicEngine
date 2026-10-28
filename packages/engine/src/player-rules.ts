@@ -101,6 +101,24 @@ export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): nu
 }
 
 /**
+ * Whether a rule lets this player do something with this card: a rule for every card, or one for cards like it
+ * (Titania, Nature's Force: "You may play Forests from your graveyard").
+ */
+export function ruleAllows(g: GameState, player: PlayerId, rule: PlayerRule, card: GameObject): boolean {
+  if (playerRule(g, player, rule) > 0) return true;
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== rule || !e.filter || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      if (matchesFilter(g, card, e.filter, { controller: player, source, anyZone: true })) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * CR 402.2: a player's maximum hand size — seven, changed by static abilities in timestamp order ("Your maximum hand
  * size is twenty", "Each opponent's maximum hand size is reduced by seven"); null when they have none.
  */

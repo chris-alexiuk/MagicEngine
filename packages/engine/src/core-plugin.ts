@@ -471,6 +471,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const dfc = (ctx.g.cards[o.card]?.faces.length ?? 0) > 1 && ['transform', 'modal_dfc', 'meld'].includes(ctx.g.cards[o.card]!.layout);
         if (node.transformed && !dfc) continue;
         moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}) });
+      } else if (node.until === 'opponent_monarch') {
+        // Palace Jailer: back to the battlefield when an opponent of this ability's controller becomes the monarch.
+        if (o.zone !== 'battlefield') continue;
+        moveObject(ctx.g, o.id, 'exile', ctx.events);
+        const now = ctx.g.objects[o.id]!;
+        if (now.zone === 'exile') (ctx.g.exiledUntil ??= []).push({ source: { id: '', zcc: 0 }, object: { id: now.id, zcc: now.zcc }, monarch: { controller: ctx.controller, was: ctx.g.monarch ?? null } });
       } else if (node.until === 'source_leaves') {
         // CR 610.3a: if the source has already left the battlefield, the object doesn't move at all.
         const src = ctx.source;
@@ -2053,33 +2059,47 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   explore(node, ctx) {
     // CR 701.44a: reveal the top card of your library. A land goes into your hand; otherwise put a
     // +1/+1 counter on the permanent, then you may put the card into your graveyard.
-    const memo = ctx.memo as { card?: string; explorer?: string };
-    const answer = answerOf(ctx, 'may');
+    // Hakbal: "each Merfolk creature you control explores" — one at a time, each finished before the next.
+    const memo = ctx.memo as { card?: string; queue?: { id: string; zcc: number }[] };
+    memo.queue ??= refObjects(ctx, ref(node, 'what')).map((o) => ({ id: o.id, zcc: o.zcc }));
+    let answer = answerOf(ctx, 'may');
     if (answer && memo.card) {
       const card = ctx.g.objects[memo.card];
       if (answer.yes && card?.zone === 'library') moveObject(ctx.g, card.id, 'graveyard', ctx.events);
-      return true;
+      memo.card = undefined;
+      memo.queue.shift();
+      answer = null;
     }
-    const [o] = refObjects(ctx, ref(node, 'what'));
-    if (!o) return true;
-    const player = o.controller;
-    const top = zoneList(ctx.g, 'library', player)[0];
-    if (!top) {
-      // CR 701.44b: it still explores, with nothing revealed (and so not a land).
-      if (o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', 1);
-      ctx.events.push({ type: 'explored', object: o.id, land: false });
-      return true;
+    while (memo.queue.length) {
+      const r = memo.queue[0]!;
+      const o = ctx.g.objects[r.id];
+      // An explorer that left still explores (CR 701.44b-c: no counter), as the one it was.
+      if (!o) {
+        memo.queue.shift();
+        continue;
+      }
+      const player = o.controller;
+      const top = zoneList(ctx.g, 'library', player)[0];
+      if (!top) {
+        // CR 701.44b: it still explores, with nothing revealed (and so not a land).
+        if (o.zone === 'battlefield' && o.zcc === r.zcc) addCounters(ctx, o, '+1/+1', 1);
+        ctx.events.push({ type: 'explored', object: o.id, land: false });
+        memo.queue.shift();
+        continue;
+      }
+      ctx.events.push({ type: 'revealed', player, objects: [top] });
+      const land = ctx.g.cards[ctx.g.objects[top]!.card]!.faces[0]!.types.includes('Land');
+      ctx.events.push({ type: 'explored', object: o.id, land });
+      if (land) {
+        moveObject(ctx.g, top, 'hand', ctx.events);
+        memo.queue.shift();
+        continue;
+      }
+      if (o.zone === 'battlefield' && o.zcc === r.zcc) addCounters(ctx, o, '+1/+1', 1);
+      memo.card = top;
+      return { ask: { kind: 'may', player, text: `put ${nameOf(ctx.g, ctx.g.objects[top]!)} into your graveyard`, sourceName: sourceName(ctx) } };
     }
-    ctx.events.push({ type: 'revealed', player, objects: [top] });
-    const land = ctx.g.cards[ctx.g.objects[top]!.card]!.faces[0]!.types.includes('Land');
-    ctx.events.push({ type: 'explored', object: o.id, land });
-    if (land) {
-      moveObject(ctx.g, top, 'hand', ctx.events);
-      return true;
-    }
-    if (o.zone === 'battlefield') addCounters(ctx, o, '+1/+1', 1);
-    memo.card = top;
-    return { ask: { kind: 'may', player, text: `put ${nameOf(ctx.g, ctx.g.objects[top]!)} into your graveyard`, sourceName: sourceName(ctx) } };
+    return true;
   },
 
   get_counters(node, ctx) {
@@ -3618,6 +3638,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
     }
     if (!to) return true;
+    // CR 611.2b: "for as long as ~ remains on the battlefield" — if it already left (or you no longer control it), the
+    // effect does nothing.
+    const whilePresent = node.until === 'source_present' || node.until === 'source_controlled' ? ctx.source : undefined;
+    if (node.until === 'source_present' || node.until === 'source_controlled') {
+      const s = ctx.source;
+      if (!s || s.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && s.zcc !== ctx.sourceZcc) || (node.until === 'source_controlled' && s.controller !== ctx.controller)) return true;
+    }
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
@@ -3625,6 +3652,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       controller: ctx.controller,
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
       control: to,
+      ...(whilePresent ? { whilePresent: { id: whilePresent.id, zcc: whilePresent.zcc, ...(node.until === 'source_controlled' ? { player: ctx.controller } : {}) } } : {}),
       until: node.until === 'eot' ? 'eot' : 'game',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
       // Treasure Nabber: "until the end of your next turn" — it ends with that turn's cleanup (CR 514.2).
@@ -4596,6 +4624,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
   },
   // CR 706: "Whenever you roll one or more dice", "Whenever you roll a die"
+  // CR 705: "Whenever you win a coin flip" — once for each flip you won.
+  coin_flipped(t, check) {
+    const e = check.event;
+    if (e.type !== 'coin_flip' || check.sourceLeft || e.player !== check.controller) return [];
+    if (t.won !== undefined && e.won !== t.won) return [];
+    return [{ player: e.player }];
+  },
   die_rolled(t, check) {
     const e = check.event;
     if (e.type !== 'die_rolled' || check.sourceLeft || (t.who === 'you' && e.player !== check.controller)) return [];

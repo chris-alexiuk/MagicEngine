@@ -50,7 +50,7 @@ import {
   type Target,
   type TargetRef,
 } from './types.js';
-import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
+import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
 import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
@@ -319,7 +319,7 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   if (!face) throw new RulesError('That card has no such face.');
   const fromExile = (o.zone === 'exile' || o.zone === 'library' || o.zone === 'graveyard') && mayPlayFrom(g, player, o, 'land');
   // "You may play lands from your graveyard."
-  const fromGraveyard = o.zone === 'graveyard' && o.owner === player && playerRule(g, player, 'lands_from_graveyard');
+  const fromGraveyard = o.zone === 'graveyard' && o.owner === player && ruleAllows(g, player, 'lands_from_graveyard', o);
   if (!fromExile && !fromGraveyard && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
   if (!face.types.includes('Land')) throw new RulesError(`${face.name} isn’t a land.`);
   // CR 712.12: a modal double-faced card is played as a land with a land face up.

@@ -1,4 +1,4 @@
-import type { Ref, TargetSpec } from '@mtg/schema';
+import type { AmountExpr, Ref, TargetSpec } from '@mtg/schema';
 import type { KeywordRegistry } from '../keywords.js';
 
 /** What every grammar function needs to know about the card being compiled. */
@@ -55,6 +55,8 @@ export class Binder {
   milled = false;
   /** Peer into the Abyss: "… half the number of cards in their library … Round up each time." — how "half" rounds. */
   halfDir: 'up' | 'down' | null = null;
+  /** The Ten Rings: "if you have fewer than ten cards in hand, draw cards equal to the difference" — what "the difference" is. */
+  difference: AmountExpr | null = null;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -75,6 +77,7 @@ export class Binder {
     b.xAllowed = this.xAllowed;
     b.milled = this.milled;
     b.halfDir = this.halfDir;
+    b.difference = this.difference;
     return b;
   }
 
@@ -94,6 +97,7 @@ export class Binder {
     this.xAllowed = other.xAllowed;
     this.milled = other.milled;
     this.halfDir = other.halfDir;
+    this.difference = other.difference;
   }
 
   addTarget(spec: TargetSpec): Ref {

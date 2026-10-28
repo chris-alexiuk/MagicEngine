@@ -104,7 +104,16 @@ export class ParserRegistry {
       }
       return result;
     }
-    const lines = text.split('\n').map(stripReminder);
+    // Traxos: "Traxos enters tapped and doesn't untap during your untap step."; Sphere of the Suns: "This artifact enters
+    // tapped and with three charge counters on it." — two static abilities in one sentence, read as two lines.
+    const lines = text
+      .split('\n')
+      .map(stripReminder)
+      .flatMap((l) => {
+        const both = /^(.+?) enters tapped and (doesn't untap during your untap step|with .+ counters? on it)\.$/.exec(l);
+        if (!both) return [l];
+        return [`${both[1]} enters tapped.`, both[2]!.startsWith('with') ? `${both[1]} enters ${both[2]}.` : `${both[1]} ${both[2]}.`];
+      });
     // Cabal Ritual: "Add {B}{B}{B}." then "Threshold — Add {B}{B}{B}{B}{B} instead if …" — on an instant or sorcery
     // the second line replaces the first (CR 608.2c), so they're read as one.
     if (/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) {

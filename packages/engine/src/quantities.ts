@@ -94,7 +94,9 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       if (e.counter && e.counter !== s.counter) return false;
       return !e.filter || matchesFilter(g, s.object, e.filter, { controller: you, source });
     case 'damage': {
-      if (!s.source || (e.noncombat && s.combat)) return false;
+      if (!s.source || (e.noncombat && s.combat) || (e.combatOnly && !s.combat)) return false;
+      // The Sound of Drums: the creature this Aura or Equipment is attached to.
+      if (e.fromAttached && !(source.attachedTo && source.attachedTo.id === s.source.id && source.attachedTo.zcc === s.source.zcc)) return false;
       if (e.filter && !matchesFilter(g, s.source, e.filter, { controller: you, source, anyZone: true })) return false;
       if (e.toOpponents) {
         const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
