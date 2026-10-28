@@ -172,6 +172,22 @@ export function attackRestriction(g: GameState, o: GameObject, target: AttackTar
 }
 
 function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): string | null {
+  // Port Razer: "can't attack a player it has already attacked this turn".
+  if (target.kind === 'player' && hasRule(g, o, 'cant_attack_same_player')) {
+    const rec = g.turnLog.attackedPlayers?.[o.id];
+    if (rec && rec.zcc === o.zcc && rec.players.includes(target.player)) return `${nameOf(g, o)} can’t attack a player it has already attacked this turn.`;
+  }
+  // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
+      const e = (a as StaticAbility).effect as AttackTaxNode;
+      if (!e.banned || !staticConditionHolds(g, e, src)) continue;
+      const at = target.kind === 'player' ? target.player === src.controller : Boolean(e.planeswalkers) && g.objects[target.object]?.controller === src.controller;
+      if (at && (!e.filter || matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) return `${nameOf(g, o)} can’t attack ${g.players[src.controller]?.name ?? src.controller}${e.planeswalkers ? ' or their planeswalkers' : ''}.`;
+    }
+  }
   for (const r of chars(g, o).combat) {
     if (!r.attackOnlyIfDefenderControls) continue;
     const defender = defenderOf(g, target);
@@ -196,7 +212,7 @@ export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; 
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
       const e = (a as StaticAbility).effect as AttackTaxNode;
-      if (!staticConditionHolds(g, e, src)) continue;
+      if (e.banned || !staticConditionHolds(g, e, src)) continue;
       // Sphere of Safety: {X} each, X counted now.
       const n = e.x ? amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, e.x) : 0;
       if (e.x && n <= 0) continue;

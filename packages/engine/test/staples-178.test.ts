@@ -339,7 +339,7 @@ describe('staples (slice 179): target spell or permanent', () => {
     expect(g.objects[think]!.zone).toBe('hand');
   });
 
-  it('Purelace: a spell is white while on the stack; the permanent it becomes is a new object', () => {
+  it('Purelace: a spell is white while on the stack, and the permanent it becomes stays white (CR 400.7a)', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     g.players.alice!.pool.G = 1;
     g.players.alice!.pool.C = 1;
@@ -351,7 +351,7 @@ describe('staples (slice 179): target spell or permanent', () => {
     expect(chars(g, g.objects[bear]!).colors).toEqual(['W']);
     g = settle(g);
     const onField = g.zones.battlefield.find((id) => g.cards[g.objects[id]!.card]?.name === 'Bear')!;
-    expect(chars(g, g.objects[onField]!).colors).toEqual(['G']);
+    expect(chars(g, g.objects[onField]!).colors).toEqual(['W']);
   });
 
   it('Oust: the creature\'s controller gains 3 life', () => {

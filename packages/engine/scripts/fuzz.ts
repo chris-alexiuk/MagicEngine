@@ -236,6 +236,19 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'choose_option', choice: pick(p.options) } };
     case 'choose_objects': {
       const n = p.min + Math.floor(rnd() * (Math.min(p.max, p.candidates.length) - p.min + 1));
+      // Sludge Titan: one card for each kind — keep only cards that can stand for a kind not used yet.
+      if (p.kinds) {
+        const used = new Set<number>();
+        const objects: string[] = [];
+        for (const id of shuffle([...p.candidates])) {
+          if (objects.length >= n) break;
+          const k = (p.kinds[id] ?? []).find((x) => !used.has(x));
+          if (k === undefined) continue;
+          used.add(k);
+          objects.push(id);
+        }
+        return { player: me, answer: { kind: 'choose_objects', objects } };
+      }
       return { player: me, answer: { kind: 'choose_objects', objects: shuffle([...p.candidates]).slice(0, n) } };
     }
     case 'as_enters':

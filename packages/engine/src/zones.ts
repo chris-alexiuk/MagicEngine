@@ -243,6 +243,11 @@ export function moveObject(
 
   o.zone = to;
   o.zcc++;
+  // CR 400.7a: effects from spells and abilities that changed a spell on the stack (Rivaz of the Claw: "it gains 'When
+  // this creature dies, exile it.'") continue to apply to the permanent it becomes.
+  if (from === 'stack' && to === 'battlefield') {
+    for (const e of g.effects) for (const r of e.objects) if (r.id === id && r.zcc === o.zcc - 1) r.zcc = o.zcc;
+  }
   o.tapped = false;
   o.damage = 0;
   o.counters = {};

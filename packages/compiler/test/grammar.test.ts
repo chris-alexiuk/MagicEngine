@@ -2516,3 +2516,29 @@ describe('slice 198', () => {
     expect(parse("At the beginning of your end step, target opponent may have you draw a card. If that player doesn't, you mill X cards, where X is the number of influence counters on ~, and that player loses life equal to the total mana value of those cards.", 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', else: [{ type: 'mill', amount: { kind: 'counters' } }, { type: 'lose_life' }] }] });
   });
 });
+
+describe('slice 199', () => {
+  it('reads shuffle wheels, first-spell reductions, attack bans and more instructions for the same players', () => {
+    expect(parse('Each player shuffles the cards from their hand into their library, then draws that many cards.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', mode: 'all', to: 'shuffle' }] });
+    expect(parse('Whenever a player taps a land for mana, this enchantment deals 1 damage to that player.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', to: { ref: 'trigger_player' } }] });
+    expect(parse('Each opponent sacrifices a creature or planeswalker of their choice and gets a poison counter.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice_choice' }, { type: 'get_counters', counter: 'poison', who: { ref: 'players', who: 'opponents' } }] });
+    expect(parse('Each opponent loses two times X life. You gain life equal to the life lost this way.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', amount: { kind: 'x', times: 2 } }, { type: 'gain_life', amount: { kind: 'life_lost' } }] });
+    expect(parse('The first creature spell you cast each turn costs {2} less to cast.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', firstEachTurn: true, filter: { types: ['Creature'] }, amount: 2 } });
+    expect(parse("Creatures with flying can't attack you or planeswalkers you control.", 'Enchantment').abilities[0]).toMatchObject({ effect: { type: 'attack_tax', banned: true, planeswalkers: true, filter: { keywords: ['flying'] } } });
+    expect(parse("{G}: Target creature with defender can attack this turn as though it didn't have defender.", 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'modify', rules: ['can_attack_with_defender'] }] });
+    expect(parse('{T}: You may cast target Zombie creature card from your graveyard this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'grant_play', mode: 'cast' }], targets: [{ filter: { zone: 'graveyard', subtypes: ['Zombie'] } }] });
+    expect(parse('Exile the top five cards of your library. You may play cards exiled this way until the end of your next turn.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', amount: 5, play: { until: 'next_turn' } }] });
+  });
+});
+
+describe('slice 199 (more)', () => {
+  it('reads graveyard permissions once each turn, countered-spell destinations, backgrounds and life-loss timing', () => {
+    expect(parse('Once during each of your turns, you may cast a permanent spell with mana value 2 or less from your graveyard.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'graveyard_cast', oncePerTurn: true, filter: { manaValue: { op: 'le', n: 2 } } } });
+    expect(parse("Counter target spell. If that spell is countered this way, put it on top of its owner's library instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'library_top' }] });
+    expect(parse("Counter target spell. If that spell is countered this way, put it into its owner's hand instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'hand' }] });
+    expect(parse('Commander creatures you own have "Whenever this creature attacks a player, if no opponent has more life than that player, you create two Treasure tokens."', 'Enchantment').abilities[0]).toMatchObject({ effect: { affected: { filter: { commander: true, owner: 'you' } }, keywords: [{ id: 'ability', abilities: [{ trigger: { type: 'attacks', defender: 'player' }, condition: { type: 'life', mostAmongOpponents: true } }] }] } });
+    expect(parse('Whenever an opponent loses life for the first time during each of their turns, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'lose_life', first: true, theirTurn: true } });
+    expect(parse('Whenever you discard one or more cards, this creature deals that much damage to each opponent.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'discard', batch: true }, effects: [{ type: 'deal_damage', amount: { kind: 'event' } }] });
+    expect(parse("This creature can't attack a player it has already attacked this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack_same_player'] } });
+  });
+});

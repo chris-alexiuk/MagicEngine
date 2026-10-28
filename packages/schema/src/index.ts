@@ -620,6 +620,8 @@ export const RULE_FLAGS = [
   'may_not_untap',
   /** CR 510.1a: Doran — "assigns combat damage equal to its toughness rather than its power". */
   'damage_by_toughness',
+  /** Port Razer: "can't attack a player it has already attacked this turn" (CR 508.1c). */
+  'cant_attack_same_player',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -955,6 +957,8 @@ export interface AttackTaxNode extends EffectNode {
   /** Only attackers like this ("Nonblack creatures"). */
   filter?: ObjectFilter;
   condition?: ConditionNode;
+  /** Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." — not at any price. */
+  banned?: true;
 }
 
 export interface CostModifierNode extends EffectNode {
@@ -975,6 +979,8 @@ export interface CostModifierNode extends EffectNode {
   /** Emet-Selch: only spells cast from these zones ("from your graveyard"); `notFromHand`: "from anywhere other than your hand". */
   castFrom?: ('graveyard' | 'exile')[];
   notFromHand?: true;
+  /** Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast." */
+  firstEachTurn?: true;
 }
 
 /**
@@ -1107,7 +1113,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw',

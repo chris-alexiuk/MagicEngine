@@ -134,6 +134,25 @@ const CARDS = [
   makeCard({ name: 'Caryatid Lite', type_line: 'Creature — Plant', mana_cost: '{0}', power: '0', toughness: '1', oracle_text: '{T}: Add one mana of any color. If you control a creature with power 4 or greater, add two mana of any one color instead.' }),
   makeCard({ name: 'Chainer Lite', type_line: 'Legendary Creature — Human Minion', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Whenever a nontoken creature you control enters, if you didn't cast it from your hand, it gains haste until your next turn." }),
   makeCard({ name: 'Reanimate Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return target creature card from your graveyard to the battlefield.' }),
+  makeCard({ name: 'Winds Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player shuffles the cards from their hand into their library, then draws that many cards.' }),
+  makeCard({ name: 'Manabarbs Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever a player taps a land for mana, this enchantment deals 1 damage to that player.' }),
+  makeCard({ name: 'Vraska Fall Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent sacrifices a creature or planeswalker of their choice and gets a poison counter.' }),
+  makeCard({ name: 'Debt Lite', type_line: 'Sorcery', mana_cost: '{X}', oracle_text: 'Each opponent loses two times X life. You gain life equal to the life lost this way.' }),
+  makeCard({ name: 'Conduit Lite', type_line: 'Creature — Eldrazi', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'The first creature spell you cast each turn costs {2} less to cast.' }),
+  makeCard({ name: 'Sandwurm Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Creatures with flying can't attack you or planeswalkers you control." }),
+  makeCard({ name: 'Bird Lite', type_line: 'Creature — Bird', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flying' }),
+  makeCard({ name: 'Formation Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "{0}: Target creature with defender can attack this turn as though it didn't have defender." }),
+  makeCard({ name: 'Wall Lite', type_line: 'Creature — Wall', mana_cost: '{0}', power: '0', toughness: '4', oracle_text: 'Defender' }),
+  makeCard({ name: 'Zul Lite', type_line: 'Legendary Creature — Zombie Warlock', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{T}: You may cast target Zombie creature card from your graveyard this turn.' }),
+  makeCard({ name: 'Razer Lite', type_line: 'Creature — Orc Pirate', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever this creature deals combat damage to a player, untap each creature you control. After this phase, there is an additional combat phase.\nThis creature can't attack a player it has already attacked this turn." }),
+  makeCard({ name: 'Valgavoth Lite', type_line: 'Legendary Creature — Elder Demon', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Whenever an opponent loses life for the first time during each of their turns, put a +1/+1 counter on this creature and draw a card.' }),
+  makeCard({ name: 'Drain One', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent loses 1 life.' }),
+  makeCard({ name: 'Lurrus Lite', type_line: 'Legendary Creature — Cat Nightmare', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: 'Lifelink\nOnce during each of your turns, you may cast a permanent spell with mana value 2 or less from your graveyard.' }),
+  makeCard({ name: 'Lapse Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Counter target spell. If that spell is countered this way, put it on top of its owner's library instead of into that player's graveyard." }),
+  makeCard({ name: 'Remand Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Counter target spell. If that spell is countered this way, put it into its owner's hand instead of into that player's graveyard.\nDraw a card." }),
+  makeCard({ name: 'Artisan Lite', type_line: 'Legendary Enchantment — Background', mana_cost: '{0}', oracle_text: 'Commander creatures you own have "Whenever this creature attacks a player, if no opponent has more life than that player, you create two Treasure tokens."' }),
+  makeCard({ name: 'Rivaz Lite', type_line: 'Legendary Creature — Kobold Warlock', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Once during each of your turns, you may cast a Dragon creature spell from your graveyard.\nWhenever you cast a Dragon creature spell from your graveyard, it gains "When this creature dies, exile it."' }),
+  makeCard({ name: 'Whelp', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flying' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1425,5 +1444,180 @@ describe('staples (slice 198)', () => {
     const bear = give(g, 'alice', 'Cub', 'hand');
     g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
     expect(chars(g, g.objects[bear]!).keywords.some((k) => k.id === 'haste')).toBe(false);
+  });
+});
+
+describe('staples (slice 199)', () => {
+  it('Winds of Change: hands shuffled away, the same number drawn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 3; i++) give(g, 'bob', 'Salve', 'hand');
+    const [a, b] = [g.zones.hand.alice!.length, g.zones.hand.bob!.length];
+    const old = [...g.zones.hand.bob!];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Winds Lite', 'hand') }));
+    expect([g.zones.hand.alice!.length, g.zones.hand.bob!.length]).toEqual([a, b]);
+    expect(old.some((id) => g.objects[id]!.zone === 'library')).toBe(true);
+  });
+
+  it('Manabarbs: 1 damage to whoever taps a land for mana', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Manabarbs Lite', 'battlefield');
+    const forest = give(g, 'bob', 'Forest', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'activate_mana', player: 'bob', object: forest, ability: 0 }));
+    expect(g.players.bob!.life).toBe(life - 1);
+  });
+
+  it("Vraska's Fall: a sacrifice and a poison counter for each opponent", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'bob', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Vraska Fall Lite', 'hand') }));
+    expect([g.objects[cub]!.zone, g.players.bob!.poison]).toEqual(['graveyard', 1]);
+  });
+
+  it('Debt to the Deathless: two times X, and you gain what they lost', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    g.players.alice!.pool.C = 2;
+    const [a, b, c] = [g.players.alice!.life, g.players.bob!.life, g.players.carol!.life];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Debt Lite', 'hand'), x: 2 } as never));
+    expect([g.players.alice!.life, g.players.bob!.life, g.players.carol!.life]).toEqual([a + 8, b - 4, c - 4]);
+  });
+
+  it('Conduit of Ruin: only the first creature spell each turn is cheaper', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Conduit Lite', 'battlefield');
+    const [one, two] = [give(g, 'alice', 'Bear', 'hand'), give(g, 'alice', 'Bear', 'hand')];
+    g.players.alice!.pool.G = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: one }));
+    expect(g.objects[one]!.zone).toBe('battlefield');
+    g.players.alice!.pool.G = 1;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: two })).toBeTruthy();
+  });
+
+  it("Sandwurm Convergence: fliers can't attack you", () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'bob', 'Sandwurm Lite', 'battlefield');
+    const bird = give(g, 'alice', 'Bird Lite', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bird, target: { kind: 'player', player: 'bob' } }] } })).toBeTruthy();
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bird, target: { kind: 'player', player: 'carol' } }] } });
+    expect(g.combat?.attackers[bird]).toBeTruthy();
+  });
+
+  it('Assault Formation: a creature with defender can attack this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const f = give(g, 'alice', 'Formation Lite', 'battlefield');
+    const wall = give(g, 'alice', 'Wall Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: f, ability: 0, targets: [[{ kind: 'object', object: wall }]] } as never));
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: wall, target: { kind: 'player', player: 'bob' } }] } });
+    expect(g.combat?.attackers[wall]).toBeTruthy();
+  });
+
+  it('Zul Ashur: a target Zombie card in your graveyard may be cast this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const zul = give(g, 'alice', 'Zul Lite', 'battlefield');
+    const zombie = give(g, 'alice', 'Zombie', 'graveyard');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: zul, ability: 0, targets: [[{ kind: 'object', object: zombie }]] } as never));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: zombie }));
+    expect(g.objects[zombie]!.zone).toBe('battlefield');
+  });
+});
+
+describe('staples (slice 199): attacks and life loss once a turn', () => {
+  it("Port Razer: in the extra combat it can't attack the same player again", () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const razer = give(g, 'alice', 'Razer Lite', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: razer, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 60 && g.pending?.kind !== 'declare_attackers'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.pending?.kind).toBe('declare_attackers');
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: razer, target: { kind: 'player', player: 'bob' } }] } })).toBeTruthy();
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: razer, target: { kind: 'player', player: 'carol' } }] } });
+    expect(g.combat?.attackers[razer]).toBeTruthy();
+  });
+
+  it('Valgavoth: only the first life an opponent loses during their own turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Valgavoth Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Drain One', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand);
+    g = toStep(g, 'main1', 'bob');
+    const h2 = g.zones.hand.alice!.length;
+    for (let i = 0; i < 2; i++) {
+      g = act(g, { type: 'pass', player: 'bob' });
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Drain One', 'hand') });
+      g = settle(g);
+    }
+    expect(g.zones.hand.alice!.length).toBe(h2 + 1);
+  });
+});
+
+describe('staples (slice 199): once during each of your turns, from your graveyard', () => {
+  it('Lurrus: one permanent spell with mana value 2 or less each of your turns', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Lurrus Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Bear', 'graveyard'), give(g, 'alice', 'Bear', 'graveyard')];
+    const big = give(g, 'alice', 'Ogre Three', 'graveyard');
+    g.players.alice!.pool.G = 4;
+    g.players.alice!.pool.R = 3;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: big })).toBeTruthy();
+    expect(legalActions(g, 'alice').some((x) => x.type === 'cast' && x.object === a)).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: a }));
+    expect(g.objects[a]!.zone).toBe('battlefield');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: b })).toBeTruthy();
+    g = toStep(g, 'main1', 'bob');
+    expect(legalActions(g, 'alice').some((x) => x.type === 'cast' && x.object === b)).toBe(false);
+    g = toStep(g, 'main1', 'alice');
+    g.players.alice!.pool.G = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: b }));
+    expect(g.objects[b]!.zone).toBe('battlefield');
+  });
+});
+
+describe('staples (slice 199): where a countered spell goes', () => {
+  for (const [name, zone] of [['Lapse Lite', 'library'], ['Remand Lite', 'hand']] as const) {
+    it(`${name}: the countered spell goes to its owner's ${zone}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const salve = give(g, 'alice', 'Salve', 'hand');
+      g = act(g, { type: 'cast', player: 'alice', object: salve });
+      g = act(g, { type: 'pass', player: 'alice' });
+      g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', name, 'hand'), targets: [[{ kind: 'object', object: salve }]] }));
+      expect(g.objects[salve]!.zone).toBe(zone);
+      if (zone === 'library') expect(g.zones.library.alice![0]).toBe(salve);
+    });
+  }
+});
+
+describe('staples (slice 199): backgrounds', () => {
+  for (const [defender, made] of [['bob', 2], ['carol', 0]] as const) {
+    it(`Guild Artisan: attacking ${defender}`, () => {
+      let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+      give(g, 'alice', 'Artisan Lite', 'battlefield');
+      const cmdr = give(g, 'alice', 'Cub', 'battlefield');
+      g.objects[cmdr]!.commander = true;
+      g.players.carol!.life = 15;
+      const before = g.zones.battlefield.filter((id) => g.objects[id]!.token).length;
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: cmdr, target: { kind: 'player', player: defender } }] } }));
+      expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(before + made);
+    });
+  }
+});
+
+describe('staples (slice 199): what a spell gained, the permanent keeps (CR 400.7a)', () => {
+  it('Rivaz of the Claw: a Dragon cast from the graveyard is exiled when it dies', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Rivaz Lite', 'battlefield');
+    const whelp = give(g, 'alice', 'Whelp', 'graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: whelp }));
+    expect(g.objects[whelp]!.zone).toBe('battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: whelp }]] }));
+    expect(g.objects[whelp]!.zone).toBe('exile');
   });
 });

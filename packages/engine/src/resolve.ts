@@ -504,7 +504,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
  * Binds a filter's references to objects as an effect applies: "that shares a creature type with it" becomes those
  * creature types, "other than it" that object (CR 608.2h).
  */
-const PERMANENT_CARD_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
+export const PERMANENT_CARD_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
 
 export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
   // Fell the Mighty: "with power greater than target creature's power" — counted as the effect applies (CR 608.2h);

@@ -55,7 +55,7 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { freePermission, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { freePermission, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -621,6 +621,8 @@ function cast(
       (alt?.id === 'plot' && o.plotted !== undefined && o.plotted < g.turn && g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0));
   // Emry, Lurker of the Loch: "You may cast that card this turn." — from a graveyard, for its mana cost.
   const permitted = o.zone === 'graveyard' && !escape && mayPlayFrom(g, player, o, 'spell');
+  // Lurrus: a "once during each of your turns" permission is used up by this cast.
+  const graveyardKey = permitted ? graveyardPermissionUsed(g, player, o) : null;
   const flashback = o.zone === 'graveyard' && o.owner === player && !escape && !permitted ? flashbackCostOf(g, o, face) : null;
   // CR 702.127a: "You may cast this half of this split card from your graveyard."
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
@@ -769,6 +771,7 @@ function cast(
   const castFrom = o.zone;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
+  if (graveyardKey) (g.turnLog.graveyardCasts ??= []).push(graveyardKey);
   if (faceDown) ensureFaceDownDefs(g);
   // CR 702.103b: it becomes an Aura spell as it's put on the stack.
   if (alt?.id === 'bestow') o.bestowed = true;

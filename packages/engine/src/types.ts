@@ -604,6 +604,8 @@ export type PendingChoice =
       seen?: ObjectId[];
       /** The answer's order matters. */
       ordered?: true;
+      /** Sludge Titan: each chosen card stands for a different kind — the kinds each candidate can stand for. */
+      kinds?: Record<ObjectId, number[]>;
     }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
@@ -854,7 +856,7 @@ export type GameEvent =
   | { type: 'ability_activated'; player: PlayerId; source: ObjectId; text: string; entry: string; loyalty?: true }
   | { type: 'resolved'; entry: StackEntry }
   /** `firstGain`: the first time this player gained life this turn (set as the turn log records it). */
-  | { type: 'life'; player: PlayerId; delta: number; life: number; firstGain?: true }
+  | { type: 'life'; player: PlayerId; delta: number; life: number; firstGain?: true; firstLoss?: true }
   /** `by`: the player who put them on ("Whenever you put one or more +1/+1 counters on …"). */
   | { type: 'counters'; object: ObjectId; counter: string; delta: number; by?: PlayerId }
   | { type: 'manual'; player: PlayerId; op: ManualOp }

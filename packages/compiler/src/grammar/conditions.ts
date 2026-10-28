@@ -105,6 +105,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Guild Artisan: "if no opponent has more life than that player" — that player has the most life among opponents.
+  const noMore = /^no opponent has more life than (that player|defending player)$/.exec(t);
+  if (noMore) {
+    const of = parsePlayerRef(noMore[1]!, b);
+    return of ? { type: 'life', mostAmongOpponents: true, of } : null;
+  }
   // Preacher of the Schism: "you have the most life or are tied for most life"
   if (/^you have the most life or are tied for (?:the )?most life$/.test(t)) return { type: 'life', most: true };
   // Righteous Valkyrie: "you have at least 7 life more than your starting life total"

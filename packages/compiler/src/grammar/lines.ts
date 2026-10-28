@@ -900,12 +900,26 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const cursed = t.startsWith('enchanted');
     return { trigger: { type: 'player_dealt_damage', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
-  const loses = /^(an opponent|you) loses? life$/.exec(t);
+  // Valgavoth, Harrower of Souls: "Whenever an opponent loses life for the first time during each of their turns".
+  const loses = /^(an opponent|you) loses? life( for the first time each turn| for the first time during each of their turns| during their turn)?$/.exec(t);
   if (loses) {
     b.eventAmount = true;
-    return { trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    const first = /first time/.test(loses[2] ?? '');
+    const theirTurn = /their turn/.test(loses[2] ?? '');
+    if (theirTurn && loses[1] === 'you') return null;
+    return {
+      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { theirTurn: true } : {}) },
+      it: { ref: 'self' },
+      player: { ref: 'trigger_player' },
+    };
   }
 
+  // Guild Artisan: "Whenever this creature attacks a player, if no opponent has more life than that player, …" — a player,
+  // not a planeswalker or battle; "that player" is the one attacked.
+  if (t === '~ attacks a player') {
+    b.named['that player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, defender: 'player' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   // CR 702.105a (dethrone): "Whenever ~ attacks the player with the most life or tied for most life"
   if (t === '~ attacks the player with the most life or tied for most life') {
     b.named['defending player'] = { ref: 'trigger_player' };
@@ -1043,7 +1057,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!pf || pf.plural || pf.filter.controller) return null;
     b.named[`that ${tapsFor[3]!.split(' ').pop()}`] = { ref: 'trigger_object' };
     const controller = tapsFor[1] === 'an opponent' ? { controller: 'opponent' as const } : {};
-    return { trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: { ...pf.filter, ...controller } }, its: true }, it: { ref: 'trigger_object' }, player: null };
+    // Manabarbs: "… deals 1 damage to that player" — who tapped it.
+    return { trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: { ...pf.filter, ...controller } }, its: true }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
@@ -1357,6 +1372,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
     const batch = /^one or more/.test(discard[2]!);
     if (!batch) b.named['that card'] = { ref: 'trigger_object' };
+    // Magmakin Artillerist: "… deals that much damage", Marauding Mako: "put that many +1/+1 counters" — how many.
+    else b.eventAmount = true;
     return {
       trigger: { type: 'discard', who: discard[1] === 'you' ? 'you' : discard[1] === 'an opponent' ? 'opponent' : 'any', ...(batch ? { batch: true } : {}), ...(filter ? { filter } : {}), ...(discard[2] === 'another card' ? { other: true } : {}) },
       it: batch ? { ref: 'self' } : { ref: 'trigger_object' },
@@ -1760,6 +1777,8 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't attack": ['cant_attack'],
   // CR 506.5
   "can't attack alone": ['cant_attack_alone'],
+  // Port Razer: "This creature can't attack a player it has already attacked this turn."
+  "can't attack a player it has already attacked this turn": ['cant_attack_same_player'],
   "can't block alone": ['cant_block_alone'],
   "can't attack or block alone": ['cant_attack_alone', 'cant_block_alone'],
   "can't attack or block": ['cant_attack', 'cant_block'],
@@ -1945,6 +1964,15 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
 
 /** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you." */
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
+  // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
+  const ban = /^(.*?creatures(?: with [a-z]+)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
+  if (ban) {
+    const pf = parseFilter(ban[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
+    if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
+    const { types, ...rest } = pf.filter;
+    if (types && (types.length !== 1 || types[0] !== 'Creature')) return null;
+    return { type: 'attack_tax', cost: '', banned: true, ...(ban[2] ? { planeswalkers: true } : {}), ...(Object.keys(rest).length ? { filter: rest } : {}) };
+  }
   const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX])\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
   if (!m || /X/.test(m[3]!) !== Boolean(m[4])) return null;
   const x = m[4] ? parseCount(m[4], b) : undefined;
@@ -2505,6 +2533,15 @@ export const costModifierRule: GrammarRule = {
       const zones = fromZone[1] === 'anywhere other than your hand' ? undefined : fromZone[1] === 'exile' ? ['exile'] : fromZone[1] === 'your graveyard' ? ['graveyard'] : ['graveyard', 'exile'];
       const node: CostModifierNode = { type: 'cost_modifier', who: 'you', change: 'less', ...a, ...(zones ? { castFrom: zones as ('graveyard' | 'exile')[] } : { notFromHand: true }) };
       return { kind: 'static', text: original, effect: node };
+    }
+    // Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast."
+    const firstEach = /^The first ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}) less to cast$/.exec(body);
+    if (firstEach) {
+      const a = amountOf(firstEach[2]!);
+      const pf = firstEach[1] ? parseFilter(`${firstEach[1]}spells`, b) : null;
+      if (!a || (firstEach[1] && !pf)) return null;
+      const { zone: _z, ...filter } = pf?.filter ?? {};
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...a } as CostModifierNode };
     }
     // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
     const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);
@@ -3357,6 +3394,25 @@ export const topPermissionRule: GrammarRule = {
 };
 
 /**
+ * Lurrus of the Dream-Den: "Once during each of your turns, you may cast a permanent spell with mana value 2 or less from
+ * your graveyard."; Karador, Gisa and Geralf, Rivaz of the Claw, Danitha (CR 601.3).
+ */
+export const graveyardCastRule: GrammarRule = {
+  id: 'graveyard_cast',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = /^Once during each of your turns, you may cast (?:a|an) (.+? spell(?: with [^,]+)?) from your graveyard\.$/.exec(line);
+    if (!env || !m) return null;
+    const words = m[1]!.split(' ');
+    const phrase = isSubtype(words[0]!) ? m[1]! : m[1]!.replace(/^\w/, (c) => c.toLowerCase());
+    const pf = parseFilter(phrase.replace(/ or /, ' or ').replace(/^(\w+) and (\w+) spell/, '$1 or $2 spell'), new Binder(env));
+    if (!pf || pf.plural || pf.filter.zone !== 'stack') return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter, oncePerTurn: true } } as StaticAbility;
+  },
+};
+
+/**
  * Training Grounds, Zirda: "Activated abilities of creatures you control cost {2} less to activate. This effect can't
  * reduce the mana in that cost to less than one mana." (CR 601.2f)
  */
@@ -3532,6 +3588,7 @@ export const triggerExtraRule: GrammarRule = {
 
 export const GRAMMAR_RULES: GrammarRule[] = [
   topPermissionRule,
+  graveyardCastRule,
   manaTriggerRule,
   manaMultiplierRule,
   combatLimitRule,

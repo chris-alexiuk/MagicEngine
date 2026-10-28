@@ -23,7 +23,7 @@ import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, apnap, bindFilter, movedThisWay, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { cantLose, playerLoses } from './flow.js';
@@ -444,8 +444,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // CR 101.2 / "can't be countered": the spell stays on the stack — its own ability, or "Creature spells you
       // control can't be countered" (Rhythm of the Wild).
       if (hasRule(ctx.g, o, 'cant_be_countered') || uncounterable(ctx.g, o)) continue;
-      // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so.
-      moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
+      // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so;
+      // Memory Lapse, Remand, Spell Crumple: on top of / into / on the bottom of its owner's library or hand.
+      const to = node.to as 'library_top' | 'library_bottom' | 'hand' | undefined;
+      if (to === 'hand') moveObject(ctx.g, o.id, 'hand', ctx.events);
+      else if (to) moveObject(ctx.g, o.id, 'library', ctx.events, { position: to === 'library_top' ? 'top' : 'bottom' });
+      else moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
       ctx.events.push({ type: 'countered', object: o.id, by: ctx.controller });
     }
     return true;
@@ -661,7 +665,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const flashback = Array.isArray(node.keywords) && (node.keywords as KeywordInstance[]).every((k) => k.id === 'flashback');
     // "Target spell or permanent becomes white" (Purelace): a spell's color, while it's on the stack.
     const spellColor = Array.isArray(node.colors) && node.power === undefined && node.types === undefined && node.keywords === undefined;
-    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard') || (spellColor && o.zone === 'stack'));
+    // Rivaz of the Claw: "Whenever you cast a Dragon creature spell …, it gains …" — a spell, and the permanent it becomes
+    // (CR 400.7a).
+    const permanentSpell = (o: GameObject) => o.zone === 'stack' && PERMANENT_CARD_TYPES.some((t) => chars(ctx.g, o).types.includes(t));
+    const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard') || (spellColor && o.zone === 'stack') || permanentSpell(o));
     if (!objects.length) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
@@ -3035,7 +3042,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     let chosen = candidates.length === 1 && min === 1 ? [candidates[0]!] : null;
     if (!chosen) {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the milled cards to put ${where}.`, seen: candidates } };
+      const kinds = each ? Object.fromEntries(candidates.map((id) => [id, each.flatMap((f, i) => (fits(id, f) ? [i] : []))])) : undefined;
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the milled cards to put ${where}.`, seen: candidates, ...(kinds ? { kinds } : {}) } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
       }
@@ -3111,7 +3119,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       for (const id of chosen) {
         if (node.to === 'bottom') moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+        else if (node.to === 'shuffle') moveObject(g, id, 'library', ctx.events);
         else discardCard(g, id, ctx.events);
+      }
+      // Winds of Change: the cards go into the library, then it's shuffled (CR 701.24a).
+      if (node.to === 'shuffle') {
+        shuffleInPlace(g, zoneList(g, 'library', p));
+        ctx.events.push({ type: 'shuffled', player: p });
       }
       memo.counts.push(chosen.length);
       memo.i = i + 1;
@@ -3908,6 +3922,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return e.attacks.flatMap(({ attacker, target }) => {
       const o = check.g.objects[attacker];
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
+      // Guild Artisan: "Whenever this creature attacks a player".
+      if (t.defender === 'player' && target.kind !== 'player') return [];
       // CR 702.105a (dethrone): attacking the player with the most life or tied for most life.
       if (t.defender === 'most_life') {
         if (target.kind !== 'player') return [];
@@ -4133,6 +4149,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
     if (t.who === 'you' ? e.player !== check.controller : e.player === check.controller) return [];
+    // Valgavoth: "for the first time during each of their turns" — the first loss this turn, on that player's turn.
+    if (t.first && !e.firstLoss) return [];
+    if (t.theirTurn && check.g.active !== e.player) return [];
     return [{ player: e.player, amount: -e.delta }];
   },
   // Baral: "Whenever a spell or ability you control counters a spell" (CR 701.6a).
@@ -4272,8 +4291,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     };
     if (!ok(e.object)) return [];
     if (t.batch) {
-      const first = (check.batch ?? [e]).find((x) => x.type === 'discarded' && x.player === e.player && ok(x.object));
-      if (first !== e) return [];
+      const together = (check.batch ?? [e]).filter((x) => x.type === 'discarded' && x.player === e.player && ok(x.object));
+      if (together[0] !== e) return [];
+      // Magmakin Artillerist: "Whenever you discard one or more cards, … deals that much damage" — how many.
+      const cards = together.flatMap((x) => (x.type === 'discarded' && check.g.objects[x.object] ? [refTo(check.g.objects[x.object]!)] : []));
+      return [{ player: e.player, amount: together.length, created: cards }];
     }
     const o = check.g.objects[e.object];
     return [{ player: e.player, ...(o ? { object: refTo(o) } : {}) }];
@@ -4565,7 +4587,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

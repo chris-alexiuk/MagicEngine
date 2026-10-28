@@ -66,6 +66,10 @@ export interface TurnLog {
   attacks?: Record<ObjectId, number>;
   /** The object each attacking creature was as it attacked (CR 400.7: "that attacked this turn"). */
   attackedAs?: Record<ObjectId, number>;
+  /** Lurrus: the "once during each of your turns" graveyard permissions used this turn (source id:zcc). */
+  graveyardCasts?: string[];
+  /** Port Razer: the players each creature (as this object) attacked this turn. */
+  attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
   discarded?: { id: ObjectId; zcc: number }[];
   /** Players who activated a loyalty ability this turn (The Chain Veil). */
@@ -129,13 +133,24 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.attacks.length && !log.attacked.includes(g.active)) log.attacked.push(g.active);
         for (const a of e.attacks) (log.attacks ??= {})[a.attacker] = ((log.attacks ??= {})[a.attacker] ?? 0) + 1;
         for (const a of e.attacks) if (g.objects[a.attacker]) (log.attackedAs ??= {})[a.attacker] = g.objects[a.attacker]!.zcc;
+        for (const a of e.attacks) {
+          const o = g.objects[a.attacker];
+          if (!o || a.target.kind !== 'player') continue;
+          const rec = (log.attackedPlayers ??= {})[a.attacker];
+          if (rec && rec.zcc === o.zcc) {
+            if (!rec.players.includes(a.target.player)) rec.players.push(a.target.player);
+          } else log.attackedPlayers[a.attacker] = { zcc: o.zcc, players: [a.target.player] };
+        }
         break;
       case 'life':
         if (e.delta > 0 && !log.gainedLife.includes(e.player)) {
           log.gainedLife.push(e.player);
           e.firstGain = true;
         }
-        if (e.delta < 0 && !log.lostLife.includes(e.player)) log.lostLife.push(e.player);
+        if (e.delta < 0 && !log.lostLife.includes(e.player)) {
+          log.lostLife.push(e.player);
+          e.firstLoss = true;
+        }
         if (e.delta > 0) (log.lifeGained ??= {})[e.player] = (log.lifeGained[e.player] ?? 0) + e.delta;
         if (e.delta < 0) (log.lifeLost ??= {})[e.player] = (log.lifeLost[e.player] ?? 0) - e.delta;
         break;
@@ -355,6 +370,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
+      // Guild Artisan: "if no opponent has more life than that player".
+      if (cond.mostAmongOpponents) {
+        const p = refPlayers(ctx, cond.of as Ref)[0];
+        return p !== undefined && livePlayers(g).every((q) => q === controller || g.players[q]!.life <= g.players[p]!.life);
+      }
       // Preacher of the Schism: "you have the most life or are tied for most life".
       if (cond.most) return livePlayers(g).every((p) => g.players[controller]!.life >= g.players[p]!.life);
       // Righteous Valkyrie: "if you have at least 7 life more than your starting life total" (`plus`).

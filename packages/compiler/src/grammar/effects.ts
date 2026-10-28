@@ -812,7 +812,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards|those exiled cards)$/.exec(next) ??
         /^Until (end of turn|the end of your next turn), you may (play) lands and cast spells from among (?:them|those cards)$/.exec(next);
       // Cunning Rhetoric: "You may play that card for as long as it remains exiled" — until it leaves exile (CR 400.7).
-      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn|until your next end step|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it|cards exiled this way) (this turn|until the end of your next turn|until end of turn|until your next end step|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
@@ -861,6 +861,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         out.push({ type: 'grant_play', what: exiledLast!.what, mode: castExiled[2], until, ...anyColor(i) });
         continue;
       }
+      // Zul Ashur, Lich Lord: "You may cast target Zombie creature card from your graveyard this turn."
+      const castTarget = /^You may (cast|play) target (.+? card) from your graveyard this turn$/.exec(s);
+      if (castTarget) {
+        const what = parseObjectRef(`target ${castTarget[2]} in your graveyard`, b);
+        if (!what || what.plural || !what.targeted) return null;
+        out.push({ type: 'grant_play', what: what.ref, mode: castTarget[1] });
+        continue;
+      }
       // Emry, Lurker of the Loch: "Choose target artifact card in your graveyard. You may cast that card this turn."
       const chooseTarget = /^Choose target (.+? card in (?:your|a|an opponent's) graveyard)$/.exec(s);
       const castIt = chooseTarget ? /^You may (cast|play) (?:that card|it) this turn$/.exec(next) : null;
@@ -891,6 +899,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const last = out[out.length - 1];
         if (last?.type !== 'counter') return null;
         last.exile = true;
+        continue;
+      }
+      // Memory Lapse: "… put it on top of its owner's library instead of into that player's graveyard"; Remand: "… into its
+      // owner's hand"; Spell Crumple: "… on the bottom of its owner's library" (CR 701.6a).
+      const counteredTo = /^If (?:that spell|it) is countered this way, put (?:it|that card) (on top of its owner's library|on the bottom of its owner's library|into its owner's hand) instead of into (?:that player's|its owner's) graveyard$/.exec(s);
+      if (counteredTo) {
+        const last = out[out.length - 1];
+        if (last?.type !== 'counter' || last.exile) return null;
+        last.to = counteredTo[1]!.startsWith('on top') ? 'library_top' : counteredTo[1]!.startsWith('on the bottom') ? 'library_bottom' : 'hand';
         continue;
       }
       // CR 701.48a: "Learn." — discard a card to draw a card; there are no Lesson cards outside the game here.
@@ -1881,6 +1898,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Valakut Awakening: "Put any number of cards from your hand on the bottom of your library, then draw that many cards plus one."
   const bottom = /^Put any number of cards from your hand on the bottom of your library, then draw that many cards( plus one)?$/.exec(s);
   if (bottom) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'any', to: 'bottom', ...(bottom[1] ? { delta: 1 } : {}) }];
+  // Winds of Change: "Each player shuffles the cards from their hand into their library, then draws that many cards."
+  const shuffleWheel = /^(.+?) shuffles? (?:the cards from (?:their|your) hand|(?:their|your) hand) into (?:their|your) library, then draws? that many cards$/.exec(s);
+  if (shuffleWheel) {
+    const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
+    if (who) return [{ type: 'wheel', who, mode: 'all', to: 'shuffle' }];
+  }
   const wheel = /^(?:(.+?) )?(?:discards?|[Dd]iscard) (all the cards in (?:your|their) hand|any number of cards|up to (\w+) cards), then (?:draws?|draw) that many cards( plus one| minus one)?$/.exec(s);
   if (wheel) {
     const r = attempt(b, (b) => {
@@ -2625,6 +2648,8 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
   },
   lose(args, who) {
+    // Debt to the Deathless: "Each opponent loses two times X life."
+    if (/^(?:twice|two times) X life$/.test(args)) return [{ type: 'lose_life', amount: { kind: 'x', times: 2 }, who }];
     const m = /^(\S+) life$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'lose_life', amount, who }] : null;
@@ -3559,6 +3584,13 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
   const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseLayerChange(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
   if (special) return { effects: special, subject: null };
 
+  // Vraska's Fall: "Each opponent sacrifices a creature … and gets a poison counter" — the same players.
+  const getsCounter = inherited && inherited.ref !== 'you' ? /^gets? (an?|one|two|three) (poison|experience|rad) counters?$/.exec(c) : null;
+  if (getsCounter && inherited) {
+    const amount = parseAmount(getsCounter[1]!.replace(/^an$/, 'a'));
+    if (typeof amount === 'number') return { effects: [{ type: 'get_counters', who: inherited, counter: getsCounter[2]!, amount }], subject: inherited };
+  }
+
   const imp = IMPERATIVE.exec(c);
   if (imp) {
     const lemma = VERB_FORMS[imp[1]!.toLowerCase()]!;
@@ -3780,6 +3812,12 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   if (locked) {
     const what = parseObjectRef(locked[1] ?? 'it', b);
     return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: 'eot' }] : null;
+  }
+  // Assault Formation: "Target creature with defender can attack this turn as though it didn't have defender." (CR 702.3b)
+  const defenderOk = /^(.+?) can attack this turn as though (?:it|they) didn't have defender$/.exec(c);
+  if (defenderOk) {
+    const what = parseObjectRef(defenderOk[1]!, b);
+    return what ? [{ type: 'modify', what: what.ref, rules: ['can_attack_with_defender'], until: 'eot' }] : null;
   }
   const lure = /^All creatures able to block (.+?) this turn do so$/.exec(c);
   if (lure) {

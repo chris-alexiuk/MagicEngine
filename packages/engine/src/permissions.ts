@@ -19,8 +19,52 @@ export function permissionLive(g: GameState, p: { lastTurn: number; firstTurn?: 
   return !(p.untilEndStep && p.lastTurn === g.turn && (g.step === 'end' || g.step === 'cleanup'));
 }
 
+/**
+ * Lurrus of the Dream-Den: "Once during each of your turns, you may cast a permanent spell with mana value 2 or less from
+ * your graveyard."; Karador, Gisa and Geralf, Rivaz — a static permission of a permanent the player controls. The key of
+ * the permission that allows casting this card (source id:zcc), or null.
+ */
+export function graveyardPermission(g: GameState, player: PlayerId, o: GameObject): string | null {
+  if (o.zone !== 'graveyard' || o.owner !== player) return null;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'graveyard_cast') continue;
+      if (!staticConditionHolds(g, a.effect as never, src)) continue;
+      const key = `${src.id}:${src.zcc}`;
+      if (a.effect.oncePerTurn && (g.active !== player || (g.turnLog.graveyardCasts ?? []).includes(key))) continue;
+      const filter = a.effect.filter as ObjectFilter | undefined;
+      if (filter && !matchesFilter(g, o, filter, { controller: player, source: src, anyZone: true })) continue;
+      return key;
+    }
+  }
+  return null;
+}
+
+/** Whether any permanent a player controls has a graveyard permission (most games: none). */
+function hasGraveyardPermissions(g: GameState, player: PlayerId): boolean {
+  return abilitySources(g).some((id) => {
+    const src = g.objects[id];
+    return src?.zone === 'battlefield' && src.controller === player && objectAbilities(g, src).some((a) => a.kind === 'static' && a.effect.type === 'graveyard_cast');
+  });
+}
+
+/** A permission from an effect (g.mayPlay) to play this card. */
+function effectPermission(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
+  return (g.mayPlay ?? []).some(
+    (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p) && (what === 'spell' || p.mode === 'play'),
+  );
+}
+
+/** The static graveyard permission a cast of this card uses — none when an effect lets it be cast anyway. */
+export function graveyardPermissionUsed(g: GameState, player: PlayerId, o: GameObject): string | null {
+  return o.zone === 'graveyard' && !effectPermission(g, player, o, 'spell') ? graveyardPermission(g, player, o) : null;
+}
+
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
   if (o.zone === 'library') return fromTop(g, player, o, what);
+  if (o.zone === 'graveyard' && what === 'spell' && graveyardPermission(g, player, o)) return true;
   // Misthollow Griffin: "You may cast this card from exile." — its own permission, its mana cost paid.
   if (o.zone === 'exile' && what === 'spell' && o.owner === player && !o.faceDown && castableFromExileItself(g, o)) return true;
   return (g.mayPlay ?? []).some(
@@ -116,7 +160,9 @@ export function playableFromExile(g: GameState, player: PlayerId): string[] {
 
 /** Cards in graveyards a player may play right now ("Choose target artifact card in your graveyard. You may cast that card this turn."). */
 export function playableFromGraveyard(g: GameState, player: PlayerId): string[] {
-  return [...new Set((g.mayPlay ?? []).filter((p) => p.player === player).map((p) => p.object.id))].filter((id) => {
+  // Lurrus: cards a static ability lets this player cast from their graveyard.
+  const statics = hasGraveyardPermissions(g, player) ? (g.zones.graveyard[player] ?? []).filter((id) => graveyardPermission(g, player, g.objects[id]!)) : [];
+  return [...new Set([...(g.mayPlay ?? []).filter((p) => p.player === player).map((p) => p.object.id), ...statics])].filter((id) => {
     const o = g.objects[id];
     return o?.zone === 'graveyard' && (mayPlayFrom(g, player, o, 'spell') || mayPlayFrom(g, player, o, 'land'));
   });
