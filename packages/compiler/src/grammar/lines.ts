@@ -229,7 +229,7 @@ function hasFreeX(v: unknown): boolean {
   if (Array.isArray(v)) return v.some(hasFreeX);
   if ((v as { kind?: unknown }).kind === 'x') return true;
   // "You may pay {X}. If you do, draw X cards." — that X is the one paid.
-  if ((v as { type?: unknown }).type === 'may_pay' && (String((v as { cost?: unknown }).cost).includes('{X}') || 'xIs' in v)) return false;
+  if ((v as { type?: unknown }).type === 'may_pay' && (String((v as { cost?: unknown }).cost).includes('{X}') || 'xIs' in v || 'lifeX' in v)) return false;
   return Object.entries(v).some(([k, x]) => k !== 'token' && k !== 'abilities' && k !== 'grant' && hasFreeX(x));
 }
 
@@ -2394,6 +2394,16 @@ export const costModifierRule: GrammarRule = {
       if (!a || !pf || pf.filter.zone !== 'stack') return null;
       const { zone: _z, ...filter } = pf.filter;
       return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: thats[4] as 'less' | 'more', ...a } as CostModifierNode };
+    }
+    // Emet-Selch: "Spells you cast from your graveyard cost {2} less to cast."; Fortune Teller's Talent: "Spells you cast from
+    // anywhere other than your hand cost {2} less to cast."; Doc Aurlock: "… from your graveyard or from exile …".
+    const fromZone = /^Spells you cast from (your graveyard|exile|your graveyard or from exile|anywhere other than your hand) cost (\{\d+\}) less to cast$/.exec(body);
+    if (fromZone) {
+      const a = amountOf(fromZone[2]!);
+      if (!a) return null;
+      const zones = fromZone[1] === 'anywhere other than your hand' ? undefined : fromZone[1] === 'exile' ? ['exile'] : fromZone[1] === 'your graveyard' ? ['graveyard'] : ['graveyard', 'exile'];
+      const node: CostModifierNode = { type: 'cost_modifier', who: 'you', change: 'less', ...a, ...(zones ? { castFrom: zones as ('graveyard' | 'exile')[] } : { notFromHand: true }) };
+      return { kind: 'static', text: original, effect: node };
     }
     // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
     const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);

@@ -606,6 +606,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     const bare = /^(other )?(.+)$/i.exec(t)!;
     // Valley Floodcaller: "Birds, Frogs, Otters, and Rats you control get +1/+1" — every creature of those types.
     let pf = parseFilter(bare[2]!, b) ?? (/^[A-Z]\w+s, (?:[A-Z]\w+s, )*and [A-Z]\w+s\b/.test(bare[2]!) ? parseFilter(bare[2]!.replace(/, and /, ', or '), b) : null);
+    // Sorin, Vengeful Bloodlord: "creatures and planeswalkers you control have lifelink" — anything that's either.
+    const bareList = pf ? null : /^((?:[a-z-]+, )*[a-z-]+s),? and ([a-z-]+s\b.*)$/.exec(bare[2]!);
+    if (bareList && !/ and /.test(bareList[2]!)) pf = parseFilter(`${bareList[1]}, or ${bareList[2]}`.replace(/^(\w+), or /, '$1 or '), b);
     // Shalai: "planeswalkers you control and other creatures you control" — either.
     const pair = pf || bare[1] ? null : /^(.+? you control) and (other )?(.+? you control)$/.exec(bare[2]!);
     if (pair) {

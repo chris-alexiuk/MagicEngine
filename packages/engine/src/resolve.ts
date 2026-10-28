@@ -325,7 +325,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (!e.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
           (e.drew === undefined || (g.turnLog.drawn?.[p] ?? 0) >= e.drew) &&
           (e.landsEntered === undefined || lands(p) >= e.landsEntered) &&
-          (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0),
+          (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0) &&
+          // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
+          (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)),
       ).length;
     }
     case 'devotion':

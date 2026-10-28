@@ -96,6 +96,12 @@ const CARDS = [
   makeCard({ name: 'Spiteful Visions', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of each player\'s draw step, that player draws an additional card.\nWhenever a player draws a card, this enchantment deals 1 damage to that player.' }),
   makeCard({ name: 'Auramancy Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Enchanted creatures you control have shroud.' }),
   makeCard({ name: 'Plain Aura', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nEnchanted creature gets +1/+0.' }),
+  makeCard({ name: 'Necro Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your end step, you may pay any amount of life. If you do, draw that many cards.' }),
+  makeCard({ name: 'Mask Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever a creature you control dies, you may pay X life, where X is its power. If you do, draw X cards.' }),
+  makeCard({ name: 'Arclight Phoenix', type_line: 'Creature — Phoenix', mana_cost: '{3}{R}', cmc: 4, power: '3', toughness: '2', oracle_text: "Flying, haste\nAt the beginning of combat on your turn, if you've cast three or more instant and sorcery spells this turn, return this card from your graveyard to the battlefield." }),
+  makeCard({ name: 'Sarah Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'As long as an artifact entered the battlefield under your control this turn, creatures you control get +2/+2.' }),
+  makeCard({ name: 'Lamia Lite', type_line: 'Creature — Snake Lamia', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Spells you cast from your graveyard cost {1} less to cast.' }),
+  makeCard({ name: 'Grave Spell', type_line: 'Sorcery', mana_cost: '{2}', cmc: 2, oracle_text: 'You gain 2 life.\nFlashback {2}' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1050,5 +1056,67 @@ describe('staples (slice 195)', () => {
     const aura = give(g, 'alice', 'Plain Aura', 'battlefield');
     g.objects[aura]!.attachedTo = { id: a, zcc: g.objects[a]!.zcc };
     expect([chars(g, g.objects[a]!).keywords.some((k) => k.id === 'shroud'), chars(g, g.objects[b]!).keywords.some((k) => k.id === 'shroud')]).toEqual([true, false]);
+  });
+});
+
+describe('staples (slice 195): paying X life', () => {
+  it('Necrodominance: any amount of life, that many cards', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Necro Lite', 'battlefield');
+    const [life, hand] = [g.players.alice!.life, g.zones.hand.alice!.length];
+    g = toStep(g, 'end', 'alice');
+    for (let i = 0; i < 10 && !g.pending && g.stack.length; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(g.pending).toMatchObject({ kind: 'pay', player: 'alice', x: { max: life } });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true, x: 3 } }));
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([life - 3, hand + 3]);
+  });
+
+  it('Mask of Griselbrand: X life where X is its power', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Mask Lite', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    const [life, hand] = [g.players.alice!.life, g.zones.hand.alice!.length];
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: ogre }]] });
+    for (let i = 0; i < 10 && !g.pending; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(g.pending).toMatchObject({ kind: 'pay', player: 'alice' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } }));
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([life - 5, hand + 5]);
+  });
+});
+
+describe('staples (slice 196): what you did this turn', () => {
+  it('Arclight Phoenix: three or more instant and sorcery spells this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const phoenix = give(g, 'alice', 'Arclight Phoenix', 'graveyard');
+    for (let i = 0; i < 2; i++) g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Cub', 'hand') }));
+    let h = structuredClone(g);
+    h = settle(toStep(h, 'beginning_of_combat'));
+    expect(h.objects[phoenix]!.zone).toBe('graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mill Three', 'hand') }));
+    g = settle(toStep(g, 'beginning_of_combat'));
+    expect(g.objects[phoenix]!.zone).toBe('battlefield');
+  });
+
+  it('Sentinel Sarah Lyons: once an artifact entered under your control this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sarah = give(g, 'alice', 'Sarah Lite', 'battlefield');
+    expect(chars(g, g.objects[sarah]!).power).toBe(2);
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Trinket', 'hand') }));
+    expect(chars(g, g.objects[sarah]!).power).toBe(4);
+  });
+});
+
+describe('staples (slice 196): spells cast from a graveyard', () => {
+  it('Gravebreaker Lamia: {1} less from your graveyard, not from your hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Lamia Lite', 'battlefield');
+    const inHand = give(g, 'alice', 'Grave Spell', 'hand');
+    const inYard = give(g, 'alice', 'Grave Spell', 'graveyard');
+    g.players.alice!.pool.C = 1;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: inHand })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: inYard }));
+    expect(g.objects[inYard]!.zone).toBe('exile');
   });
 });

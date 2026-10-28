@@ -46,6 +46,9 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       if (whose === 'you' ? player !== source.controller : whose === 'opponents' ? player === source.controller : false) continue;
       const ctx = ctxFor(source.controller, source);
       if (e.filter && !matchesFilter(g, spell, e.filter, { controller: source.controller, source, anyZone: true })) continue;
+      // As its cost is worked out, the spell is still where it's cast from (it moves to the stack after, CR 601.2a's order here).
+      if (e.castFrom && !e.castFrom.includes(spell.zone as 'graveyard' | 'exile')) continue;
+      if (e.notFromHand && spell.zone === 'hand') continue;
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
       changes.push({ n: amountOf(ctx, e.amount), ...(e.color ? { color: e.color } : {}), change: e.change });
     }

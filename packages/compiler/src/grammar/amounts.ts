@@ -214,6 +214,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
+  // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
+  if (/^the number of opponents (?:that were |who were )?dealt combat damage this turn$/.test(t)) return { kind: 'players', who: 'opponents', combatDamaged: true };
   // Proft's Eidetic Memory: "the number of cards you've drawn this turn"
   if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".

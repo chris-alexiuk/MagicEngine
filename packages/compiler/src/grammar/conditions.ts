@@ -2,7 +2,7 @@ import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
-import { capitalise, COLOR_WORDS, parseAmount } from './words.js';
+import { capitalise, COLOR_WORDS, parseAmount, TYPE_NOUNS } from './words.js';
 
 /**
  * Conditions in "if" clauses: intervening "if" on triggers (CR 603.4) and
@@ -430,6 +430,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(gy[1]!);
     return c ? { type: 'graveyard', ...c } : null;
   }
+  // The Warring Triad: "there are fewer than eight cards in your graveyard"
+  const fewerGy = /^there are fewer than (\w+) cards in your graveyard$/.exec(t);
+  if (fewerGy) {
+    const n = parseAmount(fewerGy[1]!);
+    return typeof n === 'number' && n > 0 ? { type: 'graveyard', op: 'le', n: n - 1 } : null;
+  }
 
   // Starting Town: "it's your first, second, or third turn of the game"
   if (t === "it's your first, second, or third turn of the game") return { type: 'early_turn', max: 3 };
@@ -471,6 +477,20 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'a creature you controlled died this turn': 'your_creature_died',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
+  // Fortune Teller's Talent: "you've cast a spell this turn"; Essence Channeler: "you've lost life this turn".
+  if (/^you(?:'ve)? cast a spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
+  if (/^you(?:'ve)? lost life this turn$/.test(t)) return { type: 'this_turn', event: 'you_lost_life' };
+  // Lyse Hext: "you've cast two or more noncreature spells this turn"
+  const castN = /^you(?:'ve)? cast (two|three|four|five) or more (.+?) spells this turn$/.exec(t);
+  if (castN) {
+    const pf = parseFilter(`${castN[2]} spells`, b.clone());
+    if (!pf || !pf.plural || (pf.filter.zone && pf.filter.zone !== 'stack') || pf.filter.controller) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return { type: 'this_turn', event: 'you_cast', filter, min: parseAmount(castN[1]!) as number };
+  }
+  // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
+  const enteredYours = /^an? (\w+) entered the battlefield under your control this turn$/.exec(t);
+  if (enteredYours && TYPE_NOUNS[enteredYours[1]!]) return { type: 'this_turn', event: 'entered_yours', filter: { types: [TYPE_NOUNS[enteredYours[1]!]!] } };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
   // The Enduring cycle: "it was a creature" (a leaves-the-battlefield trigger looks back, CR 603.10a)
   // Scavenging Ooze: "Exile target card from a graveyard. If it was a creature card, …" — the card, now in exile.

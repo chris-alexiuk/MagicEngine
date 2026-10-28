@@ -2453,3 +2453,23 @@ describe('slice 195', () => {
     expect(parse('Creatures you control that are enchanted or equipped have double strike.', 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { anyOf: [{ enchanted: true }, { equipped: true }] } } } });
   });
 });
+
+describe('slice 196', () => {
+  it('reads paying X life and more of what happened this turn', () => {
+    expect(parse('Whenever equipped creature dies, you may pay X life, where X is its power. If you do, draw X cards.', 'Artifact — Equipment').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', lifeX: true, xIs: { kind: 'stat', stat: 'power' }, effects: [{ type: 'draw', amount: 'X' }] }] });
+    expect(parse('At the beginning of your end step, you may pay any amount of life. If you do, draw that many cards.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', lifeX: true, effects: [{ type: 'draw', amount: 'X' }] }] });
+    expect(parse("At the beginning of combat on your turn, if you've cast three or more instant and sorcery spells this turn, return ~ from your graveyard to the battlefield.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'this_turn', event: 'you_cast', filter: { types: ['Instant', 'Sorcery'] }, min: 3 } });
+    expect(parse("As long as you've lost life this turn, ~ has flying.", 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'this_turn', event: 'you_lost_life' } } });
+    expect(parse('As long as an artifact entered the battlefield under your control this turn, creatures you control get +2/+2.', 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'this_turn', event: 'entered_yours', filter: { types: ['Artifact'] } } } });
+    expect(parse("As long as there are fewer than eight cards in your graveyard, ~ isn't a creature.", 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'graveyard', op: 'le', n: 7 } } });
+    expect(parse('At the beginning of each of your postcombat main phases, you may pay X life, where X is the number of opponents that were dealt combat damage this turn. If you do, draw X cards.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', xIs: { kind: 'players', combatDamaged: true } }] });
+  });
+});
+
+describe('slice 196 (more)', () => {
+  it('reads cost reductions by where a spell is cast from and plain plural lists', () => {
+    expect(parse('Spells you cast from your graveyard cost {2} less to cast.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', who: 'you', castFrom: ['graveyard'], amount: 2 } });
+    expect(parse('Spells you cast from anywhere other than your hand cost {2} less to cast.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', notFromHand: true } });
+    expect(parse('During your turn, creatures and planeswalkers you control have lifelink.', 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { types: ['Creature', 'Planeswalker'] } }, condition: { type: 'your_turn' } } });
+  });
+});

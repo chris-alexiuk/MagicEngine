@@ -291,16 +291,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // CR 119.4: "You may pay 3 life", Ripples of Undeath: "you may pay {1} and 3 life" — life only if you have that much.
       // "You may pay {X}. If you do, draw X cards." — X chosen as it's paid; ", where X is less than or equal to …" bounds
       // it, ", where X is …" fixes it (Primordial Ooze).
-      const payParts = /^(?:Then )?[Yy]ou may pay (?:((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)(?: and (\d+) life)?|(\d+) life)(?:, where X is (less than or equal to )?(.+))?$/.exec(s);
+      // Mask of Griselbrand: "you may pay X life, where X is its power"; Necrodominance: "you may pay any amount of life".
+      const payParts = /^(?:Then )?[Yy]ou may pay (?:((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)(?: and (\d+) life)?|(\d+|X|any amount of) life)(?:, where X is (less than or equal to )?(.+))?$/.exec(s);
+      const lifeX = payParts?.[3] === 'X' || payParts?.[3] === 'any amount of';
+      if (payParts?.[3] === 'any amount of' && payParts[5]) return null;
       const pay = payParts ? ([payParts[0], payParts[1] ?? ''] as const) : null;
-      const payLife = payParts ? Number(payParts[2] ?? payParts[3] ?? 0) : 0;
-      const hasX = Boolean(pay?.[1].includes('{X}'));
+      const payLife = payParts && !lifeX ? Number(payParts[2] ?? payParts[3] ?? 0) : 0;
+      const hasX = Boolean(pay?.[1].includes('{X}')) || payParts?.[3] === 'X';
       const whereX = payParts?.[5] ? parseCount(payParts[5], b) : null;
       if (payParts && (hasX ? payParts[5] && !whereX : payParts[5])) return null;
       const fixX = whereX && !payParts![4] ? { xIs: whereX } : {};
       const then = sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && then) {
-        const inner = parseSentence(capitalise(then[1]!), b);
+        // "If you do, draw that many cards" after "any amount of life" — the X paid.
+        const inner = parseSentence(capitalise(lifeX ? then[1]!.replace(/\bthat many\b/g, 'X') : then[1]!), b);
         if (!inner) return null;
         // CR 702.59a (recover): "… Otherwise, exile this card."
         const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't), (.+)$/.exec(sentences[i + 2]!) : null;
@@ -311,7 +315,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const cap = hasX && !whereX ? xCap(sentences.slice(after, after + 1), b) : null;
         if (cap === undefined) return null;
         const maxX = whereX && payParts![4] ? { maxX: whereX } : cap ? { maxX: cap } : {};
-        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), ...fixX, ...maxX, effects: inner, ...(no ? { else: no } : {}) });
+        if (lifeX && pay[1]) return null;
+        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), ...(lifeX ? { lifeX: true } : {}), ...fixX, ...maxX, effects: inner, ...(no ? { else: no } : {}) });
         i += (otherwise ? 2 : 1) + (cap ? 1 : 0);
         continue;
       }

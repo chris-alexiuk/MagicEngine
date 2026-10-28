@@ -522,7 +522,7 @@ export type AmountExpr = (
    * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
    */
   /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
-  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true }
+  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -972,6 +972,9 @@ export interface CostModifierNode extends EffectNode {
   condition?: ConditionNode;
   /** "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first). */
   ifTargets?: ObjectFilter;
+  /** Emet-Selch: only spells cast from these zones ("from your graveyard"); `notFromHand`: "from anywhere other than your hand". */
+  castFrom?: ('graveyard' | 'exile')[];
+  notFromHand?: true;
 }
 
 /**

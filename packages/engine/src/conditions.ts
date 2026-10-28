@@ -480,6 +480,20 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         case 'you_cast_spell':
           // Surge (CR 702.117a): "if you … have cast another spell this turn".
           return (log.spellsCast[controller] ?? 0) > 0;
+        // Lyse Hext: "if you've cast two or more noncreature spells this turn"
+        case 'you_cast':
+          return (log.castSpells ?? []).filter((c) => c.player === controller && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+        case 'you_lost_life':
+          return log.lostLife.includes(controller);
+        // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
+        case 'entered_yours':
+          return (log.entered?.[controller] ?? []).some((id) => {
+            const o = g.objects[id];
+            const types = (cond.filter as ObjectFilter | undefined)?.types ?? [];
+            if (!o) return false;
+            const have = o.zone === 'battlefield' ? chars(g, o).types : faceOf(g, o).types;
+            return !types.length || types.some((t) => have.includes(t));
+          });
         case 'your_permanent_left':
           // Revolt: "if a permanent you controlled left the battlefield this turn"
           return (log.left ?? []).includes(controller);
