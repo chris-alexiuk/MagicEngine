@@ -800,6 +800,9 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
       const of = parseObjectRef(attacked[1]!, b);
       return of && !of.plural ? [{ ref: 'attacked_by', of: of.ref }] : null;
     }
+    // Wrathful Red Dragon: "any target that isn't a Dragon".
+    const notKind = /^any target that isn't an? ([A-Z][a-z]+)$/.exec(t);
+    if (notKind && subtypeOf(notKind[1]!) === notKind[1]) return [b.addTarget({ what: 'any', filter: { types: ANY_TARGET_TYPES, notSubtypes: [notKind[1]!] }, text: t.toLowerCase() })];
     const any = /^(?:any (other )?target|(another )?target (creature|player|opponent|planeswalker|battle)(?:,? (?:creature|player|planeswalker|battle))*,? or (creature|player|planeswalker|battle))$/i.exec(t);
     if (any) {
       if (/^any/i.test(t)) {

@@ -41,6 +41,11 @@ function answerOf<K extends ChoiceAnswer['kind']>(ctx: EffectContext, kind: K): 
   return ctx.answer?.kind === kind ? (ctx.answer as Extract<ChoiceAnswer, { kind: K }>) : null;
 }
 
+/** Sludge Titan, Ojer Kaslem: "a creature card and/or a land card" — whether each chosen card can stand for a different kind. */
+function eachAssignable(fits: (id: string, i: number) => boolean, kinds: number, ids: string[], used: boolean[] = []): boolean {
+  return !ids.length || Array.from({ length: kinds }, (_, i) => i).some((i) => !used[i] && fits(ids[0]!, i) && eachAssignable(fits, kinds, ids.slice(1), Object.assign([...used], { [i]: true })));
+}
+
 /**
  * An effect's amount for each of the players it's for: the same for all, or — when the amount names "each_player"
  * ("each opponent loses life equal to the life that player lost this turn") — counted for each one in turn.
@@ -224,9 +229,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   deal_damage(node, ctx) {
     // "Target creature you control deals damage equal to its power to …": that creature is the source.
-    const source = node.from ? refObjects(ctx, ref(node, 'from'))[0] : ctx.source;
+    let source = node.from ? refObjects(ctx, ref(node, 'from'))[0] : ctx.source;
+    // CR 113.7a: Wrathful Red Dragon — "Whenever a Dragon you control is dealt damage, it deals that much damage …" — a
+    // Dragon that died of it still deals the damage (as the object it became, just put there).
+    let left = false;
+    const tobj = ctx.trigger?.object;
+    if (!source && node.from && (node.from as Ref).ref === 'trigger_object' && tobj && ctx.trigger?.amount !== undefined) {
+      const o = ctx.g.objects[tobj.id];
+      if (o && o.zcc === tobj.zcc + 1 && o.zone !== 'battlefield' && ctx.g.lastKnown?.[o.id]?.zcc === tobj.zcc) {
+        source = o;
+        left = true;
+      }
+    }
     if (!source) return true;
-    if (node.from && source.zone !== 'battlefield') return true;
+    if (node.from && source.zone !== 'battlefield' && !left) return true;
     // CR 107.1b: "X damage, where X is … minus 4" — a negative amount is no damage.
     const nAll = Math.max(0, amountOf(ctx, node.amount));
     let dealt = 0;
@@ -1130,7 +1146,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!p) return true;
     const hand = zoneList(g, 'hand', p);
     const filter = liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'hand' as const });
-    const candidates = hand.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+    // Michelangelo: "a creature card and/or a land card" — up to one of each.
+    const each = (node.each as ObjectFilter[] | undefined)?.map((f) => liveFilter(ctx, { ...f, zone: 'hand' as const }));
+    const fctx = { controller: ctx.controller, source: ctx.source ?? null };
+    const fits = (id: string, i: number) => matchesFilter(g, g.objects[id]!, each![i]!, fctx);
+    const candidates = hand.filter((id) => (each ? each.some((_, i) => fits(id, i)) : matchesFilter(g, g.objects[id]!, filter, fctx)));
     const answer = answerOf(ctx, 'choose_objects');
     let chosen: string[];
     if (answer) {
@@ -1138,6 +1158,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (answer.objects.length < need || answer.objects.length > n || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${need === n ? n : `up to ${n}`} card(s) from that hand.`);
       }
+      if (each && !eachAssignable(fits, each.length, answer.objects)) throw new RulesError('Choose at most one card of each kind.');
       chosen = answer.objects;
     } else {
       if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
@@ -1201,13 +1222,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'choose_objects');
     if (!memo.chosen) {
       const filter = node.filter ? liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'library' as const }) : null;
-      const candidates = filter ? looked.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null })) : looked;
+      // Ojer Kaslem: "a creature card and/or a land card" — up to one of each.
+      const each = (node.each as ObjectFilter[] | undefined)?.map((f) => liveFilter(ctx, { ...f, zone: 'library' as const }));
+      const fctx = { controller: ctx.controller, source: ctx.source ?? null };
+      const fits = (id: string, i: number) => matchesFilter(g, g.objects[id]!, each![i]!, fctx);
+      const candidates = each ? looked.filter((id) => each.some((_, i) => fits(id, i))) : filter ? looked.filter((id) => matchesFilter(g, g.objects[id]!, filter, fctx)) : looked;
       const max = Math.min(take, candidates.length);
       const min = node.optional || node.upTo ? 0 : max;
       if (answer) {
         if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
           throw new RulesError(min === max ? `Choose ${max} of those cards.` : `Choose up to ${max} of those cards.`);
         }
+        if (each && !eachAssignable(fits, each.length, answer.objects)) throw new RulesError('Choose at most one card of each kind.');
         memo.chosen = answer.objects;
       } else if (min === max && (max === 0 || candidates.length === max)) {
         memo.chosen = candidates.slice(0, max);
@@ -1225,6 +1251,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         library.push(...chosen, ...others);
       } else {
         for (const id of chosen) moveObject(g, id, to as 'hand' | 'battlefield' | 'graveyard', ctx.events, to === 'battlefield' ? { controller: who, ...(node.tapped ? { tapped: true } : {}) } : {});
+        // Turntimber Symbiosis: "If that card has mana value 3 or less, …" — what was put onto the battlefield.
+        if (to === 'battlefield' && ctx.resolution) ctx.resolution.created = chosen.filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
       }
       const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
       if (node.rest === 'graveyard' || node.rest === 'hand') {
@@ -3717,7 +3745,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   choose_object(node, ctx) {
     const g = ctx.g;
     const filter = liveFilter(ctx, (node.filter ?? {}) as ObjectFilter);
-    const candidates = g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+    // Currency Converter: "a card exiled with this artifact".
+    const pool = filter.zone === 'exile' ? g.zones.exile : g.zones.battlefield;
+    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' ? { anyZone: true } : {}) }));
     if (!candidates.length || !ctx.resolution) return true;
     let pick = candidates.length === 1 ? candidates[0] : undefined;
     if (!pick) {

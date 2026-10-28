@@ -83,15 +83,22 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       return o && r && (o.zcc === r.zcc || foundNow(ctx, o)) ? [o] : [];
     }
     case 'chosen_object': {
+      // Currency Converter: "Put a card exiled with this artifact into its owner's graveyard. If it's a land card, …" —
+      // followed to where this resolution put it (CR 400.7j).
       const r = ctx.resolution?.chosenObject;
       const o = r ? g.objects[r.id] : undefined;
-      return o && o.zcc === r!.zcc ? [o] : [];
+      return o && (o.zcc === r!.zcc || foundNow(ctx, o)) ? [o] : [];
     }
     case 'affected':
       return ctx.affected ? [ctx.affected] : [];
     case 'attached': {
       const s = sourceOf(ctx);
-      const r = s?.attachedTo;
+      let r = s?.attachedTo;
+      // CR 603.10a: Oathkeeper — "When Oathkeeper is put into a graveyard from the battlefield, exile equipped creature." —
+      // what it was attached to as it left.
+      const src = ctx.source;
+      const lk = src ? g.lastKnown?.[src.id] : undefined;
+      if (src && src.zone !== 'battlefield' && lk && (s ? lk.zcc === src.zcc - 1 : lk.zcc === ctx.sourceZcc)) r = lk.attachedTo;
       const o = r ? g.objects[r.id] : undefined;
       return o && r && o.zcc === r.zcc ? [o] : [];
     }

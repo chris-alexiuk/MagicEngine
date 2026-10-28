@@ -869,6 +869,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger, it: subject, player: null };
   }
+  // Wrathful Red Dragon: "Whenever a Dragon you control is dealt damage, it deals that much damage to …".
+  const othersDealt = /^(a|an|another) (.+?) is dealt damage$/.exec(t);
+  if (othersDealt) {
+    const pf = parseFilter(othersDealt[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    if (othersDealt[1] === 'another') pf.filter.other = true;
+    b.eventAmount = true;
+    b.itOnField = true;
+    return { trigger: { type: 'dealt_damage', subject: { ref: 'all', filter: pf.filter } }, it: { ref: 'trigger_object' }, player: null };
+  }
   // "Whenever ~ deals damage to a player", "… to an opponent": "that player" is the player dealt damage.
   const damageTo = /^(~|enchanted creature|equipped creature) deals (combat )?damage to (a player|an opponent|a creature)$/.exec(t);
   if (damageTo && !(damageTo[2] && damageTo[3] !== 'an opponent')) {
@@ -1390,6 +1400,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (parsed.every(Boolean) && new Set(parsed.map((p) => JSON.stringify(p!.player))).size === 1) {
       return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: null, player: parsed[0]!.player };
     }
+  }
+  // Prosper: "Whenever you play a card from exile" — a land played or a spell cast from there.
+  const playCard = word === 'Whenever' ? /^(an opponent|a player|you) plays? a card from (exile|your graveyard)$/.exec(t) : null;
+  if (playCard) {
+    const play = playCard[1] === 'you' ? 'play' : 'plays';
+    const cast = playCard[1] === 'you' ? 'cast' : 'casts';
+    const from = playCard[2] === 'exile' ? 'exile' : 'your graveyard';
+    return parseTrigger(word, `${playCard[1]} ${play} a land from ${from} or ${cast} a spell from ${from}`, b);
   }
   // The Endstone: "Whenever you play a land or cast a spell"; Rocco: "Whenever a player plays a land from exile or casts a
   // spell from exile" — either event by the same player (CR 603.2).

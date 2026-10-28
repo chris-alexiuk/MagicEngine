@@ -144,6 +144,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const amount = movedThisWay(`${movedOne[1]} ${movedOne[2]} this way`, b);
     if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
   }
+  // Turntimber Symbiosis: "If that card has mana value 3 or less".
+  const hasMV = /^(that card|that creature|it) has mana value (\d+) or (less|greater)$/.exec(t);
+  if (hasMV) {
+    const of = b.named[hasMV[1]!] ?? (hasMV[1] === 'it' ? b.it : null);
+    if (of) return { type: 'is', of, filter: { manaValue: { op: hasMV[3] === 'less' ? 'le' : 'ge', n: Number(hasMV[2]) } } };
+  }
   // Emeria Shepherd: "If that land is a Plains" — the land that entered.
   const thatIs = /^that (land|creature|permanent) is an? ([A-Z][a-z]+)$/.exec(t);
   if (thatIs && b.it?.ref === 'trigger_object' && subtypeOf(thatIs[2]!) === thatIs[2]) return { type: 'is', of: b.it, filter: { subtypes: [thatIs[2]!] } };
@@ -324,7 +330,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Tezzeret, Cruel Captain's emblem: "If it's not a creature, it becomes a 0/0 Robot artifact creature."
   const itsA = /^(?:it|that creature|that permanent)(?:'s| is)( not)? (an? .+)$/.exec(t);
   if (itsA && b.it && b.it.ref !== 'self') {
-    const pf = parseFilter(itsA[2]!.replace(/^an? /, ''), b);
+    // Currency Converter: "If it's a land card", "If it's a nonland card".
+    const noun = itsA[2]!.replace(/^an? /, '');
+    const bare = noun.replace(/ card$/, '');
+    const pf = parseFilter(noun, b) ?? (bare !== noun ? (parseFilter(bare, b) ?? (/^non[a-z]+$/.test(bare) ? parseFilter(`${bare} permanent`, b) : null)) : null);
     if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) {
       const cond: ConditionNode = { type: 'is', of: b.it, filter: pf.filter };
       return itsA[1] ? { type: 'not', cond } : cond;

@@ -71,6 +71,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /\b(if (?:there are \w+ or more (\S+) counters on (?:it|~|her|him)|(?:it|~) has \w+ or more (\S+) counters on (?:it|her|him)), (?:you may )?)remove (?:those counters|all of them)(?: from (?:it|~))?/g,
     (_m, head: string, k1?: string, k2?: string) => `${head}remove all ${k1 ?? k2} counters from it`,
   );
+  // Turntimber Symbiosis: "You may put a creature card from among them onto the battlefield. If that card has mana value 3
+  // or less, it enters with three additional +1/+1 counters on it. Put the rest …" — read as the counters put on it after
+  // the rest go to the bottom (nothing happens in between).
+  text = text.replace(
+    /(You may put an? [^.]+? from among them onto the battlefield\.) If that card has (mana value \d+ or less), it enters with (\w+) additional (\S+) counters on it\. (Put the rest [^.]+\.)/,
+    '$1 $5 If that card has $2, put $3 $4 counters on that card.',
+  );
+  // Forge of Heroes: "Put a +1/+1 counter on it if it's a creature and a loyalty counter on it if it's a planeswalker."
+  text = text.replace(/\bPut (a|an|one) (\S+) counter on it if it's an? (creature|planeswalker|artifact|enchantment|land) and (a|an|one) (\S+) counter on it if it's an? (creature|planeswalker|artifact|enchantment|land)\./, "If it's a $3, put $1 $2 counter on it. If it's a $6, put $4 $5 counter on it.");
+  // Kwain: "Each player may draw a card, then each player who drew a card this way gains 1 life." — what each who draws
+  // does as well.
+  text = text.replace(/\b(Each (?:player|opponent)) may (draw a card), then each (?:player|opponent) who drew a card this way (gain|lose|create|put)s\b/, '$1 may $2 and $3');
   // Primal Wellspring: "copy that spell and you may choose new targets for the copy." — two instructions (CR 707.10c).
   text = text.replace(/\b([Cc]opy (?:that spell|it)) and you may choose new targets for the copy\./g, '$1. You may choose new targets for the copy.');
   // The Skullspore Nexus: "create a green Fungus Dinosaur creature token with base power and toughness each equal to …" —
@@ -650,12 +662,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += dig.used - 1;
         continue;
       }
-      const look = /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is (.+))?$/.exec(s);
+      // Gishath: "reveal that many cards from the top of your library" — the damage dealt.
+      const thatMany = b.eventAmount ? /^([Ll]ook at|[Rr]eveal) that many cards from the top of your library$/.exec(s) : null;
+      const look = thatMany ? [s, thatMany[1]!, 'X', undefined] : /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is (.+))?$/.exec(s);
       if (look && sentences[i + 1]) {
         const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b);
         if (!dig || !bindDig(dig, look[3])) return null;
+        if (thatMany) Object.assign(dig.node, bindX([dig.node], { kind: 'event' })[0]);
         // Revealed: everyone sees the cards (CR 701.20a).
         if (/^[Rr]eveal/.test(look[1]!)) dig.node.reveal = true;
+        // Turntimber Symbiosis: "that card" afterwards is the one put onto the battlefield.
+        if (dig.node.to === 'battlefield' && dig.node.take === 1) b.named = { ...b.named, 'that card': { ref: 'created' } };
         out.push(dig.node);
         i += dig.used;
         continue;
@@ -777,7 +794,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Essence Flux: "Exile target creature you control, then return that card to the battlefield …. If it's a Spirit, …" —
       // back on the battlefield, it's the permanent it became (followed by the resolution, CR 400.7).
       const lastMove = [...out].reverse().find((e) => MOVES.has(e.type));
-      const backOnField = lastMove?.type === 'move' && lastMove.to === 'battlefield' && JSON.stringify(lastMove.what) === JSON.stringify(b.it);
+      // Currency Converter: "Put a card exiled with this artifact into its owner's graveyard. If it's a land card, …" — the
+      // card chosen as it resolves, followed to the graveyard.
+      const backOnField =
+        lastMove?.type === 'move' &&
+        JSON.stringify(lastMove.what) === JSON.stringify(b.it) &&
+        (lastMove.to === 'battlefield' || (b.it?.ref === 'chosen_object' && (lastMove.to === 'graveyard' || lastMove.to === 'exile')));
       if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       // Splash Portal: "If that creature is a Bird, Frog, Otter, or Rat, draw a card." — a list in the condition.
@@ -836,6 +858,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           }
         }
         if (!yes) return null;
+        // Currency Converter: "If it's a land card, create a Treasure token. If it's a nonland card, …" — the next "it" is
+        // still the card the condition was about, not the token.
+        if (cond.type === 'is' && b.it && JSON.stringify((cond as { of?: Ref }).of) === JSON.stringify({ ref: 'chosen_object' })) b.it = { ref: 'chosen_object' };
         const node: EffectNode = { type: 'if', cond, effects: yes };
         const otherwise = sentences[i + 1] ? /^Otherwise, (.+)$/.exec(sentences[i + 1]!) : null;
         if (otherwise) {
@@ -1321,6 +1346,20 @@ const REST: Record<string, { rest: string; order?: string }> = {
   'on top of your library in any order': { rest: 'top', order: 'any' },
 };
 
+/**
+ * Sludge Titan, Ojer Kaslem: "a creature card and/or a land card" — up to one of each. Undefined when the phrase isn't
+ * that; null when it is but a part doesn't read.
+ */
+function eachOfPair(many: string, noun: string, zone: 'library' | 'hand', b: Binder): ObjectFilter[] | null | undefined {
+  if (many !== 'a' && many !== 'an') return undefined;
+  const m = /^(.+? card) and\/or (?:a|an) (.+? card)$/.exec(noun);
+  if (!m) return undefined;
+  const one = parseFilter(`${m[1]} in your ${zone}`, b);
+  const two = one ? parseFilter(`${m[2]} in your ${zone}`, b) : null;
+  if (!one || !two || one.plural || two.plural) return null;
+  return [one.filter, two.filter].map(({ zone: _z, owner: _o, ...rest }) => rest);
+}
+
 /** The sentences after "Look at the top N cards of your library." (CR 701.16 isn't a keyword action: just looking). */
 function parseDig(count: string, next: string, after: string | undefined, b: Binder): { node: EffectNode; used: number } | null {
   // "Look at the top X cards of your library" — the X paid, or one the text defines (bound by the caller).
@@ -1378,6 +1417,12 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
   if (reveal) {
     if (shuffled) return null;
     const rest = restOf(after);
+    const each = eachOfPair(reveal[2]!, reveal[3]!, 'library', b);
+    if (each === null || (each && !rest)) return null;
+    if (each) {
+      const to = reveal[4]!.startsWith('into your hand') ? 'hand' : reveal[4]!.startsWith('onto') ? 'battlefield' : 'graveyard';
+      return { node: { type: 'dig', amount, take: 2, each, to, optional: true, ...rest!, ...(reveal[1] === 'reveal' ? { reveal: true } : {}), ...(reveal[5] ? { tapped: true } : {}) }, used: 2 };
+    }
     const n = reveal[2] === 'any number of' ? 99 : reveal[2]!.startsWith('up to ') ? parseAmount(reveal[2]!.slice(6)) : 1;
     const pf = parseFilter(`${reveal[3]} in your library`, b);
     if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
@@ -2190,6 +2235,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Currency Converter: "Put a card exiled with this artifact into its owner's graveyard." — chosen as it resolves; "it"
+  // afterwards is that card.
+  if (/^Put a card exiled with ~ into its owner's graveyard$/.test(s)) {
+    b.it = { ref: 'chosen_object' };
+    return [
+      { type: 'choose_object', filter: { zone: 'exile', exiledWithSource: true } },
+      { type: 'move', what: { ref: 'chosen_object' }, to: 'graveyard' },
+    ];
+  }
   // God-Eternal Bontu: "sacrifice any number of other permanents, then draw that many cards".
   const sacDraw = /^[Ss]acrifice (any number of .+?), then draw that many cards$/.exec(s);
   if (sacDraw) {
@@ -2352,15 +2406,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     return parseSentence(`Put a +1/+1 counter on ${what}`, b);
   }
   // CR 701.63a: "it endures N" — its controller creates an N/N white Spirit token unless they put N +1/+1 counters on it.
-  const endure = /^(.+?) endures (\d+)$/.exec(s);
+  // Warden of the Grove: "it endures X, where X is the number of counters on this creature".
+  const endure = /^(.+?) endures (\d+|X)$/.exec(s);
   if (endure) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(endure[1]!, b);
-      const n = Number(endure[2]);
+      const n = endure[2] === 'X' ? 'X' : Number(endure[2]);
       if (!what || what.plural) return null;
       // CR 701.63b: endure 0 does nothing.
       if (n === 0) return [];
-      const token = parseSentence(`Create a ${n}/${n} white Spirit creature token`, b.clone());
+      const token = parseSentence(n === 'X' ? 'Create an X/X white Spirit creature token' : `Create a ${n}/${n} white Spirit creature token`, b.clone());
       if (!token) return null;
       return [{ type: 'may_do', effects: [{ type: 'add_counters', what: what.ref, counter: '+1/+1', amount: n }], then: [], else: token }];
     });
@@ -3310,6 +3365,10 @@ const VERBS: Record<string, VerbHandler> = {
     // Kaalia of the Vast: "… onto the battlefield tapped and attacking that opponent" — attacking what the source attacks.
     const fromHand = /^(a|an|up to (?:one|two|three|four|five|six|seven)|any number of) (.+?) from your hand onto the battlefield( tapped)?( and attacking(?: that opponent| that player)?)?$/.exec(args);
     if (fromHand && fromHand[4] && !fromHand[3]) return null;
+    // Michelangelo: "you may put a creature card and/or a land card from your hand onto the battlefield".
+    const handEach = fromHand ? eachOfPair(fromHand[1]!, fromHand[2]!, 'hand', b) : undefined;
+    if (handEach === null) return null;
+    if (handEach) return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, each: handEach, amount: 2, then: 'battlefield', optional: true, ...(fromHand![3] ? { tapped: true } : {}) }];
     if (fromHand) {
       const n = fromHand[1] === 'any number of' ? 99 : /^up to /.test(fromHand[1]!) ? (parseAmount(fromHand[1]!.slice(6)) as number) : 1;
       const pf = parseFilter(`${fromHand[2]} in your hand`, b);
