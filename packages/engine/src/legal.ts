@@ -2,7 +2,7 @@ import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canActivateTapAbilities, chars, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
+import { canActivateTapAbilities, chars, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
@@ -15,7 +15,7 @@ import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
-import { freePermission, mayPlayFrom, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
+import { freePermission, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule } from './player-rules.js';
 import { activationsThisTurn, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
@@ -86,7 +86,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const lifeInstead = faceIndex === 0 && topLifeOnly(g, player, o);
       if (lifeInstead && g.players[player]!.life < manaValueOf(g, o)) return;
       const free = faceIndex === 0 && o.zone === 'exile' && freePermission(g, player, o);
-      const cost = parseManaCost(lifeInstead || free ? '' : face.manaCost);
+      // Airbend: {2} rather than its mana cost.
+      const airbent = !free && o.zone === 'exile' ? permissionCost(g, player, o) : undefined;
+      const cost = parseManaCost(lifeInstead || free ? '' : (airbent ?? face.manaCost));
       applyCostModifiers(g, player, o, face, cost);
       // X spells need a value; the UI asks for one (also "discard X cards" as an additional cost).
       if (cost.unsupported.length || cost.x > 0 || additionalCosts(face).some((c) => c.amount === 'X')) return;
@@ -311,9 +313,24 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const mana = parseManaCost(cost.mana ?? '');
       if (mana.unsupported.length || mana.x > 0) return;
       applyPowerUp(g, o, ab, mana, player);
-      const costs = defaultCostChoices(g, player, o, cost.other ?? []);
+      let costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
-      if (cost.mana && !planAutoTap(g, player, mana, 0, [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])], { kind: 'ability', source: o })) return;
+      const busy = [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])];
+      if (cost.mana && !planAutoTap(g, player, mana, 0, busy, { kind: 'ability', source: o })) {
+        // CR 701.67a: waterbend — tap untapped artifacts and creatures for as much of the generic mana as it takes.
+        if (!cost.waterbend) return;
+        const tappable = g.zones.battlefield.filter((x) => {
+          const t = g.objects[x]!;
+          return t.controller === player && !t.tapped && !busy.includes(x) && (hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'));
+        });
+        let found: string[] | null = null;
+        for (let k = 1; k <= Math.min(cost.waterbend, mana.generic, tappable.length) && !found; k++) {
+          const pick = tappable.slice(0, k);
+          if (planAutoTap(g, player, { ...mana, generic: mana.generic - k }, 0, [...busy, ...pick], { kind: 'ability', source: o })) found = pick;
+        }
+        if (!found) return;
+        costs = { ...costs, waterbend: found };
+      }
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
       // "−X": as much loyalty as it has, and 1 (CR 606.6); "+X": 1.
@@ -525,7 +542,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.counters !== undefined ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.counters !== undefined ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {

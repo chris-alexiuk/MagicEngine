@@ -352,6 +352,14 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
   const loyaltyX = /^([+−-])X$/.exec(text.trim());
   if (loyaltyX && planeswalker) return { loyalty: 0, loyaltyX: loyaltyX[1] === '+' ? 1 : -1 };
   for (const item of text.split(/,\s*/)) {
+    // CR 701.67a: "Waterbend {3}" — mana, each generic of which may be paid by tapping an artifact or creature.
+    const waterbend = /^[Ww]aterbend ((?:\{\d+\})+)$/.exec(item);
+    if (waterbend) {
+      if (cost.waterbend) return null;
+      mana += waterbend[1]!;
+      cost.waterbend = [...waterbend[1]!.matchAll(/\{(\d+)\}/g)].reduce((n, m) => n + Number(m[1]), 0);
+      continue;
+    }
     if (item === '{T}') cost.tap = true;
     else if (item === '{Q}') cost.untap = true;
     else if (MANA_RUN.test(item)) mana += item;

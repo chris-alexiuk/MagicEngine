@@ -3183,6 +3183,45 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 701.65a: airbend — exile them; for as long as each card remains exiled, its owner may cast it by paying {2}
+  // rather than paying its mana cost.
+  airbend(node, ctx) {
+    const g = ctx.g;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield' && o.zone !== 'stack') continue;
+      const token = o.token || o.spellCopy;
+      moveObject(g, o.id, 'exile', ctx.events);
+      const now = g.objects[o.id];
+      // A token or a copy of a spell ceases to exist (CR 111.7, 707.10a): nothing to cast.
+      if (!now || now.zone !== 'exile' || token) continue;
+      (g.mayPlay ??= []).push({ object: { id: now.id, zcc: now.zcc }, player: now.owner, mode: 'cast', lastTurn: Number.MAX_SAFE_INTEGER, cost: '{2}' });
+    }
+    return true;
+  },
+
+  // Earthbend (CR 701.66a): "When that land dies or is put into exile, return it to the battlefield tapped under your
+  // control." — a delayed triggered ability watching that permanent (CR 603.7).
+  delayed_leave(node, ctx) {
+    const g = ctx.g;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      g.delayed.push({
+        id: `d${g.nextId++}`,
+        controller: ctx.controller,
+        source: ctx.source ? { id: ctx.source.id, zcc: ctx.sourceZcc ?? ctx.source.zcc } : { id: '', zcc: 0 },
+        sourceName: sourceName(ctx),
+        text: `When ${nameOf(g, o)} dies or is put into exile, return it to the battlefield tapped under your control.`,
+        step: 'end',
+        createdTurn: g.turn,
+        createdStep: g.step,
+        effects: node.effects as EffectNode[],
+        targets: [],
+        leaves: { id: o.id, zcc: o.zcc },
+      });
+    }
+    return true;
+  },
+
   gain_control(node, ctx) {
     // Layer 2 (CR 613.1b): locked to the objects it affected (CR 611.2c).
     const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');

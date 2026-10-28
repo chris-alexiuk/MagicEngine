@@ -582,6 +582,26 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
   // "this turn" ones that didn't fire are gone.
   if (g.delayed.some((d) => d.on && d.createdTurn !== g.turn)) g.delayed = g.delayed.filter((d) => !d.on || d.createdTurn === g.turn);
   for (const e of batch) {
+    // Earthbend: "When that land dies or is put into exile" — once, as that permanent leaves for one of those zones; it's
+    // gone for good if it leaves for anywhere else (CR 400.7).
+    if (e.type === 'moved' && e.from === 'battlefield' && g.delayed.some((d) => d.leaves?.id === e.object)) {
+      const o = g.objects[e.object];
+      for (const d of [...g.delayed]) {
+        if (d.leaves?.id !== e.object || !o || o.zcc !== d.leaves.zcc + 1) continue;
+        g.delayed = g.delayed.filter((x) => x.id !== d.id);
+        if (e.to !== 'graveyard' && e.to !== 'exile') continue;
+        g.triggers.push({
+          id: `t${g.nextId++}`,
+          controller: d.controller,
+          source: d.source,
+          sourceName: d.sourceName,
+          ability: { kind: 'triggered', text: d.text, trigger: { type: 'leaves', subject: { ref: 'self' } }, effects: d.effects },
+          info: { object: { id: o.id, zcc: o.zcc } },
+          boundTargets: [],
+        });
+      }
+      continue;
+    }
     if (e.type === 'cast') {
       // "When you next cast an instant or sorcery spell this turn, copy that spell."
       for (const d of [...g.delayed]) {
@@ -605,7 +625,7 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
     for (const d of [...g.delayed]) {
       // "your next main phase": precombat or postcombat (CR 505.1).
       const isMain = e.step === 'main1' || e.step === 'main2';
-      if (d.on || !(d.step === e.step || (d.step === 'main' && isMain))) continue;
+      if (d.on || d.leaves || !(d.step === e.step || (d.step === 'main' && isMain))) continue;
       if (d.whose === 'you' && g.active !== d.controller) continue;
       // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
       if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === e.step) continue;

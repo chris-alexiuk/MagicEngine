@@ -2247,4 +2247,13 @@ describe('slice 183', () => {
     // Not for effects the engine doesn't count per player.
     expect(parse('Each player creates a 1/1 white Soldier creature token for each creature they control.', 'Sorcery').unparsed).toHaveLength(1);
   });
+  it('reads waterbend costs', () => {
+    expect(parse('Waterbend {3}, {T}: Tap target creature an opponent controls.', 'Creature').abilities[0]).toMatchObject({ cost: { waterbend: 3, mana: '{3}', tap: true } });
+  });
+  it('reads airbend', () => {
+    expect(parse('When Aang enters, airbend up to one other target creature or spell.', 'Legendary Creature — Human Avatar Ally', 'Aang').abilities[0]).toMatchObject({ targets: [{ upTo: true }], effects: [{ type: 'airbend', what: { ref: 'target', index: 0 } }] });
+  });
+  it('reads earthbend', () => {
+    expect(parse('When this creature enters, earthbend 1.', 'Creature — Badger Mole').abilities[0]).toMatchObject({ targets: [{ filter: { types: ['Land'], controller: 'you' } }], effects: [{ type: 'modify', setPower: 0, keywords: [{ id: 'haste' }] }, { type: 'add_counters', amount: 1 }, { type: 'delayed_leave' }] });
+  });
 });

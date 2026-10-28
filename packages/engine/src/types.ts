@@ -432,6 +432,8 @@ export interface DelayedTrigger {
   laterTurn?: true;
   /** "When you next cast an instant or sorcery spell this turn": fires on that event instead of a step. */
   on?: { who: 'you'; filter: ObjectFilter };
+  /** Earthbend (CR 701.66a): "When that land dies or is put into exile" — this permanent leaving for those zones. */
+  leaves?: ObjectRef;
 }
 
 /** CR 615: a prevention effect from a resolved spell or ability, this turn only. */
@@ -675,6 +677,8 @@ export interface CostChoices {
   blighted?: ObjectId[];
   /** CR 701.61a: forage by sacrificing a Food (in `sacrifice`) rather than exiling three cards (in `exile`). */
   forageFood?: boolean;
+  /** CR 701.67a: artifacts and creatures tapped to pay a waterbend cost's generic mana. */
+  waterbend?: ObjectId[];
 }
 
 export type Action =
@@ -924,7 +928,8 @@ export interface GameState {
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true }[];
+  /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

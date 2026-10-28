@@ -81,6 +81,9 @@ const CARDS = [
   makeCard({ name: 'The Chain Veil', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: "At the beginning of your end step, if you didn't activate a loyalty ability of a planeswalker this turn, you lose 2 life." }),
   makeCard({ name: 'Archfiend of Despair', type_line: 'Creature — Demon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'Flying\nYour opponents can\'t gain life.\nAt the beginning of each end step, each opponent loses life equal to the life that player lost this turn.' }),
   makeCard({ name: 'Census', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player draws cards equal to the number of creatures they control.' }),
+  makeCard({ name: 'Rocky Rebuke', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Earthbend 2. (Target land you control becomes a 0/0 creature with haste that\'s still a land. Put two +1/+1 counters on it. When it dies or is exiled, return it to the battlefield tapped.)' }),
+  makeCard({ name: 'Airbending Lesson', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Airbend target nonland permanent. (Exile it. While it\'s exiled, its owner may cast it for {2} rather than its mana cost.)\nDraw a card.' }),
+  makeCard({ name: 'Geyser Leaper', type_line: 'Creature — Human Warrior', mana_cost: '{0}', power: '4', toughness: '3', oracle_text: 'Flying\nWaterbend {4}: Draw a card, then discard a card. (While paying a waterbend cost, you can tap your artifacts and creatures to help. Each one pays for {1}.)' }),
   makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
@@ -858,5 +861,54 @@ describe('staples (slice 183): counted for each player', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Census', 'hand') }));
     expect(g.zones.hand.alice!.length).toBe(a + 1);
     expect(g.zones.hand.bob!.length).toBe(b + 3);
+  });
+});
+
+describe('staples (slice 183): earthbend', () => {
+  it('a 0/0 land creature with haste and N counters; it comes back tapped when it dies', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const land = give(g, 'alice', 'Forest', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Rocky Rebuke', 'hand'), targets: [[obj(land)]] }));
+    const c = chars(g, g.objects[land]!);
+    expect(c.types).toEqual(expect.arrayContaining(['Land', 'Creature']));
+    expect([c.power, c.toughness]).toEqual([2, 2]);
+    expect(c.keywords.some((k) => k.id === 'haste')).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Murder', 'hand'), targets: [[obj(land)]] }));
+    g = settle(g);
+    expect(g.objects[land]!.zone).toBe('battlefield');
+    expect(g.objects[land]!.tapped).toBe(true);
+    expect(chars(g, g.objects[land]!).types).toEqual(['Land']);
+    expect(g.delayed.length).toBe(0);
+  });
+});
+
+describe('staples (slice 183): airbend', () => {
+  it('exiled; its owner may cast it for {2} rather than its mana cost, for as long as it stays exiled', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const titan = give(g, 'bob', 'Titan', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Airbending Lesson', 'hand'), targets: [[obj(titan)]] }));
+    expect(g.objects[titan]!.zone).toBe('exile');
+    g = toStep(g, 'main1', 'bob');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === titan)).toBe(false);
+    g.players.bob!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'bob', object: titan }));
+    expect(g.objects[titan]!.zone).toBe('battlefield');
+    expect(g.players.bob!.pool.C).toBe(0);
+  });
+});
+
+describe('staples (slice 183): waterbend', () => {
+  it('untapped artifacts and creatures pay for generic mana of the waterbend cost', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const leaper = give(g, 'alice', 'Geyser Leaper', 'battlefield');
+    const [b1, b2] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    g.players.alice!.pool.C = 2;
+    const offered = legalActions(g, 'alice').find((a) => a.type === 'activate' && a.object === leaper) as { costs?: { waterbend?: string[] } } | undefined;
+    expect(offered?.costs?.waterbend?.length).toBe(2);
+    g = act(g, { type: 'activate', player: 'alice', object: leaper, ability: 0, costs: { waterbend: [b1, b2] } });
+    expect(g.objects[b1]!.tapped && g.objects[b2]!.tapped).toBe(true);
+    expect(g.players.alice!.pool.C).toBe(0);
+    // Not more than the waterbend cost, and only untapped ones.
+    expect(() => act(structuredClone(g), { type: 'activate', player: 'alice', object: leaper, ability: 0, costs: { waterbend: [b1] } })).toThrow();
   });
 });

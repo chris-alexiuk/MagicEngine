@@ -10,7 +10,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canActivateTapAbilities, isPermanentCard, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
 import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
@@ -55,7 +55,7 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { freePermission, mayPlayFrom, topLifeOnly } from './permissions.js';
+import { freePermission, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -630,7 +630,9 @@ function cast(
   const lifeInstead = !during && !alt && o.zone === 'library' && topLifeOnly(g, player, o);
   // "You may play it this turn without paying its mana cost" (CR 118.9; CR 107.3b: X is 0).
   const freeFromExile = !during && !alt && fromExile && o.zone === 'exile' && freePermission(g, player, o);
-  if (lifeInstead || freeFromExile) x = 0;
+  // Airbend (CR 701.65a): "by paying {2} rather than paying its mana cost" (CR 118.9; CR 107.3b: X is 0).
+  const airbent = !during && !alt && !freeFromExile && fromExile && o.zone === 'exile' ? permissionCost(g, player, o) : undefined;
+  if (lifeInstead || freeFromExile || airbent !== undefined) x = 0;
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
@@ -688,7 +690,7 @@ function cast(
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
-  const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : face.manaCost)));
+  const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : (airbent ?? face.manaCost))));
   if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
@@ -1042,10 +1044,23 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
   const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? []), ...(choices.costs.crew ?? [])];
+  // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the generic mana.
+  const bent = choices.costs.waterbend ?? [];
+  if (bent.length) {
+    if (!cost.waterbend) throw new RulesError('That cost has no waterbend part.');
+    if (bent.length > Math.min(cost.waterbend, mana.generic) || new Set(bent).size !== bent.length) throw new RulesError(`Tap at most ${cost.waterbend} artifacts and creatures to waterbend.`);
+    for (const b of bent) {
+      const t = g.objects[b];
+      if (!t || t.zone !== 'battlefield' || t.controller !== player || t.tapped || usesItself.includes(b) || !(hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'))) throw new RulesError('Waterbend by tapping untapped artifacts and creatures you control.');
+    }
+    mana.generic -= bent.length;
+    usesItself.push(...bent);
+  }
   if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
   if (cost.mana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
   if (cost.tap) setTapped(g, id, true, events);
   if (cost.untap) setTapped(g, id, false, events);
+  for (const b of bent) setTapped(g, b, true, events);
   if (cost.loyalty !== undefined) {
     // CR 606.4: the cost is putting on or removing loyalty counters.
     const delta = cost.loyalty + (cost.loyaltyX ?? 0) * choices.x;

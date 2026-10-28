@@ -2958,6 +2958,26 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const clue = parseTokenPhrase('a Clue token', b);
     return clue ? [{ type: 'create_token', amount: 1, token: clue.face, who: { ref: 'you' } }] : null;
   }
+  // CR 701.65a: "Airbend target nonland permanent", "airbend up to one other target creature or spell".
+  const airbend = /^airbend (.+)$/i.exec(c);
+  if (airbend) {
+    const what = parseObjectRef(airbend[1]!, b);
+    return what ? [{ type: 'airbend', what: what.ref }] : null;
+  }
+  // CR 701.66a: "Earthbend N" — "Target land you control becomes a 0/0 land creature with haste in addition to its other
+  // types. Put N +1/+1 counters on it. When that land dies or is put into exile, return it to the battlefield tapped
+  // under your control."
+  const earthbend = /^earthbend (\S+)$/i.exec(c);
+  if (earthbend) {
+    const amount = parseAmount(earthbend[1]!);
+    if (amount === null) return null;
+    const land = b.addTarget({ what: 'object', filter: { types: ['Land'], controller: 'you' }, text: 'target land you control' });
+    return [
+      { type: 'modify', what: land, types: ['Creature'], subtypes: [], retainTypes: true, setPower: 0, setToughness: 0, keywords: [{ id: 'haste' }], until: 'game' },
+      { type: 'add_counters', what: land, counter: '+1/+1', amount },
+      { type: 'delayed_leave', what: land, effects: [{ type: 'move', what: { ref: 'trigger_object' }, to: 'battlefield', tapped: true, under: 'you' }] },
+    ];
+  }
   // CR 701.37a: "Monstrosity N".
   const monstrosity = /^monstrosity (\S+)$/i.exec(c);
   if (monstrosity) {

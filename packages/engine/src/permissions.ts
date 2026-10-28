@@ -22,6 +22,11 @@ export function freePermission(g: GameState, player: PlayerId, o: GameObject): b
   return (g.mayPlay ?? []).some((p) => p.free && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
 }
 
+/** Airbend (CR 701.65a): a permission to cast this card by paying another cost rather than its mana cost. */
+export function permissionCost(g: GameState, player: PlayerId, o: GameObject): string | undefined {
+  return (g.mayPlay ?? []).find((p) => p.cost !== undefined && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn)?.cost;
+}
+
 /**
  * "You may play lands from the top of your library", "You may cast creature spells from the top of your library":
  * the top card, from a static ability of a permanent the player controls.
