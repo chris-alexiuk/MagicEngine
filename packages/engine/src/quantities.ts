@@ -100,6 +100,10 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
         const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
         if (!p || p === you) return false;
       }
+      if (e.toChosen) {
+        const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
+        if (!p || p !== source.chosen?.player) return false;
+      }
       return true;
     }
     default:

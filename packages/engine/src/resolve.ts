@@ -154,6 +154,12 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       return (ctx.targets[ref.index] ?? []).flatMap((t) => (t.kind === 'player' && live.includes(t.player) ? [t.player] : []));
     case 'trigger_player':
       return ctx.trigger?.player && live.includes(ctx.trigger.player) ? [ctx.trigger.player] : [];
+    case 'chosen_player': {
+      // "the chosen player": chosen as the source entered (as it last existed, if it has left).
+      const s = ctx.source;
+      const p = s?.chosen?.player ?? (s ? g.lastKnown?.[s.id]?.chosen?.player : undefined);
+      return p && live.includes(p) ? [p] : [];
+    }
     case 'enchanted_player': {
       // CR 303.4: the player the source Aura is attached to (as it last existed, if it has left).
       const s = ctx.source;

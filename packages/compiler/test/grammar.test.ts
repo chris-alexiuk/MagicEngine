@@ -2110,3 +2110,13 @@ describe('slice 173', () => {
     expect(parse('When this creature enters, you gain 3 life and get {E}{E}{E}.', 'Creature — Elemental', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'get_counters', counter: 'energy', amount: 3 }] });
   });
 });
+
+describe('slice 174', () => {
+  it('reads the qualities of protection the engine can tell apart, and leaves the rest', () => {
+    expect(parse('{T}: Another target creature you control gains protection from colorless or from the color of your choice until end of turn.', 'Creature — Kor Cleric', 'Giver of Runes').abilities[0]).toMatchObject({ effects: [{ type: 'modify', keywords: [{ id: 'protection', text: 'colorless or from the color of your choice' }] }] });
+    expect(parse("Enchanted creature has protection from black. This effect doesn't remove ~.", 'Enchantment — Aura', 'Black Ward').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'protection', text: 'black', keeps: 'source' }] } });
+    expect(parse("Enchanted creature gets +2/+2 and has protection from each color. This effect doesn't remove Auras.", 'Enchantment — Aura', 'Spectra Ward').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'protection', text: 'each color', keeps: 'auras' }] } });
+    expect(parse('Wraiths you control have protection from Ring-bearers.', 'Legendary Creature — Wraith Noble', 'Lord of the Nazgûl').unparsed).toEqual([]);
+    expect(parse('{T}: Choose target permanent you control. Creatures you control gain protection from each of that permanent\'s colors until end of turn.', 'Creature — Human Cleric', 'Samite Elder').unparsed.length).toBe(1);
+  });
+});

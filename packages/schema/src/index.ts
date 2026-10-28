@@ -12,6 +12,8 @@
 export const SCHEMA_VERSION = 2 as const;
 
 export { SUBTYPES } from './subtypes.js';
+export * from './qualities.js';
+import { qualitiesRead } from './qualities.js';
 
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
 export const COLORS: readonly Color[] = ['W', 'U', 'B', 'R', 'G'];
@@ -100,6 +102,11 @@ export interface KeywordInstance {
   abilities?: AbilityNode[];
   /** Granted flashback: "The flashback cost is equal to its mana cost." (Snapcaster Mage) */
   costIsManaCost?: true;
+  /** Protection granted by an Aura: "This effect doesn't remove this Aura." / "… doesn't remove Auras." (CR 702.16d) */
+  keeps?: 'source' | 'auras';
+  /** Bound by the engine as a quality keyword is granted: the player "you" means, and the object that granted it. */
+  you?: string;
+  grantedBy?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +443,9 @@ export type Ref =
   /** "Target player sacrifices a creature. You gain life equal to that creature's toughness." — what this effect sacrificed. */
   | { ref: 'sacrificed_this_way' }
   /** "that card's mana value" after "discards a card" — only its characteristics as it was discarded (cost_lki). */
-  | { ref: 'discarded_this_way' };
+  | { ref: 'discarded_this_way' }
+  /** CR 614.12: "the chosen player" — the player chosen as the source entered ("As ~ enters, choose a player"). */
+  | { ref: 'chosen_player' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -811,7 +820,9 @@ export interface AsEntersNode extends EffectNode {
   /** read_ahead: "As this Saga enters, choose a number between one and this Saga's final chapter number" (CR 702.155b). */
   /** card_name: "As ~ enters, choose a nonland card name" (CR 201.3; `filter` says what kind of card). */
   /** card_type: "As ~ enters, choose artifact, creature, enchantment, instant, or sorcery" (`options`; all card types if absent). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type';
+  /** player: "As ~ enters, choose a player" (`opponent`: "choose an opponent"). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player';
+  opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */
   thenCounters?: { counter: string; filter: ObjectFilter };
@@ -932,6 +943,8 @@ export interface QuantityReplacementNode extends EffectNode {
   counter?: string;
   /** damage: only to opponents and their permanents; only noncombat damage. */
   toOpponents?: true;
+  /** Sawhorn Nemesis: "to the chosen player or a permanent they control" (chosen as the source entered). */
+  toChosen?: true;
   noncombat?: true;
 }
 
@@ -1055,6 +1068,8 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   if (kw.id === 'partner_with') return false;
   // Enchant with a quality the compiler could read; flashback with a mana cost.
   if (kw.id === 'enchant') return Boolean(kw.filter || kw.player);
+  // CR 702.16a / 702.11d: protection and hexproof from qualities the engine can tell apart.
+  if (kw.id === 'protection' || kw.id === 'hexproof_from') return Boolean(kw.text && qualitiesRead(kw.text));
   if (kw.id === 'flashback' && kw.costIsManaCost) return true;
   if (['flashback', 'kicker', 'multikicker', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'madness', 'bestow', 'sneak', 'miracle', 'emerge', 'harmonize', 'escalate', 'splice'].includes(kw.id)) return Boolean(kw.cost && /^(\{[^}]+\})+$/.test(kw.cost));
   // Suspend N—[cost]

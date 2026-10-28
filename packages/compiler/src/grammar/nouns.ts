@@ -150,7 +150,9 @@ function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: str
 export function parseKeywordList(text: string, b: Binder, printed = false, grant = false): KeywordInstance[] | null {
   // Swords: "protection from black and from green" is two protections (CR 702.16).
   text = text.replace(/\bprotection from (\w+) and from (\w+)\b/g, 'protection from $1, protection from $2');
-  const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean);
+  // Giver of Runes: "protection from colorless or from the color of your choice" is one protection, chosen.
+  text = text.replace(/\bprotection from colorless or from the color of your choice\b/g, 'protection from colorless\u0002the color of your choice');
+  const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean).map((i) => i.replace('\u0002', ' or from '));
   const out: KeywordInstance[] = [];
   for (const item of items) {
     let kw = isQuoted(item) ? parseQuotedAbility(item, b, printed) : b.env.keywords.parseChunk(item, true);
@@ -590,6 +592,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'that player' || t === 'they') return b.player;
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };
+  // "As ~ enters, choose a player." — "the chosen player" (CR 614.12).
+  if (t === 'the chosen player') return { ref: 'chosen_player' };
   // Skyclave Apparition: "the exiled card's owner" (CR 607.2a)
   if (t === "the exiled card's owner") return { ref: 'owner_of', of: { ref: 'exiled_with' } };
   if (b.named[t]) return b.named[t]!;

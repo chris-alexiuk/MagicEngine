@@ -633,6 +633,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
     const cursed = /^the beginning of enchanted player's (upkeep|draw step|end step)$/.exec(t);
     if (cursed) return { trigger: { type: 'phase', step: STEP_WORDS[cursed[1]!]!, whose: 'enchanted' }, it: { ref: 'self' }, player: { ref: 'enchanted_player' } };
+    // Black Vise: "At the beginning of the chosen player's upkeep" — "that player" is the chosen player.
+    const chosenStep = /^the beginning of the chosen player's (upkeep|draw step|end step)$/.exec(t);
+    if (chosenStep) return { trigger: { type: 'phase', step: STEP_WORDS[chosenStep[1]!]!, whose: 'chosen' }, it: { ref: 'self' }, player: { ref: 'chosen_player' } };
     // CR 511.1: "At end of combat"
     if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
     if (t === "the beginning of the upkeep of enchanted creature's controller") {
@@ -1339,7 +1342,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
-  const cast = /^(you|an opponent|a player|enchanted player) (casts?|cast or copy|casts or copies) (?:a|an) (.+)$/.exec(t);
+  const cast = /^(you|an opponent|a player|enchanted player|the chosen player) (casts?|cast or copy|casts or copies) (?:a|an) (.+)$/.exec(t);
   if (cast) {
     let what = cast[3]!;
     const extra: Record<string, unknown> = {};
@@ -1372,7 +1375,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const spell = what === 'spell' ? { filter: {}, plural: false } : parseFilter(what, b);
     if (!spell || spell.plural || (what !== 'spell' && spell.filter.zone !== 'stack')) return null;
     delete spell.filter.zone;
-    const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : 'any';
+    const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : cast[1] === 'the chosen player' ? 'chosen' : 'any';
     // "that player" is whoever cast the spell.
     return { trigger: { type: 'cast', who, filter: spell.filter, ...extra }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
@@ -1408,7 +1411,8 @@ export const triggeredRule: GrammarRule = {
         b.it = trig.it;
         b.player = trig.player;
         // Dragon Tempest: "Whenever a Dragon you control enters, it deals X damage to any target" — that Dragon deals it.
-        if (['enters', 'attacks', 'blocks'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
+        // Saskia: "Whenever a creature you control deals combat damage to a player, it deals that much damage to …"
+        if (['enters', 'attacks', 'blocks', 'deals_combat_damage'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
         // CR 113.6m: "When ~ dies, return ~ from your graveyard…" — the trigger put it there; it's the card that died.
         const selfLeaves = (trig.trigger.type === 'dies' || trig.trigger.type === 'leaves') && (trig.trigger.subject as Ref).ref === 'self';
         if (selfLeaves) {
@@ -2277,7 +2281,7 @@ export const quantityReplacementRule: GrammarRule = {
       return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
-    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
+    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
     if (damage) {
       const creature = Boolean(damage.splice(3, 1)[0]);
       const op = quantityOp(damage[6]!);
@@ -2297,6 +2301,8 @@ export const quantityReplacementRule: GrammarRule = {
         ...op,
         ...(damage[4] ? { noncombat: true as const } : {}),
         ...(damage[5]!.startsWith('an opponent') ? { toOpponents: true as const } : {}),
+        // Sawhorn Nemesis: "… to the chosen player or a permanent they control"
+        ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });
     }
     return null;
@@ -2426,6 +2432,9 @@ export const asEntersRule: GrammarRule = {
       }
     }
     if (what === 'choose a creature type') node = { type: 'as_enters', choice: 'creature_type' };
+    // True-Name Nemesis: "choose a player"; Black Vise: "choose an opponent" — "the chosen player" later.
+    if (what === 'choose a player') node = { type: 'as_enters', choice: 'player' };
+    if (what === 'choose an opponent') node = { type: 'as_enters', choice: 'player', opponent: true };
     // Banner of Kinship: "choose a creature type. This artifact enters with a fellowship counter on it for each creature you
     // control of the chosen type." — counted once the type is chosen, as it enters (CR 614.12, 122.6).
     const typeThenCounters = /^choose a creature type\. ~ enters with an? (\S+) counter on it for each (.+)$/.exec(what);

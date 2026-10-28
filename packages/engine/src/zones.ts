@@ -194,6 +194,8 @@ export function moveObject(
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),
       ...(granted.length ? { granted } : {}),
       ...(o.faceDown ? { faceDown: o.faceDown } : {}),
+      // Floating Shield: "Sacrifice this Aura: … protection from the chosen color" — what was chosen as it entered.
+      ...(o.chosen ? { chosen: { ...o.chosen } } : {}),
     };
   }
   // "for each creature destroyed this way": the resolving effect that moved it, and what it was.

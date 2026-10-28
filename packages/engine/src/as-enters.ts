@@ -5,7 +5,7 @@ import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
-import { faceOf, nameOf, zoneList } from './zones.js';
+import { faceOf, livePlayers, nameOf, zoneList } from './zones.js';
 
 /**
  * Choices made as a permanent enters (CR 614.12): "As ~ enters, you may pay 2 life. If you
@@ -51,6 +51,10 @@ export function promptAsEnters(g: GameState): boolean {
         break;
       case 'creature_type':
         g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
+        break;
+      case 'player':
+        // "As ~ enters, choose a player" / "… choose an opponent" (CR 800.4a: one still in the game).
+        g.pending = { ...base, text: node.opponent ? 'Choose an opponent.' : 'Choose a player.', options: livePlayers(g).filter((p) => !node.opponent || p !== o.controller) };
         break;
       case 'card_type':
         // CR 205.2a: the card types.
@@ -180,10 +184,11 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
     case 'color':
     case 'creature_type':
     case 'card_type':
+    case 'player':
     case 'card_name': {
       const choice = answer.choice;
       if (!choice || !p.options?.includes(choice)) throw new RulesError(`Choose one of: ${p.options?.slice(0, 6).join(', ')}…`);
-      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : p.choice === 'card_type' ? { cardType: choice } : { creatureType: choice }) };
+      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : p.choice === 'card_type' ? { cardType: choice } : p.choice === 'player' ? { player: choice } : { creatureType: choice }) };
       events.push({ type: 'chosen', object: o.id, choice });
       // Banner of Kinship: counters for each permanent of the chosen type, put on it as it enters (CR 122.6).
       const then = next.node.thenCounters;

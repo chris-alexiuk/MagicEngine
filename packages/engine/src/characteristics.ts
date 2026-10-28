@@ -1,4 +1,5 @@
-import { SUBTYPES } from '@mtg/schema';
+import { readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
+import { isRingBearer } from './ring.js';
 import type {
   AbilityNode,
   ActivatedAbility,
@@ -366,7 +367,8 @@ function staticEffects(g: GameState): ActiveEffect[] {
         // CR 613.7a: a static ability's effect has the timestamp of the object it's on.
         timestamp: source.timestamp,
         ...ptParts(g, e, source),
-        ...(e.keywords ? { keywords: e.keywords } : {}),
+        // CR 702.16a: "protection from the chosen color" — what was chosen for this source; "you" is its controller.
+        ...(e.keywords ? { keywords: bindQualityKeywords(e.keywords, { you: source.controller, grantedBy: source.id, ...(source.chosen?.color ? { color: source.chosen.color } : {}), ...(source.chosen?.creatureType ? { creatureType: source.chosen.creatureType } : {}) }) } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
         ...(e.combat ? { combat: { ...e.combat, from: source.id } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
@@ -912,51 +914,138 @@ export function canActivateTapAbilities(g: GameState, o: GameObject): boolean {
   });
 }
 
-const COLOR_WORDS: Record<string, string> = { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' };
-const TYPE_WORDS: Record<string, string> = {
-  creatures: 'Creature',
-  artifacts: 'Artifact',
-  enchantments: 'Enchantment',
-  instants: 'Instant',
-  sorceries: 'Sorcery',
-  planeswalkers: 'Planeswalker',
-  lands: 'Land',
-};
-
-function qualities(keywords: KeywordInstance[], id: string): string[] {
-  return keywords
-    .filter((k) => k.id === id && k.text)
-    .flatMap((k) => k.text!.split(/\s*(?:,\s*)?and from\s+|,\s*from\s+/))
-    .map((q) => q.trim().toLowerCase());
-}
+const COLOR_NAMES: Record<Color, string> = { W: 'white', U: 'blue', B: 'black', R: 'red', G: 'green' };
 
 /** CR 702.16g: "protection from A and from B" is two protection abilities. */
 export function protectionQualities(g: GameState, o: GameObject): string[] {
-  return qualities(chars(g, o).keywords, 'protection');
-}
-
-function sourceHasQuality(g: GameState, source: GameObject, q: string): boolean {
-  const c = chars(g, source);
-  if (q === 'everything') return true;
-  if (COLOR_WORDS[q]) return c.colors.includes(COLOR_WORDS[q] as Color);
-  if (q === 'multicolored') return c.colors.length > 1;
-  if (q === 'monocolored') return c.colors.length === 1;
-  if (q === 'colorless') return c.colors.length === 0;
-  if (TYPE_WORDS[q]) return c.types.includes(TYPE_WORDS[q]!);
-  const singular = q.replace(/(?:ies)$/, 'y').replace(/s$/, '');
-  return c.subtypes.some((t) => t.toLowerCase() === singular);
+  return chars(g, o).keywords.filter((k) => k.id === 'protection' && k.text).flatMap((k) => splitQualities(k.text!));
 }
 
 /**
- * Whether `o` has protection from `source` (CR 702.16a). Colors, multicolored/monocolored,
- * card types and creature types are understood; CR 702.16j: "everything" covers every source.
- * Qualities that need a choice ("the color of your choice") are left to players.
+ * Binds a granted protection or hexproof-from keyword to what granted it (CR 702.16a): "the chosen color" and
+ * "creatures of the chosen type" become what was chosen, "you" the player who controls the effect. A choice that
+ * wasn't made gives no protection.
+ */
+export function bindQualityKeywords(
+  keywords: KeywordInstance[],
+  bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string },
+): KeywordInstance[] {
+  if (!keywords.some((k) => (k.id === 'protection' || k.id === 'hexproof_from') && k.text)) return keywords;
+  return keywords.flatMap((k) => {
+    if ((k.id !== 'protection' && k.id !== 'hexproof_from') || !k.text) return [k];
+    let ok = true;
+    const parts = splitQualities(k.text).map((q) => {
+      const r = readQuality(q);
+      if (r?.kind === 'chosen_color' || r?.kind === 'choice') {
+        if (!bind.color) ok = false;
+        return bind.color === 'colorless' ? 'colorless' : COLOR_NAMES[bind.color as Color] ?? q;
+      }
+      if (r?.kind === 'type_choice') {
+        if (!bind.cardType) ok = false;
+        return bind.cardType ?? q;
+      }
+      if (r?.kind === 'objects' && r.match.chosenType) {
+        if (!bind.creatureType) ok = false;
+        return `${bind.creatureType ?? ''} creatures`.toLowerCase();
+      }
+      return q;
+    });
+    return ok ? [{ ...k, text: parts.join(' and from '), you: bind.you, ...(bind.grantedBy ? { grantedBy: bind.grantedBy } : {}) }] : [];
+  });
+}
+
+/** CR 702.16a: whether `source` has the quality — `holder` has the keyword, `you` is who "you" means in it. */
+function sourceHasQuality(g: GameState, holder: GameObject, source: GameObject, q: string, you: PlayerId): boolean {
+  const r = readQuality(q);
+  if (!r) return false;
+  const c = chars(g, source);
+  const colorIn = (colors: Iterable<Color>) => [...colors].some((x) => c.colors.includes(x));
+  switch (r.kind) {
+    case 'everything':
+      return true;
+    case 'color':
+      return c.colors.includes(r.color);
+    case 'colored':
+      return c.colors.length > 0;
+    case 'multicolored':
+      return c.colors.length > 1;
+    case 'monocolored':
+      return c.colors.length === 1;
+    case 'colorless':
+      return c.colors.length === 0;
+    // Not bound when granted: its own choice ("This creature has protection from the chosen color").
+    case 'chosen_color':
+      return Boolean(holder.chosen?.color && c.colors.includes(holder.chosen.color));
+    case 'choice':
+    case 'type_choice':
+      return false;
+    case 'mana_value': {
+      const mv = manaValueOf(g, source);
+      return r.cmp === 'lte' ? mv <= r.n : r.cmp === 'gte' ? mv >= r.n : mv === r.n;
+    }
+    case 'opponents':
+      return source.controller !== you;
+    // CR 702.16k: protection from a player — what they control (and, off the battlefield, own).
+    case 'chosen_player':
+      return Boolean(holder.chosen?.player) && source.controller === holder.chosen!.player;
+    case 'its_colors':
+      return colorIn(chars(g, holder).colors);
+    case 'colors_among_yours':
+      return colorIn(new Set(g.zones.battlefield.filter((id) => g.objects[id]!.controller === you).flatMap((id) => chars(g, g.objects[id]!).colors)));
+    case 'mana_values_among_yours': {
+      const mvs = g.zones.battlefield.filter((id) => g.objects[id]!.controller === you && (!r.type || chars(g, g.objects[id]!).types.includes(r.type))).map((id) => manaValueOf(g, g.objects[id]!));
+      return mvs.includes(manaValueOf(g, source));
+    }
+    case 'outside_identity': {
+      // CR 903.4: the combined color identity of your commanders; with no commander, no protection (Commander's Plate ruling).
+      const commanders = Object.values(g.objects).filter((o) => o.commander && o.owner === you);
+      if (!commanders.length) return false;
+      const identity = new Set(commanders.flatMap((o) => (g.cards[o.card]?.colorIdentity ?? []) as Color[]));
+      return c.colors.some((x) => !identity.has(x));
+    }
+    case 'objects': {
+      const m = r.match;
+      if (m.types && !m.types.every((t) => c.types.includes(t))) return false;
+      const creatureTypes = (x: string) => (c.keywords.some((k) => k.id === 'changeling') && CREATURE_TYPES.includes(x)) || c.subtypes.includes(x);
+      if (m.subtype && !creatureTypes(m.subtype)) return false;
+      if (m.notSubtype && creatureTypes(m.notSubtype)) return false;
+      if (m.chosenType && !(holder.chosen?.creatureType && creatureTypes(holder.chosen.creatureType))) return false;
+      if (m.supertype && !c.supertypes.includes(m.supertype)) return false;
+      if (m.color && !c.colors.includes(m.color)) return false;
+      if (m.colored && !c.colors.length) return false;
+      if (m.opponents && source.controller === you) return false;
+      if (m.spell && source.zone !== 'stack') return false;
+      if (m.counter && !(source.zone === 'battlefield' && (source.counters[m.counter] ?? 0) > 0)) return false;
+      if (m.ringBearer && !isRingBearer(source)) return false;
+      return true;
+    }
+  }
+}
+
+function hasQualityKeyword(g: GameState, o: GameObject, id: string, source: GameObject, keep?: (k: KeywordInstance) => boolean): boolean {
+  return chars(g, o).keywords.some(
+    (k) => k.id === id && k.text && !keep?.(k) && splitQualities(k.text).some((q) => sourceHasQuality(g, o, source, q, (k.you as PlayerId | undefined) ?? o.controller)),
+  );
+}
+
+/**
+ * Whether `o` has protection from `source` (CR 702.16a). CR 702.16j: "everything" covers every source. Qualities
+ * chosen as they're granted ("the color of your choice") were bound then (bindQualityKeywords).
  */
 export function hasProtectionFrom(g: GameState, o: GameObject, source: GameObject): boolean {
-  return protectionQualities(g, o).some((q) => sourceHasQuality(g, source, q));
+  return hasQualityKeyword(g, o, 'protection', source);
+}
+
+/**
+ * CR 702.16c–d: protection means it can't be enchanted or equipped by an Aura or Equipment with that quality —
+ * unless the protection says "This effect doesn't remove this Aura" (or "… Auras").
+ */
+export function protectedFromAttachment(g: GameState, o: GameObject, attachment: GameObject): boolean {
+  const aura = faceOf(g, attachment).subtypes.includes('Aura');
+  return hasQualityKeyword(g, o, 'protection', attachment, (k) => aura && (k.keeps === 'auras' || (k.keeps === 'source' && k.grantedBy === attachment.id)));
 }
 
 /** CR 702.11d: "hexproof from [quality]". */
 export function hasHexproofFrom(g: GameState, o: GameObject, source: GameObject): boolean {
-  return qualities(chars(g, o).keywords, 'hexproof_from').some((q) => sourceHasQuality(g, source, q));
+  return hasQualityKeyword(g, o, 'hexproof_from', source);
 }

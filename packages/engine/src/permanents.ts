@@ -1,5 +1,5 @@
 import type { CardDef, FaceDef, TargetSpec } from '@mtg/schema';
-import { chars, hasKeyword, hasType, matchesFilter } from './characteristics.js';
+import { chars, hasKeyword, hasType, matchesFilter, protectedFromAttachment } from './characteristics.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
 import { createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
@@ -73,12 +73,14 @@ export function canAttach(g: GameState, attachment: GameObject, target: GameObje
   const face = faceOf(g, attachment);
   if (face.subtypes.includes('Equipment')) {
     // CR 301.5c: an Equipment that's also a creature can't equip a creature unless it has reconfigure (CR 702.151b).
-    return hasType(g, target, 'Creature') && (!hasType(g, attachment, 'Creature') || face.keywords.some((k) => k.id === 'reconfigure'));
+    // CR 702.16d: nor a creature with protection from it.
+    return hasType(g, target, 'Creature') && (!hasType(g, attachment, 'Creature') || face.keywords.some((k) => k.id === 'reconfigure')) && !protectedFromAttachment(g, target, attachment);
   }
   if (face.subtypes.includes('Aura')) {
     const enchant = chars(g, attachment).keywords.find((k) => k.id === 'enchant');
     if (!enchant?.filter) return false;
-    return matchesFilter(g, target, enchant.filter, { controller: attachment.controller, source: attachment });
+    // CR 702.16c: a permanent with protection from it can't be enchanted by it.
+    return matchesFilter(g, target, enchant.filter, { controller: attachment.controller, source: attachment }) && !protectedFromAttachment(g, target, attachment);
   }
   return false;
 }

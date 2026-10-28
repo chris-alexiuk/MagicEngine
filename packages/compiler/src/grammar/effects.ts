@@ -3097,7 +3097,8 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     if (amount === null) return null;
     const out: EffectNode[] = [];
     const second = /^(.+?) and (\S+) damage to (.+)$/.exec(m[3]!);
-    const first = parseRecipients(second ? second[1]! : m[3]!, b);
+    // Stuffy Doll: "~ deals 1 damage to itself."
+    const first = m[3] === 'itself' && m[1] === '~' ? [{ ref: 'self' } as Ref] : parseRecipients(second ? second[1]! : m[3]!, b);
     if (!first) return null;
     for (const to of first) out.push({ type: 'deal_damage', amount, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : {}) });
     // "If a creature dealt damage this way would die this turn, …"

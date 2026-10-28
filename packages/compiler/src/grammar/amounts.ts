@@ -33,7 +33,7 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   const t = text.trim();
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
-  const theirs = /^(.+) in (?:(target player|target opponent|that player)'s|their) (hand|graveyard|library)$/.exec(t);
+  const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player)'s|their) (hand|graveyard|library)$/.exec(t);
   if (theirs) {
     const head = theirs[1]!;
     let filter: ObjectFilter | undefined;
@@ -172,6 +172,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (twice) {
     const inner = parseCount(twice[1]!, b);
     return inner ? { ...inner, times: (inner.times ?? 1) * 2 } : null;
+  }
+  // Black Vise: "the number of cards in their hand minus 4" (CR 107.1b: a negative result is 0 where it must be).
+  const minus = /^(.+) minus (\d+|one|two|three|four|five)$/.exec(t);
+  if (minus) {
+    const n = parseAmount(minus[2]!);
+    const inner = typeof n === 'number' ? parseCount(minus[1]!, b) : null;
+    if (inner && typeof n === 'number' && !inner.times && !inner.half) return { ...inner, plus: (inner.plus ?? 0) - n };
   }
   // Sea Gate Restoration: "the number of cards in your hand plus one"
   const plusAfter = /^(.+) plus (one|two|three|four|five)$/.exec(t);

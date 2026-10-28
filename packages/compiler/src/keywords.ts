@@ -145,9 +145,13 @@ export class KeywordRegistry {
             return numbered ? { id: spec.id, n: Number(numbered[1]), cost: numbered[2]! } : { id: spec.id, cost: arg };
           }
           break;
-        case 'quality':
-          if (arg !== '') return { id: spec.id, text: arg };
-          break;
+        case 'quality': {
+          if (arg === '') break;
+          // CR 702.16d: "Enchanted creature has protection from black. This effect doesn't remove this Aura."
+          const keeps = /^(.+)\. This effect doesn't remove (~|Auras)$/.exec(arg);
+          if (keeps && spec.id === 'protection') return { id: spec.id, text: keeps[1]!, keeps: keeps[2] === '~' ? 'source' : 'auras' };
+          return { id: spec.id, text: arg };
+        }
       }
     }
     return null;

@@ -4,11 +4,11 @@ import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
 import type { AbilityNode, AddManaEffect, Amount, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
-import { CORE_NODES, SUBTYPES } from '@mtg/schema';
+import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { extraTokens, lifeLoss, replaceQuantity } from './quantities.js';
-import { chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
+import { bindQualityKeywords, chars, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -191,7 +191,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const source = node.from ? refObjects(ctx, ref(node, 'from'))[0] : ctx.source;
     if (!source) return true;
     if (node.from && source.zone !== 'battlefield') return true;
-    const n = amountOf(ctx, node.amount);
+    // CR 107.1b: "X damage, where X is … minus 4" — a negative amount is no damage.
+    const n = Math.max(0, amountOf(ctx, node.amount));
     let dealt = 0;
     if (node.divided) {
       // CR 601.2d: as divided when it was cast; a target that's no longer legal doesn't get its share.
@@ -592,6 +593,34 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!objects.length) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
+    // CR 702.16a: "gains protection from the color of your choice" — chosen now; "from the chosen color" — as chosen
+    // before (by this spell, or as its source entered: Floating Shield remembers it as it's sacrificed).
+    let keywords = Array.isArray(node.keywords) ? (node.keywords as KeywordInstance[]) : undefined;
+    if (keywords?.some((k) => (k.id === 'protection' || k.id === 'hexproof_from') && k.text)) {
+      const src = ctx.source;
+      const lk = src && !src.chosen ? g.lastKnown?.[src.id] : undefined;
+      const before = src?.chosen ?? (lk && lk.zcc + 1 === src!.zcc ? lk.chosen : undefined);
+      let color: Color | 'colorless' | undefined = chosen.color ?? before?.color;
+      const choice = keywords.flatMap((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text ? splitQualities(k.text).map(readQuality) : [])).find((r) => r?.kind === 'choice');
+      if (choice?.kind === 'choice') {
+        const chooser = choice.chooser === 'its_controller' ? objects[0]!.controller : ctx.controller;
+        const options = [...(choice.colorless ? ['colorless'] : []), 'W', 'U', 'B', 'R', 'G'];
+        const answer = answerOf(ctx, 'choose_option');
+        if (!answer) return { ask: { kind: 'choose_option', player: chooser, options, text: 'Choose a color (protection).', sourceName: sourceName(ctx) } };
+        if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+        color = answer.choice as Color | 'colorless';
+      }
+      // Pippin: "protection from the card type of your choice".
+      let cardType: string | undefined;
+      if (keywords.some((k) => k.id === 'protection' && k.text && splitQualities(k.text).some((q) => readQuality(q)?.kind === 'type_choice'))) {
+        const answer = answerOf(ctx, 'choose_option');
+        if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: [...CARD_TYPE_PLURALS], text: 'Choose a card type (protection).', sourceName: sourceName(ctx) } };
+        if (!CARD_TYPE_PLURALS.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+        cardType = answer.choice;
+      }
+      const creatureType = chosen.creatureType ?? before?.creatureType;
+      keywords = bindQualityKeywords(keywords, { you: ctx.controller, ...(src ? { grantedBy: src.id } : {}), ...(color ? { color } : {}), ...(creatureType ? { creatureType } : {}), ...(cardType ? { cardType } : {}) });
+    }
     // CR 701.10a / 701.10c: "double its power and toughness" — it gets +X/+Y, where X and Y are its power and toughness now.
     if (node.double) {
       for (const o of objects) {
@@ -614,7 +643,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
       // CR 608.2h: a counted amount ("+1/+1 for each creature you control") is counted once, now.
       ...(node.power !== undefined ? { power: amountOf(ctx, node.power), toughness: amountOf(ctx, node.toughness ?? 0) } : {}),
-      ...(Array.isArray(node.keywords) ? { keywords: node.keywords as KeywordInstance[] } : {}),
+      ...(keywords ? { keywords } : {}),
       ...(Array.isArray(node.loseKeywords) ? { loseKeywords: node.loseKeywords as string[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
@@ -3705,6 +3734,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.whose === 'opponent' && active === check.controller) return [];
     // Curses: "At the beginning of enchanted player's upkeep"
     if (t.whose === 'enchanted' && active !== check.source.attachedToPlayer) return [];
+    // Black Vise: "At the beginning of the chosen player's upkeep"
+    if (t.whose === 'chosen' && active !== check.source.chosen?.player) return [];
     // "At the beginning of the upkeep of enchanted creature's controller"
     if (t.whose === 'attached_controller') {
       const r = check.source.attachedTo;
@@ -4041,6 +4072,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
     if (t.who === 'enchanted' && e.player !== check.source.attachedToPlayer) return [];
+    // Sewer Nemesis: "Whenever the chosen player casts a spell"
+    if (t.who === 'chosen' && e.player !== check.source.chosen?.player) return [];
     const spell = check.g.objects[e.object];
     if (!spell) return [];
     // Heroic: "a spell that targets ~"
