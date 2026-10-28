@@ -342,6 +342,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 119.5: "Your life total becomes 10", "… half your starting life total, rounded up" (The Endstone) — the player
+  // gains or loses the necessary amount of life.
+  set_life(node, ctx) {
+    const players = refPlayers(ctx, ref(node, 'who'));
+    const start = ctx.g.config.startingLife;
+    const value = node.value === 'starting' ? start : node.value === 'half_starting_up' ? Math.ceil(start / 2) : node.value === 'half_starting_down' ? Math.floor(start / 2) : undefined;
+    const each = value === undefined ? perPlayerAmounts(ctx, node.amount, players) : players.map(() => value);
+    const out: EffectNode[] = [];
+    for (const [i, p] of players.entries()) {
+      const delta = each[i]! - ctx.g.players[p]!.life;
+      if (delta > 0) out.push({ type: 'gain_life', amount: delta, who: { ref: 'you' }, asPlayer: p });
+      else if (delta < 0) out.push({ type: 'lose_life', amount: -delta, who: { ref: 'you' }, asPlayer: p });
+    }
+    return out.length ? { expand: out } : true;
+  },
+
   lose_life(node, ctx) {
     // CR 119.3: the life total is adjusted.
     const players = refPlayers(ctx, ref(node, 'who'));
@@ -3317,7 +3333,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 701.57a: discover N — like cascade, but with mana value N or less, and to hand if not cast.
   discover(node, ctx) {
-    const n = Number(node.n ?? 0);
+    // Monstrous Vortex: "discover X, where X is that spell's mana value" — counted once, as it starts.
+    const n = (ctx.memo.discoverN as number | undefined) ?? (typeof node.n === 'number' ? node.n : amountOf(ctx, node.n as Amount));
+    ctx.memo.discoverN = n;
     return revealUntilCast(ctx, (o, g) => manaValueOf(g, o) <= n, 'hand');
   },
 
@@ -4253,12 +4271,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const to = e.to.player;
     if (t.opponent && to === check.controller) return [];
     const matches = (x: GameEvent) => {
-      if (x.type !== 'damage' || !x.combat || x.to.kind !== 'player' || x.to.player !== to) return false;
+      // Contaminant Grafter: "to one or more players" — damage to any player.
+      if (x.type !== 'damage' || !x.combat || x.to.kind !== 'player' || (!t.anyPlayers && x.to.player !== to)) return false;
       const src = check.g.objects[x.source];
       return Boolean(src && matchesFilter(check.g, src, t.filter as ObjectFilter, { controller: check.controller, source: check.source, anyZone: true }));
     };
     const batch = (check.batch ?? [e]).filter(matches);
     if (batch[0] !== e) return [];
+    if (t.anyPlayers) return [{}];
     return [{ player: to, amount: batch.reduce((n, x) => n + (x.type === 'damage' ? x.amount : 0), 0) }];
   },
   // "Whenever one or more cards leave your graveyard": once per batch.

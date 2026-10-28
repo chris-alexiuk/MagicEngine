@@ -116,6 +116,12 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
+  const colorsOf = /^of (that spell|that card|~)'s colors$/.exec(t) ?? (t === 'of its colors' ? [t, 'it'] : null);
+  if (colorsOf) {
+    const of = parseObjectRef(colorsOf[1]!, b.clone(), 'static');
+    if (of && !of.plural) return { kind: 'stat', stat: 'colors', of: of.ref };
+  }
   // Fists of Flame: "for each card you've drawn this turn"
   if (t === "card you've drawn this turn") return { kind: 'drawn_this_turn' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
@@ -218,6 +224,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (/^the number of opponents (?:that were |who were )?dealt combat damage this turn$/.test(t)) return { kind: 'players', who: 'opponents', combatDamaged: true };
   // Proft's Eidetic Memory: "the number of cards you've drawn this turn"
   if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
+  // Thalisse, Reverent Medium: "the number of tokens you created this turn"
+  if (/^the number of tokens you(?:'ve)? created this turn$/.test(t)) return { kind: 'tokens_created_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"

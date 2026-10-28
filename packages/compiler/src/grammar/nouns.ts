@@ -162,6 +162,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
   [/ with mana cost ((?:\{[^}]+\})+)(?: or ((?:\{[^}]+\})+))?$/, (f, m) => !f.manaCostIs && ((f.manaCostIs = [m[1]!, ...(m[2] ? [m[2]] : [])]), true)],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
+  // Kozilek's Unsealing: "a creature spell with mana value 4, 5, or 6" — any of them.
+  [/ with mana value (\d+), (\d+),? or (\d+)$/, (f, m) => !f.anyOf && !f.manaValue && ((f.anyOf = [m[1], m[2], m[3]].map((n) => ({ manaValue: { op: 'eq' as const, n: Number(n) } }))), true)],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?!a |an )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
@@ -703,6 +705,12 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
   return attempt(b, (b) => {
     // Delayed Blast Fireball: "each opponent and each creature they control" — the opponents' creatures.
     const t = text.trim().replace(/^each opponent and each (creature|planeswalker|creature and planeswalker) they control$/, 'each opponent and each $1 your opponents control');
+    // Raid Bombardment: "the player or planeswalker that creature is attacking"; Myr Battlesphere: "… it's attacking".
+    const attacked = /^the player or planeswalker (that creature|it|~) is attacking$/.exec(t.replace(/ it's attacking$/, ' it is attacking'));
+    if (attacked) {
+      const of = parseObjectRef(attacked[1]!, b);
+      return of && !of.plural ? [{ ref: 'attacked_by', of: of.ref }] : null;
+    }
     const any = /^(?:any (other )?target|(another )?target (creature|player|opponent|planeswalker|battle)(?:,? (?:creature|player|planeswalker|battle))*,? or (creature|player|planeswalker|battle))$/i.exec(t);
     if (any) {
       if (/^any/i.test(t)) {

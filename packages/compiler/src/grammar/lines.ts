@@ -755,13 +755,21 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const level = /^~ becomes level (\d+)$/.exec(t);
   if (level) return { trigger: { type: 'becomes_level', level: Number(level[1]) }, it: { ref: 'self' }, player: null };
   // CR 702.21a (ward): "becomes the target of a spell or ability an opponent controls".
-  const targeted = /^~ becomes the target of (a spell or ability|a spell|an ability)(?: (an opponent|you) controls?)?( for the first time each turn)?$/.exec(t);
+  // Venerated Rotpriest: "Whenever a creature you control becomes the target of a spell" — any of them.
+  const targeted = /^(~|(?:a|an|another) .+?) becomes the target of (a spell or ability|a spell|an ability)(?: (an opponent|you) controls?)?( for the first time each turn)?$/.exec(t);
   if (targeted) {
+    let subject: Ref = { ref: 'self' };
+    if (targeted[1] !== '~') {
+      const other = /^another /.test(targeted[1]!);
+      const pf = parseFilter(targeted[1]!.replace(/^(?:a|an|another) /, ''), b);
+      if (!pf || pf.plural || pf.filter.zone) return null;
+      subject = { ref: 'all', filter: { ...pf.filter, ...(other ? { other: true } : {}) } };
+    }
     // Goldspan Dragon: "becomes the target of a spell" — not an ability.
-    const of = targeted[1] === 'a spell' ? { targetedBy: 'spell' } : targeted[1] === 'an ability' ? { targetedBy: 'ability' } : {};
+    const of = targeted[2] === 'a spell' ? { targetedBy: 'spell' } : targeted[2] === 'an ability' ? { targetedBy: 'ability' } : {};
     return {
-      trigger: { type: 'becomes_target', subject: { ref: 'self' }, ...of, ...(targeted[2] ? { by: targeted[2] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[3] ? { first: true } : {}) },
-      it: { ref: 'trigger_object' },
+      trigger: { type: 'becomes_target', subject, ...of, ...(targeted[3] ? { by: targeted[3] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[4] ? { first: true } : {}) },
+      it: subject.ref === 'self' ? { ref: 'trigger_object' } : null,
       player: { ref: 'trigger_player' },
     };
   }
@@ -1015,12 +1023,20 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // "Whenever one or more creatures you control deal combat damage to a player": once for each player.
   // Kutzil: "one or more creatures you control each with power greater than its base power deals combat damage …"
-  const batchHits = /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents)$/.exec(t) ?? /^one or more (.+? each with .+?) deals combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
+  // Contaminant Grafter: "… deal combat damage to one or more players" — once, however many players.
+  const batchHits =
+    /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents|one or more players)$/.exec(t) ??
+    /^one or more (.+? each with .+?) deals combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
   if (batchHits) {
     const pf = parseFilter(batchHits[1]!, b);
     if (!pf || !pf.plural) return null;
-    b.eventAmount = true;
-    return { trigger: { type: 'combat_damage_batch', filter: pf.filter, ...(batchHits[2] !== 'a player' ? { opponent: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    const anyPlayers = batchHits[2] === 'one or more players';
+    if (!anyPlayers) b.eventAmount = true;
+    return {
+      trigger: { type: 'combat_damage_batch', filter: pf.filter, ...(batchHits[2] !== 'a player' && !anyPlayers ? { opponent: true } : {}), ...(anyPlayers ? { anyPlayers: true } : {}) },
+      it: { ref: 'self' },
+      player: anyPlayers ? null : { ref: 'trigger_player' },
+    };
   }
   // "Whenever ~ attacks for the first time each turn" (with additional combat phases, CR 500.8)
   if (t === '~ attacks for the first time each turn') {

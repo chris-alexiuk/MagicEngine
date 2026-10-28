@@ -46,6 +46,8 @@ export interface TurnLog {
   drawnIds?: Record<PlayerId, ObjectId[]>;
   /** Players who created a token this turn. */
   createdToken?: PlayerId[];
+  /** Thalisse: how many tokens each player created this turn. */
+  tokensCreated?: Partial<Record<PlayerId, number>>;
   /** Players who controlled a permanent that left the battlefield this turn (revolt). */
   left?: PlayerId[];
   /** A nonland permanent left the battlefield this turn (void). */
@@ -119,6 +121,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
         // "if you created a token this turn" (Idol of Oblivion)
         if (!(log.createdToken ??= []).includes(e.controller)) log.createdToken.push(e.controller);
+        (log.tokensCreated ??= {})[e.controller] = (log.tokensCreated[e.controller] ?? 0) + 1;
         break;
       }
       case 'became_target': {

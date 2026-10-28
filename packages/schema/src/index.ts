@@ -472,6 +472,8 @@ export type Ref =
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
   | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true }
   | { ref: 'controller_of'; of: Ref }
+  /** Raid Bombardment: "the player or planeswalker that creature is attacking" (a damage recipient). */
+  | { ref: 'attacked_by'; of: Ref }
   | { ref: 'owner_of'; of: Ref }
   /** CR 607.2a: "the exiled card", "cards exiled with ~" — what this object's linked ability exiled. */
   | { ref: 'exiled_with' }
@@ -509,7 +511,7 @@ export type AmountExpr = (
   /** `least`: the fewest any one of those players has (Shelldock Isle: "a library has twenty or fewer cards in it"). */
   | { kind: 'cards'; zone: 'hand' | 'graveyard' | 'library' | 'exile'; who: 'you' | 'opponents' | 'each'; filter?: ObjectFilter; player?: Ref; least?: true }
   /** An object's power, toughness or mana value (last known if it left, CR 608.2h). */
-  | { kind: 'stat'; stat: 'power' | 'toughness' | 'mana_value'; of: Ref }
+  | { kind: 'stat'; stat: 'power' | 'toughness' | 'mana_value' | 'colors'; of: Ref }
   /** "the amount of mana spent to cast that spell" (CR 601.2h). */
   | { kind: 'mana_spent'; of: Ref }
   /** Multani: "for each land you control and each land card in your graveyard" — counts added together. */
@@ -556,6 +558,8 @@ export type AmountExpr = (
   | { kind: 'spells_cast_this_turn' }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn' }
+  /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
+  | { kind: 'tokens_created_this_turn' }
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
   | { kind: 'discarded_this_way'; max?: true }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
@@ -1096,7 +1100,7 @@ export interface TokenSpec {
  */
 export const CORE_NODES = {
   effects: [
-    'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'destroy', 'move', 'counter', 'tap', 'untap',
+    'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'destroy', 'move', 'counter', 'tap', 'untap',
     'put_from_milled', 'grant_play', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
@@ -1124,7 +1128,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

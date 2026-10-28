@@ -153,6 +153,21 @@ const CARDS = [
   makeCard({ name: 'Artisan Lite', type_line: 'Legendary Enchantment — Background', mana_cost: '{0}', oracle_text: 'Commander creatures you own have "Whenever this creature attacks a player, if no opponent has more life than that player, you create two Treasure tokens."' }),
   makeCard({ name: 'Rivaz Lite', type_line: 'Legendary Creature — Kobold Warlock', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Once during each of your turns, you may cast a Dragon creature spell from your graveyard.\nWhenever you cast a Dragon creature spell from your graveyard, it gains "When this creature dies, exile it."' }),
   makeCard({ name: 'Whelp', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flying' }),
+  makeCard({ name: 'Unsealing Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever you cast a creature spell with mana value 4, 5, or 6, draw a card.' }),
+  makeCard({ name: 'Four Drop', type_line: 'Creature — Beast', mana_cost: '{4}', cmc: 4, power: '4', toughness: '4', oracle_text: '' }),
+  makeCard({ name: 'Cotton Lite', type_line: 'Legendary Creature — Halfling Peasant', mana_cost: '{X}', power: '1', toughness: '1', oracle_text: 'When this creature enters, create X 1/1 white Halfling creature tokens and X Food tokens.' }),
+  makeCard({ name: 'Ramos Lite', type_line: 'Legendary Artifact Creature — Dragon', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Whenever you cast a spell, put a +1/+1 counter on this creature for each of that spell's colors." }),
+  makeCard({ name: 'Gold Spell', type_line: 'Sorcery', mana_cost: '{W}{U}', cmc: 2, colors: ['W', 'U'], oracle_text: 'You gain 1 life.' }),
+  makeCard({ name: 'Endstone Life', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: 'At the beginning of your end step, your life total becomes half your starting life total, rounded up.' }),
+  makeCard({ name: 'Set Twenty', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Target player's life total becomes 20." }),
+  makeCard({ name: 'Rejuvenator Lite', type_line: 'Creature — Plant Hydra', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "When this creature dies, search your library for up to X basic land cards, where X is this creature's power, put them onto the battlefield, then shuffle." }),
+  makeCard({ name: 'Hydra Lite', type_line: 'Creature — Hydra', mana_cost: '{0}', power: '3', toughness: '1', oracle_text: 'When this creature dies, you gain life and draw cards equal to its power.' }),
+  makeCard({ name: 'Raid Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever a creature you control with power 2 or less attacks, this enchantment deals 1 damage to the player or planeswalker that creature is attacking.' }),
+  makeCard({ name: 'Grafter Lite', type_line: 'Creature — Phyrexian Druid', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever one or more creatures you control deal combat damage to one or more players, draw a card.' }),
+  makeCard({ name: 'Titan Lite', type_line: 'Artifact Creature — Golem', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'When this creature dies, create a 3/3 colorless Golem artifact creature token with flying, a 3/3 colorless Golem artifact creature token with vigilance, and a 3/3 colorless Golem artifact creature token with lifelink.' }),
+  makeCard({ name: 'Rotpriest Lite', type_line: 'Creature — Phyrexian Druid', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: 'Whenever a creature you control becomes the target of a spell, target opponent gets a poison counter.' }),
+  makeCard({ name: 'Thalisse Lite', type_line: 'Legendary Creature — Human Cleric', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: 'At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.' }),
+  makeCard({ name: 'Make Two', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create two 1/1 white Soldier creature tokens.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1619,5 +1634,126 @@ describe('staples (slice 199): what a spell gained, the permanent keeps (CR 400.
     expect(g.objects[whelp]!.zone).toBe('battlefield');
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: whelp }]] }));
     expect(g.objects[whelp]!.zone).toBe('exile');
+  });
+});
+
+describe('staples (slice 200)', () => {
+  it("Kozilek's Unsealing: mana value 4, 5, or 6", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Unsealing Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g.players.alice!.pool.C = 4;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Four Drop', 'hand') }));
+    g.players.alice!.pool.G = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Farmer Cotton: X of each kind of token', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Cotton Lite', 'hand'), x: 2 } as never));
+    const tokens = g.zones.battlefield.filter((id) => g.objects[id]!.token).map((id) => chars(g, g.objects[id]!).subtypes.join());
+    expect(tokens.sort()).toEqual(['Food', 'Food', 'Halfling', 'Halfling']);
+  });
+
+  it("Ramos: a counter for each of the spell's colors", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ramos = give(g, 'alice', 'Ramos Lite', 'battlefield');
+    g.players.alice!.pool.W = 1;
+    g.players.alice!.pool.U = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Gold Spell', 'hand') }));
+    expect(g.objects[ramos]!.counters['+1/+1']).toBe(2);
+  });
+
+  it('The Endstone and "life total becomes": gaining or losing the difference (CR 119.5)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Endstone Life', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Set Twenty', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(20);
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(g.players.alice!.life).toBe(Math.ceil(g.config.startingLife / 2));
+  });
+});
+
+describe('staples (slice 200): what died, as it last existed', () => {
+  it("Rampant Rejuvenator: X is this creature's power as it died", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const r = give(g, 'alice', 'Rejuvenator Lite', 'battlefield');
+    const lands = g.zones.battlefield.filter((id) => chars(g, g.objects[id]!).types.includes('Land')).length;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: r }]] });
+    for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'search') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'search', objects: p.candidates.slice(0, p.count) } });
+      else if (p) throw new Error(p.kind + JSON.stringify(p).slice(0, 200));
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.zones.battlefield.filter((id) => chars(g, g.objects[id]!).types.includes('Land')).length).toBe(lands + 2);
+  });
+
+  it('Lifeblood Hydra: gain life and draw cards equal to its power', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const h = give(g, 'alice', 'Hydra Lite', 'battlefield');
+    const [life, hand] = [g.players.alice!.life, g.zones.hand.alice!.length];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: h }]] }));
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([life + 3, hand + 3]);
+  });
+});
+
+describe('staples (slice 200): combat and token counts', () => {
+  it('Raid Bombardment: damage to the player that creature is attacking', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'alice', 'Raid Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const life = g.players.carol!.life;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: cub, target: { kind: 'player', player: 'carol' } }] } }));
+    expect(g.players.carol!.life).toBe(life - 1);
+  });
+
+  it('Contaminant Grafter: once for damage to one or more players', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'alice', 'Grafter Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Cub', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+    const hand = g.zones.hand.alice!.length;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: a, target: { kind: 'player', player: 'bob' } }, { attacker: b, target: { kind: 'player', player: 'carol' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Triplicate Titan: three different tokens', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const t = give(g, 'alice', 'Titan Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: t }]] }));
+    const kws = g.zones.battlefield.filter((id) => g.objects[id]!.token).map((id) => chars(g, g.objects[id]!).keywords.map((k) => k.id).join()).sort();
+    expect(kws).toEqual(['flying', 'lifelink', 'vigilance']);
+  });
+
+  it('Venerated Rotpriest: a creature you control targeted by a spell', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Rotpriest Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Grow Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.players.bob!.poison).toBe(1);
+  });
+
+  it('Thalisse: as many Spirits as tokens you created this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Thalisse Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Make Two', 'hand') }));
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(4);
   });
 });

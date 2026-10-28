@@ -1546,6 +1546,23 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Rampant Rejuvenator: "search your library for up to X basic land cards, where X is this creature's power, put them
+  // onto the battlefield, then shuffle" — the same as with the definition last.
+  const whereMid = /^(.+?), where X is ([^,]+), ((?:put|then|and) .+)$/.exec(s);
+  if (whereMid && !/, where X is /.test(whereMid[3]!)) {
+    const r = attempt(b, (b) => parseSentence(`${whereMid[1]}, ${whereMid[3]}, where X is ${whereMid[2]}`, b));
+    if (r) return r;
+  }
+  // Lifeblood Hydra: "you gain life and draw cards equal to its power" — the same number for both.
+  const gainDraw = /^(.+?) gains? life and draws? cards equal to (.+)$/.exec(s);
+  if (gainDraw) {
+    const r = attempt(b, (b) => {
+      const gain = parseSentence(`${capitalise(gainDraw[1]!)} gain life equal to ${gainDraw[2]}`, b);
+      const draw = gain ? parseSentence(`${capitalise(gainDraw[1]!)} draw cards equal to ${gainDraw[2]}`, b) : null;
+      return gain && draw ? [...gain, ...draw] : null;
+    });
+    if (r) return r;
+  }
   // "…, where X is the number of creatures you control." (CR 107.3a: X defined by the text)
   const where = /^(.+), where X is (.+)$/.exec(s);
   if (where) {
@@ -2442,8 +2459,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     return [{ type: 'move', what: { ref: 'all', filter: { commander: true, zone: 'command', owner: 'you' } }, to: 'hand' }];
   }
   // CR 701.57a: "discover N".
-  const discover = /^[Dd]iscover (\d+)$/.exec(s);
-  if (discover) return [{ type: 'discover', n: Number(discover[1]) }];
+  // CR 119.5: "Your life total becomes 10"; The Endstone: "your life total becomes half your starting life total, rounded
+  // up"; Oketra's Last Mercy: "… becomes equal to your starting life total"; Sorin Markov: "Target opponent's life total
+  // becomes 10."
+  const lifeBecomes = /^(.+?)(?:'s?)? life totals? becomes? (\d+|half (?:your|their) starting life total, rounded (up|down)|equal to (?:your|their) starting life total)$/.exec(s);
+  if (lifeBecomes) {
+    const who = attempt(b, (b) => parsePlayerRef(lifeBecomes[1]!.replace(/^Your$|^your$/, 'you').replace(/^Each player$/i, 'each player'), b));
+    if (who) {
+      const n = Number(lifeBecomes[2]);
+      const value = Number.isFinite(n) ? null : lifeBecomes[3] ? (lifeBecomes[3] === 'up' ? 'half_starting_up' : 'half_starting_down') : 'starting';
+      return [{ type: 'set_life', who, ...(value ? { value } : { amount: n }) }];
+    }
+  }
+  // Monstrous Vortex: "discover X, where X is that spell's mana value" (the X bound below).
+  const discover = /^[Dd]iscover (\d+|X)$/.exec(s);
+  if (discover) return [{ type: 'discover', n: discover[1] === 'X' ? 'X' : Number(discover[1]) }];
   // CR 701.40a / 701.58a: "Manifest the top card of your library", "cloak the top two cards of your library".
   const manifest = /^([Mm]anifest|[Cc]loak) the top (card|two cards|three cards) of your library$/.exec(s);
   if (manifest) {
@@ -2747,13 +2777,27 @@ const VERBS: Record<string, VerbHandler> = {
     if (!token) {
       // Wurmcoil Engine: "a 3/3 … token with deathtouch and a 3/3 … token with lifelink" — two kinds of tokens.
       if (attached || attacking) return null;
-      for (const m of args.matchAll(/ and (?=(?:a|an|one|two|three) )/g)) {
+      // Farmer Cotton: "X 1/1 white Halfling creature tokens and X Food tokens".
+      for (const m of args.matchAll(/ and (?=(?:a|an|one|two|three|X) )/g)) {
         const r = attempt(b, (b) => {
           const one = parseTokenPhrase(args.slice(0, m.index), b);
           const two = one ? parseTokenPhrase(args.slice(m.index! + m[0].length), b) : null;
           if (!one || !two) return null;
           if (one.size || two.size) return null;
           return [one, two].map((t): EffectNode => ({ type: 'create_token', amount: t.amount, token: t.face, who, ...(t.tapped ? { tapped: true } : {}) }));
+        });
+        if (r) {
+          createdTokens(b);
+          return r;
+        }
+      }
+      // Triplicate Titan: "a 3/3 … token with flying, a 3/3 … token with vigilance, and a 3/3 … token with lifelink".
+      const parts = args.split(/,? and (?=(?:a|an|one|two|three) \d)|, (?=(?:a|an|one|two|three) \d)/);
+      if (parts.length >= 3) {
+        const r = attempt(b, (b) => {
+          const made = parts.map((p) => parseTokenPhrase(p, b));
+          if (made.some((t) => !t || t.size)) return null;
+          return made.map((t): EffectNode => ({ type: 'create_token', amount: t!.amount, token: t!.face, who, ...(t!.tapped ? { tapped: true } : {}) }));
         });
         if (r) {
           createdTokens(b);
@@ -3334,6 +3378,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
   const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);
   const experience = /^(.+?) gets? (an?|one|two|three|four|five|six|seven|eight|nine|ten|that many) (experience|rad|poison) counters?$/i.exec(c);
+  // Feral Ghoul: "each opponent gets a number of rad counters equal to its power".
+  const numberOf = /^(.+?) gets? a number of (experience|rad|poison) counters equal to (.+)$/i.exec(c);
+  if (numberOf) {
+    const who = parsePlayerRef(numberOf[1]!, b);
+    const amount = who ? parseCount(numberOf[3]!, b) : null;
+    return who && amount ? [{ type: 'get_counters', who, counter: numberOf[2]!.toLowerCase(), amount }] : null;
+  }
   if (energy || experience) {
     const who = parsePlayerRef((energy ?? experience)![1]!, b);
     // Etali, Primal Sickness: "they get that many poison counters" — how much the trigger event was.

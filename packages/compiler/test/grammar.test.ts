@@ -2542,3 +2542,19 @@ describe('slice 199 (more)', () => {
     expect(parse("This creature can't attack a player it has already attacked this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack_same_player'] } });
   });
 });
+
+describe('slice 200', () => {
+  it('reads mana value lists, life totals that become a number, discover X and creatures targeted by spells', () => {
+    expect(parse('Whenever you cast a creature spell with mana value 4, 5, or 6, draw a card.', 'Enchantment').abilities[0]).toMatchObject({ trigger: { filter: { anyOf: [{ manaValue: { n: 4 } }, { manaValue: { n: 5 } }, { manaValue: { n: 6 } }] } } });
+    expect(parse('At the beginning of your end step, your life total becomes half your starting life total, rounded up.', 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'set_life', who: { ref: 'you' }, value: 'half_starting_up' }] });
+    expect(parse("Target player's life total becomes 20.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'set_life', amount: 20 }] });
+    expect(parse("Whenever you cast a creature spell with power 5 or greater, discover X, where X is that spell's mana value.", 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'discover', n: { kind: 'stat', stat: 'mana_value' } }] });
+    expect(parse("Whenever you cast a spell, put a +1/+1 counter on ~ for each of that spell's colors.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', amount: { kind: 'stat', stat: 'colors' } }] });
+    expect(parse('Whenever a creature you control becomes the target of a spell, target opponent gets a poison counter.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'becomes_target', subject: { ref: 'all' }, targetedBy: 'spell' } });
+    expect(parse('When this creature dies, you gain life and draw cards equal to its power.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'draw' }] });
+    expect(parse('When this creature dies, each opponent gets a number of rad counters equal to its power.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'get_counters', counter: 'rad', amount: { kind: 'stat' } }] });
+    expect(parse('Whenever one or more creatures you control deal combat damage to one or more players, proliferate.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', anyPlayers: true } });
+    expect(parse('Whenever a creature you control with power 2 or less attacks, this enchantment deals 1 damage to the player or planeswalker that creature is attacking.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', to: { ref: 'attacked_by' } }] });
+    expect(parse('At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'tokens_created_this_turn' } }] });
+  });
+});

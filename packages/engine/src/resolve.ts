@@ -209,6 +209,15 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
 
 /** Damage and similar effects can point at players and objects alike ("any target"). */
 export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
+  // Raid Bombardment, Myr Battlesphere: "the player or planeswalker that creature is attacking".
+  if (ref.ref === 'attacked_by') {
+    const o = refObjects(ctx, ref.of as Ref)[0];
+    const a = o ? ctx.g.combat?.attackers[o.id] : undefined;
+    if (!o || !a || a.zcc !== o.zcc) return [];
+    if (a.target.kind === 'player') return livePlayers(ctx.g).includes(a.target.player) ? [{ kind: 'player', player: a.target.player }] : [];
+    const t = ctx.g.objects[a.target.object];
+    return t && t.zone === 'battlefield' ? [{ kind: 'permanent', object: t.id }] : [];
+  }
   if (ref.ref === 'target') {
     return (ctx.targets[ref.index] ?? []).flatMap((t): DamageRecipient[] => {
       if (t.kind === 'player') return livePlayers(ctx.g).includes(t.player) ? [{ kind: 'player' as const, player: t.player }] : [];
@@ -225,7 +234,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -236,12 +245,14 @@ function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] 
 }
 
 /** CR 608.2h: an object's power/toughness now, or as it last existed on the battlefield. */
-function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'mana_value'): number {
+function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'mana_value' | 'colors'): number {
   const { g } = ctx;
   const [r] = refRefs(ctx, ref);
   if (!r) return 0;
   const o = g.objects[r.id];
   if (stat === 'mana_value') return o ? manaValueOf(g, o) : 0;
+  // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
+  if (stat === 'colors') return o ? chars(g, o).colors.length : 0;
   if (o && o.zcc === r.zcc && o.zone === 'battlefield') return chars(g, o)[stat];
   const last = g.lastKnown?.[r.id];
   // A leaves-the-battlefield trigger points at the new object; the one just before it was on the battlefield.
@@ -351,6 +362,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return g.turnLog.spellsCast[ctx.controller] ?? 0;
     case 'drawn_this_turn':
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
+    case 'tokens_created_this_turn':
+      return g.turnLog.tokensCreated?.[ctx.controller] ?? 0;
     case 'damage_this_way':
       return ctx.resolution?.damageDealt ?? 0;
     case 'excess_this_way':
