@@ -181,10 +181,15 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       const out: PlayerId[] = [];
       const of = ref.of;
       // CR 608.2h: an object that has left uses its last known information.
+      // Orcish Mine: "destroy enchanted land and this Aura deals 2 damage to that land's controller" — the Aura still
+      // remembers what it was attached to after the land has gone.
+      const attachedTo = of.ref === 'attached' ? sourceOf(ctx)?.attachedTo : undefined;
       const objects =
         of.ref === 'target'
           ? (ctx.targets[of.index] ?? []).flatMap((t) => (t.kind === 'object' ? [t] : []))
-          : refObjects(ctx, of).map((o) => ({ kind: 'object' as const, id: o.id, zcc: o.zcc }));
+          : attachedTo
+            ? [{ kind: 'object' as const, id: attachedTo.id, zcc: attachedTo.zcc }]
+            : refObjects(ctx, of).map((o) => ({ kind: 'object' as const, id: o.id, zcc: o.zcc }));
       for (const t of objects) {
         const o = g.objects[t.id];
         if (!o) continue;
@@ -450,7 +455,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       for (const id of g.zones.battlefield) {
         const o = g.objects[id]!;
         // Excalibur, Metalwork Colossus: "the total mana value of …".
-        if (matchesFilter(g, o, e.filter, { controller: ctx.controller, source: ctx.source ?? null })) n += e.stat === 'mana_value' ? manaValueOf(g, o) : Math.max(0, power(g, o));
+        // Towering Titan: "the total toughness of other creatures you control".
+        if (matchesFilter(g, o, e.filter, { controller: ctx.controller, source: ctx.source ?? null })) n += e.stat === 'mana_value' ? manaValueOf(g, o) : e.stat === 'toughness' ? Math.max(0, toughness(g, o)) : Math.max(0, power(g, o));
       }
       return n;
     }
@@ -582,6 +588,10 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
 export function startResolution(g: GameState, entry: StackEntry, targets: TargetRef[][]): void {
   const lki: Record<ObjectId, PlayerId> = {};
   for (const list of targets) for (const t of list) if (t.kind === 'object' && g.objects[t.id]) lki[t.id] = g.objects[t.id]!.controller;
+  // "that land's controller" after the enchanted land is destroyed mid-resolution.
+  const src = entry.kind === 'spell' ? g.objects[entry.object] : g.objects[entry.source.id];
+  const att = src?.attachedTo ? g.objects[src.attachedTo.id] : undefined;
+  if (att && att.zcc === src!.attachedTo!.zcc && lki[att.id] === undefined) lki[att.id] = att.controller;
   g.resolving = { entry, effects: structuredClone(entry.program!.effects), index: 0, memo: {}, targets, lki };
 }
 

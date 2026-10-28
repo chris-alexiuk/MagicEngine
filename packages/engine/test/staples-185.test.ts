@@ -41,6 +41,20 @@ const CARDS = [
   makeCard({ name: 'Mill Three', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Mill three cards.' }),
   makeCard({ name: 'Reality Chip Lite', type_line: 'Legendary Artifact — Equipment', mana_cost: '{0}', oracle_text: 'As long as this Equipment is attached to a creature, you may play lands and cast spells from the top of your library.\nEquip {0}' }),
   makeCard({ name: 'Electro Lite', type_line: 'Legendary Creature — Human Villain', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: "You don't lose unspent red mana as steps and phases end." }),
+  makeCard({ name: 'Plains', type_line: 'Basic Land — Plains', mana_cost: '', oracle_text: '({T}: Add {W}.)' }),
+  makeCard({ name: 'Lay Down Arms', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exile target creature with mana value less than or equal to the number of Plains you control. Its controller gains 3 life.' }),
+  makeCard({ name: 'Ogre Three', type_line: 'Creature — Ogre', mana_cost: '{2}{R}', cmc: 3, power: '3', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Ogre', type_line: 'Creature — Ogre', mana_cost: '{0}', power: '5', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Ruby Lite', type_line: 'Creature — Human Scout', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever this creature attacks while you control a creature with power 4 or greater, this creature gets +2/+2 until end of turn.' }),
+  makeCard({ name: 'Niv Lite', type_line: 'Creature — Dragon Wizard', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever a source you control deals noncombat damage to an opponent, you draw that many cards.' }),
+  makeCard({ name: 'Rout Lite', type_line: 'Sorcery', mana_cost: '{1}', cmc: 1, oracle_text: 'You may cast this spell as though it had flash if you pay {2} more to cast it.\nDestroy all creatures.' }),
+  makeCard({ name: 'Child of the Volcano', type_line: 'Creature — Elemental', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Trample\nAt the beginning of your end step, if you descended this turn, put a +1/+1 counter on this creature.' }),
+  makeCard({ name: 'Cleric Lite', type_line: 'Creature — Human Cleric', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'At the beginning of your end step, if a creature died under your control this turn, create a 1/1 white Human Soldier creature token.' }),
+  makeCard({ name: 'Shrine of Loyal Legions', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'At the beginning of your upkeep and whenever you cast a white spell, put a charge counter on this artifact.\n{3}, {T}, Sacrifice this artifact: Create a 1/1 colorless Phyrexian Myr artifact creature token for each charge counter on this artifact.' }),
+  makeCard({ name: 'White Salve', type_line: 'Instant', mana_cost: '{W}', cmc: 1, colors: ['W'], oracle_text: 'You gain 1 life.' }),
+  makeCard({ name: 'Orcish Mine', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant land\nThis Aura enters with three ore counters on it.\nAt the beginning of your upkeep and whenever enchanted land becomes tapped, remove an ore counter from this Aura.\nWhen the last ore counter is removed from this Aura, destroy enchanted land and this Aura deals 2 damage to that land\'s controller.' }),
+  makeCard({ name: 'Tap Land', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Tap target land.' }),
+  makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
 function settle(g: GameState): GameState {
@@ -408,5 +422,127 @@ describe('staples (slice 188): keeping unspent mana (CR 500.5)', () => {
     g.players.alice!.pool.G = 1;
     g = toStep(g, 'end', 'alice');
     expect([g.players.alice!.pool.R, g.players.alice!.pool.G]).toEqual([2, 0]);
+  });
+});
+
+describe('staples (slice 189): counted target filters', () => {
+  it('Lay Down Arms: mana value up to the number of Plains you control, counted as the target is chosen', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Plains', 'battlefield');
+    give(g, 'alice', 'Plains', 'battlefield');
+    const [bear, ogre] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Ogre Three', 'battlefield')];
+    const spell = give(g, 'alice', 'Lay Down Arms', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, targets: [[{ kind: 'object', object: ogre }]] })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: spell, targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[bear]!.zone).toBe('exile');
+  });
+});
+
+describe('staples (slice 189): attacks while, sources you control', () => {
+  it('"attacks while …": checked as it attacks only', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ruby = give(g, 'alice', 'Ruby Lite', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: ruby, target: { kind: 'player', player: 'bob' } }] } });
+    expect(g.stack.length).toBe(0);
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ruby2 = give(h, 'alice', 'Ruby Lite', 'battlefield');
+    give(h, 'alice', 'Ogre', 'battlefield');
+    h = toAttack(toStep(h, 'beginning_of_combat'));
+    h = act(h, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: ruby2, target: { kind: 'player', player: 'bob' } }] } });
+    h = settle(h);
+    expect(chars(h, h.objects[ruby2]!).power).toBe(3);
+  });
+
+  it('Niv-Mizzet, Visionary: draw that many when a source you control deals noncombat damage to an opponent', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Niv Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 3);
+  });
+});
+
+describe('staples (slice 189): flash for more', () => {
+  it('Rout: at instant speed only by paying {2} more', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const rout = give(g, 'alice', 'Rout Lite', 'hand');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g.players.alice!.pool.C = 3;
+    g = act(g, { type: 'pass', player: 'bob' });
+    expect(g.priority).toBe('alice');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: rout })).toMatch(/main phase/);
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === rout && (a as { extras?: string[] }).extras?.includes('flash'))).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: rout, extras: ['flash'] }));
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+    expect(g.players.alice!.pool.C).toBe(0);
+  });
+});
+
+describe('staples (slice 189): cast from exile', () => {
+  it('Misthollow Griffin: its owner may cast it from exile, paying its mana cost', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const griffin = give(g, 'alice', 'Misthollow Griffin', 'exile');
+    const theirs = give(g, 'bob', 'Misthollow Griffin', 'exile');
+    g.players.alice!.pool.C = 2;
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === theirs)).toBe(false);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: griffin }));
+    expect(g.objects[griffin]!.zone).toBe('battlefield');
+  });
+});
+
+describe('staples (slice 190): descended, died under your control, two-event triggers', () => {
+  it('Child of the Volcano: grows at your end step only if a permanent card went to your graveyard this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const child = give(g, 'alice', 'Child of the Volcano', 'battlefield');
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(g.objects[child]!.counters['+1/+1'] ?? 0).toBe(0);
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const child2 = give(h, 'alice', 'Child of the Volcano', 'battlefield');
+    const bear = give(h, 'alice', 'Bear', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(h.objects[bear]!.zone).toBe('graveyard');
+    h = settle(toStep(h, 'end', 'alice'));
+    expect(h.objects[child2]!.counters['+1/+1']).toBe(1);
+  });
+
+  it('"if a creature died under your control this turn": an opponent\'s creature dying doesn\'t count', () => {
+    const tokens = (g: GameState) => g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice').length;
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Cleric Lite', 'battlefield');
+    const theirs = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: theirs }]] }));
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(tokens(g)).toBe(0);
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(h, 'alice', 'Cleric Lite', 'battlefield');
+    const mine = give(h, 'alice', 'Bear', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: mine }]] }));
+    h = settle(toStep(h, 'end', 'alice'));
+    expect(tokens(h)).toBe(1);
+  });
+
+  it('Shrine of Loyal Legions: "at the beginning of your upkeep and whenever you cast a white spell"', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const shrine = give(g, 'alice', 'Shrine of Loyal Legions', 'battlefield');
+    g.players.alice!.pool.W = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'White Salve', 'hand') }));
+    expect(g.objects[shrine]!.counters.charge).toBe(1);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    expect(g.objects[shrine]!.counters.charge).toBe(1);
+    g = settle(toStep(g, 'upkeep', 'alice'));
+    expect(g.objects[shrine]!.counters.charge).toBe(2);
+  });
+
+  it('Orcish Mine: the last ore counter destroys the land and deals 2 damage to its controller', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const land = give(g, 'bob', 'Forest', 'battlefield');
+    const mine = give(g, 'alice', 'Orcish Mine', 'battlefield');
+    g.objects[mine]!.attachedTo = { id: land, zcc: g.objects[land]!.zcc };
+    g.objects[mine]!.counters.ore = 1;
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tap Land', 'hand'), targets: [[{ kind: 'object', object: land }]] }));
+    expect(g.objects[land]!.zone).toBe('graveyard');
+    expect(g.players.bob!.life).toBe(life - 2);
   });
 });

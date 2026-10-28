@@ -12,9 +12,19 @@ import { preparedSource } from './prepare.js';
 
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
   if (o.zone === 'library') return fromTop(g, player, o, what);
+  // Misthollow Griffin: "You may cast this card from exile." — its own permission, its mana cost paid.
+  if (o.zone === 'exile' && what === 'spell' && o.owner === player && !o.faceDown && castableFromExileItself(g, o)) return true;
   return (g.mayPlay ?? []).some(
     (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn && (what === 'spell' || p.mode === 'play'),
   );
+}
+
+function castableFromExileItself(g: GameState, o: GameObject): boolean {
+  return (g.cards[o.card]?.faces[0]?.abilities ?? []).some((a) => {
+    if (a.kind !== 'static' || a.effect.type !== 'cast_option') return false;
+    const e = a.effect as { zone?: string; alsoExile?: true; withManaCost?: true; condition?: unknown };
+    return Boolean(e.withManaCost && !e.condition && (e.zone === 'exile' || e.alsoExile));
+  });
 }
 
 /** Dauthi Voidwalker: a permission to play this card "without paying its mana cost". */

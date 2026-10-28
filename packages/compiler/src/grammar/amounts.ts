@@ -61,7 +61,9 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     return { kind: 'cards', ...where, filter: filter as ObjectFilter };
   }
   const pf = parseFilter(t, b);
-  if (!pf || pf.plural !== plural || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
+  // "the number of Plains you control": a word whose plural is the same.
+  const same = /^(?:basic )?(?:Plains|Sheep|Fish|Elk)\b/.test(t);
+  if (!pf || (pf.plural !== plural && !same) || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
   return { kind: 'count', filter: pf.filter };
 }
 
@@ -193,16 +195,17 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
   // Ghalta: "the total power of creatures you control"
-  const totalPower = /^the total (power|mana value) of (other )?(.+)$/.exec(t);
+  const totalPower = /^the total (power|toughness|mana value) of (other )?(.+)$/.exec(t);
   if (totalPower) {
     // Summon: Bahamut: "the total mana value of other permanents you control" — other than the source.
     const pf = parseFilter(totalPower[3]!, b);
-    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: { ...pf.filter, ...(totalPower[2] ? { other: true } : {}) }, ...(totalPower[1] === 'mana value' ? { stat: 'mana_value' as const } : {}) } : null;
+    const stat = totalPower[1] === 'mana value' ? { stat: 'mana_value' as const } : totalPower[1] === 'toughness' ? { stat: 'toughness' as const } : {};
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: { ...pf.filter, ...(totalPower[2] ? { other: true } : {}) }, ...stat } : null;
   }
   // CR 903.4: "the number of colors in your commanders' color identity"
   if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };
   // Mockingbird: "the amount of mana spent to cast this creature" (CR 601.2h) — the mana paid for it.
-  if (/^the amount of mana spent to cast (?:~|this creature|this spell)$/.test(t)) return { kind: 'mana_spent', of: { ref: 'self' } };
+  if (/^the amount of mana spent to cast (?:~|this creature|this spell|it)$/.test(t) && (t.endsWith(' it') ? !b.it || b.it.ref === 'self' : true)) return { kind: 'mana_spent', of: { ref: 'self' } };
   const twice = /^twice (.+)$/.exec(t);
   if (twice) {
     const inner = parseCount(twice[1]!, b);

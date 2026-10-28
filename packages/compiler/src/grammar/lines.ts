@@ -661,6 +661,16 @@ const STEP_WORDS: Record<string, string> = {
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
   // CR 903.3: Tome of Legends: "Whenever your commander enters or attacks" — a commander you own.
   const t = text.trim().replace(/^your commander (?=enters|attacks|dies|deals|becomes|blocks)/, 'a commander you own ');
+  // Ruby, Daring Tracker: "Whenever Ruby attacks while you control a creature with power 4 or greater" — the condition is
+  // part of the trigger event, checked as it attacks (not again as the ability resolves).
+  // ("while saddled" is the attack trigger's own `saddled`, below.)
+  const whileCond = /^(~|this creature) attacks while (?!saddled$)(.+)$/.exec(t);
+  if (whileCond) {
+    const base = parseTrigger(word, '~ attacks', b);
+    const cond = base ? parseCondition(whileCond[2]!, b.clone()) : null;
+    if (!base || !cond) return null;
+    return { ...base, trigger: { ...base.trigger, while: cond } };
+  }
   // A "this turn" ability about what its creator targeted (Hunter's Insight: "Whenever that creature deals combat damage
   // … this turn"): read as the source's own event, about that object instead.
   const outer = /^TARGETREF(\d+) (.+)$/.exec(t);
@@ -672,6 +682,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: swap(r.trigger), it: r.it?.ref === 'self' ? target : r.it, player: r.player };
   }
   if (word === 'At') {
+    // Shrine of Boundless Growth: "At the beginning of your upkeep and whenever you cast a green spell" — two events, one
+    // ability (CR 603.2).
+    const andWhen = /^(the beginning of .+?) and whenever (.+)$/.exec(t);
+    if (andWhen) {
+      const one = parseTrigger('At', andWhen[1]!, b);
+      const two = one ? parseTrigger('Whenever', andWhen[2]!, b) : null;
+      if (!one || !two) return null;
+      return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: null };
+    }
     // Curses: "At the beginning of enchanted player's upkeep" — "that player" is the enchanted player.
     // Tenuous Truce: "At the beginning of enchanted opponent's end step".
     const cursed = /^the beginning of enchanted (?:player|opponent)'s (upkeep|draw step|end step)$/.exec(t);
@@ -775,6 +794,18 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return {
       trigger: { type: 'deals_damage', subject, to: damageTo[3] === 'a player' ? 'player' : 'opponent', ...(damageTo[2] ? { combat: true } : {}) },
       it: subject,
+      player: { ref: 'trigger_player' },
+    };
+  }
+  // Niv-Mizzet, Visionary: "Whenever a source you control deals noncombat damage to an opponent" — once for each source
+  // and player; "that player" is the one dealt damage.
+  const sourceHits = /^a source you control deals (noncombat |combat )?damage to (an opponent|a player)$/.exec(t);
+  if (sourceHits) {
+    b.eventAmount = true;
+    const kind = sourceHits[1]?.trim();
+    return {
+      trigger: { type: 'deals_damage', subject: { ref: 'all', filter: { controller: 'you' } }, to: sourceHits[2] === 'a player' ? 'player' : 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) },
+      it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
   }
@@ -2742,7 +2773,7 @@ export const entersWithCountersRule: GrammarRule = {
       return node;
     }
     // Diregraf Colossus: "~ enters with a +1/+1 counter on it for each Zombie card in your graveyard" — counted as it enters.
-    const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on it for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(line);
+    const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on (?:it|him|her) for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(line);
     if (perEach) {
       const env = envOf(ctx);
       const n = parseAmount(perEach[1]!);
@@ -2750,7 +2781,16 @@ export const entersWithCountersRule: GrammarRule = {
       if (!each || typeof n !== 'number') return null;
       return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: perEach[2]!.replace(/−/g, '-'), amount: n, perEach: each } } satisfies StaticAbility;
     }
-    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (\S+) (\S+) counters? on it( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
+    // Towering Titan: "~ enters with X +1/+1 counters on it, where X is …"; Boss's Chauffeur: "… a number of +1/+1 counters
+    // on it equal to …" — counted as it enters (CR 614.1c).
+    const counted = /^~ enters(?: the battlefield)? with X (\S+) counters on (?:it|him|her), where X is (.+?)\.$/.exec(line) ?? /^~ enters(?: the battlefield)? with a number of (\S+) counters on (?:it|him|her) equal to (.+?)\.$/.exec(line);
+    if (counted) {
+      const env = envOf(ctx);
+      const expr = env ? parseCount(counted[2]!, new Binder(env)) : null;
+      if (!expr) return null;
+      return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: counted[1]!.replace(/−/g, '-'), amount: 1, perEach: expr } } satisfies StaticAbility;
+    }
+    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);
     if (m) m.splice(2, 1);
     const amount = m && parseAmount(m[2]!);
@@ -2808,6 +2848,9 @@ export const castOptionRule: GrammarRule = {
     }
     // Gravecrawler: "You may cast this card from your graveyard [as long as you control a Zombie]"; Rona: "… by discarding
     // two cards in addition to paying its other costs" — a permission, with the mana cost still paid (CR 601.2a).
+    // Misthollow Griffin: "You may cast this card from exile."; Squee, the Immortal: "… from your graveyard or from exile."
+    const fromExile = /^You may cast ~ from (your graveyard or from )?exile$/.exec(t);
+    if (fromExile) return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost: {}, zone: fromExile[1] ? 'graveyard' : 'exile', withManaCost: true, ...(fromExile[1] ? { alsoExile: true } : {}) } as CastOptionNode };
     const fromYard = /^You may cast ~ from your graveyard(?:,? (?:as long as|if) (.+?)| by (.+?) in addition to paying its other costs)?$/.exec(t);
     if (fromYard) {
       const condition = fromYard[1] ? parseCondition(fromYard[1], b) : undefined;
@@ -2855,6 +2898,9 @@ export const castOptionRule: GrammarRule = {
     }
     const additional = /^You may pay an additional (.+?) as you cast ~$/.exec(t);
     if (additional) return make('additional', additional[1]!);
+    // Rout, Saproling Symbiosis: "You may cast this spell as though it had flash if you pay {2} more to cast it." (CR 702.8a)
+    const flashTax = /^You may cast ~ as though it had flash if you pay ((?:\{\d+\})+) more to cast it$/.exec(t);
+    if (flashTax) return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'flash', kind: 'additional', cost: { mana: flashTax[1]! }, flash: true } as CastOptionNode };
     // Replicate, squad: "As an additional cost to cast this spell, you may pay [cost] any number of times."
     const anyTimes = /^As an additional cost to cast ~, you may pay (.+?) any number of times$/.exec(t);
     if (anyTimes) return make('additional', anyTimes[1]!, { repeatable: true });

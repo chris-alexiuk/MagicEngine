@@ -150,7 +150,7 @@ describe('triggered abilities', () => {
       condition: { type: 'count', who: 'you', filter: { subtypes: ['Forest'] }, min: 1 },
     });
     // Conditions the grammar doesn't know leave the line unparsed.
-    expect(parse('When this creature enters, if you descended this turn, draw a card.', 'Creature — Elf').unparsed).toHaveLength(1);
+    expect(parse("When this creature enters, if you've rolled a natural 20 this turn, draw a card.", 'Creature — Elf').unparsed).toHaveLength(1);
   });
 
   it('keywords whose definitions use conditions: persist (CR 702.79a)', () => {
@@ -2073,8 +2073,8 @@ describe('slice 171', () => {
     expect(parse('Lands you control enter untapped.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effect: { type: 'enter_untapped_others', filter: { types: ['Land'], controller: 'you' } } });
     expect(parse('Whenever one or more creatures you control each with power greater than its base power deals combat damage to a player, draw a card.', 'Legendary Creature — Cat Warrior', 'K').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', filter: { powerAboveBase: true } } });
     expect(parse('Search your library for a card with mana value less than or equal to the number of lands you control, reveal it, put it into your hand, then shuffle.', 'Sorcery', 'B').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { op: 'le', n: { kind: 'count', filter: { types: ['Land'], controller: 'you' } } } } }] });
-    // Not as a target: it couldn't be checked as targets are chosen.
-    expect(parse('Destroy target creature with mana value less than or equal to the number of lands you control.', 'Sorcery', 'D').unparsed).toHaveLength(1);
+    // As a target too: counted as the target is checked (slice 189).
+    expect(parse('Destroy target creature with mana value less than or equal to the number of lands you control.', 'Sorcery', 'D').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { op: 'le', n: { kind: 'count' } } } }] });
     expect(parse('At the beginning of your upkeep, you may move any number of +1/+1 counters from ~ onto other creatures.', 'Creature — Elemental', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'move_counters', distribute: true }] }] });
   });
 });
@@ -2324,3 +2324,41 @@ describe('slice 188', () => {
   });
 });
 
+describe('slice 189', () => {
+  it('reads counted target filters, "up to seven" from the hand and half a library', () => {
+    expect(parse("At the beginning of your end step, return target creature card with mana value less than or equal to ~'s power from your graveyard to the battlefield.", 'Creature').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { op: 'le', n: { kind: 'stat', stat: 'power' } } } }] });
+    expect(parse('Exile target creature with mana value less than or equal to the number of Plains you control.', 'Instant').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { n: { kind: 'count', filter: { subtypes: ['Plains'] } } } } }] });
+    expect(parse('{T}: Gain control of target creature with power less than or equal to the number of creatures you control.', 'Creature').abilities[0]).toMatchObject({ targets: [{ filter: { power: { op: 'le', n: { kind: 'count' } } } }] });
+    // Not one that depends on the event ("that spell's mana value").
+    expect(parse("Whenever you cast a spell, return up to one target nonland permanent an opponent controls with mana value less than or equal to that spell's mana value to its owner's hand.", 'Creature').unparsed).toHaveLength(1);
+    expect(parse('−10: You gain 7 life, draw seven cards, then put up to seven permanent cards from your hand onto the battlefield.', 'Legendary Planeswalker — Ugin').abilities[0]).toMatchObject({ effects: [{}, {}, { type: 'choose_from_hand', amount: 7, optional: true }] });
+    expect(parse('Each opponent mills half their library, rounded up.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'mill', amount: { kind: 'cards', zone: 'library', player: { ref: 'each_player' }, half: 'up' } }] });
+  });
+  it('reads attacks-while triggers, sources you control and cards milled this way', () => {
+    expect(parse('Whenever ~ attacks while you control a creature with power 4 or greater, ~ gets +2/+2 until end of turn.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'attacks', while: { type: 'count', filter: { power: { op: 'ge', n: 4 } } } } });
+    expect(parse('Whenever ~ attacks while you have the most life or are tied for most life, you draw a card and you lose 1 life.', 'Creature').abilities[0]).toMatchObject({ trigger: { while: { type: 'life', most: true } } });
+    expect(parse("At the beginning of your upkeep, you lose 2 life if you don't control an Ogre.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'count', filter: { subtypes: ['Ogre'] }, max: 0 } }] });
+    expect(parse('Whenever a source you control deals noncombat damage to an opponent, you draw that many cards.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'deals_damage', subject: { filter: { controller: 'you' } }, to: 'opponent', noncombat: true }, effects: [{ type: 'draw', amount: { kind: 'event' } }] });
+    expect(parse('Mill five cards, then return a creature card milled this way to your hand.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'put_from_milled', filter: { types: ['Creature'] }, to: 'hand' }] });
+  });
+  it('reads flash for more and casting from exile', () => {
+    expect(parse('You may cast this spell as though it had flash if you pay {2} more to cast it.', 'Sorcery').abilities[0]).toMatchObject({ effect: { type: 'cast_option', id: 'flash', kind: 'additional', cost: { mana: '{2}' }, flash: true } });
+    expect(parse('You may cast this card from exile.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'cast_option', zone: 'exile', withManaCost: true } });
+    expect(parse('You may cast this card from your graveyard or from exile.', 'Creature').abilities[0]).toMatchObject({ effect: { zone: 'graveyard', alsoExile: true } });
+  });
+  it('reads counted "enters with" counters', () => {
+    expect(parse('This creature enters with X +1/+1 counters on it, where X is the total toughness of other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', amount: 1, perEach: { kind: 'total_power', stat: 'toughness' } } });
+    expect(parse('This creature enters with a number of +1/+1 counters on it equal to one plus the number of other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { perEach: { kind: 'count', plus: 1 } } });
+    expect(parse('This creature enters with a +1/+1 counter on it if a permanent left the battlefield under your control this turn.', 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'this_turn', event: 'your_permanent_left' } } });
+    expect(parse('~ enters with a +1/+1 counter on him.', 'Legendary Creature', 'Hulk').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', amount: 1 } });
+  });
+});
+
+describe('slice 190', () => {
+  it('reads descended and died-under-your-control conditions, two-event triggers and "each opponent controls"', () => {
+    expect(parse('At the beginning of your end step, if you descended this turn, put a +1/+1 counter on ~.', 'Creature').abilities[0]).toMatchObject({ condition: { type: 'this_turn', event: 'you_descended' } });
+    expect(parse("~ can't attack or block unless a creature died under your control this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'not', cond: { type: 'this_turn', event: 'your_creature_died' } } } });
+    expect(parse('At the beginning of your upkeep and whenever you cast a green spell, put a charge counter on ~.', 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ type: 'phase', step: 'upkeep' }, { type: 'cast', filter: { colors: ['G'] } }] } });
+    expect(parse('At the beginning of your upkeep, put a +1/+1 counter on each creature each opponent controls.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'all', filter: { controller: 'opponent' } } }] });
+  });
+});

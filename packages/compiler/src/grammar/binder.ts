@@ -93,12 +93,22 @@ export class Binder {
   addTarget(spec: TargetSpec): Ref {
     // "target spell with mana value X or less, where X is …": the engine can't check X as targets are chosen yet.
     if ((spec.filter as { manaValue?: { n?: unknown } } | undefined)?.manaValue?.n === 'X') this.unsupported = true;
-    // Nor a counted amount ("with mana value less than or equal to the number of lands you control").
+    // A counted amount ("with mana value less than or equal to the number of Plains you control", "… Alesha's power") is
+    // counted as the target is checked — only one that doesn't depend on the event or the resolution.
     const f = (spec.filter ?? {}) as Record<string, { n?: unknown } | undefined>;
-    if ((['power', 'toughness', 'manaValue'] as const).some((k) => typeof f[k]?.n === 'object')) this.unsupported = true;
+    const counted = (['power', 'toughness', 'manaValue'] as const).map((k) => f[k]?.n).filter((n) => typeof n === 'object');
+    if (counted.some((n) => !targetCountable(n))) this.unsupported = true;
     this.targets.push(spec);
     return { ref: 'target', index: this.targets.length - 1 };
   }
+}
+
+/** A counted amount the engine can work out as a target is checked: about the source or the game, not the event. */
+function targetCountable(n: unknown): boolean {
+  const e = n as { kind?: string; of?: { ref?: string } };
+  const json = JSON.stringify(n);
+  if (/"ref":"(?!self"|you")/.test(json)) return false;
+  return e.kind === 'count' || e.kind === 'cards' || ((e.kind === 'stat' || e.kind === 'counters') && e.of?.ref === 'self');
 }
 
 /** Runs `fn` on a copy of the binder and keeps its changes only if it succeeds. */

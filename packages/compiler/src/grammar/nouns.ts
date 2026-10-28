@@ -25,13 +25,17 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // the count's.
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power".
   // Mockingbird: "with mana value less than or equal to the amount of mana spent to cast this creature".
-  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature))$/, (f, m, b) => {
+  // Vedalken Shackles: "target creature with power less than or equal to the number of Islands you control".
+  // (A power compared with this creature's own stays powerBelowSource, below.)
+  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature))$/, (f, m, b) => {
+    const key = m[1] === 'mana value' ? 'manaValue' : (m[1] as 'power' | 'toughness');
+    if (key !== 'manaValue' && !/^the number of /.test(m[3]!)) return false;
     // "… in your library" is the card's zone: peeled first.
-    if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[2]!)) return false;
-    const n = parseCount(m[2]!, b);
+    if (f[key] || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[3]!)) return false;
+    const n = parseCount(m[3]!, b);
     if (!n) return false;
-    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt', 'equal to': 'eq' } as const)[m[1] as 'less than'];
-    f.manaValue = { op, n };
+    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt', 'equal to': 'eq' } as const)[m[2] as 'less than'];
+    f[key] = { op, n };
     return true;
   }],
   // The Darkness Crystal: "target creature card exiled with The Darkness Crystal" (CR 607.2a).
@@ -40,7 +44,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
-  [/ (?:an opponent controls|your opponents control|opponents control)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
+  // Aku Djinn: "each creature each opponent controls"
+  [/ (?:an opponent controls|your opponents control|opponents control|each opponent controls)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
   [/ defending player controls$/, (f) => !f.controller && ((f.controller = 'defending'), true)],
   // "all creatures target player controls", "each creature that player controls"

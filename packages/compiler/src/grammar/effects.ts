@@ -1380,7 +1380,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Six: "Mill three cards. You may put a land card from among them into your hand." Gyruda: "Put a creature card with
   // an even mana value from among the milled cards onto the battlefield under your control." — the cards milled this way.
-  const fromMilled = /^(You may )?(?:[Tt]hen )?[Pp]ut (a|an|up to (?:one|two|three)|any number of) (.+?) from among (them|those cards|the milled cards) (into your hand|onto the battlefield( tapped)?( under your control)?)$/.exec(s);
+  // Monster Manual: "then return a creature card milled this way to your hand"; Terra: "Put up to one enchantment card milled
+  // this way into your hand"; Wasteful Harvest: "… from among the cards milled this way into your hand".
+  const milledText = s
+    .replace(/^((?:You may )?(?:[Tt]hen )?)[Rr]eturn (a|an) (.+?) milled this way to your hand$/, '$1Put $2 $3 from among the milled cards into your hand')
+    .replace(/ from among the cards milled this way /, ' from among the milled cards ')
+    .replace(/^((?:You may )?(?:[Tt]hen )?[Pp]ut (?:a|an|up to (?:one|two|three)|any number of) .+?) milled this way (into your hand)$/, '$1 from among the milled cards $2');
+  const fromMilled = /^(You may )?(?:[Tt]hen )?[Pp]ut (a|an|up to (?:one|two|three)|any number of) (.+?) from among (them|those cards|the milled cards) (into your hand|onto the battlefield( tapped)?( under your control)?)$/.exec(milledText);
   if (fromMilled && (b.milled || fromMilled[4] === 'the milled cards')) {
     const many = fromMilled[2]!;
     const to = fromMilled[5]!.startsWith('into') ? 'hand' : 'battlefield';
@@ -1400,7 +1406,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const pf = parseFilter(`${fromMilled[3]} in your library`, b);
     if (typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
     const filter = strip(pf.filter);
-    const optional = Boolean(fromMilled[1]) || n > 1;
+    const optional = Boolean(fromMilled[1]) || n > 1 || many.startsWith('up to ');
     return [{ type: 'put_from_milled', filter, amount: n, to, ...(optional ? { optional: true } : {}), ...(fromMilled[6] ? { tapped: true } : {}) }];
   }
   // Sea Gate Restoration: "You have no maximum hand size for the rest of the game."
@@ -2485,6 +2491,13 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
   },
   mill(args, who, b) {
+    // Maddening Cacophony: "each opponent mills half their library, rounded up" — each of them counts their own.
+    const half = /^half (?:their|your|his or her) library, rounded (up|down)$/.exec(args);
+    if (half) {
+      const player: Ref = who.ref === 'players' ? { ref: 'each_player' } : who;
+      b.milled = true;
+      return [{ type: 'mill', amount: { kind: 'cards', zone: 'library', who: 'each', player, half: half[1] as 'up' | 'down' }, who }];
+    }
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     if (amount === null || amount === undefined) return null;
@@ -2629,9 +2642,10 @@ const VERBS: Record<string, VerbHandler> = {
     if (!imperative) return null;
     // "Put a land card from your hand onto the battlefield (tapped)." — chosen as it resolves.
     // Ghalta, Last March of the Ents: "put any number of creature cards from your hand onto the battlefield".
-    const fromHand = /^(a|an|up to one|up to two|any number of) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
+    // Ugin, the Spirit Dragon: "put up to seven permanent cards from your hand onto the battlefield".
+    const fromHand = /^(a|an|up to (?:one|two|three|four|five|six|seven)|any number of) (.+?) from your hand onto the battlefield( tapped)?$/.exec(args);
     if (fromHand) {
-      const n = fromHand[1] === 'up to two' ? 2 : fromHand[1] === 'any number of' ? 99 : 1;
+      const n = fromHand[1] === 'any number of' ? 99 : /^up to /.test(fromHand[1]!) ? (parseAmount(fromHand[1]!.slice(6)) as number) : 1;
       const pf = parseFilter(`${fromHand[2]} in your hand`, b);
       if (!pf || pf.plural !== n > 1) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;

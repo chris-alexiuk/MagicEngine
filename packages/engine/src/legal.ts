@@ -382,7 +382,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       // CR 702.102: a fused spell with a sorcery half is cast as a sorcery.
       const both = fusedFace(g.cards[o.card]!);
       if (!sorcerySpeed && (playerRule(g, player, 'sorcery_timing') || (!both.types.every((t) => t === 'Instant') && !flashPermission(g, player, o)))) continue;
-    } else if (!instantSpeed && !sorcerySpeed) continue;
+    } else if (!instantSpeed && !sorcerySpeed && !opt.flash) continue;
     if ((opt.zone === 'graveyard') !== fromGraveyard) continue;
     if (opt.kind === 'additional' && fromGraveyard) continue;
     if (opt.condition && !evalCondition(opt.condition, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) continue;

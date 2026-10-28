@@ -650,7 +650,8 @@ function cast(
   // CR 702.190a: sneak — "any time you could cast an instant during your declare blockers step".
   if (alt?.id === 'sneak' && !(g.active === player && g.step === 'declare_blockers')) throw new RulesError(`${face.name} can be cast for its sneak cost only during your declare blockers step.`);
   // Teferi, Time Raveler: "Each opponent can cast spells only any time they could cast a sorcery." (CR 307.5)
-  const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o) || alt?.id === 'sneak');
+  // Rout: "as though it had flash if you pay {2} more to cast it" — that optional cost chosen.
+  const instantSpeed = !playerRule(g, player, 'sorcery_timing') && (castFace.types.includes('Instant') || castFace.keywords.some((k) => k.id === 'flash') || flashPermission(g, player, o) || alt?.id === 'sneak' || added.some((a) => a.flash));
   // CR 601.3: "Cast this spell only during combat" (and the like).
   // CR 101.2: a "can't cast" effect applies even when an effect lets it be cast as something resolves.
   const restricted = during ? castProhibition(g, player, castFace, o) : castRestrictionProblem(g, player, castFace, o);

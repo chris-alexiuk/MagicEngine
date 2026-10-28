@@ -566,7 +566,7 @@ export type AmountExpr = (
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
   | { kind: 'colors_spent' }
   /** "the sacrificed creature's power", "the discarded card's mana value" — as it was when the cost was paid. */
-  | { kind: 'total_power'; filter: ObjectFilter; stat?: 'mana_value' }
+  | { kind: 'total_power'; filter: ObjectFilter; stat?: 'mana_value' | 'toughness' }
   | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
   /** `half`: "half X, rounded down", "half their life, rounded up" — the count is halved, then scaled (times, plus). */
@@ -767,6 +767,10 @@ export interface CastOptionNode extends EffectNode {
   prototype?: { power: string; toughness: string };
   /** One of a list of additional costs ("sacrifice a creature or pay {3}"): exactly one of them is paid (CR 118.8). */
   required?: true;
+  /** "You may cast this spell as though it had flash if you pay {2} more to cast it." — any time you could cast an instant. */
+  flash?: true;
+  /** Squee, the Immortal: "You may cast this card from your graveyard or from exile." — from exile too. */
+  alsoExile?: true;
 }
 
 /** "As an additional cost to cast this spell, sacrifice a creature, discard a card, or pay 4 life." (CR 118.8, 601.2b) */
@@ -1188,6 +1192,8 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
     }
   };
   if (a.kind === 'triggered' && a.condition) cond(a.condition);
+  // "Whenever ~ attacks while …": a condition of the trigger itself.
+  if (a.kind === 'triggered' && a.trigger.while) cond(a.trigger.while as ConditionNode);
   if (a.gate) cond(a.gate);
   if (a.kind === 'activated' && a.activateIf) cond(a.activateIf);
   if (a.kind === 'static') {

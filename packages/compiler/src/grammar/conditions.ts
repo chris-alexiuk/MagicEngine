@@ -99,6 +99,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Preacher of the Schism: "you have the most life or are tied for most life"
+  if (/^you have the most life or are tied for (?:the )?most life$/.test(t)) return { type: 'life', most: true };
   // Righteous Valkyrie: "you have at least 7 life more than your starting life total"
   const moreThanStart = /^you have at least (\w+) life more than your starting life total$/.exec(t);
   if (moreThanStart && typeof parseAmount(moreThanStart[1]!) === 'number') return { type: 'life', op: 'ge', starting: true, plus: parseAmount(moreThanStart[1]!) as number };
@@ -310,6 +312,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // "you control a Forest", "you control three or more artifacts", "an opponent controls no creatures",
   // "you control a Plains or an Island", "you control two or more other lands", "your opponents control eight or more lands".
+  // Pugnacious Hammerskull: "you don't control another Dinosaur" — none other.
+  const dont = /^you don't control (a|an|another) (.+)$/.exec(t);
+  if (dont) {
+    const pf = parseFilter(dont[2]!, b);
+    if (!pf || pf.plural) return null;
+    return { type: 'count', who: 'you', filter: { ...pf.filter, ...(dont[1] === 'another' ? { other: true } : {}) }, max: 0 };
+  }
   const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer) (other )?(.+)$/.exec(t);
   if (control) {
     const c = count(control[2]!);
@@ -431,11 +440,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     "you've cast a noncreature spell this turn": 'you_cast_noncreature',
     // Revolt; void (CR 702.185c: "a spell was warped this turn").
     'a permanent you controlled left the battlefield this turn': 'your_permanent_left',
+    'a permanent left the battlefield under your control this turn': 'your_permanent_left',
     'a nonland permanent left the battlefield this turn': 'nonland_left',
     'a spell was warped this turn': 'warped',
     // CR 700.13
     "you've committed a crime this turn": 'you_committed_crime',
     'you committed a crime this turn': 'you_committed_crime',
+    // CR 700.11
+    'you descended this turn': 'you_descended',
+    "you've descended this turn": 'you_descended',
+    'a creature died under your control this turn': 'your_creature_died',
+    'a creature you controlled died this turn': 'your_creature_died',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };

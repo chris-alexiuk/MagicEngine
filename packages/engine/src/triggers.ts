@@ -1,5 +1,5 @@
 import { copyChoicePending } from './as-enters.js';
-import type { Amount, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
+import type { Amount, ConditionNode, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
@@ -138,8 +138,13 @@ function collect(g: GameState, events: GameEvent[]): void {
         // CR 603.2h: "Do this only once each turn." — not once its controller took that action this turn.
         if (ability.doOnce && c.o.doneOnce?.[`${c.o.zcc}:${ability.text}`] === g.turn) return;
         // CR 603.4: an intervening "if" must be true for it to trigger at all.
+        // "Whenever ~ attacks while you control a creature with power 4 or greater": part of the trigger condition, checked
+        // as the event happens only (unlike an intervening "if", it isn't checked again as it resolves).
+        const during = ability.trigger.while as ConditionNode | undefined;
         const infos = matchTrigger(ability.trigger, { g, event, source: c.o, controller: c.controller, sourceLeft: c.left, batch }).filter(
-          (info) => !ability.condition || evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability)),
+          (info) =>
+            (!during || evalCondition(during, triggerContext(g, c.controller, c.o, info, ability))) &&
+            (!ability.condition || evalCondition(ability.condition, triggerContext(g, c.controller, c.o, info, ability))),
         );
         if (ability.oncePerTurn && infos.length) {
           // "This ability triggers only once each turn." — once it has triggered (Tataru Taru: not an opponent's draw

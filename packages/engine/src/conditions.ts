@@ -36,6 +36,8 @@ export interface TurnLog {
   drawStepCards?: number;
   /** What died this turn, as it last existed ("for each creature that died this turn"). */
   died?: { controller: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
+  /** CR 700.11: how many times each player descended this turn. */
+  descended?: Record<PlayerId, number>;
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
@@ -84,6 +86,11 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         break;
       case 'moved': {
         const types = g.cards[e.card]?.faces[e.face]?.types ?? [];
+        // CR 700.11: "descended this turn" — a permanent card put into that player's graveyard from anywhere (tokens aren't cards).
+        if (e.to === 'graveyard' && !g.objects[e.object]?.token && ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'].some((t) => types.includes(t))) {
+          const owner = g.objects[e.object]?.owner;
+          if (owner) (log.descended ??= {})[owner] = (log.descended[owner] ?? 0) + 1;
+        }
         if (e.from === 'battlefield' && e.to === 'graveyard') {
           // CR 700.4: it died — as it last existed on the battlefield.
           const lk = g.lastKnown?.[e.object];
@@ -343,6 +350,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
+      // Preacher of the Schism: "you have the most life or are tied for most life".
+      if (cond.most) return livePlayers(g).every((p) => g.players[controller]!.life >= g.players[p]!.life);
       // Righteous Valkyrie: "if you have at least 7 life more than your starting life total" (`plus`).
       if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife + Number(cond.plus ?? 0) });
       return cmp(g.players[controller]!.life, cond);
@@ -475,6 +484,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(log.warped);
         case 'you_committed_crime':
           return (log.crimes ?? []).includes(controller);
+        // CR 700.11
+        case 'you_descended':
+          return (log.descended?.[controller] ?? 0) > 0;
+        // Denethor: "if a creature died under your control this turn"
+        case 'your_creature_died':
+          return (log.died ?? []).some((d) => d.controller === controller && d.types.includes('Creature'));
         default:
           return false;
       }

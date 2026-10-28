@@ -3923,7 +3923,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever ~ deals damage" / "deals combat damage": once for everything it dealt at the same time.
   deals_damage(t, check) {
     const e = check.event;
-    if (e.type !== 'damage' || (t.combat && !e.combat) || check.sourceLeft) return [];
+    if (e.type !== 'damage' || (t.combat && !e.combat) || (t.noncombat && e.combat) || check.sourceLeft) return [];
     // "Whenever ~ deals damage to a creature": once for each creature, which is the trigger's object.
     if (t.to === 'creature') {
       if (e.to.kind !== 'permanent') return [];
