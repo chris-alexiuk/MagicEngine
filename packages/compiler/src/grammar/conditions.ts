@@ -353,6 +353,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     return { type: 'graveyard', ...c, filter };
   }
+  // Oversold Cemetery: "you have four or more creature cards in your graveyard".
+  const haveKind = /^you have (\w+ or more) (.+?) cards in your graveyard$/.exec(t);
+  if (haveKind) {
+    const c = compare(haveKind[1]!);
+    const pf = parseFilter(`${haveKind[2]} cards in your graveyard`, b);
+    if (!c || !pf || pf.filter.zone !== 'graveyard') return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'graveyard', ...c, filter };
+  }
   // Threshold and friends: "there are seven or more cards in your graveyard", "seven or more cards are in your graveyard".
   const gy = /^there are (\w+ or more) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) cards are in your graveyard$/.exec(t);
   if (gy) {
@@ -397,8 +406,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
   // The Enduring cycle: "it was a creature" (a leaves-the-battlefield trigger looks back, CR 603.10a)
   // Scavenging Ooze: "Exile target card from a graveyard. If it was a creature card, …" — the card, now in exile.
-  const wasCard = /^it was an? (creature|artifact|enchantment|land|planeswalker|instant|sorcery) card$/.exec(t);
-  if (wasCard && b.it && (b.it.ref === 'target' || b.it.ref === 'created')) return { type: 'is', of: b.it, filter: { types: [wasCard[1]!.replace(/^\w/, (c) => c.toUpperCase())] } };
+  const wasCard = /^it was an? (creature|artifact|enchantment|land|planeswalker|instant|sorcery|permanent) card$/.exec(t);
+  // Lion Sash: "If it was a permanent card" (CR 110.4a: artifact, battle, creature, enchantment, land, planeswalker).
+  const typesOf = (w: string) => (w === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : [w.replace(/^\w/, (c) => c.toUpperCase())]);
+  if (wasCard && b.it && (b.it.ref === 'target' || b.it.ref === 'created')) return { type: 'is', of: b.it, filter: { types: typesOf(wasCard[1]!) } };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath

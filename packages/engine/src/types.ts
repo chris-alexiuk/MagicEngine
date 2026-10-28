@@ -479,6 +479,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** Cosmium Confluence: "Put three +1/+1 counters on a Cave you control. It becomes …" — the one chosen. */
+  chosenObject?: ObjectRef;
   /** CR 706.2: the result of the latest die roll this resolution made ("equal to the result"). */
   dieResult?: number;
   /** CR 608.2h: what this resolution sacrificed, as it last existed ("the sacrificed creature's power"). */

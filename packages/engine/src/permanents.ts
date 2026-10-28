@@ -20,9 +20,20 @@ function umbraArmor(g: GameState, o: GameObject): GameObject | undefined {
     .find((a) => a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && faceOf(g, a).keywords.some((k) => k.id === 'umbra_armor' || k.id === 'totem_armor'));
 }
 
+/** CR 122.1c: a shield counter is removed instead of the permanent being dealt damage or destroyed. */
+export function removeShield(o: GameObject, events: GameEvent[]): boolean {
+  if ((o.counters.shield ?? 0) <= 0) return false;
+  o.counters.shield!--;
+  if (!o.counters.shield) delete o.counters.shield;
+  events.push({ type: 'counters', object: o.id, counter: 'shield', delta: -1 });
+  return true;
+}
+
 export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean } = {}): boolean {
   if (o.zone !== 'battlefield') return false;
   if (hasKeyword(g, o, 'indestructible')) return false;
+  // CR 122.1c: "If a permanent with a shield counter on it would be … destroyed, instead remove a shield counter from it."
+  if (removeShield(o, events)) return false;
   if (!opts.noRegen && (o.regenShields ?? 0) > 0) {
     // CR 701.19a: instead remove all damage from it, tap it, and remove it from combat.
     o.regenShields!--;

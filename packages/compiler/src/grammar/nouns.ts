@@ -24,12 +24,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // counted as the effect applies. Before "you control": that's
   // the count's.
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power".
-  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than) (the number of .+|(?:~|this creature)'s (?:power|toughness))$/, (f, m, b) => {
+  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness))$/, (f, m, b) => {
     // "… in your library" is the card's zone: peeled first.
     if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[2]!)) return false;
     const n = parseCount(m[2]!, b);
     if (!n) return false;
-    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt' } as const)[m[1] as 'less than'];
+    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'greater than or equal to': 'ge', 'greater than': 'gt', 'equal to': 'eq' } as const)[m[1] as 'less than'];
     f.manaValue = { op, n };
     return true;
   }],

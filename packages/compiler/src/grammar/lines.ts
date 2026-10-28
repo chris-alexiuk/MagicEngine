@@ -414,6 +414,8 @@ const andIf = (a: ActivatedAbility, c: ConditionNode) => (a.activateIf = a.activ
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   // CR 602.5b: timing restrictions on activating.
   [/ Activate only during your turn, before attackers are declared\.$/, (a) => andIf(a, { type: 'before_attackers' })],
+  // Vivi Ornitier: "Activate only during your turn and only once each turn."
+  [/ Activate only during your turn and only once each turn\.$/, (a) => (andIf(a, { type: 'your_turn', value: true }), (a.oncePerTurn = true))],
   [/ Activate only during your turn\.$/, (a) => andIf(a, { type: 'your_turn', value: true })],
   [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
   [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
@@ -843,6 +845,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!pf || pf.plural) return null;
     b.named['that creature'] = { ref: 'trigger_object' };
     return { trigger: { type: 'attacks', subject: { ref: 'all', filter: pf.filter }, defender: 'you' }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // Aurelia, the Law Above: "Whenever a player attacks with three or more creatures" — anyone (CR 508.3d).
+  const playerAttacks = /^a player attacks with (\w+) or more creatures$/.exec(t);
+  if (playerAttacks) {
+    const min = NUMBER_WORDS[playerAttacks[1]!];
+    if (!min) return null;
+    return { trigger: { type: 'you_attack', anyone: true, min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // CR 508.3d: "Whenever you attack", "… with two or more creatures", "Whenever one or more creatures you control attack".
   const youAttack = /^(?:you attack|one or more creatures you control attack)(?: with (\w+) or more creatures)?$/.exec(t);
@@ -1692,6 +1701,19 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
     const pf = parseFilter(extra[2]!, b);
     if (!pf || pf.plural || pf.filter.zone) return null;
     return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extra[1] ? { other: true } : {}) }, counter: extra[3]!, amount: 1 };
+  }
+  // Giada: "Each other Angel you control enters with an additional +1/+1 counter on it for each Angel you already control";
+  // Arwen: "… enters with a number of additional +1/+1 counters on it equal to Arwen's toughness".
+  const extraMany =
+    /^Each (other )?(.+?) enters with an additional (\S+) counter on it for each (.+?) you already control$/.exec(body) ??
+    /^Each (other )?(.+?) enters with a number of additional (\S+) counters on it equal to (.+)$/.exec(body);
+  if (extraMany) {
+    const pf = parseFilter(extraMany[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    const already = /for each/.test(body);
+    const amount = already ? parseForEach(`${extraMany[4]} you control`, b) : parseCount(extraMany[4]!, b);
+    if (!amount || amount.kind === 'x') return null;
+    return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extraMany[1] ? { other: true } : {}) }, counter: extraMany[3]!, amount, ...(already ? { notEntering: true } : {}) };
   }
   // Spelunking: "Lands you control enter untapped." — the controller orders replacement effects (CR 616.1), so it wins.
   const untapped = /^(.+?) you control enter untapped$/.exec(body);

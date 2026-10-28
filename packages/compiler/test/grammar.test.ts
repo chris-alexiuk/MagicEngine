@@ -2152,3 +2152,13 @@ describe('slice 177', () => {
     expect(parse("Whenever a creature an opponent controls attacks, if you're the defending player, create a 3/3 red Ogre creature token unless that creature's controller pays {3}.", 'Legendary Creature — Ogre Warrior', 'Kazuul, Tyrant of the Cliffs').abilities[0]).toMatchObject({ trigger: { defender: 'you' }, effects: [{ type: 'unless_pays', payer: { ref: 'controller_of', of: { ref: 'trigger_object' } } }] });
   });
 });
+
+describe('slice 178', () => {
+  it('reads a counter on a chosen creature, counted mana values, total mana value, Giada', () => {
+    expect(parse('Whenever equipped creature deals combat damage to a player, put a +1/+1 counter on a creature you control, then proliferate.', 'Artifact — Equipment', 'Sword of Truth and Justice').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', choose: { controller: 'you', types: ['Creature'] } }, { type: 'proliferate' }] });
+    expect(parse('Put a shield counter on a creature you control. It gains flying until end of turn.', 'Instant', 'Shield Up').abilities[0]).toMatchObject({ effects: [{ counter: 'shield' }, { type: 'modify', what: { ref: 'chosen_object' } }] });
+    expect(parse('Whenever a player casts a spell with mana value equal to the number of charge counters on ~, counter that spell.', 'Artifact', 'Chalice of the Void').abilities[0]).toMatchObject({ trigger: { filter: { manaValue: { op: 'eq', n: { kind: 'counters', counter: 'charge' } } } } });
+    expect(parse('This spell costs {X} less to cast, where X is the total mana value of historic permanents you control.', 'Legendary Artifact — Equipment', 'Excalibur').abilities[0]).toMatchObject({ effect: { amount: { kind: 'total_power', stat: 'mana_value' } } });
+    expect(parse('Each other Angel you control enters with an additional +1/+1 counter on it for each Angel you already control.', 'Legendary Creature — Angel', 'Giada').abilities[0]).toMatchObject({ effect: { type: 'enter_counters_others', notEntering: true } });
+  });
+});

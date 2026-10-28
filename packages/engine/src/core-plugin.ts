@@ -581,6 +581,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     const n = amountOf(ctx, node.amount);
+    // "Put a +1/+1 counter on a creature you control": one chosen as it resolves (none if there's none).
+    if (node.choose) {
+      const g = ctx.g;
+      const candidates = g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, node.choose as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null }));
+      if (!candidates.length) return true;
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: `Choose one to put ${n === 1 ? 'a counter' : `${n} counters`} on.`, sourceName: sourceName(ctx) } };
+      if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of them.');
+      const chosen = g.objects[answer.objects[0]!]!;
+      addCounters(ctx, chosen, String(node.counter), n);
+      if (ctx.resolution) ctx.resolution.chosenObject = { id: chosen.id, zcc: chosen.zcc };
+      return true;
+    }
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') addCounters(ctx, o, String(node.counter), n);
     return true;
   },
@@ -3816,7 +3829,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
       return players.map((player) => ({ player }));
     }
-    return [{}];
+    // "Whenever a player attacks …": that player is the attacker.
+    return t.anyone ? [{ player: check.g.active }] : [{}];
   },
   // CR 509.3g: "Whenever ~ attacks and isn't blocked" — once blockers have been declared.
   unblocked(t, check) {

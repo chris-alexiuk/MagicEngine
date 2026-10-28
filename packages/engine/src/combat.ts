@@ -18,6 +18,7 @@ import {
 import { playerRule } from './player-rules.js';
 import { lifeLoss, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
+import { removeShield } from './permanents.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
@@ -889,6 +890,8 @@ export function dealDamage(
   if (!o || o.zone !== 'battlefield') return 0;
   // CR 702.16e: damage from a source with the protected-against quality is prevented.
   if (!unpreventable && hasProtectionFrom(g, o, source)) return 0;
+  // CR 122.1c: a shield counter is removed instead (a replacement, not prevention — it works even when damage can't be prevented).
+  if (removeShield(o, events)) return 0;
   events.push({ type: 'damage', source: source.id, to, amount, combat });
   o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {

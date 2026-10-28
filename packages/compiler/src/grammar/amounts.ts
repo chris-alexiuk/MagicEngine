@@ -171,10 +171,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Ghalta: "the total power of creatures you control"
-  const totalPower = /^the total power of (.+)$/.exec(t);
+  const totalPower = /^the total (power|mana value) of (.+)$/.exec(t);
   if (totalPower) {
-    const pf = parseFilter(totalPower[1]!, b);
-    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: pf.filter } : null;
+    const pf = parseFilter(totalPower[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: pf.filter, ...(totalPower[1] === 'mana value' ? { stat: 'mana_value' as const } : {}) } : null;
   }
   // CR 903.4: "the number of colors in your commanders' color identity"
   if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };

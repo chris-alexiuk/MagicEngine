@@ -1,6 +1,7 @@
-import type { ConditionNode, EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
+import type { AmountExpr, ConditionNode, EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
 import { chars, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import { replaceQuantity } from './quantities.js';
+import { amountOf } from './resolve.js';
 import { abilitySources } from './zones.js';
 import type {
   ChoiceAnswer,
@@ -182,7 +183,14 @@ function applyEnterReplacements(g: GameState, o: GameObject): void {
         // Metallic Mimic: "Each other creature you control of the chosen type enters with an additional +1/+1 counter on
         // it." — counters it enters with are put on it (CR 122.6), so counter replacements apply.
         const counter = String(effect.counter);
-        const n = replaceQuantity(g, 'counters', Number(effect.amount ?? 1), { player: o.controller, object: o, counter });
+        // Giada: "for each Angel you already control" — not counting the one entering; Arwen: "equal to Arwen's toughness".
+        let base = Number(effect.amount ?? 1);
+        if (effect.amount && typeof effect.amount === 'object') {
+          const a = effect.amount as AmountExpr;
+          const counted = effect.notEntering && a.kind === 'count' ? { ...a, filter: { ...a.filter, notObject: o.id } } : a;
+          base = Math.max(0, amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, counted));
+        }
+        const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter });
         if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
       }
     }

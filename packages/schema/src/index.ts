@@ -452,7 +452,9 @@ export type Ref =
   /** "that card's mana value" after "discards a card" — only its characteristics as it was discarded (cost_lki). */
   | { ref: 'discarded_this_way' }
   /** CR 614.12: "the chosen player" — the player chosen as the source entered ("As ~ enters, choose a player"). */
-  | { ref: 'chosen_player' };
+  | { ref: 'chosen_player' }
+  /** "Put a +1/+1 counter on a creature you control. It gains …" — the object that effect chose. */
+  | { ref: 'chosen_object' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
@@ -535,7 +537,7 @@ export type AmountExpr = (
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
   | { kind: 'colors_spent' }
   /** "the sacrificed creature's power", "the discarded card's mana value" — as it was when the cost was paid. */
-  | { kind: 'total_power'; filter: ObjectFilter }
+  | { kind: 'total_power'; filter: ObjectFilter; stat?: 'mana_value' }
   | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded'; stat: 'power' | 'toughness' | 'mana_value' }
   /** `half`: "half X, rounded down", "half their life, rounded up" — the count is halved, then scaled (times, plus). */

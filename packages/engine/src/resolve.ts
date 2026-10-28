@@ -78,6 +78,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       const o = r ? g.objects[r.id] : undefined;
       return o && r && (o.zcc === r.zcc || foundNow(ctx, o)) ? [o] : [];
     }
+    case 'chosen_object': {
+      const r = ctx.resolution?.chosenObject;
+      const o = r ? g.objects[r.id] : undefined;
+      return o && o.zcc === r!.zcc ? [o] : [];
+    }
     case 'attached': {
       const s = sourceOf(ctx);
       const r = s?.attachedTo;
@@ -427,7 +432,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       let n = 0;
       for (const id of g.zones.battlefield) {
         const o = g.objects[id]!;
-        if (matchesFilter(g, o, e.filter, { controller: ctx.controller, source: ctx.source ?? null })) n += Math.max(0, power(g, o));
+        // Excalibur, Metalwork Colossus: "the total mana value of …".
+        if (matchesFilter(g, o, e.filter, { controller: ctx.controller, source: ctx.source ?? null })) n += e.stat === 'mana_value' ? manaValueOf(g, o) : Math.max(0, power(g, o));
       }
       return n;
     }

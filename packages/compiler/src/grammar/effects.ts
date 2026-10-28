@@ -2499,8 +2499,19 @@ const VERBS: Record<string, VerbHandler> = {
     const counters = /^(\S+) (\S+) counters? on (.+)$/.exec(args);
     if (counters) {
       const amount = parseAmount(counters[1]!);
+      if (amount === null || !/^[+-]?\w+(?:\/[+-]\d+)?$/.test(counters[2]!)) return null;
+      // Sword of Truth and Justice: "put a +1/+1 counter on a creature you control" — one chosen as it resolves.
+      const one = /\btarget\b/.test(counters[3]!) ? null : /^(a|an|another) (.+)$/.exec(counters[3]!);
+      if (one) {
+        const pf = parseFilter(one[2]!, b);
+        if (!pf || pf.plural || pf.filter.zone) return null;
+        if (one[1] === 'another') pf.filter.other = true;
+        // "It becomes …", "It gains …" after: the one chosen.
+        b.it = { ref: 'chosen_object' };
+        return [{ type: 'add_counters', choose: pf.filter, counter: counters[2]!.replace(/−/g, '-'), amount }];
+      }
       const what = parseObjectRef(counters[3]!, b);
-      if (amount === null || !what || !/^[+-]?\w+(?:\/[+-]\d+)?$/.test(counters[2]!)) return null;
+      if (!what) return null;
       return [{ type: 'add_counters', what: what.ref, counter: counters[2]!.replace(/−/g, '-'), amount }];
     }
     // Watcher for Tomorrow: "put the exiled card into its owner's hand"; "put it into its owner's graveyard" (CR 400.3:
@@ -3253,7 +3264,8 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // "Target creature must be blocked this turn if able." / "~ can't be blocked by more than one creature this turn."
-  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can block only .+? this turn)$/.exec(c);
+  // Gingerbrute: "This creature can't be blocked this turn except by creatures with haste."
+  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can't be blocked this turn except by .+|can block only .+? this turn)$/.exec(c);
   if (combat) {
     const r = attempt(b, (b) => {
       const rule = parseCombatRule(combat[2]!.replace(' this turn', ''), b);
