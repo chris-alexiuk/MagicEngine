@@ -9,7 +9,7 @@ import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { legendRuleExempt, maxHandSize, playerRule } from './player-rules.js';
+import { keptManaColors, legendRuleExempt, maxHandSize, playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
@@ -17,7 +17,7 @@ import { ascendOnResolve, checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
 import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
-import type { ChoiceAnswer, GameEvent, GameObject, GameState, PlayerId, Step, StackEntry } from './types.js';
+import type { ChoiceAnswer, GameEvent, GameObject, GameState, ManaColor, PlayerId, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
 import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, setTapped, zoneList } from './zones.js';
 
@@ -318,8 +318,12 @@ export function endStep(g: GameState, events: GameEvent[]): void {
   // CR 500.5: unspent mana empties as each step and phase ends — except mana an effect says isn't lost until later.
   const combatEnds = g.step === 'end_of_combat';
   for (const p of Object.values(g.players)) {
-    p.pool = emptyPool();
-    const kept = (p.restricted ?? []).filter((r) => r.keep === 'end_of_turn' ? g.step !== 'cleanup' : r.keep === 'end_of_combat' ? !combatEnds : false);
+    // Omnath, Locus of Mana / Electro: "You don't lose unspent green (red) mana as steps and phases end."
+    const keep = keptManaColors(g, p.id);
+    const pool = emptyPool();
+    for (const c of keep) pool[c as ManaColor] = p.pool[c as ManaColor];
+    p.pool = pool;
+    const kept = (p.restricted ?? []).filter((r) => keep.has(r.color) || (r.keep === 'end_of_turn' ? g.step !== 'cleanup' : r.keep === 'end_of_combat' ? !combatEnds : false));
     if (kept.length) p.restricted = kept;
     else delete p.restricted;
   }

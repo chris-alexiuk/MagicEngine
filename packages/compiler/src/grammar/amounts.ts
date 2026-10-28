@@ -193,10 +193,11 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
   // Ghalta: "the total power of creatures you control"
-  const totalPower = /^the total (power|mana value) of (.+)$/.exec(t);
+  const totalPower = /^the total (power|mana value) of (other )?(.+)$/.exec(t);
   if (totalPower) {
-    const pf = parseFilter(totalPower[2]!, b);
-    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: pf.filter, ...(totalPower[1] === 'mana value' ? { stat: 'mana_value' as const } : {}) } : null;
+    // Summon: Bahamut: "the total mana value of other permanents you control" — other than the source.
+    const pf = parseFilter(totalPower[3]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'total_power', filter: { ...pf.filter, ...(totalPower[2] ? { other: true } : {}) }, ...(totalPower[1] === 'mana value' ? { stat: 'mana_value' as const } : {}) } : null;
   }
   // CR 903.4: "the number of colors in your commanders' color identity"
   if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };

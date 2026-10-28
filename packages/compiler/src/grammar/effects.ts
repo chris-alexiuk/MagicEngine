@@ -156,6 +156,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // meaning (CR 207.2c); "also" only says it's in addition.
       if (i > 0) s = s.replace(/^(?!Choose\b)[A-Z][A-Za-z']+(?: [A-Za-z']+){0,2} — (?=[A-Z])/, '');
       s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
+      // Electro: "When you do, he deals X damage to target player." — a character card calling itself "he" or "she".
+      if (/\bCreature\b/.test(b.env.typeLine)) s = s.replace(/^(?:He|She) (?=(?:deals|gains|gets|fights) )/, '~ ');
       // Dawn's Truce: "If the gift was promised, permanents you control also gain indestructible until end of turn."
       s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
@@ -2641,7 +2643,7 @@ const VERBS: Record<string, VerbHandler> = {
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (onto[1] === 'that card' && b.it?.ref === 'trigger_object'))) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (onto[1] === 'that card' && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }

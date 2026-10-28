@@ -1170,14 +1170,18 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // "Whenever a creature card is put into a graveyard from anywhere other than the battlefield" (Syr Konrad)
   // The Gitrog Monster: "Whenever one or more land cards are put into your graveyard from anywhere" — once per batch.
-  const intoYardBatch = /^one or more ((?:.+? )?cards) are put into (your|a|an opponent's) graveyard from anywhere( other than the battlefield)?$/.exec(t);
+  // Hedge Shredder: "Whenever one or more land cards are put into your graveyard from your library, put them onto the
+  // battlefield tapped." — "them" are the cards of that batch.
+  const intoYardBatch = /^one or more ((?:.+? )?cards) are put into (your|a|an opponent's) graveyard from (anywhere( other than the battlefield)?|your library)$/.exec(t);
   if (intoYardBatch) {
     const pf = parseFilter(`${intoYardBatch[1]} in a graveyard`, b);
     if (pf && pf.plural && pf.filter.zone === 'graveyard') {
       const { zone: _z, ...filter } = pf.filter;
       filter.token = false;
       if (intoYardBatch[2] !== 'a') filter.owner = intoYardBatch[2] === 'your' ? 'you' : 'opponent';
-      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, batch: true, ...(intoYardBatch[3] ? { notFromBattlefield: true } : {}) }, it: null, player: null };
+      const fromLibrary = intoYardBatch[3] === 'your library';
+      if (fromLibrary) b.named['them'] = { ref: 'created' };
+      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, batch: true, ...(intoYardBatch[4] ? { notFromBattlefield: true } : {}), ...(fromLibrary ? { fromZone: 'library' } : {}) }, it: null, player: null };
     }
   }
   // Bloodchief Ascension: "Whenever a card is put into an opponent's graveyard from anywhere" — "that player" is its owner.
@@ -1882,6 +1886,10 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
     'may cast spells from your hand without paying their mana costs': 'free_from_hand',
   };
   if (subject && simple[subject[2]!] && who(subject[1]!)) return { type: 'player_rule', who: who(subject[1]!)!, rule: simple[subject[2]!]! };
+  // CR 500.5: Omnath, Locus of Mana: "You don't lose unspent green mana as steps and phases end."; Upwelling: "Players
+  // don't lose unspent mana as steps and phases end."
+  const keepMana = /^(You|Players) don't lose unspent (?:(white|blue|black|red|green) )?mana as steps and phases end$/.exec(body);
+  if (keepMana) return { type: 'player_rule', who: keepMana[1] === 'You' ? 'you' : 'each', rule: 'keep_mana', ...(keepMana[2] ? { colors: [COLOR_WORDS[keepMana[2]]!] } : {}) };
   // Platinum Angel: "You can't lose the game and your opponents can't win the game." (CR 104.3a: conceding still works.)
   if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
   // Narset, Parter of Veils
@@ -3102,10 +3110,16 @@ export const topPermissionRule: GrammarRule = {
   id: 'top_permission',
   parse(line, original, ctx) {
     const env = envOf(ctx);
+    // The Reality Chip: "As long as ~ is attached to a creature, you may …"; Augur of Autumn: "As long as you control three
+    // or more creatures with different powers, …" — only while that holds.
+    const gated = /^As long as (.+?), you may (.+)$/.exec(line);
+    const condition = gated && env ? parseCondition(gated[1]!, new Binder(env)) : null;
+    if (gated && !condition) return null;
+    const body = gated ? `You may ${gated[2]}` : line;
     // Bolas's Citadel: "… If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost."
-    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(line);
+    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(body);
     if (!env || !m || (!m[1] && !m[2]) || (m[3] && !m[2])) return null;
-    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}), ...(m[3] ? { lifeCost: true } : {}) };
+    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}), ...(m[3] ? { lifeCost: true } : {}), ...(condition ? { condition } : {}) };
     if (m[2]) {
       let phrase = m[2];
       // "Angel spells and Human spells", "instant and sorcery spells"

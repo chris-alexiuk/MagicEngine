@@ -37,6 +37,10 @@ const CARDS = [
   makeCard({ name: 'Thirst for Knowledge', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Draw three cards. Then discard two cards unless you discard an artifact card.' }),
   makeCard({ name: 'Trinket', type_line: 'Artifact', mana_cost: '{1}', cmc: 1, oracle_text: '' }),
   makeCard({ name: 'Kreat Lite', type_line: 'Creature — Goblin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever one or more Goblins you control attack, create a 1/1 red Goblin creature token that's tapped and attacking." }),
+  makeCard({ name: 'Hedge Shredder', type_line: 'Artifact Creature — Vehicle', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Whenever one or more land cards are put into your graveyard from your library, put them onto the battlefield tapped.' }),
+  makeCard({ name: 'Mill Three', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Mill three cards.' }),
+  makeCard({ name: 'Reality Chip Lite', type_line: 'Legendary Artifact — Equipment', mana_cost: '{0}', oracle_text: 'As long as this Equipment is attached to a creature, you may play lands and cast spells from the top of your library.\nEquip {0}' }),
+  makeCard({ name: 'Electro Lite', type_line: 'Legendary Creature — Human Villain', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: "You don't lose unspent red mana as steps and phases end." }),
 ];
 
 function settle(g: GameState): GameState {
@@ -358,5 +362,51 @@ describe('staples (slice 187)', () => {
     g = settle(g);
     const goblins = () => g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'alice' && g.cards[g.objects[id]!.card]!.name === 'Goblin Token');
     expect(goblins().length).toBe(0);
+  });
+});
+
+describe('staples (slice 187): from the library', () => {
+  it('Hedge Shredder: the land cards milled at once go onto the battlefield tapped', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Hedge Shredder', 'battlefield');
+    const lib = g.zones.library.alice!;
+    const forests = [give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library')];
+    for (const f of forests) lib.splice(lib.indexOf(f), 1);
+    lib.unshift(...forests, give(g, 'alice', 'Bear', 'library'));
+    lib.splice(lib.lastIndexOf(lib[2]!), 1);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mill Three', 'hand') }));
+    g = settle(g);
+    expect(forests.map((id) => [g.objects[id]!.zone, g.objects[id]!.tapped])).toEqual([['battlefield', true], ['battlefield', true]]);
+  });
+
+  it('The Reality Chip: playing from the top only while attached to a creature', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const chip = give(g, 'alice', 'Reality Chip Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Zombie', 'battlefield');
+    const top = g.zones.library.alice![0]!;
+    const playsTop = () => legalActions(g, 'alice').some((a) => (a.type === 'cast' || a.type === 'play_land') && (a as { object: string }).object === top);
+    g.players.alice!.pool.C = 9;
+    g.players.alice!.pool.G = 9;
+    expect(playsTop()).toBe(false);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: chip, ability: 0, targets: [[{ kind: 'object', object: bear }]] }));
+    g.players.alice!.pool.C = 9;
+    g.players.alice!.pool.G = 9;
+    g.players.alice!.pool.W = 9;
+    g.players.alice!.pool.U = 9;
+    g.players.alice!.pool.B = 9;
+    g.players.alice!.pool.R = 9;
+    expect(g.objects[chip]!.attachedTo?.id).toBe(bear);
+    expect(playsTop()).toBe(true);
+  });
+});
+
+describe('staples (slice 188): keeping unspent mana (CR 500.5)', () => {
+  it("Electro: unspent red mana isn't lost as steps and phases end; other mana is", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Electro Lite', 'battlefield');
+    g.players.alice!.pool.R = 2;
+    g.players.alice!.pool.G = 1;
+    g = toStep(g, 'end', 'alice');
+    expect([g.players.alice!.pool.R, g.players.alice!.pool.G]).toEqual([2, 0]);
   });
 });

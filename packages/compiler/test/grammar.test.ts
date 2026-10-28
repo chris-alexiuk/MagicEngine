@@ -2315,3 +2315,12 @@ describe('slice 187', () => {
   });
 });
 
+describe('slice 188', () => {
+  it('reads conditional top-of-library permissions, library batches and kept mana', () => {
+    expect(parse('As long as ~ is attached to a creature, you may play lands and cast spells from the top of your library.', 'Legendary Artifact — Equipment').abilities[0]).toMatchObject({ effect: { type: 'top_permission', lands: true, condition: { type: 'is', of: { ref: 'attached' } } } });
+    expect(parse('Whenever one or more land cards are put into your graveyard from your library, put them onto the battlefield tapped.', 'Artifact Creature').abilities[0]).toMatchObject({ trigger: { type: 'put_into_graveyard', batch: true, fromZone: 'library' }, effects: [{ type: 'move', what: { ref: 'created' }, to: 'battlefield', tapped: true }] });
+    expect(parse("You don't lose unspent red mana as steps and phases end.", 'Creature').abilities[0]).toMatchObject({ effect: { rule: 'keep_mana', colors: ['R'] } });
+    expect(parse('This creature deals damage equal to the total mana value of other permanents you control to each opponent.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ amount: { kind: 'total_power', stat: 'mana_value', filter: { other: true } } }] });
+  });
+});
+

@@ -2,7 +2,7 @@ import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
-import { COLOR_WORDS, parseAmount } from './words.js';
+import { capitalise, COLOR_WORDS, parseAmount } from './words.js';
 
 /**
  * Conditions in "if" clauses: intervening "if" on triggers (CR 603.4) and
@@ -215,6 +215,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const state = /^~ is (tapped|untapped)$/.exec(t);
   if (state) return { type: 'self_tapped', tapped: state[1] === 'tapped' };
   // "~ is equipped", "~ is enchanted" — something of that kind is attached to it.
+  // The Reality Chip: "~ is attached to a creature" — what it's attached to is one.
+  const attachedTo = /^(?:~|it) is attached to (a|an) (creature|permanent|land|artifact)$/.exec(t);
+  if (attachedTo) return { type: 'is', of: { ref: 'attached' }, filter: attachedTo[2] === 'permanent' ? {} : { types: [capitalise(attachedTo[2]!)] } };
   const attached = /^~ is (equipped|enchanted)$/.exec(t);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
   if (/^~ is monstrous$/.test(t)) return { type: 'monstrous' };

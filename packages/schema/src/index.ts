@@ -1035,6 +1035,8 @@ export const PLAYER_RULES = [
   'no_legend_rule',
   /** CR 609.4b: "You may spend mana as though it were mana of any color" — to cast the spells its `filter` names (any payment without one). */
   'spend_any_color',
+  /** CR 500.5: "You don't lose unspent red mana as steps and phases end" — mana of its `colors` (any, without them) stays. */
+  'keep_mana',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

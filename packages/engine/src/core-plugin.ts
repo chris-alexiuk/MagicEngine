@@ -4257,18 +4257,20 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     // Syr Konrad: "Whenever a creature card is put into a graveyard from anywhere [other than the battlefield]"
     if ((t.subject as Ref | undefined)?.ref === 'all') {
-      if (e.type !== 'moved' || e.to !== 'graveyard' || check.sourceLeft || (t.notFromBattlefield && e.from === 'battlefield')) return [];
+      if (e.type !== 'moved' || e.to !== 'graveyard' || check.sourceLeft || (t.notFromBattlefield && e.from === 'battlefield') || (t.fromZone && e.from !== t.fromZone)) return [];
       const o = check.g.objects[e.object];
       const filter = (t.subject as { filter: ObjectFilter }).filter;
       if (!o || o.zone !== 'graveyard' || !matchesFilter(check.g, o, filter, { controller: check.controller, anyZone: true })) return [];
-      // The Gitrog Monster: "one or more land cards" — once for the cards put there at the same time.
+      // The Gitrog Monster: "one or more land cards" — once for the cards put there at the same time; Hedge Shredder's
+      // "them" are those cards.
       if (t.batch) {
-        const first = (check.batch ?? [e]).find((x) => {
-          if (x.type !== 'moved' || x.to !== 'graveyard' || (t.notFromBattlefield && x.from === 'battlefield')) return false;
+        const matching = (check.batch ?? [e]).filter((x) => {
+          if (x.type !== 'moved' || x.to !== 'graveyard' || (t.notFromBattlefield && x.from === 'battlefield') || (t.fromZone && x.from !== t.fromZone)) return false;
           const xo = check.g.objects[x.object];
           return Boolean(xo && xo.zone === 'graveyard' && matchesFilter(check.g, xo, filter, { controller: check.controller, anyZone: true }));
         });
-        return first === e ? [{}] : [];
+        if (matching[0] !== e) return [];
+        return [t.fromZone ? { created: matching.flatMap((x) => (x.type === 'moved' && check.g.objects[x.object] ? [refTo(check.g.objects[x.object]!)] : [])) } : {}];
       }
       return [{ object: refTo(o) }];
     }

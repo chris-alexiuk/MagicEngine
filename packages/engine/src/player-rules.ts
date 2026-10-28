@@ -51,6 +51,23 @@ export function spendAnyColor(g: GameState, player: PlayerId, spell?: GameObject
   return false;
 }
 
+/** CR 500.5: the colors of unspent mana this player doesn't lose as steps and phases end ("red mana"; all of it). */
+export function keptManaColors(g: GameState, player: PlayerId): Set<string> {
+  const out = new Set<string>();
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode & { colors?: string[] };
+      if (e.rule !== 'keep_mana') continue;
+      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      if (!applies || !staticConditionHolds(g, e, source)) continue;
+      for (const c of e.colors ?? ['W', 'U', 'B', 'R', 'G', 'C']) out.add(c);
+    }
+  }
+  return out;
+}
+
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
   // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.

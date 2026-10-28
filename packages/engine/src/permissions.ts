@@ -1,5 +1,5 @@
 import type { ObjectFilter } from '@mtg/schema';
-import { matchesFilter, objectAbilities } from './characteristics.js';
+import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { abilitySources } from './zones.js';
 
@@ -45,6 +45,8 @@ function fromTop(g: GameState, player: PlayerId, o: GameObject, what: 'land' | '
     if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || a.effect.type !== 'top_permission') continue;
+      // "As long as ~ is attached to a creature, …" (The Reality Chip).
+      if (!staticConditionHolds(g, a.effect as never, src)) continue;
       if (what === 'land' && a.effect.lands) return true;
       const spells = a.effect.spells as ObjectFilter | undefined;
       if (what === 'spell' && spells && matchesFilter(g, o, spells, { controller: player, source: src, anyZone: true })) return true;
@@ -65,7 +67,7 @@ export function topLifeOnly(g: GameState, player: PlayerId, o: GameObject): bool
     const src = g.objects[id];
     if (!src || src.zone !== 'battlefield' || src.controller !== player) continue;
     for (const a of objectAbilities(g, src)) {
-      if (a.kind !== 'static' || a.effect.type !== 'top_permission') continue;
+      if (a.kind !== 'static' || a.effect.type !== 'top_permission' || !staticConditionHolds(g, a.effect as never, src)) continue;
       const spells = a.effect.spells as ObjectFilter | undefined;
       if (!spells || !matchesFilter(g, o, spells, { controller: player, source: src, anyZone: true })) continue;
       if (!a.effect.lifeCost) return false;
