@@ -215,7 +215,11 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
   const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t);
-  if (lki) return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
+  if (lki) {
+    // Momentous Fall: "… equal to the sacrificed creature's power, then you gain life equal to its toughness."
+    if (lki[1] === 'sacrificed' && (!b.it || b.it.ref === 'self')) b.it = { ref: 'sacrificed_this_way' };
+    return { kind: 'cost_lki', cost: lki[1] as 'sacrificed' | 'discarded', stat: lki[2] === 'mana value' ? 'mana_value' : (lki[2] as 'power' | 'toughness') };
+  }
   // Skyclave Apparition: "the mana value of the exiled card"
   const statOfThe = /^the (power|toughness|mana value) of (.+)$/.exec(t);
   if (statOfThe) {
@@ -231,7 +235,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const s = stat[2] === 'mana value' ? 'mana_value' : (stat[2] as 'power' | 'toughness');
     // CR 608.2h: what was sacrificed, as it last existed on the battlefield.
     if (of?.ref.ref === 'sacrificed_this_way') return { kind: 'cost_lki', cost: 'sacrificed', stat: s };
-    return of && !of.plural ? { kind: 'stat', stat: s, of: of.ref } : null;
+    if (of?.ref.ref === 'discarded_this_way') return { kind: 'cost_lki', cost: 'discarded', stat: s };
+    // Canopy Gargantuan: "on each other creature you control equal to that creature's toughness" — each its own; not one
+    // number.
+    return of && !of.plural && of.ref.ref !== 'all' ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
   // CR 706.2: "equal to the result", "where X is the result"

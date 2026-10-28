@@ -1834,7 +1834,8 @@ describe('slice 160', () => {
   it('waits for a delayed coin flip, binds the creature put onto the battlefield, and never pumps an instant itself', () => {
     expect(parse('Whenever this creature attacks or blocks, flip a coin at end of combat. If you lose the flip, an opponent gains control of this creature.', 'Creature — Efreet', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'delayed', step: 'end_of_combat', effects: [{ type: 'flip_coin' }, { type: 'if', cond: { type: 'won_flip', not: true } }] }] });
     expect(parse('You may put a creature card from your hand onto the battlefield. That creature gains haste. Sacrifice that creature at the beginning of the next end step.', 'Instant — Arcane', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'may' }, { type: 'modify', what: { ref: 'created' } }, { type: 'delayed', effects: [{ type: 'sacrifice', what: { ref: 'created' } }] }] });
-    expect(parse('Search your library for a Dinosaur creature card, put it onto the battlefield, then shuffle. It gains indestructible until your next turn.', 'Sorcery', 'S').unparsed).toHaveLength(1);
+    // Slice 169: "It" is the card found (it had read as the spell itself, so it stayed unread until then).
+    expect(parse('Search your library for a Dinosaur creature card, put it onto the battlefield, then shuffle. It gains indestructible until your next turn.', 'Sorcery', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'search' }, { type: 'modify', what: { ref: 'created' } }] });
   });
 });
 
@@ -1999,5 +2000,24 @@ describe('slice 168', () => {
     expect(parse('Counter target noncreature spell unless its controller pays {1}.\nFerocious — If you control a creature with power 4 or greater, counter that spell instead.', 'Instant', 'S').unparsed).toHaveLength(0);
     expect(parse('Whenever ~ becomes blocked by a creature, destroy that creature.', 'Creature — Basilisk', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] });
     expect(parse('Whenever ~ blocks or becomes blocked by a non-Wall creature, destroy that creature at end of combat.', 'Creature — Cockatrice', 'C').abilities[0]).toMatchObject({ trigger: { type: 'blocks', orBlocked: true, other: { notSubtypes: ['Wall'] } }, effects: [{ type: 'delayed', effects: [{ type: 'destroy', what: { ref: 'trigger_object' } }] }] });
+  });
+});
+
+describe('slice 169 (what pronouns refer to)', () => {
+  it('reads "that creature" as the other object, not the source the text just named', () => {
+    expect(parse('When a nonblack creature enters, sacrifice ~. If you do, destroy that creature.', 'Enchantment', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'destroy', what: { ref: 'trigger_object' } }] }] });
+    expect(parse('When a player casts a spell, sacrifice ~ and counter that spell.', 'Enchantment', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'sacrifice' }, { type: 'counter', what: { ref: 'trigger_object' } }] });
+    expect(parse("Whenever ~ becomes blocked by a creature, that creature's controller loses 2 life and you gain 2 life.", 'Creature — Horror', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', who: { ref: 'controller_of', of: { ref: 'trigger_object' } } }, { type: 'gain_life' }] });
+    expect(parse('When this Aura enters, if enchanted creature is a Wolf or Werewolf, untap that creature.', 'Enchantment — Aura', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'untap', what: { ref: 'attached' } }] });
+  });
+  it('reads what a search or manifest found, the target of a line before, and "its power" of a target', () => {
+    expect(parse('{T}, Sacrifice ~: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle. Then if you control four or more lands, untap that land.', 'Land', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'search' }, { type: 'if', effects: [{ type: 'untap', what: { ref: 'created' } }] }] });
+    expect(parse('Tap target creature.\nMetalcraft — If you control three or more artifacts, exile that creature.', 'Instant', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'if', effects: [{ type: 'move', what: { ref: 'target', index: 0 }, to: 'exile' }] }] });
+    expect(parse('Manifest the top card of your library, then put two +1/+1 counters on it.', 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'manifest' }, { type: 'add_counters', what: { ref: 'created' } }] });
+    expect(parse('Target creature gets +X/+0 until end of turn, where X is its power.', 'Instant', 'R').abilities[0]).toMatchObject({ effects: [{ type: 'modify', power: { kind: 'stat', of: { ref: 'target', index: 0 } } }] });
+    expect(parse('{T}: ~ deals damage equal to its power to target creature.', 'Creature — Elf', 'J').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', amount: { kind: 'stat', of: { ref: 'self' } } }] });
+    expect(parse("{1}{B}, {T}, Sacrifice another creature: Draw X cards, where X is that creature's power.", 'Legendary Creature — Human Elf Cleric', 'S').abilities[0]).toMatchObject({ effects: [{ type: 'draw', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'power' } }] });
+    expect(parse("When this creature enters, target player discards a card. ~ deals damage to that player equal to that card's mana value.", 'Creature — Rat', 'H').abilities[0]).toMatchObject({ effects: [{ type: 'discard' }, { type: 'deal_damage', amount: { kind: 'cost_lki', cost: 'discarded', stat: 'mana_value' } }] });
+    expect(parse("At the beginning of your upkeep, put a number of +1/+1 counters on each other creature you control equal to that creature's toughness.", 'Creature — Dragon', 'C').unparsed).toHaveLength(1);
   });
 });

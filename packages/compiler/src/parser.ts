@@ -111,7 +111,9 @@ export class ParserRegistry {
         // Stubborn Denial: "Ferocious — If you control a creature with power 4 or greater, counter that spell instead.";
         // Temur Battle Rage: "Ferocious — That creature also gains trample …" — about what the line before did.
         const wordless = next !== lines[i];
-        const joins = /^[A-Z][^.]* instead if [^.]+\.$/.test(next) || /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) || (wordless && /^(?:That|Those) (?:creature|creatures|spell|permanent|player)\b[^.]*\.$/.test(next));
+        // Dispatch: "Metalcraft — If you control three or more artifacts, exile that creature." — the target of the line before.
+        const refersBack = /\b(?:that|those) (?:creature|creatures|spell|permanent|player|card|land)\b|\bthe same (?:target|creature)\b/i.test(next);
+        const joins = /^[A-Z][^.]* instead if [^.]+\.$/.test(next) || /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) || (wordless && refersBack && /^(?:If|That|Those)\b[^.]*\.$/.test(next));
         if (joins && lines[i - 1] && /\.$/.test(lines[i - 1]!) && !/^[•+]/.test(lines[i - 1]!)) {
           lines.splice(i - 1, 2, `${lines[i - 1]} ${next}`);
           i--;

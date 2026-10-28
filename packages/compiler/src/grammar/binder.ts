@@ -24,6 +24,11 @@ export class Binder {
   targets: TargetSpec[] = [];
   /** Antecedent for "it", "that creature", "them". */
   it: Ref | null = null;
+  /**
+   * The last antecedent other than the source, kept when the text names the source ("sacrifice this enchantment. If you
+   * do, destroy that creature") — "that creature" is that one, not the source.
+   */
+  other: Ref | null = null;
   /** Antecedent for "that player". */
   player: Ref | null = null;
   /** Other phrases with a fixed meaning in this ability ("the blocking creature"). */
@@ -53,6 +58,7 @@ export class Binder {
     const b = new Binder(this.env);
     b.targets = this.targets.map((t) => ({ ...t }));
     b.it = this.it;
+    b.other = this.other;
     b.player = this.player;
     b.named = this.named;
     b.selfZone = this.selfZone;
@@ -70,6 +76,7 @@ export class Binder {
   adopt(other: Binder): void {
     this.targets = other.targets;
     this.it = other.it;
+    this.other = other.other;
     this.player = other.player;
     this.named = other.named;
     this.selfZone = other.selfZone;

@@ -156,10 +156,14 @@ export const spellRule: GrammarRule = {
     if (!program) return null;
     // "X target creatures" with X the announced X only (CR 601.2b), not an X the text works out.
     if (hasCountX(program) && /\bX is\b|\bthat many target/.test(line)) return null;
+    if (unfindable(program)) return null;
     const node: SpellAbility = { kind: 'spell', text: original, ...program };
     return node;
   },
 };
+
+/** A discarded card is known only by what it was ("that card's mana value"), not as an object to act on. */
+const unfindable = (program: object): boolean => JSON.stringify(program).includes('"ref":"discarded_this_way"');
 
 /** Whether a program has a target count that is "X" (TargetSpec.countX). */
 const hasCountX = (program: object): boolean => JSON.stringify(program).includes('"countX":true');
@@ -530,8 +534,15 @@ export const activatedRule: GrammarRule = {
     if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice')) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
+    // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
+    // (its power as it was, CR 608.2h).
+    const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));
+    if (sacCost) b.other = { ref: 'sacrificed_this_way' };
     const program = parseProgram(effectText, b);
     if (!program) return null;
+    // Only its stats are known (cost_lki); anything else about it isn't something the ability can find.
+    if (sacCost && JSON.stringify(program).includes('"sacrificed_this_way"')) return null;
+    if (unfindable(program)) return null;
     if (b.selfZone) {
       // "{2}{B}: Return ~ from your graveyard to your hand."
       if (node.zone && node.zone !== b.selfZone) return null;
@@ -1381,6 +1392,7 @@ export const triggeredRule: GrammarRule = {
       if (r) {
         // A triggered ability has no X announced for "X target …" (CR 601.2b).
         if (hasCountX(r.program)) return null;
+        if (unfindable(r.program)) return null;
         const node: TriggeredAbility = { kind: 'triggered', text: original, trigger: r.trig.trigger, ...r.program };
         if (r.oncePerTurn) node.oncePerTurn = true;
         if (r.doOnce) node.doOnce = true;

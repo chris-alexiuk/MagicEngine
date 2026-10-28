@@ -417,7 +417,10 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       b.selfZone = 'hand';
       return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     }
-    if (PRONOUNS.test(t)) return b.it ? { ref: b.it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
+    if (PRONOUNS.test(t)) {
+      const it = demonstrative(t, b);
+      return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
+    }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
     if (/^(?:it|that card) from (?:your|its owner's|their) graveyard$/i.test(t) && b.it && b.it.ref !== 'self') return { ref: b.it, plural: false, targeted: false };
     if (/^(?:enchanted|equipped) (?:creature|permanent|land|artifact|planeswalker)$/i.test(t)) {
@@ -530,8 +533,14 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
 }
 
 function set(b: Binder, r: ParsedRef): ParsedRef {
+  if (r.ref.ref === 'self' && b.it && b.it.ref !== 'self') b.other = b.it;
   b.it = r.ref;
   return r;
+}
+
+/** "that creature", "that card": not the source when the text named the source after another object (`Binder.other`). */
+function demonstrative(t: string, b: Binder): Ref | null {
+  return /^(?:that|those) /i.test(t) && b.it?.ref === 'self' && b.other ? b.other : b.it;
 }
 
 /** Player phrases: "you", "target opponent", "each player", "that player", "its controller". */
@@ -561,7 +570,7 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (b.named[t]) return b.named[t]!;
   const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t);
   // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
-  const of = owner ? (owner[1] && b.named[owner[1]]) || b.it : null;
+  const of = owner ? (owner[1] && b.named[owner[1]]) || (owner[1] ? demonstrative(owner[1], b) : b.it) : null;
   if (owner && of) return { ref: owner[2] === 'controller' ? 'controller_of' : 'owner_of', of };
   return null;
 }

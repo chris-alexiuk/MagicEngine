@@ -58,6 +58,16 @@ function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'):
   return turn;
 }
 
+/** Discards a card, remembering what it was (Hellhole Rats: "equal to that card's mana value", CR 608.2h). */
+function discardRecorded(ctx: EffectContext, id: string): void {
+  const o = ctx.g.objects[id];
+  if (o && ctx.resolution) {
+    const lki = (ctx.resolution.lkiThisWay ??= {});
+    lki.discarded = [...(lki.discarded ?? []), { power: power(ctx.g, o), toughness: toughness(ctx.g, o), mana_value: manaValueOf(ctx.g, o) }];
+  }
+  discardCard(ctx.g, id, ctx.events);
+}
+
 /** Splits "+1/+1" counters from others and fires the event. */
 function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: number): void {
   // CR 614.1a: "that many plus one +1/+1 counters are put on it instead", counter doublers.
@@ -707,7 +717,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // "discards their hand": nothing to choose.
       for (const p of players) {
         const hand = [...zoneList(ctx.g, 'hand', p)];
-        for (const id of hand) discardCard(ctx.g, id, ctx.events);
+        for (const id of hand) discardRecorded(ctx, id);
         if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + hand.length;
       }
       return true;
@@ -719,7 +729,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const hand = [...zoneList(ctx.g, 'hand', p)];
         const picked: string[] = [];
         while (picked.length < n && hand.length) picked.push(hand.splice(Math.floor(nextRandom(ctx.g) * hand.length), 1)[0]!);
-        for (const id of picked) discardCard(ctx.g, id, ctx.events);
+        for (const id of picked) discardRecorded(ctx, id);
         if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + picked.length;
       }
       return true;
@@ -732,7 +742,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (answer.objects.length !== Math.min(n, hand.length) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => hand.includes(id))) {
         throw new RulesError(`Choose ${Math.min(n, hand.length)} card(s) from your hand to discard.`);
       }
-      for (const id of answer.objects) discardCard(ctx.g, id, ctx.events);
+      for (const id of answer.objects) discardRecorded(ctx, id);
       if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + answer.objects.length;
       done.push(p);
     }
@@ -740,7 +750,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (done.includes(p)) continue;
       const hand = zoneList(ctx.g, 'hand', p);
       if (hand.length <= n) {
-        for (const id of [...hand]) discardCard(ctx.g, id, ctx.events);
+        for (const id of [...hand]) discardRecorded(ctx, id);
         done.push(p);
         continue;
       }
@@ -2147,6 +2157,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of chosen) {
         moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}) } : {});
       }
+      // Fabled Passage: "… put it onto the battlefield tapped, then shuffle. Then if …, untap that land." — what was found.
+      if (ctx.resolution && chosen.length) ctx.resolution.created = chosen.map((id) => ({ id, zcc: g.objects[id]!.zcc }));
     }
     // CR 701.24a: then the library is shuffled.
     const rest = zoneList(g, 'library', owner);

@@ -853,6 +853,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (!effects) return null;
       out.push(...effects);
       previous = effects;
+      // Fabled Passage: "Search … put it onto the battlefield tapped, then shuffle. Then …, untap that land." — the card found.
+      const last = effects[effects.length - 1];
+      if (last?.type === 'search' && last.amount === 1 && (!last.who || (last.who as Ref).ref === 'target') && ['battlefield', 'hand', 'exile'].includes(String(last.to))) b.it = { ref: 'created' };
     }
     return out.length ? out : null;
   });
@@ -995,6 +998,22 @@ function capitalise(s: string): string {
   return s.replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** A count that names something the instruction itself introduces ("its power", "that creature's toughness"). */
+const POINTS_BACK = /^(?:its|that (?:creature|permanent|card|spell|land|artifact)'s) (?:power|toughness|mana value)$/;
+/** …unless the instruction's subject is the source ("It deals damage equal to its power to target creature"). */
+/** Canopy Gargantuan: "on each other creature you control equal to that creature's toughness" — a number for each one. */
+const perEach = (what: string, instruction: string, b: Binder) => {
+  const noun = /^that (\w+)'s/.exec(what)?.[1];
+  // Only when there's nothing earlier it could mean (Rupture's "that creature" is the one it sacrificed).
+  return Boolean(noun) && (!b.it || (b.it.ref === 'self' && !b.other)) && new RegExp(`\\beach (?:other )?(?:[\\w-]+ )*?${noun}\\b`, 'i').test(instruction) && !/\btarget\b/i.test(instruction);
+};
+const pointsBack = (what: string, instruction: string) => {
+  const t = instruction.trim();
+  // Only an instruction that introduces the thing ("target creature gets …", "sacrifices a creature …"); not one that
+  // creates something new ("create X tokens, where X is that spell's mana value").
+  return POINTS_BACK.test(what) && !/^(?:it\b|~|this (?:creature|permanent|artifact|enchantment|land|spell)\b)/i.test(t) && !/\bcreates?\b/i.test(t) && /\btarget\b|\bsacrific(?:es?|ed)\b/i.test(t);
+};
+
 /** "draws cards equal to …" → "draws X cards" plus what X is (then bound with bindX). */
 const EQUAL_TO: [RegExp, (m: RegExpExecArray) => [string, string]][] = [
   [/^(.*?\bdeals?) damage equal to (.+?) to (.+)$/i, (m) => [`${m[1]} X damage to ${m[3]}`, m[2]!]],
@@ -1094,6 +1113,13 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
       if (!m) continue;
       const [text, what] = rewrite(m);
       const r = attempt(b, (b) => {
+        // "gains life equal to its toughness" — "its" is read after the instruction it's about.
+        if (perEach(what, text, b)) return null;
+        if (pointsBack(what, text)) {
+          const inner = parseInner(text, b);
+          const expr = inner && parseCount(what, b);
+          return inner && expr ? bindX(inner, expr) : null;
+        }
         const expr = parseCount(what, b);
         const inner = expr && parseInner(text, b);
         return inner && expr ? bindX(inner, expr) : null;
@@ -1173,7 +1199,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (where) {
     return attempt(b, (b) => {
       // "… as this ability resolves": effects count as they resolve anyway (CR 608.2h).
-      const expr = parseCount(where[2]!.replace(/ as this (?:ability|spell) resolves$/, ''), b);
+      const what = where[2]!.replace(/ as this (?:ability|spell) resolves$/, '');
+      // Rush of Blood: "Target creature gets +X/+0 until end of turn, where X is its power." — "its" is what the
+      // instruction is about, so that's read first.
+      if (perEach(what, where[1]!, b)) return null;
+      if (pointsBack(what, where[1]!)) {
+        const inner = parseSentence(where[1]!, b);
+        const expr = inner && parseCount(what, b);
+        return inner && expr ? bindX(inner, expr) : null;
+      }
+      const expr = parseCount(what, b);
       const inner = expr && parseSentence(where[1]!, b);
       return inner && expr ? bindX(inner, expr) : null;
     });
@@ -1938,6 +1973,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const manifest = /^([Mm]anifest|[Cc]loak) the top (card|two cards|three cards) of your library$/.exec(s);
   if (manifest) {
     const amount = manifest[2] === 'card' ? 1 : manifest[2] === 'two cards' ? 2 : 3;
+    // Fierce Invocation: "Manifest the top card of your library, then put two +1/+1 counters on it." — the manifested one.
+    if (amount === 1) b.it = { ref: 'created' };
     return [{ type: 'manifest', amount, ...(/^[Cc]loak/.test(manifest[1]!) ? { cloak: true } : {}) }];
   }
   // Reality Shift: "Its controller manifests the top card of their library."
@@ -2081,7 +2118,7 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'lose_life', amount, who }] : null;
   },
-  discard(args, who) {
+  discard(args, who, b) {
     // "discards their hand" (CR 701.9a: all the cards in it).
     if (/^(?:their|your|his or her) hand$/.test(args)) return [{ type: 'discard', all: true, amount: 0, who }];
     // CR 701.9b: "discard a card at random"
@@ -2090,6 +2127,8 @@ const VERBS: Record<string, VerbHandler> = {
     if (random) return typeof n === 'number' ? [{ type: 'discard', amount: n, who, random: true }] : null;
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
+    // Hellhole Rats: "target player discards a card. ~ deals damage to that player equal to that card's mana value."
+    if (amount === 1) b.other = { ref: 'discarded_this_way' };
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
   },
   mill(args, who, b) {

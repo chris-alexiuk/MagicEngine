@@ -421,7 +421,9 @@ export type Ref =
   /** CR 701.38: "each permanent with the most votes or tied for most votes". */
   | { ref: 'voted' }
   /** "Target player sacrifices a creature. You gain life equal to that creature's toughness." — what this effect sacrificed. */
-  | { ref: 'sacrificed_this_way' };
+  | { ref: 'sacrificed_this_way' }
+  /** "that card's mana value" after "discards a card" — only its characteristics as it was discarded (cost_lki). */
+  | { ref: 'discarded_this_way' };
 
 /** A number, X as paid when casting, or a number the game counts (CR 107.3, CR 608.2h). */
 export type Amount = number | 'X' | AmountExpr;
