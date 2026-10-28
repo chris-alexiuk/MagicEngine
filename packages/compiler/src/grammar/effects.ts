@@ -132,17 +132,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     if (!sentences) return null;
     // "…, and you may spend mana as though it were mana of any color to cast that spell" rides on the play permission it
     // follows; one left over (with no permission to ride on) doesn't read.
-    const ANY_COLOR = /,? and you may spend mana as though it were mana of any color to cast (?:that spell|those spells|it|them)$/;
-    const anyColorAt = new Set<number>();
+    // Hostage Taker: "… mana of any type" — colorless costs too.
+    const ANY_COLOR = /,? and you may spend mana as though it were mana of any (color|type) to cast (?:that spell|those spells|it|them)$/;
+    const anyColorAt = new Map<number, 'color' | 'type'>();
     sentences.forEach((t, k) => {
-      if (!ANY_COLOR.test(t)) return;
+      const m = ANY_COLOR.exec(t);
+      if (!m) return;
       sentences[k] = t.replace(ANY_COLOR, '');
-      anyColorAt.add(k);
+      anyColorAt.set(k, m[1] as 'color' | 'type');
     });
     const anyColor = (k: number) => {
-      if (!anyColorAt.has(k)) return {};
+      const how = anyColorAt.get(k);
+      if (!how) return {};
       anyColorAt.delete(k);
-      return { anyColor: true as const };
+      return { anyColor: how === 'type' ? ('type' as const) : (true as const) };
     };
     const out: EffectNode[] = [];
     // The plain effects of the last sentence, for a following "… instead".
@@ -764,13 +767,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const free = freeSuffix.test(next);
       const untilPlay =
         /^Until (end of turn|the end of your next turn|your next end step), you may (play|cast) (?:that card|those cards|them|it)$/.exec(next.replace(freeSuffix, '')) ??
-        /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards)$/.exec(next) ??
+        /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards|those exiled cards)$/.exec(next) ??
         /^Until (end of turn|the end of your next turn), you may (play) lands and cast spells from among (?:them|those cards)$/.exec(next);
-      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn)$/.exec(next.replace(freeSuffix, ''));
+      // Cunning Rhetoric: "You may play that card for as long as it remains exiled" — until it leaves exile (CR 400.7).
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
-        const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
+        const until = untilPlay
+          ? untilPlay[1] !== 'end of turn'
+            ? 'next_turn'
+            : 'eot'
+          : thisTurn![2] === 'until the end of your next turn'
+            ? 'next_turn'
+            : /^for as long as/.test(thisTurn![2]!)
+              ? 'exiled'
+              : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         if (!topWho) return null;
         out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until, ...(free ? { free: true } : {}), ...anyColor(i + 1) } });
@@ -2457,6 +2469,15 @@ const VERBS: Record<string, VerbHandler> = {
     if (random) return typeof n === 'number' ? [{ type: 'discard', amount: n, who, random: true }] : null;
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
+    // Thirst for Knowledge: "unless you discard an artifact card" — a card of that kind.
+    const typed = !m ? /^(a|an|one|two|three) (.+? cards?)$/.exec(args) : null;
+    if (typed) {
+      const k = parseAmount(typed[1]!);
+      const pf = typeof k === 'number' ? parseFilter(`${typed[2]} in your graveyard`, b.clone()) : null;
+      if (!pf || pf.plural !== (k as number) > 1) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return Object.keys(filter).length ? [{ type: 'discard', amount: k, who, filter }] : null;
+    }
     // Hellhole Rats: "target player discards a card. ~ deals damage to that player equal to that card's mana value."
     if (amount === 1) b.other = { ref: 'discarded_this_way' };
     return amount !== null && amount !== undefined ? [{ type: 'discard', amount, who }] : null;
@@ -2564,7 +2585,8 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // Soul Shatter: "Each opponent sacrifices a creature or planeswalker with the greatest mana value among creatures and
     // planeswalkers they control." — the greatest among their own, ties their choice.
-    const greatest = /^(a|an) (.+?) with the greatest (mana value|power) among (.+?) (?:they|you) control$/.exec(args);
+    // Crackling Doom: "… among creatures that player controls".
+    const greatest = /^(a|an) (.+?) with the greatest (mana value|power) among (.+?) (?:they|you) control$/.exec(args) ?? /^(a|an) (.+?) with the greatest (mana value|power) among (.+?) that player controls$/.exec(args);
     if (greatest) {
       const pf = parseFilter(greatest[2]!, b);
       const among = pf ? parseFilter(greatest[4]!.replace(/ and /, ' or '), b) : null;

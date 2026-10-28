@@ -368,6 +368,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (item === '{Q}') cost.untap = true;
     else if (MANA_RUN.test(item)) mana += item;
     else if (/^[Ss]acrifice ~$/.test(item)) (cost.other ??= []).push({ type: 'sacrifice_self' });
+    // CR 701.43a: Arena of Glory: "{R}, {T}, Exert this land: Add {R}{R}."
+    else if (/^[Ee]xert ~$/.test(item)) (cost.other ??= []).push({ type: 'exert_self' });
     else if (/^[Dd]iscard ~$/.test(item)) (cost.other ??= []).push({ type: 'discard_self' });
     else if (/^[Ee]xile ~ from your graveyard$/.test(item)) (cost.other ??= []).push({ type: 'exile_self' });
     // Simian Spirit Guide: "Exile this card from your hand: Add {R}." (CR 605.1a: from the hand)
@@ -567,6 +569,16 @@ export const activatedRule: GrammarRule = {
         effect.abilities = [{ kind: 'triggered', text: mana[2]!, trigger: { type: 'mana_spent', filter }, effects: then }];
         mana[2] = '';
       }
+      // Arena of Glory: "If any of that mana is spent on a creature spell, it gains haste until end of turn."; Hall of the
+      // Bandit Lord: "… it gains haste." (for good).
+      const spentHaste = mana?.[2] ? /^If (?:any of )?that mana is spent on (?:a|an) (.+?) spell, it gains haste( until end of turn)?\.$/.exec(mana[2]) : null;
+      if (mana && effect && spentHaste) {
+        const pf = parseFilter(`${spentHaste[1]} spell`, new Binder(env));
+        if (!pf || pf.filter.zone !== 'stack') return null;
+        const { zone: _z, ...filter } = pf.filter;
+        effect.spentHaste = { filter, ...(spentHaste[2] ? { eot: true as const } : {}) };
+        mana[2] = '';
+      }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
       const keep = mana?.[2] ? /^Until end of turn, you don't lose this mana as steps and phases end\.(?: (.+))?$/.exec(mana[2]) : null;
       if (mana && effect && keep) {
@@ -647,7 +659,8 @@ const STEP_WORDS: Record<string, string> = {
 };
 
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
-  const t = text.trim();
+  // CR 903.3: Tome of Legends: "Whenever your commander enters or attacks" — a commander you own.
+  const t = text.trim().replace(/^your commander (?=enters|attacks|dies|deals|becomes|blocks)/, 'a commander you own ');
   // A "this turn" ability about what its creator targeted (Hunter's Insight: "Whenever that creature deals combat damage
   // … this turn"): read as the source's own event, about that object instead.
   const outer = /^TARGETREF(\d+) (.+)$/.exec(t);
@@ -888,6 +901,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const min = NUMBER_WORDS[oppAttacks[1]!] ?? Number(oppAttacks[1]);
     if (!min) return null;
     return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacks[2] ? 'or_planeswalkers' : 'you', min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
+  // General Kreat: "Whenever one or more Goblins you control attack" — once per declaration, if any of them attack.
+  const someAttack = /^one or more (.+? you control) attack$/.exec(t);
+  if (someAttack && someAttack[1] !== 'creatures you control') {
+    const pf = parseFilter(someAttack[1]!, b);
+    if (!pf || !pf.plural || pf.filter.controller !== 'you') return null;
+    const { controller: _c, ...filter } = pf.filter;
+    b.named['those creatures'] = { ref: 'all', filter: { ...filter, types: [...new Set([...(filter.types ?? []), 'Creature'])], controller: 'you', combat: 'attacking' } };
+    return { trigger: { type: 'you_attack', filter }, it: { ref: 'self' }, player: null };
   }
   // Duelist's Heritage: "Whenever one or more creatures attack" — whoever attacks (once per declaration, CR 508.3d).
   if (t === 'one or more creatures attack') return { trigger: { type: 'you_attack', anyone: true }, it: { ref: 'self' }, player: null };
@@ -2111,7 +2133,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
         const expr = parseForEach(each[2]!, b);
         b.it = saved;
         // "Other Elves get +1/+1 for each other Elf": "other" would mean other than each affected one — not modelled.
-        if (expr?.kind === 'count' && expr.filter.other && subject.ref.ref !== 'self') return null;
+        // (An Aura's or Equipment's "for each other enchantment" is other than itself, the source.)
+        if (expr?.kind === 'count' && expr.filter.other && subject.ref.ref !== 'self' && subject.ref.ref !== 'attached') return null;
         const scaled = expr && scaleBy([{ type: 'x', power: pt.power, toughness: pt.toughness }], expr);
         if (!scaled) return null;
         effect.power = scaled[0]!.power as Amount;
@@ -2481,6 +2504,9 @@ export const staticPreventionRule: GrammarRule = {
       const node: StaticPreventionNode = { type: 'prevent_damage', half: 'up', ...(half[1]!.startsWith('you') ? { toYou: true as const } : {}), ...(half[1]!.includes('permanent') ? { to: { controller: 'you' } } : {}) };
       return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
+    // CR 615.12: Frenzied Baloth: "Combat damage can't be prevented."; "Damage can't be prevented."
+    const cant = /^(Combat damage|Damage) can't be prevented\.$/.exec(line);
+    if (cant) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(cant[1] === 'Combat damage' ? { combat: true } : {}) } } as StaticAbility;
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to) (.+?)( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
@@ -2706,6 +2732,15 @@ export const entersWithCountersRule: GrammarRule = {
       if (typeof n !== 'number') return null;
       const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: escapes[2]!.replace(/−/g, '-'), amount: n, condition: { type: 'paid', cost: 'escape' } } };
       return node;
+    }
+    // Diregraf Colossus: "~ enters with a +1/+1 counter on it for each Zombie card in your graveyard" — counted as it enters.
+    const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on it for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(line);
+    if (perEach) {
+      const env = envOf(ctx);
+      const n = parseAmount(perEach[1]!);
+      const each = env && typeof n === 'number' ? parseForEach(perEach[3]!, new Binder(env)) : null;
+      if (!each || typeof n !== 'number') return null;
+      return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: perEach[2]!.replace(/−/g, '-'), amount: n, perEach: each } } satisfies StaticAbility;
     }
     const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (\S+) (\S+) counters? on it( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);

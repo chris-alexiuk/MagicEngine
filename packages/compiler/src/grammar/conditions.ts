@@ -99,6 +99,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Righteous Valkyrie: "you have at least 7 life more than your starting life total"
+  const moreThanStart = /^you have at least (\w+) life more than your starting life total$/.exec(t);
+  if (moreThanStart && typeof parseAmount(moreThanStart[1]!) === 'number') return { type: 'life', op: 'ge', starting: true, plus: parseAmount(moreThanStart[1]!) as number };
   // Thickest in the Thicket: "if you control the creature with the greatest power or tied for the greatest power".
   if (t === 'you control the creature with the greatest power or tied for the greatest power') return { type: 'greatest_power', filter: { types: ['Creature'] } };
   // The Chain Veil: "if you didn't activate a loyalty ability of a planeswalker this turn".

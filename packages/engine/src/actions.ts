@@ -755,6 +755,9 @@ function cast(
     const filter = (r.onSpent?.trigger.filter ?? {}) as ObjectFilter;
     return r.onSpent && matchesFilter(g, o, filter, { controller: player, source: src ?? null, anyZone: true }) ? [{ ability: r.onSpent, source: r.source!, name: src ? nameOf(g, src) : 'mana' }] : [];
   });
+  // Arena of Glory: "If any of that mana is spent on a creature spell, it gains haste until end of turn."
+  const hasteRider = lastSpentRestricted.find((r) => r.haste && matchesFilter(g, o, r.haste.filter, { controller: player, source: r.source ? (g.objects[r.source.id] ?? null) : null, anyZone: true }));
+  const hasteUntil = hasteRider ? (hasteRider.haste!.eot ? g.turn : Number.MAX_SAFE_INTEGER) : undefined;
   // CR 702.44a / converge: the colors of mana spent to cast it.
   const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => spent[m] > 0).length;
   const lki = costLKI(g, additional, costChoices);
@@ -799,6 +802,7 @@ function cast(
     ...(during?.suspended ? { suspended: true as const } : {}),
     ...(giftTo ? { giftTo } : {}),
     ...(uncounterableCast ? { uncounterable: true as const } : {}),
+    ...(hasteUntil !== undefined ? { hasteUntil } : {}),
     // Addendum: cast during the caster's own main phase.
     ...(g.active === player && (g.step === 'main1' || g.step === 'main2') ? { mainPhase: true as const } : {}),
   };

@@ -15,7 +15,7 @@ import { lifeLoss, replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'];
+export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -149,6 +149,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     }
     if (c.type === 'sacrifice_self') {
       if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t sacrifice ${nameOf(g, o)}.`);
+    } else if (c.type === 'exert_self') {
+      // CR 701.43a: a permanent can be exerted even if it's exerted already.
+      if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t exert ${nameOf(g, o)}.`);
     } else if (c.type === 'pay_life') {
       // CR 119.4: a player can pay life only if their life total is at least that much; CR 119.8: not if it can't change.
       const life = lifeCost(g, player, o, c);
@@ -295,6 +298,10 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       // CR 701.21a: sacrificing moves it from the battlefield to its owner's graveyard.
       events.push({ type: 'sacrificed', object: o.id, player });
       moveObject(g, o.id, 'graveyard', events);
+    } else if (c.type === 'exert_self') {
+      // CR 701.43a: "Exert this land" — it won't untap during its controller's next untap step.
+      o.exerted = true;
+      events.push({ type: 'exerted', object: o.id, player });
     } else if (c.type === 'mill') {
       // Millikin: "{T}, Mill a card: Add {C}." (CR 701.17a)
       for (const id of zoneList(g, 'library', player).slice(0, Number(c.amount ?? 1))) moveObject(g, id, 'graveyard', events);

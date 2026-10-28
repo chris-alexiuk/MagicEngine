@@ -2297,3 +2297,21 @@ describe('slice 185', () => {
     expect(parse('Draw a card, and you may spend mana as though it were mana of any color to cast that spell.', 'Sorcery').unparsed).toHaveLength(1);
   });
 });
+
+describe('slice 187', () => {
+  it('reads exert costs and haste from mana', () => {
+    expect(parse('{R}, {T}, Exert this land: Add {R}{R}. If any of that mana is spent on a creature spell, it gains haste until end of turn.', 'Land').abilities[0]).toMatchObject({ cost: { other: [{ type: 'exert_self' }] }, effects: [{ type: 'add_mana', spentHaste: { filter: { types: ['Creature'] }, eot: true } }] });
+  });
+  it('reads counts and riders from the top-2000 cards', () => {
+    expect(parse('This creature enters with a +1/+1 counter on it for each Zombie card in your graveyard.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', perEach: { kind: 'cards', zone: 'graveyard' } } });
+    expect(parse("Creatures you don't control get -1/-1 for each slime counter on them.", 'Creature').abilities[0]).toMatchObject({ effect: { power: { kind: 'counters', of: { ref: 'affected' }, counter: 'slime' } } });
+    expect(parse('Enchanted creature gets +2/+2 for each other enchantment on the battlefield.', 'Enchantment — Aura').abilities[0]).toMatchObject({ effect: { power: { filter: { other: true } } } });
+    expect(parse("Combat damage can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', combat: true } });
+    expect(parse('Draw three cards. Then discard two cards unless you discard an artifact card.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'unless_does', action: [{ type: 'discard', filter: { types: ['Artifact'] } }] }] });
+    expect(parse("Whenever one or more Goblins you control attack, create a 1/1 red Goblin creature token that's tapped and attacking.", 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', filter: { subtypes: ['Goblin'] } } });
+    expect(parse('Whenever your commander enters or attacks, put a page counter on this artifact.', 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ subject: { filter: { commander: true, owner: 'you' } } }, { type: 'attacks' }] } });
+    expect(parse('Whenever this creature attacks, it deals damage to defending player equal to the number of artifacts they control.', 'Creature').abilities[0]).toMatchObject({ effects: [{ amount: { filter: { controlledBy: { ref: 'trigger_player' } } }, to: { ref: 'trigger_player' } }] });
+    expect(parse('As long as you have at least 7 life more than your starting life total, creatures you control get +2/+2.', 'Creature').abilities[0]).toMatchObject({ effect: { condition: { type: 'life', starting: true, plus: 7 } } });
+  });
+});
+

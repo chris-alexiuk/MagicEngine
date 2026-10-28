@@ -45,22 +45,26 @@ export let lastSpentRestricted: RestrictedMana[] = [];
  * CR 609.4b: may this payment spend mana as though it were mana of any color? (Chromatic Orrery; a spell cast with a
  * permission that says so — the card is still where it was cast from as its costs are paid, CR 601.2a–h.)
  */
-export function asThoughAnyColor(g: GameState, player: PlayerId, purpose: ManaPurpose): boolean {
+export function asThoughAnyColor(g: GameState, player: PlayerId, purpose: ManaPurpose): false | 'color' | 'type' {
   const spell = purpose.kind === 'spell' ? purpose.object : undefined;
-  return spendAnyColor(g, player, spell) || Boolean(spell && anyColorPermission(g, player, spell));
+  const permission = spell ? anyColorPermission(g, player, spell) : false;
+  return permission === 'type' ? 'type' : permission || spendAnyColor(g, player, spell) ? 'color' : false;
 }
 
 /**
  * The cost as it can be paid when any mana can be spent as though it were any color: each colored or hybrid symbol
  * takes one mana of any type; {C} still needs colorless mana (it isn't a color).
  */
-export function anyColorCost(cost: ManaCost): ManaCost {
-  const colored = MANA_COLORS.filter((c) => c !== 'C').reduce((n, c) => n + (cost.specific[c] ?? 0), 0);
-  return { ...cost, generic: cost.generic + colored + cost.hybrid.length, specific: cost.specific.C ? { C: cost.specific.C } : {}, hybrid: [] };
+export function anyColorCost(cost: ManaCost, how: 'color' | 'type' = 'color'): ManaCost {
+  // "mana of any type" (Hostage Taker): {C} too.
+  const kinds = how === 'type' ? MANA_COLORS : MANA_COLORS.filter((c) => c !== 'C');
+  const colored = kinds.reduce((n, c) => n + (cost.specific[c] ?? 0), 0);
+  return { ...cost, generic: cost.generic + colored + cost.hybrid.length, specific: how === 'color' && cost.specific.C ? { C: cost.specific.C } : {}, hybrid: [] };
 }
 
 export function payMana(g: GameState, player: PlayerId, cost: ManaCost, x: number, purpose: ManaPurpose): ManaPool | null {
-  if (asThoughAnyColor(g, player, purpose)) cost = anyColorCost(cost);
+  const anyColor = asThoughAnyColor(g, player, purpose);
+  if (anyColor) cost = anyColorCost(cost, anyColor);
   const ps = g.players[player]!;
   const usable = (ps.restricted ?? []).filter((r) => r.amount > 0 && canSpend(g, player, r.spend, purpose, sourceOf(g, r)));
   lastSpentRestricted = [];

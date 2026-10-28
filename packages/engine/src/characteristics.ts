@@ -497,6 +497,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
   const c = printed(faceOf(g, o));
   // CR 702.62a: cast from suspend, a creature has haste while its caster controls it.
   if (o.cast?.suspended && o.controller === o.cast.by && !c.keywords.some((k) => k.id === 'haste')) c.keywords.push({ id: 'haste' });
+  // Arena of Glory, Hall of the Bandit Lord: the creature cast with that mana gains haste (until end of turn).
+  if (o.cast?.hasteUntil !== undefined && o.zone === 'battlefield' && g.turn <= o.cast.hasteUntil && !c.keywords.some((k) => k.id === 'haste')) c.keywords.push({ id: 'haste' });
   if (o.zone === 'stack') {
     // A spell's own "can't be countered" works while it's on the stack.
     for (const a of printedAbilities(faceOf(g, o))) {

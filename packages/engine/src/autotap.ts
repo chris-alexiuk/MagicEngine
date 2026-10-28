@@ -75,7 +75,8 @@ const toActivation = (s: Source, m: Mode): PlannedActivation => ({
 /** `purpose`: what the mana is for, which decides whether restricted mana can help (CR 106.6). */
 export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): PlannedActivation[] | null {
   // CR 609.4b: "as though it were mana of any color" — any mana pays its colored symbols.
-  if (asThoughAnyColor(g, player, purpose)) cost = anyColorCost(cost);
+  const anyColor = asThoughAnyColor(g, player, purpose);
+  if (anyColor) cost = anyColorCost(cost, anyColor);
   const need = shortfall(spendablePool(g, player, purpose), cost, x);
   if (!need) return null;
   const sources = manaSources(g, player, exclude, purpose);

@@ -66,7 +66,8 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if (!m) return null;
   const amount = parseAmount(m[1]!);
   if (amount === null) return null;
-  const plural = /tokens(?: with .+)?$/.test(text.trim());
+  // Koma, World-Eater: "four 3/3 blue Serpent creature tokens named Koma's Coil".
+  const plural = /tokens(?: named (?:~'s )?[A-Z][^,]*?)?(?: with .+)?$/.test(text.trim());
   // A numeral comes from a keyword definition ("create N … tokens" with N = 1), so either number is fine.
   if ((amount === 1) === plural && amount !== 'X' && !/^\d+$/.test(m[1]!)) return null;
   const tapped = Boolean(m[2]);

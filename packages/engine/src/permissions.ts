@@ -23,8 +23,9 @@ export function freePermission(g: GameState, player: PlayerId, o: GameObject): b
 }
 
 /** CR 609.4b: "… and you may spend mana as though it were mana of any color to cast that spell" — on this card's permission. */
-export function anyColorPermission(g: GameState, player: PlayerId, o: GameObject): boolean {
-  return (g.mayPlay ?? []).some((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
+export function anyColorPermission(g: GameState, player: PlayerId, o: GameObject): false | 'color' | 'type' {
+  const live = (g.mayPlay ?? []).filter((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
+  return live.some((p) => p.anyColor === 'type') ? 'type' : live.length ? 'color' : false;
 }
 
 /** Airbend (CR 701.65a): a permission to cast this card by paying another cost rather than its mana cost. */

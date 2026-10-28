@@ -343,7 +343,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
-      if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife });
+      // Righteous Valkyrie: "if you have at least 7 life more than your starting life total" (`plus`).
+      if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife + Number(cond.plus ?? 0) });
       return cmp(g.players[controller]!.life, cond);
     case 'hand': {
       // Ghirapur Orrery: "if that player has no cards in hand".

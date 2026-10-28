@@ -189,10 +189,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const ps = ctx.g.players[ctx.controller]!;
     // CR 106.6: "Spend this mana only to …" — kept apart from the rest of the pool.
     const onSpent = effect.abilities?.find((a): a is TriggeredAbility => a.kind === 'triggered' && a.trigger.type === 'mana_spent');
-    if (effect.spend || effect.keep || onSpent) {
+    if (effect.spend || effect.keep || onSpent || effect.spentHaste) {
       // "a creature spell of the chosen type": remember which permanent's choice that is (and whose mana it was).
-      const source = ctx.source && (onSpent || JSON.stringify(effect.spend ?? {}).includes('"chosen')) ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {};
-      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}) });
+      const source = ctx.source && (onSpent || effect.spentHaste || JSON.stringify(effect.spend ?? {}).includes('"chosen')) ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {};
+      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}), ...(effect.spentHaste ? { haste: effect.spentHaste } : {}) });
     } else for (const c of mana) ps.pool[c]++;
     ctx.events.push({ type: 'mana_added', player: ctx.controller, mana });
     return true;
@@ -854,6 +854,28 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         while (picked.length < n && hand.length) picked.push(hand.splice(Math.floor(nextRandom(ctx.g) * hand.length), 1)[0]!);
         for (const id of picked) discardRecorded(ctx, id);
         if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + picked.length;
+      }
+      return true;
+    }
+    // Thirst for Knowledge: "discard an artifact card" — one of those (each player in turn, CR 101.4).
+    if (node.filter) {
+      const filter = node.filter as ObjectFilter;
+      const memo = ctx.memo as { i?: number };
+      memo.i ??= 0;
+      let picked = answerOf(ctx, 'choose_objects');
+      for (; memo.i < players.length; memo.i++) {
+        const p = players[memo.i]!;
+        const fits = zoneList(ctx.g, 'hand', p).filter((id) => matchesFilter(ctx.g, ctx.g.objects[id]!, filter, { controller: p, source: ctx.source ?? null, anyZone: true }));
+        const k = Math.min(n, fits.length);
+        let chosen = fits;
+        if (fits.length > k) {
+          if (!picked) return { ask: { kind: 'choose_objects', player: p, candidates: fits, min: k, max: k, text: `Discard ${k} of these cards.` } };
+          if (picked.objects.length !== k || new Set(picked.objects).size !== k || !picked.objects.every((id) => fits.includes(id))) throw new RulesError(`Choose ${k} of those cards to discard.`);
+          chosen = picked.objects;
+          picked = null;
+        }
+        for (const id of [...chosen]) discardRecorded(ctx, id);
+        if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + chosen.length;
       }
       return true;
     }
@@ -1850,7 +1872,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Exile the top card of your library. Until the end of your next turn, you may play that card."
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn'; free?: true; anyColor?: true } | undefined;
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' | 'exiled'; free?: true; anyColor?: true | 'type' } | undefined;
     const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
@@ -1864,8 +1886,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         exiled.push({ id, zcc: o.zcc });
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
-          const lastTurn = lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
-          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}), ...(play.anyColor ? { anyColor: true as const } : {}) });
+          // "for as long as it remains exiled": until it leaves (the permission follows this object, CR 400.7).
+          const lastTurn = play.until === 'exiled' ? Number.MAX_SAFE_INTEGER : lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}), ...(play.anyColor ? { anyColor: play.anyColor } : {}) });
         }
       }
     }
@@ -2841,7 +2864,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone === 'battlefield' || o.zone === 'stack') continue;
       if (node.until === 'exiled' && o.zone !== 'exile') continue;
-      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn, ...(node.anyColor ? { anyColor: true as const } : {}) });
+      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn, ...(node.anyColor ? { anyColor: node.anyColor === 'type' ? ('type' as const) : (true as const) } : {}) });
     }
     return true;
   },
@@ -3503,7 +3526,10 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     }).length;
     return n >= amountOf(ctx, e.amount);
   }
-  if (e.type === 'discard') return e.all ? zoneList(g, 'hand', chooser).length > 0 : zoneList(g, 'hand', chooser).length >= amountOf(ctx, e.amount);
+  if (e.type === 'discard') {
+    const hand = zoneList(g, 'hand', chooser).filter((id) => !e.filter || matchesFilter(g, g.objects[id]!, e.filter as ObjectFilter, { controller: chooser, source: ctx.source ?? null, anyZone: true }));
+    return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
+  }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
   // Coral Atoll: "unless you return an untapped Island you control to its owner's hand".
   if (e.type === 'move_chosen') return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null })).length >= amountOf(ctx, e.amount ?? 1);
@@ -4018,7 +4044,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       return atYou.length >= Number(t.min ?? 1) ? [{ player: g.active }] : [];
     }
     if (!t.anyone && check.g.active !== check.controller) return [];
-    if (typeof t.min === 'number' && e.attacks.length < t.min) return [];
+    // General Kreat: "Whenever one or more Goblins you control attack" — only those count.
+    const attacks = t.filter ? e.attacks.filter(({ attacker }) => check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.filter as ObjectFilter, { controller: check.controller, source: check.source ?? null })) : e.attacks;
+    if (!attacks.length) return [];
+    if (typeof t.min === 'number' && attacks.length < t.min) return [];
     if (t.perPlayer) {
       const players = [...new Set(e.attacks.flatMap(({ target }) => (target.kind === 'player' ? [target.player] : [])))];
       return players.map((player) => ({ player }));
@@ -4345,7 +4374,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {
@@ -4389,8 +4418,13 @@ export const corePlugin: MechanicPlugin = {
         if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;
         return;
       }
-      // CR 702.33c: "… a +1/+1 counter on it for each time it was kicked"
-      const base = node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per;
+      // CR 702.33c: "… a +1/+1 counter on it for each time it was kicked"; Diregraf Colossus: "… for each Zombie card in
+      // your graveyard" (counted as it enters, CR 614.1c).
+      // It isn't on the battlefield yet as this is worked out (CR 614.1c), so it doesn't count itself.
+      const perEach = node.perEach as AmountExpr | undefined;
+      const counted = perEach?.kind === 'count' ? { ...perEach, filter: { ...perEach.filter, other: true } } : perEach;
+      const each = counted ? Math.max(0, amountOf({ g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }, counted as Amount)) : 1;
+      const base = (node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per) * each;
       // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.
       const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter: String(node.counter) });
       if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;

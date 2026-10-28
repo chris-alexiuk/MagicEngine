@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { legalActions } from '../src/index.js';
+import { chars, legalActions } from '../src/index.js';
 import type { GameState } from '../src/index.js';
 import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
 
@@ -26,6 +26,17 @@ const CARDS = [
   makeCard({ name: 'Hurl Through Hell', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exile target creature. Until the end of your next turn, you may cast that card and you may spend mana as though it were mana of any color to cast that spell.' }),
   makeCard({ name: 'Bear', type_line: 'Creature — Bear', mana_cost: '{1}{G}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
   makeCard({ name: 'Walker', type_line: 'Legendary Planeswalker — Test', mana_cost: '{1}{G}', cmc: 2, loyalty: '3', oracle_text: '+1: You gain 1 life.' }),
+  makeCard({ name: 'Arena of Glory', type_line: 'Land', mana_cost: '', oracle_text: '{T}: Add {R}.\n{R}, {T}, Exert this land: Add {R}{R}. If any of that mana is spent on a creature spell, it gains haste until end of turn.' }),
+  makeCard({ name: 'Goblin Pair', type_line: 'Creature — Goblin', mana_cost: '{R}{R}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Hostage Taker', type_line: 'Creature — Human Pirate', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: 'When this creature enters, exile another target creature or artifact until this creature leaves the battlefield. You may cast that card for as long as it remains exiled, and you may spend mana as though it were mana of any type to cast that spell.' }),
+  makeCard({ name: 'Toxrill Lite', type_line: 'Creature — Slug Horror', mana_cost: '{0}', power: '7', toughness: '7', oracle_text: "Creatures you don't control get -1/-1 for each slime counter on them." }),
+  makeCard({ name: 'Frenzied Baloth', type_line: 'Creature — Beast', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: "Trample, haste\nCreature spells you control can't be countered.\nCombat damage can't be prevented." }),
+  makeCard({ name: 'Chasm Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Prevent all damage that would be dealt to you.' }),
+  makeCard({ name: 'Diregraf Colossus', type_line: 'Creature — Zombie Giant', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'This creature enters with a +1/+1 counter on it for each Zombie card in your graveyard.' }),
+  makeCard({ name: 'Zombie', type_line: 'Creature — Zombie', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Thirst for Knowledge', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Draw three cards. Then discard two cards unless you discard an artifact card.' }),
+  makeCard({ name: 'Trinket', type_line: 'Artifact', mana_cost: '{1}', cmc: 1, oracle_text: '' }),
+  makeCard({ name: 'Kreat Lite', type_line: 'Creature — Goblin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever one or more Goblins you control attack, create a 1/1 red Goblin creature token that's tapped and attacking." }),
 ];
 
 function settle(g: GameState): GameState {
@@ -248,5 +259,104 @@ describe('staples (slice 185): spending mana as though it were mana of any color
     g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
     expect(g.objects[bear]!.zone).toBe('battlefield');
     expect(g.objects[bear]!.controller).toBe('alice');
+  });
+});
+
+describe('staples (slice 186): Arena of Glory', () => {
+  it('exerted as a cost (it stays tapped), and the creature cast with its mana has haste this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const arena = give(g, 'alice', 'Arena of Glory', 'battlefield');
+    g.players.alice!.pool.R = 1;
+    g = act(g, { type: 'activate_mana', player: 'alice', object: arena, ability: 1 });
+    expect(g.objects[arena]!.exerted).toBe(true);
+    const goblin = give(g, 'alice', 'Goblin Pair', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: goblin }));
+    expect(chars(g, g.objects[goblin]!).keywords.some((k) => k.id === 'haste')).toBe(true);
+    g = toStep(g, 'main1', 'bob');
+    expect(chars(g, g.objects[goblin]!).keywords.some((k) => k.id === 'haste')).toBe(false);
+    g = toStep(g, 'main1', 'alice');
+    expect(g.objects[arena]!.tapped).toBe(true);
+  });
+});
+
+describe('staples (slice 187): Hostage Taker', () => {
+  it('cast the exiled card for as long as it remains exiled, with mana of any type', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const taker = give(g, 'alice', 'Hostage Taker', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: taker }));
+    if (g.pending?.kind === 'trigger_targets') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bear }]] } }));
+    expect(g.objects[bear]!.zone).toBe('exile');
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'main1', 'alice');
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+    expect(g.objects[bear]!.controller).toBe('alice');
+  });
+});
+
+const toAttack = (g: GameState) => {
+  while (!g.pending && g.priority) g = act(g, { type: 'pass', player: g.priority });
+  return g;
+};
+
+describe('staples (slice 187)', () => {
+  it('Toxrill: each creature you don\'t control gets -1/-1 for each slime counter on it', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Toxrill Lite', 'battlefield');
+    const [a, b] = [give(g, 'bob', 'Zombie', 'battlefield'), give(g, 'bob', 'Zombie', 'battlefield')];
+    g.objects[a]!.counters.slime = 1;
+    expect([chars(g, g.objects[a]!).power, chars(g, g.objects[b]!).power]).toEqual([1, 2]);
+  });
+
+  it('Frenzied Baloth: combat damage can\'t be prevented', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const baloth = give(g, 'alice', 'Frenzied Baloth', 'battlefield');
+    give(g, 'bob', 'Chasm Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: baloth, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 30 && g.step !== 'end'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect(g.players.bob!.life).toBe(life - 3);
+  });
+
+  it('Diregraf Colossus: a counter for each Zombie card in your graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Zombie', 'graveyard');
+    give(g, 'alice', 'Zombie', 'graveyard');
+    const colossus = give(g, 'alice', 'Diregraf Colossus', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: colossus }));
+    expect(g.objects[colossus]!.counters['+1/+1']).toBe(2);
+  });
+
+  it('Thirst for Knowledge: discard an artifact card, or two cards', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const trinket = give(g, 'alice', 'Trinket', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Thirst for Knowledge', 'hand') }));
+    const hand = g.zones.hand.alice!.length;
+    expect(g.pending?.kind).toBe('pay');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } }));
+    // Another artifact card drawn: which one is the player's choice.
+    if (g.pending?.kind === 'choose_objects') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [trinket] } }));
+    expect(g.objects[trinket]!.zone).toBe('graveyard');
+    expect(g.zones.hand.alice!.length).toBe(hand - 1);
+  });
+
+  it('"Whenever one or more Goblins you control attack": only when one of them attacks', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const kreat = give(g, 'alice', 'Kreat Lite', 'battlefield');
+    const zombie = give(g, 'alice', 'Zombie', 'battlefield');
+    g.objects[kreat]!.sick = false;
+    g.objects[zombie]!.sick = false;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: zombie, target: { kind: 'player', player: 'bob' } }] } });
+    g = settle(g);
+    const goblins = () => g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'alice' && g.cards[g.objects[id]!.card]!.name === 'Goblin Token');
+    expect(goblins().length).toBe(0);
   });
 });

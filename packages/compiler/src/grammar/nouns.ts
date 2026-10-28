@@ -643,7 +643,11 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'the chosen player') return { ref: 'chosen_player' };
   // Skyclave Apparition: "the exiled card's owner" (CR 607.2a)
   if (t === "the exiled card's owner") return { ref: 'owner_of', of: { ref: 'exiled_with' } };
-  if (b.named[t]) return b.named[t]!;
+  if (b.named[t]) {
+    // "… defending player … the number of artifacts they control": "they" is that player.
+    if (t === 'defending player' && !b.player) b.player = b.named[t]!;
+    return b.named[t]!;
+  }
   const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t);
   // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
   const of = owner ? (owner[1] && b.named[owner[1]]) || (owner[1] ? demonstrative(owner[1], b) : b.it) : null;
@@ -707,7 +711,8 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
         out.push(player);
         continue;
       }
-      const obj = parseObjectRef(part, b);
+      // End the Festivities: "each creature and planeswalker they control" — each creature and each planeswalker.
+      const obj = parseObjectRef(part, b) ?? (/^each (creature|planeswalker|battle) and (creature|planeswalker|battle) /.test(part) ? parseObjectRef(part.replace(/^each (\w+) and (\w+) /, 'each $1 or $2 '), b) : null);
       if (!obj) return null;
       out.push(obj.ref);
     }

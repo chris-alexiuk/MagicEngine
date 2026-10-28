@@ -66,6 +66,8 @@ export interface RestrictedMana {
   source?: ObjectRef;
   /** "When that mana is spent to cast …" (Path of Ancestry). */
   onSpent?: TriggeredAbility;
+  /** "If any of that mana is spent on a creature spell, it gains haste until end of turn." (Arena of Glory) */
+  haste?: { filter: ObjectFilter; eot?: true };
 }
 
 export interface PlayerState {
@@ -217,7 +219,8 @@ export interface GameObject {
    * A copy of a spell wasn't cast (CR 707.10) but keeps the choices made for the original, like kicker.
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number };
+  /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -935,8 +938,8 @@ export interface GameState {
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
   /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
-  /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b). */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string; anyColor?: true }[];
+  /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b); 'type': "… of any type". */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string; anyColor?: true | 'type' }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

@@ -112,6 +112,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Fists of Flame: "for each card you've drawn this turn"
+  if (t === "card you've drawn this turn") return { kind: 'drawn_this_turn' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
   // Teysa, Opulent Oligarch: "for each opponent who lost life this turn"
@@ -163,6 +165,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^other spell that was cast before (?:it|~) this turn$/.test(t)) return { kind: 'cast_before', of: b.it ?? { ref: 'self' } };
   // Twitching Doll: "for each counter on this creature" — of any kind.
   const counter = /^(?:(\S+) )?counter on (.+)$/.exec(t);
+  // Toxrill, the Corrosive: "Creatures you don't control get -1/-1 for each slime counter on them." — each one's own.
+  if (counter && counter[2] === 'them' && b.it?.ref === 'affected') return { kind: 'counters', of: b.it, ...(counter[1] ? { counter: counter[1] } : {}) };
   if (counter) {
     const of = parseObjectRef(counter[2]!, b.clone(), 'static');
     return of && !of.plural ? { kind: 'counters', of: of.ref, ...(counter[1] ? { counter: counter[1] } : {}) } : null;
