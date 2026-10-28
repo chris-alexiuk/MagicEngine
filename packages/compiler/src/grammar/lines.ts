@@ -1579,6 +1579,9 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't be countered": ['cant_be_countered'],
   "doesn't untap during your untap step": ['doesnt_untap'],
   "doesn't untap during its controller's untap step": ['doesnt_untap'],
+  // Back to Basics, Meekstone: "Nonbasic lands don't untap during their controllers' untap steps."
+  "don't untap during their controllers' untap steps": ['doesnt_untap'],
+  "don't untap during your untap step": ['doesnt_untap'],
   "can attack as though it didn't have defender": ['can_attack_with_defender'],
   "can attack as though they didn't have defender": ['can_attack_with_defender'],
   // CR 602.5 (after the rewrite in parseContinuous): "its activated abilities can't be activated [unless they're mana abilities]"
@@ -1593,6 +1596,17 @@ export const continuousRule: GrammarRule = {
   id: 'continuous',
   parse(line, original, ctx) {
     const env = envOf(ctx);
+    // CR 704.5j: 'The "legend rule" doesn't apply to permanents you control.' (Mirror Box, Sakashima), "… to Slivers you
+    // control", 'The "legend rule" doesn't apply.' (Mirror Gallery).
+    // (The quoted words are set aside as QUOTED_n.)
+    const legend = env ? /^The QUOTED_(\d+) doesn't apply(?: to (.+?) you control)?\.$/.exec(line) : null;
+    if (legend && (ctx as { quotes?: string[] }).quotes?.[Number(legend[1])] === 'legend rule') {
+      legend.splice(1, 1);
+      const pf = legend[1] && legend[1] !== 'permanents' ? parseFilter(legend[1], new Binder(env!)) : null;
+      if (legend[1] && legend[1] !== 'permanents' && (!pf || !pf.plural || pf.filter.zone)) return null;
+      const effect: PlayerRuleNode = { type: 'player_rule', who: legend[1] ? 'you' : 'each', rule: 'no_legend_rule', ...(pf ? { filter: pf.filter } : {}) };
+      return { kind: 'static', text: original, effect } as AbilityNode;
+    }
     if (!env || !line.endsWith('.') || /["“”]/.test(line)) return null;
     const b = new Binder(env);
     // Conditions in front: "During your turn, …", "As long as [condition], …" (CR 611.3a: checked continuously).
@@ -1821,6 +1835,16 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (oneDraw) return { type: 'player_rule', who: who(oneDraw[1]!)!, rule: 'max_one_draw' };
   const hand = /^(You|Players|Each player|Each opponent|Your opponents) ha(?:s|ve) no maximum hand size$/.exec(body);
   if (hand) return { type: 'player_rule', who: who(hand[1]!)!, rule: 'no_max_hand_size' };
+  // CR 402.2: "Your maximum hand size is twenty", "Each opponent's maximum hand size is reduced by seven".
+  const handSize = /^(Your|Each player's|Each opponent's) maximum hand size is (?:(reduced|increased) by )?(\w+)$/.exec(body);
+  if (handSize) {
+    const n = parseAmount(handSize[3]!);
+    const whose = handSize[1] === 'Your' ? 'you' : handSize[1] === "Each player's" ? 'each' : 'opponents';
+    if (typeof n !== 'number') return null;
+    return handSize[2]
+      ? { type: 'player_rule', who: whose, rule: 'hand_size_delta', amount: handSize[2] === 'reduced' ? -n : n }
+      : { type: 'player_rule', who: whose, rule: 'max_hand_size', amount: n };
+  }
   const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
   if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
@@ -1911,7 +1935,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2039,7 +2063,12 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       effect.power = pt.power;
       effect.toughness = pt.toughness;
       if (each) {
+        // Coat of Arms: "Each creature gets +1/+1 for each other creature … that shares at least one creature type with
+        // it" — "it" is each creature in turn.
+        const saved = b.it;
+        if (subject.ref.ref === 'all') b.it = { ref: 'affected' };
         const expr = parseForEach(each[2]!, b);
+        b.it = saved;
         // "Other Elves get +1/+1 for each other Elf": "other" would mean other than each affected one — not modelled.
         if (expr?.kind === 'count' && expr.filter.other && subject.ref.ref !== 'self') return null;
         const scaled = expr && scaleBy([{ type: 'x', power: pt.power, toughness: pt.toughness }], expr);
@@ -2561,13 +2590,18 @@ export const entersAsCopyRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."
-    const m = /^You may have ~ enter( tapped)?(?: the battlefield)? as a copy of (.+?)(?:, except (.+))?\.$/.exec(line);
+    // Cursed Mirror: "As this artifact enters, you may have it become a copy of any creature on the battlefield until end of
+    // turn, except it has haste."
+    const enter = /^You may have ~ enter( tapped)?(?: the battlefield)? as a copy of (.+?)(?:, except (.+))?\.$/.exec(line);
+    const become = /^As ~ enters, you may have it become a copy of (.+?) until end of turn(?:, except (.+))?\.$/.exec(line);
+    const m = enter ? { tapped: enter[1], what: enter[2], except: enter[3] } : become ? { tapped: undefined, what: become[1], except: become[2] } : null;
     if (!env || !m) return null;
     const b = new Binder(env);
-    const filter = parseCopyCandidates(m[2]!, b);
-    const except = m[3] ? parseCopyExcept(m[3], b) : undefined;
+    const filter = parseCopyCandidates(m.what!, b);
+    const except = m.except ? parseCopyExcept(m.except, b) : undefined;
     if (!filter || except === null) return null;
-    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}), ...(m[1] ? { copyTapped: true } : {}) };
+    const until = become ? { copyUntil: 'eot' as const } : {};
+    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}), ...(m.tapped ? { copyTapped: true } : {}), ...until };
     const ability: StaticAbility = { kind: 'static', text: original, effect: node };
     return ability;
   },

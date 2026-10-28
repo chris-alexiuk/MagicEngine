@@ -24,7 +24,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // counted as the effect applies. Before "you control": that's
   // the count's.
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power".
-  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness))$/, (f, m, b) => {
+  // Mockingbird: "with mana value less than or equal to the amount of mana spent to cast this creature".
+  [/ with mana value (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature))$/, (f, m, b) => {
     // "… in your library" is the card's zone: peeled first.
     if (f.manaValue || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[2]!)) return false;
     const n = parseCount(m[2]!, b);
@@ -71,9 +72,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that shares? (?:at least one|a) creature type with (it|~|this creature|that creature)$/, (f, m, b) => {
     if (f.sharesCreatureTypeWith) return false;
     // One object: not "each creature … with it" (Coat of Arms compares each creature with itself in turn).
-    const about: Ref | null = m[1] === '~' || m[1] === 'this creature' ? { ref: 'self' } : b.it && ['self', 'trigger_object', 'attached', 'target'].includes(b.it.ref) ? b.it : null;
+    const about: Ref | null = m[1] === '~' || m[1] === 'this creature' ? { ref: 'self' } : b.it && ['self', 'trigger_object', 'attached', 'target', 'affected'].includes(b.it.ref) ? b.it : null;
     return Boolean(about && ((f.sharesCreatureTypeWith = about), true));
   }],
+  // Mirror Box: "each other creature you control with the same name as that creature" — each one it applies to.
+  [/ with the same name as (?:that creature|it)$/, (f, _m, b) => !f.sameNameAs && b.it?.ref === 'affected' && ((f.sameNameAs = b.it), true)],
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],

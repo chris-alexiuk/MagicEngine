@@ -28,6 +28,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     // Shared Animosity: "each other attacking creature that shares a creature type with it" — other than it.
     const about = inner.filter.sharesCreatureTypeWith as Ref | undefined;
     if (about && about.ref !== 'self') return { ...inner, filter: { ...inner.filter, otherThan: about } };
+    // Counted for each object a static applies to (Mirror Box): other than that one.
+    if (b.it?.ref === 'affected') return { ...inner, filter: { ...inner.filter, otherThan: b.it } };
     return { ...inner, filter: { ...inner.filter, other: true } };
   }
   const t = text.trim();
@@ -178,6 +180,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // CR 903.4: "the number of colors in your commanders' color identity"
   if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };
+  // Mockingbird: "the amount of mana spent to cast this creature" (CR 601.2h) — the mana paid for it.
+  if (/^the amount of mana spent to cast (?:~|this creature|this spell)$/.test(t)) return { kind: 'mana_spent', of: { ref: 'self' } };
   const twice = /^twice (.+)$/.exec(t);
   if (twice) {
     const inner = parseCount(twice[1]!, b);

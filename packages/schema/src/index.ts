@@ -394,6 +394,9 @@ export interface ObjectFilter {
   sharesTypeWithCommander?: true;
   /** Shared Animosity: "that shares a creature type with it" (CR 205.3m) — it being this object. */
   sharesCreatureTypeWith?: Ref;
+  /** Mirror Box: "with the same name as that creature" — the name it has (CR 201.2); `sameName` is set by the engine. */
+  sameNameAs?: Ref;
+  sameName?: string;
   /** "each other attacking creature that shares a creature type with it": other than it, not other than the source. */
   otherThan?: Ref;
   /** Set by the engine as an effect applies: the creature types `sharesCreatureTypeWith` stands for, and `otherThan`'s id. */
@@ -431,6 +434,8 @@ export type Ref =
   | { ref: 'trigger_player' }
   /** What the source Aura or Equipment is attached to. */
   | { ref: 'attached' }
+  /** Coat of Arms: "… that shares at least one creature type with it" — each object a static effect applies to, in turn. */
+  | { ref: 'affected' }
   /** Every object matching (CR 608.2h: determined as the effect is applied). */
   | { ref: 'all'; filter: ObjectFilter }
   | { ref: 'you' }
@@ -763,6 +768,8 @@ export interface CopyExcept {
   /** "it's 1/1" */
   power?: number;
   toughness?: number;
+  /** Saw in Half: "their base power is half that creature's power and their base toughness is half that creature's toughness, rounded up" — as it last existed. */
+  halfStats?: 'up';
   /** "it has haste" / "it has flying" */
   keywords?: KeywordInstance[];
   /** CR 707.9d: "it has no mana cost" */
@@ -851,6 +858,8 @@ export interface AsEntersNode extends EffectNode {
   tapped?: true;
   /** Vesuva: "You may have this land enter tapped as a copy of …" — tapped only if it copies. */
   copyTapped?: true;
+  /** Cursed Mirror: "you may have it become a copy of any creature on the battlefield until end of turn". */
+  copyUntil?: 'eot';
 }
 
 /**
@@ -987,6 +996,13 @@ export const PLAYER_RULES = [
   'skip_extra_turns',
   /** Aven Mindcensor: "If an opponent would search a library, that player searches the top four cards of that library instead." */
   'search_top_four',
+  /**
+   * CR 402.2: "Your maximum hand size is twenty" (max_hand_size: `amount` is the new maximum); "Each opponent's maximum
+   * hand size is reduced by seven" (hand_size_delta: `amount` is added) — applied in timestamp order.
+   */
+  'max_hand_size', 'hand_size_delta',
+  /** CR 704.5j: 'The "legend rule" doesn't apply to permanents you control' — for the permanents its `filter` names (all without one). */
+  'no_legend_rule',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

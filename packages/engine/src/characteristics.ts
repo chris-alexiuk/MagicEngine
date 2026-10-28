@@ -19,7 +19,7 @@ import type {
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
-import { abilitySources, battlefieldZcc, faceOf, manaValueOf } from './zones.js';
+import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf } from './zones.js';
 
 /**
  * CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of
@@ -81,7 +81,8 @@ interface ActiveEffect {
   /** It's about spells ("Instant and sorcery spells you control have lifelink"). */
   spells?: true;
   /** Layer 7c: how much it adds to power and toughness (counted as needed). */
-  pt?: () => [number, number];
+  /** `o`: the object it's applied to — for amounts counted per object (Coat of Arms). */
+  pt?: (o: GameObject) => [number, number];
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
   set?: { layer: '7a' | '7b'; pt: () => [number | null, number | null] };
   /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained); `lose`: types it stops having. */
@@ -307,17 +308,19 @@ export function staticConditionHolds(g: GameState, e: ConditionalNode, source: G
 const counting: [Amount, string][] = [];
 
 /** A static ability's number, counted now ("+1/+1 for each other Zombie you control"); 0 inside its own count. */
-function staticAmount(g: GameState, a: Amount | undefined, source: GameObject): number {
+function staticAmount(g: GameState, a: Amount | undefined, source: GameObject, affected?: GameObject): number {
   if (a === undefined) return 0;
   if (typeof a === 'number') return a;
-  const key = `${source.id}:${source.zcc}`;
+  const base = `${source.id}:${source.zcc}`;
+  const key = affected ? `${base}>${affected.id}:${affected.zcc}` : base;
   const cached = typeof a === 'object' ? amountMemo?.get(a)?.get(key) : undefined;
   if (cached !== undefined) return cached;
-  if (counting.some(([n, k]) => n === a && k === key)) return 0;
-  counting.push([a, key]);
+  // Inside its own count, for any object (what's counted there is types, not this number).
+  if (counting.some(([n, k]) => n === a && k === base)) return 0;
+  counting.push([a, base]);
   let n: number;
   try {
-    n = amountOf({ g, controller: source.controller, source, events: [], targets: [], x: 0, memo: {} }, a);
+    n = amountOf({ g, controller: source.controller, source, events: [], targets: [], x: 0, memo: {}, ...(affected ? { affected } : {}) }, a);
   } finally {
     counting.pop();
   }
@@ -333,7 +336,11 @@ function staticAmount(g: GameState, a: Amount | undefined, source: GameObject): 
 /** The P/T parts of a static ability's effect. */
 function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pick<ActiveEffect, 'pt' | 'set'> {
   const out: Pick<ActiveEffect, 'pt' | 'set'> = {};
-  if (e.power !== undefined || e.toughness !== undefined) out.pt = () => [staticAmount(g, e.power, source), staticAmount(g, e.toughness, source)];
+  // Coat of Arms: counted for each creature it applies to.
+  const perObject = JSON.stringify([e.power, e.toughness]).includes('"ref":"affected"');
+  if (e.power !== undefined || e.toughness !== undefined) {
+    out.pt = (o) => [staticAmount(g, e.power, source, perObject ? o : undefined), staticAmount(g, e.toughness, source, perObject ? o : undefined)];
+  }
   if (e.setPower !== undefined || e.setToughness !== undefined) {
     out.set = {
       layer: e.setLayer ?? '7b',
@@ -589,7 +596,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
   // CR 613.4c: layer 7c — effects and counters that modify power and toughness.
   for (const e of effects) {
     if (!e.pt || !e.applies(o, c)) continue;
-    const [p, t] = e.pt();
+    const [p, t] = e.pt(o);
     c.power += p;
     c.toughness += t;
   }
@@ -850,6 +857,8 @@ export function matchesFilter(
     if (!creatureTypesOf(c).some((t) => theirs.includes(t))) return false;
   }
   if (f.sharesCreatureTypes && !creatureTypesOf(c).some((t) => f.sharesCreatureTypes!.includes(t))) return false;
+  if (f.sameName !== undefined && nameOf(g, o) !== f.sameName) return false;
+  if (f.sameNameAs && f.sameName === undefined) return false;
   if (f.otherThan && f.notObject === undefined && !((f.otherThan as { ref?: string }).ref === 'self' && ctx.source && ctx.source.id !== o.id)) return false;
   if (f.notObject !== undefined && f.notObject === o.id) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;

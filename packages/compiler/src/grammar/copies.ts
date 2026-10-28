@@ -37,6 +37,9 @@ function typeWords(words: string[], out: CopyExcept, replaceCreatureTypes: boole
 /** CR 707.9: "except it isn't legendary", "except it's 1/1 and it has flying". */
 export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
   const out: CopyExcept = {};
+  // Saw in Half: "their base power is half that creature's power and their base toughness is half that creature's
+  // toughness, rounded up".
+  if (/^(?:its|their) (?:base )?power is half that creature's power and (?:its|their) (?:base )?toughness is half that creature's toughness, rounded up$/.test(text.trim())) return { halfStats: 'up' };
   const parts = exceptParts(text.trim());
   if (!parts.length) return null;
   for (const part of parts) {

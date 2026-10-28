@@ -3,7 +3,7 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, Amount, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
@@ -684,7 +684,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // "It doesn't untap during its controller's untap step for as long as ~ remains tapped."
   lock_untap(node, ctx) {
     if (!ctx.source) return true;
-    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') (o.untapLocks ??= []).push({ id: ctx.source.id, zcc: ctx.source.zcc });
+    const kind = node.while === 'controlled' || node.while === 'present' ? node.while : undefined;
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone === 'battlefield') (o.untapLocks ??= []).push({ id: ctx.source.id, zcc: ctx.source.zcc, ...(kind ? { while: kind, controller: ctx.controller } : {}) });
+    }
     return true;
   },
 
@@ -736,7 +739,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "this card" still means the card after a cost moved it (embalm exiles it from the graveyard).
     // Second Harvest: "For each token you control, create a token that's a copy of that permanent." — one of each.
     const originals = node.copyOf ? (ref(node, 'copyOf').ref === 'self' ? (ctx.source ? [ctx.source] : []) : refObjects(ctx, ref(node, 'copyOf'))) : [undefined];
-    const copies = (node.copyEach ? originals : originals.slice(0, 1)).map((original) => (original ? withExceptions(ctx.g, copiable(original), node.except as CopyExcept | undefined) : undefined));
+    // Saw in Half: "except their base power is half that creature's power …, rounded up" — as it last existed (CR 608.2h).
+    let except = node.except as CopyExcept | undefined;
+    if (except?.halfStats && node.copyOf) {
+      const of = ref(node, 'copyOf');
+      const half = (stat: 'power' | 'toughness') => Math.max(0, amountOf(ctx, { kind: 'stat', stat, of, half: 'up' } as AmountExpr));
+      const { halfStats: _h, ...rest } = except;
+      except = { ...rest, power: half('power'), toughness: half('toughness') };
+    }
+    const copies = (node.copyEach ? originals : originals.slice(0, 1)).map((original) => (original ? withExceptions(ctx.g, copiable(original), except) : undefined));
     if (!copies.length) return true;
     const created: ObjectRef[] = [];
     for (const copy of copies) for (const p of players) {

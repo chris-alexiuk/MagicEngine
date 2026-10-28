@@ -42,6 +42,8 @@ export interface EffectContext {
   /** Scratch space that survives between asking and resuming. */
   memo: Record<string, unknown>;
   resolution?: Resolution;
+  /** A static ability's amount counted for one object it applies to (Ref 'affected', Coat of Arms). */
+  affected?: GameObject;
 }
 
 /**

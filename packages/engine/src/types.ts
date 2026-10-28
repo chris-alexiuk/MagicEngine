@@ -197,7 +197,8 @@ export interface GameObject {
   /** CR 709.5c: a Room's unlocked designations — [left half, right half]. */
   unlocked?: [boolean, boolean];
   /** "It doesn't untap during its controller's untap step for as long as ~ remains tapped." */
-  untapLocks?: ObjectRef[];
+  /** "… doesn't untap … for as long as ~ remains tapped" (or `while` "you control ~", "~ remains on the battlefield"). */
+  untapLocks?: (ObjectRef & { while?: 'controlled' | 'present'; controller?: PlayerId })[];
   /** CR 509.1c: "blocks ~ this turn if able" (an attacker) or "blocks this turn if able" (none) — for that turn. */
   mustBlock?: { attacker?: ObjectRef; turn: number }[];
   /** "Target creature can't block ~ this turn": the attackers it can't block, for that turn. */

@@ -528,6 +528,8 @@ export class ParserRegistry {
     );
     const normalised = masked
       .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
+      // Saw in Half: "… half that creature's toughness. Round up each time." — the rounding belongs to the exception.
+      .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {

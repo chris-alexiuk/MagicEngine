@@ -2,14 +2,14 @@ import { dredgeOptions } from './dredge.js';
 import { phasingStep } from './phasing.js';
 import { checkDungeonDone } from './dungeons.js';
 import type { ConditionNode } from '@mtg/schema';
-import { hasRule, hasType, isPermanentCard, hasKeyword, printedAbilities, toughness, withCharsCache } from './characteristics.js';
+import { chars, hasRule, hasType, isPermanentCard, hasKeyword, printedAbilities, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { playerRule } from './player-rules.js';
+import { legendRuleExempt, maxHandSize, playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
@@ -469,6 +469,8 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
 
 /** CR 502.3: the active player untaps their permanents (all but those they chose to keep tapped); then the upkeep. */
 export function untapStep(g: GameState, events: GameEvent[], keep: readonly string[]): void {
+  // CR 502.3: they untap at once — "Creatures with power 3 or greater don't untap …" (Meekstone) is checked first.
+  const held = new Set(g.zones.battlefield.filter((id) => g.objects[id]!.controller === g.active && hasRule(g, g.objects[id]!, 'doesnt_untap')));
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     if (o.controller !== g.active) continue;
@@ -489,14 +491,15 @@ export function untapStep(g: GameState, events: GameEvent[], keep: readonly stri
     if (o.untapLocks) {
       o.untapLocks = o.untapLocks.filter((l) => {
         const s = g.objects[l.id];
-        return Boolean(s && s.zone === 'battlefield' && s.zcc === l.zcc && s.tapped);
+        const there = Boolean(s && s.zone === 'battlefield' && s.zcc === l.zcc);
+        return there && (l.while === 'present' || (l.while === 'controlled' ? s!.controller === l.controller : s!.tapped));
       });
       if (o.untapLocks.length) continue;
       delete o.untapLocks;
     }
     // CR 502.3: one its controller chose not to untap.
     if (keep.includes(id)) continue;
-    if (!hasRule(g, o, 'doesnt_untap')) setTapped(g, id, false, events);
+    if (!held.has(id)) setTapped(g, id, false, events);
   }
   // Seedborn Muse: "Untap all permanents you control during each other player's untap step."
   for (const p of g.order) {
@@ -520,8 +523,9 @@ function startCleanup(g: GameState, events: GameEvent[]): void {
   g.extraCleanup = false;
   // CR 514.1 / CR 402.2: discard down to maximum hand size.
   const hand = zoneList(g, 'hand', g.active);
-  const excess = hand.length - g.config.maxHandSize;
-  if (excess > 0 && !playerRule(g, g.active, 'no_max_hand_size')) {
+  const max = maxHandSize(g, g.active);
+  const excess = max === null ? 0 : hand.length - max;
+  if (excess > 0) {
     g.pending = { kind: 'discard_to_hand_size', player: g.active, count: excess };
     return;
   }
@@ -711,7 +715,9 @@ function findLegendRuleGroup(
   for (const id of g.zones.battlefield) {
     if (leaving.has(id)) continue;
     const o = g.objects[id]!;
-    if (!faceOf(g, o).supertypes.includes('Legendary')) continue;
+    // Legendary as printed (or copied), or made legendary — your Ring-bearer (CR 701.54c).
+    const legendary = faceOf(g, o).supertypes.includes('Legendary') || (o.ringBearer !== undefined && chars(g, o).supertypes.includes('Legendary'));
+    if (!legendary || legendRuleExempt(g, o)) continue;
     const key = `${o.controller}\u0000${nameOf(g, o)}`;
     groups.set(key, [...(groups.get(key) ?? []), id]);
   }

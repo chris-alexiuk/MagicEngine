@@ -86,6 +86,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
   // CR 120.10: "If excess damage was dealt this way", "… to that creature this way", "… to a permanent this way".
   if (/^excess damage was dealt (?:to (?:that creature|that permanent|a permanent|a creature) )?this way$/.test(t)) return { type: 'amount', amount: { kind: 'excess_this_way' }, op: 'ge', n: 1 };
+  // Saw in Half: "If that creature dies this way" — put into a graveyard from the battlefield by this (CR 700.4).
+  if (/^(?:that creature|it) dies this way$/.test(t)) return { type: 'amount', amount: { kind: 'moved_this_way', how: 'graveyard' }, op: 'ge', n: 1 };
   // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
   const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed) this way$/.exec(t);
   if (movedOne) {

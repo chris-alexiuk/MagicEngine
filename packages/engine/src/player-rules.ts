@@ -57,6 +57,45 @@ export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): nu
   return n;
 }
 
+/**
+ * CR 402.2: a player's maximum hand size — seven, changed by static abilities in timestamp order ("Your maximum hand
+ * size is twenty", "Each opponent's maximum hand size is reduced by seven"); null when they have none.
+ */
+export function maxHandSize(g: GameState, player: PlayerId): number | null {
+  if (playerRule(g, player, 'no_max_hand_size')) return null;
+  const changes: { t: number; set?: number; delta?: number }[] = [];
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'max_hand_size' && e.rule !== 'hand_size_delta') continue;
+      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      if (!applies || !staticConditionHolds(g, e, source)) continue;
+      changes.push({ t: source.timestamp, ...(e.rule === 'max_hand_size' ? { set: e.amount ?? 7 } : { delta: e.amount ?? 0 }) });
+    }
+  }
+  let n = g.config.maxHandSize;
+  for (const c of changes.sort((a, b) => a.t - b.t)) n = c.set !== undefined ? c.set : n + (c.delta ?? 0);
+  return Math.max(0, n);
+}
+
+/** CR 704.5j: 'The "legend rule" doesn't apply to permanents you control' (Mirror Box) — for this permanent. */
+export function legendRuleExempt(g: GameState, o: GameObject): boolean {
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'no_legend_rule') continue;
+      const applies = e.who === 'each' || (e.who === 'you' ? o.controller === source.controller : o.controller !== source.controller);
+      if (!applies || !staticConditionHolds(g, e, source)) continue;
+      if (!e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source })) return true;
+    }
+  }
+  return false;
+}
+
 /** CR 305.2: one land a turn, plus any extra land plays. */
 export function landsAllowed(g: GameState, player: PlayerId): number {
   const extra = g.players[player]?.extraLands;

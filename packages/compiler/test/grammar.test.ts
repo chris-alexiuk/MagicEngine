@@ -1745,7 +1745,8 @@ describe('slice 157', () => {
   it('reads "shares a creature type with it"', () => {
     expect(parse('Whenever a creature you control attacks, it gets +1/+0 until end of turn for each other attacking creature that shares a creature type with it.', 'Enchantment', 'S').abilities[0]).toMatchObject({ effects: [{ power: { kind: 'count', filter: { sharesCreatureTypeWith: { ref: 'trigger_object' }, otherThan: { ref: 'trigger_object' } } } }] });
     expect(parse('Equipped creature gets +1/+1 for each other creature you control that shares a creature type with it.', 'Artifact — Equipment', 'S').abilities[0]).toMatchObject({ effect: { power: { kind: 'count', filter: { sharesCreatureTypeWith: { ref: 'attached' }, otherThan: { ref: 'attached' } } } } });
-    expect(parse('Each creature gets +1/+1 for each other creature on the battlefield that shares at least one creature type with it.', 'Artifact', 'C').unparsed).toHaveLength(1);
+    // Coat of Arms (slice 180): each creature in turn ('affected').
+    expect(parse('Each creature gets +1/+1 for each other creature on the battlefield that shares at least one creature type with it.', 'Artifact', 'C').abilities[0]).toMatchObject({ effect: { power: { kind: 'count', filter: { sharesCreatureTypeWith: { ref: 'affected' }, otherThan: { ref: 'affected' } } } } });
   });
   it('reads "you put counters on", Primal Vigor and mill costs', () => {
     expect(parse('Whenever you put one or more +1/+1 counters on this creature, draw a card. This ability triggers only once each turn.', 'Creature — Angel', 'E').abilities[0]).toMatchObject({ trigger: { type: 'counters_put', byYou: true, subject: { ref: 'self' } }, oncePerTurn: true });
@@ -2186,5 +2187,21 @@ describe('slice 179', () => {
   it("reads Approach of the Second Sun: a prior cast by name and a library position", () => {
     const p = parse("If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life.", 'Sorcery', 'Approach of the Second Sun');
     expect(p.abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'and', all: [{ type: 'cast_by_you', fromHand: true }, { type: 'cast_named_before' }] }, else: [{ type: 'move', to: 'library', position: 7 }, { type: 'gain_life' }] }] });
+  });
+});
+
+describe('slice 180', () => {
+  it('reads maximum hand size, untap restrictions and the legend rule', () => {
+    expect(parse("Each opponent's maximum hand size is reduced by seven.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'player_rule', who: 'opponents', rule: 'hand_size_delta', amount: -7 } });
+    expect(parse('Your maximum hand size is twenty.', 'Creature').abilities[0]).toMatchObject({ effect: { rule: 'max_hand_size', amount: 20 } });
+    expect(parse("Nonbasic lands don't untap during their controllers' untap steps.", 'Enchantment').abilities[0]).toMatchObject({ effect: { type: 'continuous', rules: ['doesnt_untap'] } });
+    expect(parse('The "legend rule" doesn\'t apply to Slivers you control.', 'Creature').abilities[0]).toMatchObject({ effect: { rule: 'no_legend_rule', filter: { subtypes: ['Sliver'] } } });
+  });
+  it('reads per-object counts, next untap steps and Saw in Half', () => {
+    expect(parse('Each creature you control gets +1/+1 for each +1/+1 counter on it.', 'Creature').abilities[0]).toMatchObject({ effect: { power: { kind: 'counters', of: { ref: 'affected' } } } });
+    expect(parse('Each nontoken creature you control gets +1/+1 for each other creature you control with the same name as that creature.', 'Artifact').abilities[0]).toMatchObject({ effect: { power: { filter: { sameNameAs: { ref: 'affected' }, otherThan: { ref: 'affected' } } } } });
+    expect(parse("Tap all creatures target player controls. Those creatures don't untap during that player's next untap step.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'skip_untap' }] });
+    expect(parse("When this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's untap step for as long as you control this creature.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'tap' }, { type: 'lock_untap', while: 'controlled' }] });
+    expect(parse("Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time.", 'Instant', 'Saw in Half').abilities[0]).toMatchObject({ effects: [{ type: 'destroy' }, { type: 'if', effects: [{ type: 'create_token', amount: 2, except: { halfStats: 'up' } }] }] });
   });
 });

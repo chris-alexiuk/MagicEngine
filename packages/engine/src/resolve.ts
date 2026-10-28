@@ -3,7 +3,7 @@ import { chars, colorsAmong, creatureTypesOf, filterZones, matchesFilter, power,
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
-import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nextPlayer, zoneList } from './zones.js';
+import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // References: who and what an effect acts on
@@ -83,6 +83,8 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       const o = r ? g.objects[r.id] : undefined;
       return o && o.zcc === r!.zcc ? [o] : [];
     }
+    case 'affected':
+      return ctx.affected ? [ctx.affected] : [];
     case 'attached': {
       const s = sourceOf(ctx);
       const r = s?.attachedTo;
@@ -468,8 +470,12 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     for (const k of counted) out[k] = { ...f[k]!, n: f[k]!.n === 'X' ? ctx.x : amountOf(ctx, f[k]!.n) };
     return bindFilter(ctx, out);
   }
-  if (!f.sharesCreatureTypeWith && !f.otherThan) return f;
+  if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs) return f;
   const out: ObjectFilter = { ...f };
+  if (f.sameNameAs) {
+    const [o] = refObjects(ctx, f.sameNameAs as Ref);
+    out.sameName = o ? nameOf(ctx.g, o) : '\u0000';
+  }
   if (f.sharesCreatureTypeWith) {
     const [o] = refObjects(ctx, f.sharesCreatureTypeWith as Ref);
     out.sharesCreatureTypes = o ? [...creatureTypesOf(chars(ctx.g, o))] : [];

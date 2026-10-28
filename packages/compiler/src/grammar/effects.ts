@@ -2971,7 +2971,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return amount !== null && subtype ? [{ type: 'amass', subtype, amount }] : null;
   }
   // "It doesn't untap during its controller's next untap step." (CR 502.3)
-  const stay = /^(.+?) (?:doesn't|don't) untap during (?:its controller's|their controllers'|their controller's|your) next untap step$/i.exec(c);
+  // Sleep: "Those creatures don't untap during that player's next untap step"; Sudden Storm: "… their controllers' next
+  // untap steps".
+  const stay = /^(.+?) (?:doesn't|don't) untap during (?:its controller's|their controllers'|their controller's|that player's|your) next untap steps?$/i.exec(c);
   if (stay) {
     const what = parseObjectRef(stay[1]!, b);
     return what ? [{ type: 'skip_untap', what: what.ref }] : null;
@@ -2993,10 +2995,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return what ? [{ type: 'unlock', what: what.ref }] : null;
   }
   // "It doesn't untap during its controller's untap step for as long as ~ remains tapped."
-  const lock = /^(.+?) (?:doesn't|don't) untap during (?:its|their) controller(?:'s|s') untap steps? for as long as ~ remains tapped$/i.exec(c);
+  // Icefall Regent: "… for as long as you control this creature"; Time of Ice: "… for as long as you control this Saga";
+  // "… for as long as this Equipment remains on the battlefield".
+  const lock = /^(.+?) (?:doesn't|don't) untap during (?:its|their) controller(?:'s|s') untap steps? for as long as (?:(?:~|this [a-z]+) remains (tapped|on the battlefield)|you control (?:~|this [a-z]+))$/i.exec(c);
   if (lock) {
     const what = parseObjectRef(lock[1]!, b);
-    return what ? [{ type: 'lock_untap', what: what.ref }] : null;
+    const kind = lock[2] === 'tapped' ? null : lock[2] ? 'present' : 'controlled';
+    return what ? [{ type: 'lock_untap', what: what.ref, ...(kind ? { while: kind } : {}) }] : null;
   }
   // CR 702.26: "Target creature phases out.", "All permanents you control phase out."
   const phase = /^(.+?) phases? out$/i.exec(c);

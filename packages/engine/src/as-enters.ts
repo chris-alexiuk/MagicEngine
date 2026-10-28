@@ -158,6 +158,8 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         events.push({ type: 'became_copy', object: o.id, of: original.id });
         // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."
         if (next.node.copyTapped) o.tapped = true;
+        // Cursed Mirror: "… become a copy of any creature on the battlefield until end of turn" (then it's itself again).
+        if (next.node.copyUntil === 'eot') (o.copyRevert ??= []).push(null);
         // CR 306.5b / 707.5: a copy of a planeswalker enters with its loyalty (a battle, its defense).
         const copied = faceOf(g, o);
         if (copied.loyalty !== undefined && /^\d+$/.test(copied.loyalty) && !o.counters.loyalty) o.counters.loyalty = Number(copied.loyalty);

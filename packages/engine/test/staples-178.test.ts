@@ -48,6 +48,24 @@ const CARDS = [
   makeCard({ name: "Heliod's Intervention", type_line: 'Instant', mana_cost: '{X}{W}{W}', oracle_text: 'Choose one —\n• Destroy X target artifacts and/or enchantments.\n• Target player gains twice X life.' }),
   makeCard({ name: 'Koma, Cosmos Serpent', type_line: 'Legendary Creature — Serpent', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "This spell can't be countered.\nAt the beginning of each upkeep, create a 3/3 blue Serpent creature token named Koma's Coil.\nSacrifice another Serpent: Choose one —\n• Tap target permanent. Its activated abilities can't be activated this turn.\n• Koma gains indestructible until end of turn." }),
   makeCard({ name: 'Pump Knight', type_line: 'Creature — Human Knight', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{0}: This creature gets +1/+1 until end of turn.' }),
+  makeCard({ name: 'Augur Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "Each opponent's maximum hand size is reduced by seven." }),
+  makeCard({ name: 'Toad Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Your maximum hand size is twenty.' }),
+  makeCard({ name: 'Mirror Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'The "legend rule" doesn\'t apply to permanents you control.' }),
+  makeCard({ name: 'Basics Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Nonbasic lands don't untap during their controllers' untap steps." }),
+  makeCard({ name: 'Meek Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "Creatures with power 3 or greater don't untap during their controllers' untap steps." }),
+  makeCard({ name: 'Tundra Lite', type_line: 'Land', mana_cost: '', oracle_text: '{T}: Add {W} or {U}.' }),
+  makeCard({ name: 'Icefall Regent', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '4', toughness: '3', oracle_text: "Flying\nWhen this creature enters, tap target creature an opponent controls. That creature doesn't untap during its controller's untap step for as long as you control this creature.\nSpells your opponents cast that target this creature cost {2} more to cast." }),
+  makeCard({ name: 'Sleep', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Tap all creatures target player controls. Those creatures don't untap during that player's next untap step." }),
+  makeCard({ name: 'Saw in Half', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Destroy target creature. If that creature dies this way, its controller creates two tokens that are copies of that creature, except their power is half that creature's power and their toughness is half that creature's toughness. Round up each time." }),
+  makeCard({ name: 'Ogre', type_line: 'Creature — Ogre', mana_cost: '{0}', power: '5', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Coat of Arms', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Each creature gets +1/+1 for each other creature on the battlefield that shares at least one creature type with it. (For example, if two Goblin Warriors and a Goblin Shaman are on the battlefield, each gets +2/+2.)' }),
+  makeCard({ name: 'Goblin Warrior', type_line: 'Creature — Goblin Warrior', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Goblin Shaman', type_line: 'Creature — Goblin Shaman', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Mirror Box', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'The "legend rule" doesn\'t apply to permanents you control.\nEach legendary creature you control gets +1/+1.\nEach nontoken creature you control gets +1/+1 for each other creature you control with the same name as that creature.' }),
+  makeCard({ name: 'Clamavus', type_line: 'Creature — Human Tyranid Artificer', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Proclamator Hailer — Each creature you control gets +1/+1 for each +1/+1 counter on it.' }),
+  makeCard({ name: 'Mockingbird', type_line: 'Creature — Bird Bard', mana_cost: '{X}{U}', power: '1', toughness: '1', oracle_text: "Flying\nYou may have this creature enter as a copy of any creature on the battlefield with mana value less than or equal to the amount of mana spent to cast this creature, except it's a Bird in addition to its other types and it has flying." }),
+  makeCard({ name: 'Titan', type_line: 'Creature — Giant', mana_cost: '{5}', cmc: 5, power: '6', toughness: '6', oracle_text: '' }),
+  makeCard({ name: 'Cursed Mirror', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Add {R}.\nAs this artifact enters, you may have it become a copy of any creature on the battlefield until end of turn, except it has haste.' }),
   makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
@@ -261,7 +279,8 @@ describe('staples (slice 179): Approach of the Second Sun', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: approach }));
     expect(g.players.alice!.life).toBe(27);
     const lib = g.zones.library.alice!;
-    const moved = lib.find((id) => g.cards[g.objects[id]!.card]?.name === 'Approach of the Second Sun')!;
+    // (The deck holds other copies; the engine keeps a card's id as it moves.)
+    const moved = approach;
     expect(lib.indexOf(moved)).toBe(6);
     expect(g.winner ?? null).toBe(null);
     // Dig it back out and cast it again from hand.
@@ -274,17 +293,16 @@ describe('staples (slice 179): Approach of the Second Sun', () => {
 });
 
 describe('staples (slice 179): target spell or permanent', () => {
-  const nameAt = (g: GameState, p: string, i: number) => g.cards[g.objects[g.zones.library[p]![i]!]!.card]?.name;
   it('Commit puts a spell second from the top; a nonland permanent too', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Think', 'hand') });
     const think = g.stack[0]!.kind === 'spell' ? g.stack[0]!.object : '';
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(think)]] }));
     expect(g.stack.length).toBe(0);
-    expect(nameAt(g, 'alice', 1)).toBe('Think');
+    expect(g.zones.library.alice![1]).toBe(think);
     const bear = give(g, 'bob', 'Bear', 'battlefield');
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(bear)]] }));
-    expect(nameAt(g, 'bob', 1)).toBe('Bear');
+    expect(g.zones.library.bob![1]).toBe(bear);
     // A land isn't a legal target.
     const forest = give(g, 'bob', 'Forest', 'battlefield');
     expect(() => act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Commit', 'hand'), targets: [[obj(forest)]] })).toThrow();
@@ -300,7 +318,7 @@ describe('staples (slice 179): target spell or permanent', () => {
     if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(think)]] } });
     g = settle(g);
     expect(g.stack.length).toBe(0);
-    expect(g.zones.hand.bob!.some((id) => g.cards[g.objects[id]!.card]?.name === 'Think')).toBe(true);
+    expect(g.objects[think]!.zone).toBe('hand');
   });
 
   it('Purelace: a spell is white while on the stack; the permanent it becomes is a new object', () => {
@@ -323,7 +341,7 @@ describe('staples (slice 179): target spell or permanent', () => {
     const bear = give(g, 'bob', 'Bear', 'battlefield');
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Oust', 'hand'), targets: [[obj(bear)]] }));
     expect(g.players.bob!.life).toBe(23);
-    expect(nameAt(g, 'bob', 1)).toBe('Bear');
+    expect(g.zones.library.bob![1]).toBe(bear);
   });
 });
 
@@ -448,5 +466,190 @@ describe('staples (slice 179): Heliod\'s Intervention, Koma', () => {
     expect(legalActions(g, 'bob').some((a) => a.type === 'activate' && a.object === knight)).toBe(false);
     g = toStep(g, 'main1', 'bob');
     expect(legalActions(g, 'bob').some((a) => a.type === 'activate' && a.object === knight)).toBe(true);
+  });
+});
+
+describe('staples (slice 179): maximum hand size', () => {
+  it('reduced by seven for opponents; twenty for you', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Augur Lite', 'battlefield');
+    g = toStep(g, 'end', 'bob');
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.pending).toMatchObject({ kind: 'discard_to_hand_size', player: 'bob', count: g.zones.hand.bob!.length });
+  });
+  it('a later "is twenty" replaces an earlier reduction (timestamp order)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Augur Lite', 'battlefield');
+    give(g, 'bob', 'Toad Lite', 'battlefield');
+    for (let i = 0; i < 5; i++) give(g, 'bob', 'Bear', 'hand');
+    g = toStep(g, 'end', 'bob');
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.pending?.kind).not.toBe('discard_to_hand_size');
+  });
+});
+
+describe('staples (slice 179): the legend rule and untap restrictions', () => {
+  it('Mirror Box: the legend rule doesn\'t apply to your permanents', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    const before = structuredClone(g);
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.pending?.kind).toBe('legend_rule');
+    g = before;
+    give(g, 'alice', 'Mirror Lite', 'battlefield');
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.pending?.kind).not.toBe('legend_rule');
+    expect(g.zones.battlefield.filter((id) => g.cards[g.objects[id]!.card]?.name === 'Koma, Cosmos Serpent').length).toBe(2);
+  });
+
+  it('Back to Basics: nonbasic lands stay tapped; Meekstone: power 3 or greater', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'bob', 'Basics Lite', 'battlefield');
+    give(g, 'bob', 'Meek Lite', 'battlefield');
+    const tundra = give(g, 'alice', 'Tundra Lite', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const koma = give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    for (const id of [tundra, forest, bear, koma]) g.objects[id]!.tapped = true;
+    g = toStep(g, 'upkeep', 'alice');
+    expect(g.objects[tundra]!.tapped).toBe(true);
+    expect(g.objects[forest]!.tapped).toBe(false);
+    expect(g.objects[bear]!.tapped).toBe(false);
+    expect(g.objects[koma]!.tapped).toBe(true);
+  });
+});
+
+describe('staples (slice 180): staying tapped', () => {
+  it('Icefall Regent: for as long as you control it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Icefall Regent', 'hand') });
+    g = settle(g);
+    if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[obj(bear)]] } });
+    g = settle(g);
+    const regent = g.zones.battlefield.find((id) => g.cards[g.objects[id]!.card]?.name === 'Icefall Regent')!;
+    expect(g.objects[bear]!.tapped).toBe(true);
+    g = toStep(g, 'main1', 'bob');
+    expect(g.objects[bear]!.tapped).toBe(true);
+    // Once the Regent is gone, it untaps as usual.
+    g = toStep(g, 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Murder', 'hand'), targets: [[obj(regent)]] }));
+    expect(g.objects[regent]!.zone).toBe('graveyard');
+    g = toStep(g, 'main1', 'bob');
+    expect(g.objects[bear]!.tapped).toBe(false);
+  });
+
+  it('Sleep: those creatures skip their next untap step only', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Sleep', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.objects[bear]!.tapped).toBe(true);
+    g = toStep(g, 'main1', 'bob');
+    expect(g.objects[bear]!.tapped).toBe(true);
+    g = toStep(toStep(g, 'main1', 'alice'), 'main1', 'bob');
+    expect(g.objects[bear]!.tapped).toBe(false);
+  });
+});
+
+describe('staples (slice 180): Saw in Half', () => {
+  it('two half-size copies for its controller, from the power it last had', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    g.objects[ogre]!.counters['+1/+1'] = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Saw in Half', 'hand'), targets: [[obj(ogre)]] }));
+    const tokens = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.token && o.controller === 'bob');
+    expect(tokens.length).toBe(2);
+    // 7/5 as it died: 4/3 each (rounded up), copies of an Ogre.
+    expect(tokens.map((t) => [chars(g, t).power, chars(g, t).toughness])).toEqual([[4, 3], [4, 3]]);
+    expect(chars(g, tokens[0]!).subtypes).toContain('Ogre');
+  });
+
+  it('no tokens if it doesn\'t die (a shield counter)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    g.objects[ogre]!.counters.shield = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Saw in Half', 'hand'), targets: [[obj(ogre)]] }));
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(0);
+  });
+});
+
+describe('staples (slice 180): Coat of Arms', () => {
+  it('each creature counts the others that share a creature type with it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Coat of Arms', 'battlefield');
+    const w1 = give(g, 'alice', 'Goblin Warrior', 'battlefield');
+    const w2 = give(g, 'bob', 'Goblin Warrior', 'battlefield');
+    const sh = give(g, 'alice', 'Goblin Shaman', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    expect([w1, w2, sh].map((id) => chars(g, g.objects[id]!).power)).toEqual([3, 3, 3]);
+    expect(chars(g, g.objects[bear]!).power).toBe(2);
+    const bear2 = give(g, 'bob', 'Bear', 'battlefield');
+    expect(chars(g, g.objects[bear]!).toughness).toBe(3);
+    expect(chars(g, g.objects[bear2]!).power).toBe(3);
+  });
+});
+
+describe('staples (slice 180): Mirror Box, Clamavus', () => {
+  it('Clamavus: each creature counts the counters on itself (it had summed them all)', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Clamavus', 'battlefield');
+    const a = give(g, 'alice', 'Bear', 'battlefield');
+    const b = give(g, 'alice', 'Bear', 'battlefield');
+    g.objects[a]!.counters['+1/+1'] = 2;
+    expect(chars(g, g.objects[a]!).power).toBe(6);
+    expect(chars(g, g.objects[b]!).power).toBe(2);
+  });
+
+  it('+1/+1 for each other creature you control with the same name', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Mirror Box', 'battlefield');
+    const a = give(g, 'alice', 'Goblin Warrior', 'battlefield');
+    const b = give(g, 'alice', 'Goblin Warrior', 'battlefield');
+    give(g, 'bob', 'Goblin Warrior', 'battlefield');
+    const k1 = give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    give(g, 'alice', 'Koma, Cosmos Serpent', 'battlefield');
+    expect(chars(g, g.objects[a]!).power).toBe(2);
+    expect(chars(g, g.objects[b]!).toughness).toBe(2);
+    // Legendary (+1/+1) and one other Koma (+1/+1); the legend rule doesn't apply.
+    expect(chars(g, g.objects[k1]!).power).toBe(8);
+    g = act(g, { type: 'pass', player: 'alice' });
+    expect(g.pending?.kind).not.toBe('legend_rule');
+  });
+});
+
+describe('staples (slice 180): Mockingbird', () => {
+  it('copies only a creature with mana value up to the mana spent on it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const titan = give(g, 'bob', 'Titan', 'battlefield');
+    Object.assign(g.players.alice!.pool, { U: 1, C: 2 });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mockingbird', 'hand'), x: 2 }));
+    expect(g.pending).toMatchObject({ kind: 'as_enters', choice: 'copy' });
+    const candidates = (g.pending as { candidates: string[] }).candidates;
+    expect(candidates).toContain(bear);
+    expect(candidates).not.toContain(titan);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', copy: bear } });
+    const bird = g.zones.battlefield.map((id) => g.objects[id]!).find((o) => o.controller === 'alice' && o.copyOf)!;
+    expect(chars(g, bird).subtypes).toEqual(expect.arrayContaining(['Bear', 'Bird']));
+    expect(chars(g, bird).keywords.some((k) => k.id === 'flying')).toBe(true);
+  });
+});
+
+describe('staples (slice 180): Cursed Mirror', () => {
+  it('a copy with haste until end of turn, then the artifact again', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const titan = give(g, 'bob', 'Titan', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Cursed Mirror', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'as_enters', choice: 'copy' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', copy: titan } });
+    const mirror = g.zones.battlefield.map((id) => g.objects[id]!).find((o) => o.controller === 'alice' && o.copyOf)!;
+    expect(chars(g, mirror).power).toBe(6);
+    expect(chars(g, mirror).keywords.some((k) => k.id === 'haste')).toBe(true);
+    g = toStep(g, 'main1', 'bob');
+    expect(chars(g, g.objects[mirror.id]!).types).toEqual(['Artifact']);
   });
 });
