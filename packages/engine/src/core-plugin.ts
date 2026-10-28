@@ -660,6 +660,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.power !== undefined ? { power: amountOf(ctx, node.power), toughness: amountOf(ctx, node.toughness ?? 0) } : {}),
       ...(keywords ? { keywords } : {}),
       ...(Array.isArray(node.loseKeywords) ? { loseKeywords: node.loseKeywords as string[] } : {}),
+      ...(Array.isArray(node.cantHave) ? { cantHave: node.cantHave as string[] } : {}),
       ...(Array.isArray(node.rules) ? { rules: node.rules as RuleFlag[] } : {}),
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
@@ -1312,7 +1313,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'battlefield' || !chars(ctx.g, o).types.includes('Creature')) continue;
       if (!(o.goadedBy ??= []).includes(ctx.controller)) o.goadedBy.push(ctx.controller);
-      ctx.events.push({ type: 'goaded', object: o.id, by: ctx.controller });
+      // Kardur: "… attack each combat if able and attack a player other than you if able" — the same requirements, but
+      // nothing was goaded ("whenever you goad" doesn't trigger).
+      if (!node.quiet) ctx.events.push({ type: 'goaded', object: o.id, by: ctx.controller });
     }
     return true;
   },
@@ -2122,19 +2125,22 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const life = Number(node.life ?? 0) * Math.max(0, n);
     const otherwise = (node.else as EffectNode[] | undefined) ?? [];
     if (!cost && !life) return { expand: node.effects as EffectNode[] };
+    // Dance of the Dead: "that player may pay {1}{B}" — someone other than the ability's controller.
+    const payer = node.payer ? refPlayers(ctx, ref(node, 'payer'))[0] : ctx.controller;
+    if (!payer) return { expand: otherwise };
     if (!answer) {
       const price = [cost, life ? `${life} life` : ''].filter(Boolean).join(' and ');
       const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
-      return { ask: { kind: 'pay', player: ctx.controller, cost, text, sourceName: sourceName(ctx) } };
+      return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx) } };
     }
     if (!answer.pay) return { expand: otherwise };
-    const ps = ctx.g.players[ctx.controller]!;
+    const ps = ctx.g.players[payer]!;
     if (life && ps.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
-    if (cost) payDuringResolution(ctx.g, ctx.controller, cost, ctx.events);
+    if (cost) payDuringResolution(ctx.g, payer, cost, ctx.events);
     if (life) {
-      const lost = lifeLoss(ctx.g, ctx.controller, life);
+      const lost = lifeLoss(ctx.g, payer, life);
       ps.life -= lost;
-      ctx.events.push({ type: 'life', player: ctx.controller, delta: -lost, life: ps.life });
+      ctx.events.push({ type: 'life', player: payer, delta: -lost, life: ps.life });
     }
     return { expand: node.effects as EffectNode[] };
   },

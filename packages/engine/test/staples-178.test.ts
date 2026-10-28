@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { chars, legalActions } from '../src/index.js';
 import type { Action } from '../src/index.js';
 import type { GameState } from '../src/index.js';
-import { act, give, makeCard, start, toStep } from './helpers.js';
+import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
 
 const CARDS = [
   makeCard({ name: 'Lion Sash', type_line: 'Artifact Creature — Equipment Cat', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{W}: Exile target card from a graveyard. If it was a permanent card, put a +1/+1 counter on this permanent.' }),
@@ -70,6 +70,12 @@ const CARDS = [
   makeCard({ name: 'Disenchant', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target artifact or enchantment.' }),
   makeCard({ name: 'Throne of Eldraine', type_line: 'Legendary Artifact', mana_cost: '{5}', oracle_text: 'As Throne of Eldraine enters, choose a color.\n{T}: Add four mana of the chosen color. Spend this mana only to cast monocolored spells of that color.\n{3}, {T}: Draw two cards. Spend only mana of the chosen color to activate this ability.' }),
   makeCard({ name: 'Red Ogre', type_line: 'Creature — Ogre', mana_cost: '{3}{R}', cmc: 4, power: '4', toughness: '4', oracle_text: '' }),
+  makeCard({ name: 'Dance of the Dead', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature card in a graveyard\nWhen this Aura enters, if it\'s on the battlefield, it loses "enchant creature card in a graveyard" and gains "enchant creature put onto the battlefield with this Aura." Put enchanted creature card onto the battlefield tapped under your control and attach this Aura to it. When this Aura leaves the battlefield, that creature\'s controller sacrifices it.\nEnchanted creature gets +1/+1 and doesn\'t untap during its controller\'s untap step.\nAt the beginning of the upkeep of enchanted creature\'s controller, that player may pay {1}{B}. If the player does, untap that creature.' }),
+  makeCard({ name: 'Kardur, Doomscourge', type_line: 'Legendary Creature — Demon Berserker', mana_cost: '{0}', power: '4', toughness: '3', oracle_text: 'When Kardur enters, until your next turn, creatures your opponents control attack each combat if able and attack a player other than you if able.\nWhenever an attacking creature dies, each opponent loses 1 life and you gain 1 life.' }),
+  makeCard({ name: 'Gisela, Blade of Goldnight', type_line: 'Legendary Creature — Angel', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Flying, first strike\nIf a source would deal damage to an opponent or a permanent an opponent controls, that source deals double that damage to that player or permanent instead.\nIf a source would deal damage to you or a permanent you control, prevent half that damage, rounded up.' }),
+  makeCard({ name: 'Archetype of Endurance', type_line: 'Enchantment Creature — Boar', mana_cost: '{0}', power: '6', toughness: '5', oracle_text: "Creatures you control have hexproof.\nCreatures your opponents control lose hexproof and can't have or gain hexproof." }),
+  makeCard({ name: 'Arcane Lighthouse', type_line: 'Land', mana_cost: '', oracle_text: "{T}: Add {C}.\n{1}, {T}: Until end of turn, creatures your opponents control lose hexproof and shroud and can't have hexproof or shroud." }),
+  makeCard({ name: 'Hexproof Bear', type_line: 'Creature — Bear', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Hexproof' }),
   makeCard({ name: 'Approach of the Second Sun', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "If this spell was cast from your hand and you've cast another spell named Approach of the Second Sun this game, you win the game. Otherwise, put Approach of the Second Sun into its owner's library seventh from the top and you gain 7 life." }),
 ];
 
@@ -685,6 +691,23 @@ describe('staples (slice 180): Animate Dead', () => {
     expect(g.zones.graveyard.bob).toContain(titan);
   });
 
+  it('Dance of the Dead: enters tapped, stays tapped, and its controller may pay {1}{B} at upkeep to untap it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const titan = give(g, 'bob', 'Titan', 'graveyard');
+    const aura = give(g, 'alice', 'Dance of the Dead', 'hand');
+    g = settle(settle(act(g, { type: 'cast', player: 'alice', object: aura, targets: [[obj(titan)]] })));
+    expect(g.objects[titan]!.zone).toBe('battlefield');
+    expect(g.objects[titan]!.tapped).toBe(true);
+    expect(chars(g, g.objects[titan]!).power).toBe(7);
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'upkeep', 'alice');
+    for (let i = 0; i < 5 && g.pending?.kind !== 'pay'; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(g.pending).toMatchObject({ kind: 'pay', player: 'alice' });
+    Object.assign(g.players.alice!.pool, { B: 1, C: 1 });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } });
+    expect(g.objects[titan]!.tapped).toBe(false);
+  });
+
   it('the creature dying takes the Aura with it; nothing is sacrificed', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const titan = give(g, 'bob', 'Titan', 'graveyard');
@@ -714,5 +737,59 @@ describe('staples (slice 181): Throne of Eldraine', () => {
     const hand = g.zones.hand.alice!.length;
     g = settle(act(g, { type: 'activate', player: 'alice', object: throne, ability: 0 }));
     expect(g.zones.hand.alice!.length).toBe(hand + 2);
+  });
+});
+
+describe('staples (slice 181): Kardur, Doomscourge', () => {
+  it('opponents\' creatures must attack someone other than Kardur\'s controller, without being goaded', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Kardur, Doomscourge', 'hand') }));
+    g = settle(g);
+    expect(g.objects[bear]!.goadedBy).toEqual(['alice']);
+    g = toStep(g, 'beginning_of_combat', 'bob');
+    while (g.pending?.kind !== 'declare_attackers') g = act(g, { type: 'pass', player: g.priority! });
+    expect(illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [] } })).toBeTruthy();
+    expect(illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'alice' } }] } })).toBeTruthy();
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'carol' } }] } });
+    expect(g.combat?.attackers[bear]).toBeTruthy();
+  });
+});
+
+describe('staples (slice 181): Gisela, Blade of Goldnight', () => {
+  it('double to opponents and their permanents; half, rounded up, prevented for you and yours', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Gisela, Blade of Goldnight', 'battlefield');
+    const mine = give(g, 'alice', 'Titan', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(14);
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(g.players.alice!.life).toBe(19);
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[obj(mine)]] }));
+    expect(g.objects[mine]!.damage).toBe(1);
+  });
+});
+
+describe('staples (slice 182): can\'t have or gain', () => {
+  const hex = (g: GameState, id: string) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'hexproof');
+  it('Archetype of Endurance: opponents\' creatures lose hexproof, whatever grants it', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Hexproof Bear', 'battlefield');
+    // Bob's own Archetype (later timestamp) would give it hexproof; Alice's Archetype says it can't have it.
+    give(g, 'alice', 'Archetype of Endurance', 'battlefield');
+    give(g, 'bob', 'Archetype of Endurance', 'battlefield');
+    expect(hex(g, bear)).toBe(false);
+  });
+  it('Arcane Lighthouse: until end of turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Hexproof Bear', 'battlefield');
+    const lh = give(g, 'alice', 'Arcane Lighthouse', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: lh, ability: 0 }));
+    expect(hex(g, bear)).toBe(false);
+    g = toStep(g, 'main1', 'bob');
+    expect(hex(g, bear)).toBe(true);
   });
 });

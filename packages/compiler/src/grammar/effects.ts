@@ -249,6 +249,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += otherwise ? 2 : 1;
         continue;
       }
+      // Dance of the Dead: "that player may pay {1}{B}. If the player does, untap that creature." — another player pays.
+      const otherPay = /^(That player|Its controller|They) may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+)$/.exec(s);
+      const otherDo = otherPay && sentences[i + 1] ? /^If (?:the player|that player|they) (?:does|do), (.+)$/.exec(sentences[i + 1]!) : null;
+      if (otherPay && otherDo) {
+        const payer = singlePlayer(otherPay[1]!.toLowerCase(), b);
+        const inner = payer ? parseSentence(capitalise(otherDo[1]!), b) : null;
+        if (!payer || !inner) return null;
+        out.push({ type: 'may_pay', cost: otherPay[2]!, payer, effects: inner });
+        i++;
+        continue;
+      }
       // "You may pay {2}. If you don't, blight 2." / "… sacrifice it."
       const payDont = pay && sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && payDont) {
@@ -2183,6 +2194,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Kardur, Doomscourge: "until your next turn, creatures your opponents control attack each combat if able and attack a
+  // player other than you if able" — goad's requirements (CR 701.15b), without goading.
+  const kardur = /^[Uu]ntil your next turn, (.+?) attacks? each combat if able and attacks? a player other than you if able$/.exec(s);
+  if (kardur) {
+    const what = parseObjectRef(kardur[1]!, b);
+    if (what) return [{ type: 'goad', what: what.ref, quiet: true }];
+  }
   const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
 
@@ -3289,6 +3307,18 @@ const RESTRICTIONS: Record<string, RuleFlag[]> = {
 function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   // Layer 6: "Target creature loses flying until end of turn", "Permanents your opponents control lose hexproof and
   // indestructible until end of turn".
+  // Arcane Lighthouse: "… lose hexproof and shroud and can't have hexproof or shroud" — whatever would give it back.
+  const loseHave = /^(.+?) loses? ([a-z ,]+?) and can't have(?: or gain)? ([a-z ,]+?) until end of turn$/.exec(c);
+  if (loseHave) {
+    const r = attempt(b, (b) => {
+      const kws = parseKeywordList(loseHave[2]!, b);
+      const banned = parseKeywordList(loseHave[3]!.replace(/ or /g, ' and '), b);
+      const plain = (k: { text?: string; cost?: string; n?: number }[] | null) => k && !k.some((x) => x.text || x.cost || x.n !== undefined);
+      const what = plain(kws) && plain(banned) ? parseObjectRef(loseHave[1]!, b) : null;
+      return what && kws && banned ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), cantHave: banned.map((k) => k.id), until: 'eot' }] : null;
+    });
+    if (r) return r;
+  }
   const lose = /^(.+?) loses? ([a-z ,]+?) until end of turn$/.exec(c);
   if (lose && !/^all abilities$/.test(lose[2]!)) {
     const r = attempt(b, (b) => {

@@ -382,6 +382,8 @@ export interface ContinuousEffect {
   combat?: CombatRules;
   /** Layer 6: keywords it loses ("loses flying until end of turn"). */
   loseKeywords?: string[];
+  /** "can't have or gain hexproof": stripped whatever grants it. */
+  cantHave?: string[];
   /** Layer 4: card types and subtypes it becomes; added to its own if `retainTypes` (CR 205.1b). */
   types?: string[];
   subtypes?: string[];

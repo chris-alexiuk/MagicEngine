@@ -657,6 +657,8 @@ export interface StaticPreventionNode extends EffectNode {
   bySelf?: true;
   /** "during your turn" (CR 611.3a: checked continuously). */
   condition?: ConditionNode;
+  /** Gisela: "prevent half that damage, rounded up" — not all of it. */
+  half?: 'up';
 }
 
 export interface TriggerExtraNode extends EffectNode {
@@ -813,6 +815,8 @@ export interface ContinuousEffectNode extends EffectNode {
   control?: 'you';
   /** Layer 6: "Creatures your opponents control lose trample" — these keywords go (CR 613.1f). */
   loseKeywords?: string[];
+  /** "… and can't have or gain hexproof" (Archetype of Endurance, Arcane Lighthouse): whatever would give it to them. */
+  cantHave?: string[];
   /** Layer 4: "isn't a creature" (the Theros Gods) — card types it loses. */
   loseTypes?: string[];
   /** Layer 4: "is a Wizard in addition to its other types" (CR 205.1b). */

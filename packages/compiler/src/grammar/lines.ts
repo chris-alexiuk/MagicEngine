@@ -658,6 +658,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (t === "the beginning of the upkeep of enchanted creature's controller") {
       // Apathy, Unstable Mutation: "… untap that creature", "put a -1/-1 counter on that creature" — the enchanted creature.
       b.named['that creature'] = { ref: 'attached' };
+      // Paralyze: "untap the creature".
+      b.named['the creature'] = { ref: 'attached' };
       return { trigger: { type: 'phase', step: 'upkeep', whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     }
     if (t === 'the beginning of each of your postcombat main phases' || t === 'the beginning of each of your second main phases') {
@@ -1937,7 +1939,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -1958,6 +1960,15 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (/^loses all other (?:abilities, card types, and creature types|card types and abilities)$/.test(part) && !effect.loseAbilities) {
       effect.loseAbilities = true;
       loseOthers = true;
+      continue;
+    }
+    // Archetype of Endurance: "… lose hexproof and can't have or gain hexproof".
+    // (Not Arrest's "can't have its abilities activated" — a rule flag.)
+    const cantHave = /^can't have(?: or gain)? (?!(?:its|their) )([a-z ,]+)$/.exec(part);
+    if (cantHave && !effect.cantHave) {
+      const kws = parseKeywordList(cantHave[1]!.replace(/ or /g, ' and '), b);
+      if (!kws || kws.some((k) => k.text || k.cost || k.n !== undefined)) return null;
+      effect.cantHave = kws.map((k) => k.id);
       continue;
     }
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
@@ -2396,7 +2407,8 @@ export const quantityReplacementRule: GrammarRule = {
       return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
-    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target), it deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
+    // Gisela, Blade of Goldnight: "… that source deals double that damage to that player or permanent instead."
+    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target), (?:it|that source) deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
     if (damage) {
       const creature = Boolean(damage.splice(3, 1)[0]);
       const op = quantityOp(damage[6]!);
@@ -2434,6 +2446,13 @@ export const staticPreventionRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     if (!env || /\b(?:Instant|Sorcery)\b/.test(env.typeLine)) return null;
+    // Gisela, Blade of Goldnight: "If a source would deal damage to you or a permanent you control, prevent half that
+    // damage, rounded up."
+    const half = /^If a source would deal damage to (you or a permanent you control|you|a permanent you control), prevent half that damage, rounded up\.$/.exec(line);
+    if (half) {
+      const node: StaticPreventionNode = { type: 'prevent_damage', half: 'up', ...(half[1]!.startsWith('you') ? { toYou: true as const } : {}), ...(half[1]!.includes('permanent') ? { to: { controller: 'you' } } : {}) };
+      return { kind: 'static', text: original, effect: node } as StaticAbility;
+    }
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to) (.+?)( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);

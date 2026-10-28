@@ -96,6 +96,8 @@ interface ActiveEffect {
   loseAbilities?: true;
   /** Layer 6: "loses flying" — those keywords. */
   loseKeywords?: string[];
+  /** "can't have or gain hexproof": removed after every grant, whatever its timestamp. */
+  cantHave?: string[];
   keywords?: KeywordInstance[];
   rules?: readonly RuleFlag[];
   combat?: CombatRules;
@@ -394,6 +396,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.colors ? { colors: e.colors } : {}),
         ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
         ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
+        ...(e.cantHave ? { cantHave: e.cantHave } : {}),
         ...(ptGated(e) ? { ptGated: true as const } : {}),
         // CR 611.3a: not locked in — it applies to whatever matches at any given moment.
         applies: (o, c) => affectedBy(g, e.affected, source, o, c),
@@ -410,7 +413,7 @@ function ptGated(e: ContinuousEffectNode): boolean {
   const f = e.affected.filter as ObjectFilter;
   const byPT = (x: ObjectFilter): boolean => Boolean(x.power || x.toughness || x.anyOf?.some(byPT));
   if (!byPT(f)) return false;
-  if (e.power !== undefined || e.toughness !== undefined || e.setPower !== undefined || e.addTypes || e.setTypes || e.loseTypes || e.colors || e.loseAbilities || e.loseKeywords || e.creatureTypes || e.landTypes) return false;
+  if (e.power !== undefined || e.toughness !== undefined || e.setPower !== undefined || e.addTypes || e.setTypes || e.loseTypes || e.colors || e.loseAbilities || e.loseKeywords || e.cantHave || e.creatureTypes || e.landTypes) return false;
   return !(e.keywords ?? []).some((k) => k.id === 'ability' || k.abilities?.some((a) => a.kind === 'static'));
 }
 
@@ -448,6 +451,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.landTypes ? { landTypes: e.landTypes } : {}),
     ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
     ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
+    ...(e.cantHave ? { cantHave: e.cantHave } : {}),
     ...(e.keywords ? { keywords: e.keywords } : {}),
     ...(e.rules ? { rules: e.rules } : {}),
     ...(e.combat ? { combat: e.combat } : {}),
@@ -615,6 +619,9 @@ function layered(g: GameState, o: GameObject): Characteristics {
     for (const r of e.rules ?? []) out.rules.add(r);
     if (e.combat) out.combat.push(e.combat);
   }
+  // "… and can't have or gain hexproof" (Archetype of Endurance): whatever would give it, at any timestamp.
+  const banned = effects.flatMap((e) => (e.cantHave && e.applies(o, out) ? e.cantHave : []));
+  if (banned.length) out.keywords = out.keywords.filter((k) => !banned.includes(k.id));
   return out;
 }
 

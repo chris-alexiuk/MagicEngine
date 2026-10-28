@@ -918,7 +918,9 @@ export function dealDamage(
 }
 
 /** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): boolean {
+/** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number } {
+  let halves = 0;
   for (const id of abilitySources(g)) {
     const holder = g.objects[id]!;
     for (const a of objectAbilities(g, holder)) {
@@ -926,25 +928,33 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       const e = (a as StaticAbility).effect as StaticPreventionNode;
       if ((e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
       if (!staticConditionHolds(g, e, holder)) continue;
-      if (e.bySelf && source.id === holder.id) return true;
-      if (to.kind === 'player') {
-        if (e.toYou && to.player === holder.controller) return true;
-        continue;
+      let hit = false;
+      if (e.bySelf && source.id === holder.id) hit = true;
+      else if (to.kind === 'player') hit = Boolean(e.toYou && to.player === holder.controller);
+      else {
+        const o = g.objects[to.object];
+        hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
       }
-      const o = g.objects[to.object];
-      if (!o) continue;
-      if (e.toSelf && o.id === holder.id) return true;
-      if (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder })) return true;
+      if (!hit) continue;
+      if (e.half) halves++;
+      else return { all: true, halves };
     }
   }
-  return false;
+  return { all: false, halves };
 }
 
 /** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
 function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
-  if (amount > 0 && staticallyPrevented(g, source, to, combat)) {
+  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : { all: false, halves: 0 };
+  if (fixed.all) {
     events.push({ type: 'prevented', source: source.id, amount });
     return 0;
+  }
+  // Gisela: "prevent half that damage, rounded up" — what's left is half, rounded down.
+  if (fixed.halves) {
+    const before = amount;
+    for (let i = 0; i < fixed.halves; i++) amount = Math.floor(amount / 2);
+    if (amount < before) events.push({ type: 'prevented', source: source.id, amount: before - amount });
   }
   if (amount <= 0 || !g.prevention.length) return amount;
   const left0 = amount;

@@ -2212,4 +2212,23 @@ describe('slice 181', () => {
     expect(p.unparsed).toEqual([]);
     expect(p.abilities.map((a) => (a.kind === 'triggered' ? a.effects[0]!.type : a.kind))).toEqual(['reanimate_attach', 'sacrifice_linked', 'static']);
   });
+  it('reads Throne of Eldraine and monocolored', () => {
+    expect(parse('{T}: Add four mana of the chosen color. Spend this mana only to cast monocolored spells of that color.', 'Legendary Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', options: [['chosen', 'chosen', 'chosen', 'chosen']], spend: { spells: { monocolored: true, chosenColor: true } } }] });
+    expect(parse('{3}, {T}: Draw two cards. Spend only mana of the chosen color to activate this ability.', 'Legendary Artifact').abilities[0]).toMatchObject({ payOnly: 'chosen' });
+    expect(parse('Exile target monocolored permanent.', 'Instant').abilities[0]).toMatchObject({ targets: [{ filter: { monocolored: true } }] });
+  });
+  it('reads another payer, Kardur and Gisela', () => {
+    expect(parse("At the beginning of the upkeep of enchanted creature's controller, that player may pay {1}{B}. If the player does, untap that creature.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', payer: { ref: 'trigger_player' }, effects: [{ type: 'untap', what: { ref: 'attached' } }] }] });
+    expect(parse('When ~ enters, until your next turn, creatures your opponents control attack each combat if able and attack a player other than you if able.', 'Legendary Creature — Demon', 'Kardur').abilities[0]).toMatchObject({ effects: [{ type: 'goad', quiet: true }] });
+    expect(parse('If a source would deal damage to you or a permanent you control, prevent half that damage, rounded up.', 'Legendary Creature — Angel').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', half: 'up', toYou: true } });
+  });
+});
+
+describe('slice 182', () => {
+  it('reads "can\'t have or gain" and keeps Arrest\'s activation lock', () => {
+    expect(parse("Creatures your opponents control lose hexproof and can't have or gain hexproof.", 'Enchantment Creature — Boar').abilities[0]).toMatchObject({ effect: { loseKeywords: ['hexproof'], cantHave: ['hexproof'] } });
+    expect(parse("{1}, {T}: Until end of turn, creatures your opponents control lose hexproof and shroud and can't have hexproof or shroud.", 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'modify', cantHave: ['hexproof', 'shroud'], until: 'eot' }] });
+    expect(parse("Enchanted creature can't attack or block, and its activated abilities can't be activated.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack', 'cant_block', 'cant_activate'] } });
+    expect(parse("At the beginning of the upkeep of enchanted creature's controller, that player may pay {4}. If the player does, untap the creature.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', effects: [{ type: 'untap', what: { ref: 'attached' } }] }] });
+  });
 });
