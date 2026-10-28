@@ -10,12 +10,21 @@ import { abilitySources } from './zones.js';
  */
 import { preparedSource } from './prepare.js';
 
+/**
+ * A play permission's window: through `lastTurn` (from `firstTurn`); "until your next end step" ends as that end step
+ * begins.
+ */
+export function permissionLive(g: GameState, p: { lastTurn: number; firstTurn?: number; untilEndStep?: true }): boolean {
+  if (p.lastTurn < g.turn || (p.firstTurn ?? 0) > g.turn) return false;
+  return !(p.untilEndStep && p.lastTurn === g.turn && (g.step === 'end' || g.step === 'cleanup'));
+}
+
 export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
   if (o.zone === 'library') return fromTop(g, player, o, what);
   // Misthollow Griffin: "You may cast this card from exile." — its own permission, its mana cost paid.
   if (o.zone === 'exile' && what === 'spell' && o.owner === player && !o.faceDown && castableFromExileItself(g, o)) return true;
   return (g.mayPlay ?? []).some(
-    (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn && (what === 'spell' || p.mode === 'play'),
+    (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p) && (what === 'spell' || p.mode === 'play'),
   );
 }
 
@@ -29,18 +38,18 @@ function castableFromExileItself(g: GameState, o: GameObject): boolean {
 
 /** Dauthi Voidwalker: a permission to play this card "without paying its mana cost". */
 export function freePermission(g: GameState, player: PlayerId, o: GameObject): boolean {
-  return (g.mayPlay ?? []).some((p) => p.free && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
+  return (g.mayPlay ?? []).some((p) => p.free && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
 }
 
 /** CR 609.4b: "… and you may spend mana as though it were mana of any color to cast that spell" — on this card's permission. */
 export function anyColorPermission(g: GameState, player: PlayerId, o: GameObject): false | 'color' | 'type' {
-  const live = (g.mayPlay ?? []).filter((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn);
+  const live = (g.mayPlay ?? []).filter((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
   return live.some((p) => p.anyColor === 'type') ? 'type' : live.length ? 'color' : false;
 }
 
 /** Airbend (CR 701.65a): a permission to cast this card by paying another cost rather than its mana cost. */
 export function permissionCost(g: GameState, player: PlayerId, o: GameObject): string | undefined {
-  return (g.mayPlay ?? []).find((p) => p.cost !== undefined && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && p.lastTurn >= g.turn && (p.firstTurn ?? 0) <= g.turn)?.cost;
+  return (g.mayPlay ?? []).find((p) => p.cost !== undefined && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p))?.cost;
 }
 
 /**
@@ -57,7 +66,8 @@ function fromTop(g: GameState, player: PlayerId, o: GameObject, what: 'land' | '
       if (a.kind !== 'static' || a.effect.type !== 'top_permission') continue;
       // "As long as ~ is attached to a creature, …" (The Reality Chip).
       if (!staticConditionHolds(g, a.effect as never, src)) continue;
-      if (what === 'land' && a.effect.lands) return true;
+      // Crystal Skull: "You may play historic lands …" — only those.
+      if (what === 'land' && a.effect.lands && (!a.effect.landFilter || matchesFilter(g, o, a.effect.landFilter as ObjectFilter, { controller: player, source: src, anyZone: true }))) return true;
       const spells = a.effect.spells as ObjectFilter | undefined;
       if (what === 'spell' && spells && matchesFilter(g, o, spells, { controller: player, source: src, anyZone: true })) return true;
     }
@@ -115,5 +125,5 @@ export function playableFromGraveyard(g: GameState, player: PlayerId): string[] 
 /** Drops permissions that have run out or whose card has moved. */
 export function prunePermissions(g: GameState): void {
   if (!g.mayPlay?.length) return;
-  g.mayPlay = g.mayPlay.filter((p) => p.lastTurn >= g.turn && g.objects[p.object.id]?.zcc === p.object.zcc);
+  g.mayPlay = g.mayPlay.filter((p) => p.lastTurn >= g.turn && !(p.untilEndStep && p.lastTurn === g.turn && (g.step === 'end' || g.step === 'cleanup')) && g.objects[p.object.id]?.zcc === p.object.zcc);
 }

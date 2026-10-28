@@ -941,7 +941,7 @@ export interface GameState {
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
   /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
   /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b); 'type': "… of any type". */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string; anyColor?: true | 'type' }[];
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; untilEndStep?: true; free?: true; cost?: string; anyColor?: true | 'type' }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

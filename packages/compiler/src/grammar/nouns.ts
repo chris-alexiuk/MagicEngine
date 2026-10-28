@@ -378,6 +378,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     else if (w === 'tapped') f.tapped = true;
     else if (w === 'untapped') f.tapped = false;
     else if (w === 'attacking') f.combat = 'attacking';
+    // Vengeful Ancestor: "Whenever a goaded creature attacks" (CR 701.15)
+    else if (w === 'goaded') f.goaded = true;
     else if (w === 'blocking') f.combat = 'blocking';
     else if (SUPERTYPE_WORDS[w]) (f.supertypes ??= []).push(SUPERTYPE_WORDS[w]!);
     else if (TYPE_NOUNS[w] && w === TYPE_NOUNS[w]!.toLowerCase()) adjTypes.push(TYPE_NOUNS[w]!);
@@ -556,7 +558,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(tm[1] ? { upTo: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
-      if (tm) {
+      // Sudden Spoiling: "creatures target player controls" — not a number of targets; a bare plural below.
+      if (tm && !(tm[2] && !tm[1] && parseAmount(tm[2]) === null && !tm[3])) {
         const count = tm[2] ? parseAmount(tm[2]) : 1;
         if (typeof count !== 'number' || count < 1) return null;
         // "up to two target cards from a single graveyard"

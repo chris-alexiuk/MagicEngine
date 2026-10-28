@@ -280,7 +280,7 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     return { type: 'discard', amount, filter };
   }
   // "Tap an untapped creature you control", "tap two untapped creatures you control that each share a color with it"
-  const tap = /^[Tt]ap (a|an|one|two|three|four|five) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
+  const tap = /^[Tt]ap (a|an|one|two|three|four|five|six|seven|eight|nine|ten) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
   if (tap && b) {
     const amount = parseAmount(tap[1]!.replace(/^an$/, 'a'));
     const pf = parseFilter(tap[2]!, b);
@@ -1451,6 +1451,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === '~ transforms into ~' || t === '~ transforms') return { trigger: { type: 'transforms' }, it: { ref: 'self' }, player: null };
   // CR 700.13: "Whenever you commit a crime"; CR 700.14: "Whenever you expend 4"
   if (t === 'you commit a crime') return { trigger: { type: 'crime' }, it: { ref: 'self' }, player: null };
+  // Patrolling Peacemaker: "Whenever an opponent commits a crime" — that player.
+  if (t === 'an opponent commits a crime') return { trigger: { type: 'crime', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   const expend = /^you expend (\d+)$/.exec(t);
   if (expend) return { trigger: { type: 'expend', n: Number(expend[1]) }, it: { ref: 'self' }, player: null };
   // CR 309.7: "Whenever you complete a dungeon"
@@ -2036,7 +2038,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (cda[1] !== 'power is') effect.setToughness = first;
     if (cda[3]) {
       if (cda[1] !== 'power is') return null;
-      const second = parseCount(cda[3], b);
+      // Tarmogoyf: "… and its toughness is equal to that number plus 1".
+      const plus = /^that number plus (\d+|one|two)$/.exec(cda[3]);
+      const n = plus ? parseAmount(plus[1]!) : null;
+      const second = typeof n === 'number' && typeof first === 'object' ? { ...first, plus: (first.plus ?? 0) + n } : parseCount(cda[3], b);
       if (!second) return null;
       effect.setToughness = second;
     }
@@ -3193,9 +3198,11 @@ export const topPermissionRule: GrammarRule = {
     if (gated && !condition) return null;
     const body = gated ? `You may ${gated[2]}` : line;
     // Bolas's Citadel: "… If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost."
-    const m = /^You may (?:(play lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(body);
+    // Crystal Skull, Isu Spyglass: "You may play historic lands and cast historic spells from the top of your library."
+    const m = /^You may (?:(play (?:(historic) )?lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(body)?.filter((_, i) => i !== 2) ?? null;
+    const landWord = /^You may play (historic) lands/.exec(body)?.[1];
     if (!env || !m || (!m[1] && !m[2]) || (m[3] && !m[2])) return null;
-    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}), ...(m[3] ? { lifeCost: true } : {}), ...(condition ? { condition } : {}) };
+    const effect: EffectNode = { type: 'top_permission', ...(m[1] ? { lands: true } : {}), ...(landWord ? { landFilter: { historic: true } } : {}), ...(m[3] ? { lifeCost: true } : {}), ...(condition ? { condition } : {}) };
     if (m[2]) {
       let phrase = m[2];
       // "Angel spells and Human spells", "instant and sorcery spells"

@@ -422,6 +422,8 @@ export interface ObjectFilter {
   notObject?: string;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
+  /** Vengeful Ancestor: "a goaded creature" (CR 701.15). */
+  goaded?: true;
   /** Relentless Assault: it was declared as an attacker this turn (as this object, CR 400.7). */
   attackedThisTurn?: true;
   /** Steel Hellkite: its controller was dealt combat damage by the source this turn. */
@@ -540,7 +542,8 @@ export type AmountExpr = (
   /** CR 305.6 (domain): the number of basic land types among lands you control. */
   | { kind: 'domain' }
   /** Delirium: the number of card types among cards in your graveyard. */
-  | { kind: 'card_types' }
+  // Tarmogoyf: `whose` — all graveyards, or the opponents'; yours without it.
+  | { kind: 'card_types'; whose?: 'all' | 'opponents' }
   /** CR 706.2: "equal to the result" — the result of the die roll this resolution made. */
   | { kind: 'die_result' }
   /** CR 701.38: "for each death vote" — votes for that option as this resolves. */

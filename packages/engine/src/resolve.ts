@@ -413,9 +413,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const blocking = o && g.combat ? Object.entries(g.combat.blockers).filter(([id, bl]) => g.objects[id]?.zcc === bl.zcc && (bl.blocking === o.id || bl.alsoBlocking?.includes(o.id))).length : 0;
       return Math.max(0, blocking - (e.beyond ?? 0));
     }
-    case 'card_types':
-      // "the number of card types among cards in your graveyard"
-      return new Set(zoneList(g, 'graveyard', ctx.controller).flatMap((id) => faceOf(g, g.objects[id]!).types)).size;
+    case 'card_types': {
+      // "the number of card types among cards in your graveyard" / "in all graveyards" / "in your opponents' graveyards"
+      const whose = e.whose === 'all' ? g.order : e.whose === 'opponents' ? g.order.filter((p) => p !== ctx.controller) : [ctx.controller];
+      return new Set(whose.flatMap((p) => zoneList(g, 'graveyard', p)).flatMap((id) => faceOf(g, g.objects[id]!).types)).size;
+    }
     case 'x':
       return ctx.x;
     case 'event':

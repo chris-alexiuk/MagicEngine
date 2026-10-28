@@ -78,6 +78,12 @@ const CARDS = [
   makeCard({ name: 'Ogre Spell', type_line: 'Sorcery', mana_cost: '{3}', cmc: 3, oracle_text: 'You gain 3 life.' }),
   makeCard({ name: 'Braids, Arisen Nightmare', type_line: 'Legendary Creature — Nightmare', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "At the beginning of your end step, you may sacrifice an artifact, creature, enchantment, land, or planeswalker. If you do, each opponent may sacrifice a permanent of their choice that shares a card type with it. For each opponent who doesn't, that player loses 2 life and you draw a card." }),
   makeCard({ name: 'Lithoform Lite', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: '{0}, {T}: Copy target permanent spell you control. (The copy becomes a token.)' }),
+  makeCard({ name: 'Tarmogoyf', type_line: 'Creature — Lhurgoyf', mana_cost: '{0}', power: '*', toughness: '1+*', oracle_text: "Tarmogoyf's power is equal to the number of card types among cards in all graveyards and its toughness is equal to that number plus 1." }),
+  makeCard({ name: 'Mutavault', type_line: 'Land', mana_cost: '', oracle_text: "{T}: Add {C}.\n{1}: This land becomes a 2/2 creature with all creature types until end of turn. It's still a land." }),
+  makeCard({ name: 'Sudden Spoiling', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Until end of turn, creatures target player controls lose all abilities and have base power and toughness 0/2.' }),
+  makeCard({ name: 'Oko Lite', type_line: 'Legendary Planeswalker — Oko', mana_cost: '{0}', loyalty: '4', oracle_text: '+1: Target artifact or creature loses all abilities and becomes a green Elk creature with base power and toughness 3/3.' }),
+  makeCard({ name: 'Wiccan Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Exile the top card of your library. Until your next end step, you may play it.' }),
+  makeCard({ name: 'Peacemaker Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever an opponent commits a crime, you gain 2 life.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -871,5 +877,68 @@ describe('staples (slice 193): copying a permanent spell', () => {
     const cubs = g.zones.battlefield.filter((id) => g.objects[id]!.card === g.objects[cub]!.card);
     expect(cubs.length).toBe(2);
     expect(cubs.filter((id) => g.objects[id]!.token).length).toBe(1);
+  });
+});
+
+describe('staples (slice 194)', () => {
+  it('Tarmogoyf: card types among cards in all graveyards', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const goyf = give(g, 'alice', 'Tarmogoyf', 'battlefield');
+    give(g, 'bob', 'Bolt', 'graveyard');
+    give(g, 'alice', 'Bear', 'graveyard');
+    give(g, 'alice', 'Trinket', 'graveyard');
+    const c = chars(g, g.objects[goyf]!);
+    expect([c.power, c.toughness]).toEqual([3, 4]);
+  });
+
+  it('Mutavault: a 2/2 with every creature type, still a land', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const vault = give(g, 'alice', 'Mutavault', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: vault, ability: 0 }));
+    const c = chars(g, g.objects[vault]!);
+    expect(c.types).toEqual(expect.arrayContaining(['Land', 'Creature']));
+    expect(c.subtypes).toEqual(expect.arrayContaining(['Goblin', 'Elf', 'Shapeshifter']));
+    expect([c.power, c.toughness]).toEqual([2, 2]);
+  });
+
+  it('Sudden Spoiling: creatures target player controls', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [theirs, mine] = [give(g, 'bob', 'Ogre', 'battlefield'), give(g, 'alice', 'Ogre', 'battlefield')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Sudden Spoiling', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([chars(g, g.objects[theirs]!).power, chars(g, g.objects[theirs]!).toughness]).toEqual([0, 2]);
+    expect(chars(g, g.objects[mine]!).power).toBe(5);
+  });
+
+  it("Oko's +1: an artifact becomes a green Elk creature and stops being an artifact", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const oko = give(g, 'alice', 'Oko Lite', 'battlefield');
+    g.objects[oko]!.counters.loyalty = 4;
+    const relic = give(g, 'bob', 'Trinket', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: oko, ability: 0, targets: [[{ kind: 'object', object: relic }]] }));
+    const c = chars(g, g.objects[relic]!);
+    expect([c.types, c.subtypes, c.colors, c.power, c.toughness]).toEqual([['Creature'], ['Elk'], ['G'], 3, 3]);
+  });
+
+  it('"until your next end step": gone at this turn\'s end step when made before it', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lib = g.zones.library.alice!;
+    const top = give(g, 'alice', 'Salve', 'library');
+    lib.splice(lib.indexOf(top), 1);
+    lib.unshift(top);
+    const w = give(g, 'alice', 'Wiccan Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: w, ability: 0 }));
+    expect(g.objects[top]!.zone).toBe('exile');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === top)).toBe(true);
+    g = toStep(g, 'end', 'alice');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === top)).toBe(false);
+  });
+
+  it('Patrolling Peacemaker: an opponent committing a crime', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Peacemaker Lite', 'battlefield');
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(g.players.alice!.life).toBe(life - 3 + 2);
   });
 });

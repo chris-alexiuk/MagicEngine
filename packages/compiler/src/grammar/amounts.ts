@@ -160,6 +160,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
   if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };
+  // Tarmogoyf: "among cards in all graveyards"; Nighthawk Scavenger: "… in your opponents' graveyards".
+  if (t === 'card type among cards in all graveyards') return { kind: 'card_types', whose: 'all' };
+  if (t === "card type among cards in your opponents' graveyards") return { kind: 'card_types', whose: 'opponents' };
   // CR 701.38: "for each death vote"
   const vote = /^(.+) vote$/.exec(t);
   if (vote && b.votes.includes(vote[1]!)) return { kind: 'votes', option: vote[1]! };
@@ -259,6 +262,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (t === 'the number of creatures in your party') return { kind: 'party' };
   if (t === 'the number of basic land types among lands you control') return { kind: 'domain' };
   if (t === 'the number of card types among cards in your graveyard') return { kind: 'card_types' };
+  if (t === 'the number of card types among cards in all graveyards') return { kind: 'card_types', whose: 'all' };
+  if (t === "the number of card types among cards in your opponents' graveyards") return { kind: 'card_types', whose: 'opponents' };
   const number = /^the number of (.+)$/.exec(t);
   if (number) {
     const what = number[1]!;

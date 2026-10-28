@@ -2417,3 +2417,16 @@ describe('slice 193', () => {
     expect(parse("At the beginning of your end step, you may sacrifice an artifact, creature, enchantment, land, or planeswalker. If you do, each opponent may sacrifice a permanent of their choice that shares a card type with it. For each opponent who doesn't, that player loses 2 life and you draw a card.", 'Legendary Creature — Nightmare').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', then: [{ type: 'opponents_may', effects: [{ type: 'sacrifice_choice', filter: { sharesCardTypeWithSacrificed: true } }], declined: [{ type: 'lose_life', who: { ref: 'each_player' } }, { type: 'draw', who: { ref: 'you' } }] }] }] });
   });
 });
+
+describe('slice 194', () => {
+  it('reads goyfs, Mutavault, creatures a target player controls and more', () => {
+    expect(parse("~'s power is equal to the number of card types among cards in all graveyards and its toughness is equal to that number plus 1.", 'Creature').abilities[0]).toMatchObject({ effect: { setPower: { kind: 'card_types', whose: 'all' }, setToughness: { kind: 'card_types', whose: 'all', plus: 1 } } });
+    expect(parse("{1}: ~ becomes a 2/2 creature with all creature types until end of turn. It's still a land.", 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'modify', subtypes: expect.arrayContaining(['Elf', 'Goblin']), retainTypes: true }] });
+    expect(parse('Until end of turn, creatures target player controls lose all abilities and have base power and toughness 0/2.', 'Instant').abilities[0]).toMatchObject({ targets: [{ what: 'player' }], effects: [{ type: 'modify', what: { filter: { controlledBy: { ref: 'target' } } }, loseAbilities: true, setToughness: 2 }] });
+    expect(parse('{T}, Tap ten untapped Elves you control: You gain 10 life.', 'Creature').abilities[0]).toMatchObject({ cost: { other: [{ type: 'tap_creatures', amount: 10 }] } });
+    expect(parse('Whenever an opponent commits a crime, proliferate.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'crime', who: 'opponent' } });
+    expect(parse('Whenever a goaded creature attacks, it deals 1 damage to its controller.', 'Creature').abilities[0]).toMatchObject({ trigger: { subject: { filter: { goaded: true } } } });
+    expect(parse('You may play historic lands and cast historic spells from the top of your library.', 'Artifact').abilities[0]).toMatchObject({ effect: { type: 'top_permission', lands: true, landFilter: { historic: true }, spells: { historic: true } } });
+    expect(parse('Exile the top card of your library. Until your next end step, you may play it.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', play: { until: 'next_end_step' } }] });
+  });
+});

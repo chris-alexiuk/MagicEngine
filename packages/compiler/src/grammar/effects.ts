@@ -794,19 +794,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         /^Until (end of turn|the end of your next turn), you may (cast) spells from among (?:them|those cards|those exiled cards)$/.exec(next) ??
         /^Until (end of turn|the end of your next turn), you may (play) lands and cast spells from among (?:them|those cards)$/.exec(next);
       // Cunning Rhetoric: "You may play that card for as long as it remains exiled" — until it leaves exile (CR 400.7).
-      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
+      const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it) (this turn|until the end of your next turn|until end of turn|until your next end step|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
       if (top && (untilPlay || thisTurn)) {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
+        // Wiccan, Inti: "until your next end step" — it ends as that step begins (this turn's, if it's still to come).
         const until = untilPlay
-          ? untilPlay[1] !== 'end of turn'
-            ? 'next_turn'
-            : 'eot'
+          ? untilPlay[1] === 'your next end step'
+            ? 'next_end_step'
+            : untilPlay[1] !== 'end of turn'
+              ? 'next_turn'
+              : 'eot'
           : thisTurn![2] === 'until the end of your next turn'
             ? 'next_turn'
-            : /^for as long as/.test(thisTurn![2]!)
-              ? 'exiled'
-              : 'eot';
+            : thisTurn![2] === 'until your next end step'
+              ? 'next_end_step'
+              : /^for as long as/.test(thisTurn![2]!)
+                ? 'exiled'
+                : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         if (!topWho) return null;
         out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until, ...(free ? { free: true } : {}), ...anyColor(i + 1) } });
@@ -3311,7 +3316,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 500.8: "After this phase, there is an additional combat phase (followed by an additional main phase)."
   const extraCombat =
     /^after this (?:main )?phase, there is an additional combat phase( followed by an additional main phase)?$/i.exec(c) ??
-    /^there is an additional combat phase( followed by an additional main phase)? after this (?:main )?phase$/i.exec(c);
+    /^there is an additional combat phase( followed by an additional main phase)? after this (?:main )?phase$/i.exec(c) ??
+    // Overpowering Attack: "there is an additional combat phase after this phase, followed by an additional main phase"
+    /^there is an additional combat phase after this (?:main )?phase(, followed by an additional main phase)$/i.exec(c);
   if (extraCombat) return [{ type: 'extra_combat', ...(extraCombat[1] ? { main: true } : {}) }];
   // CR 701.54a: "The Ring tempts you."
   if (/^the ring tempts you$/i.test(c)) return [{ type: 'ring_tempts' }];
@@ -3410,7 +3417,7 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   // Tezzeret the Seeker: "Artifacts you control become artifact creatures with base power and toughness 5/5 until end of
   // turn" — the same as "become 5/5 artifact creatures"; one at a time below.
   c = c
-    .replace(/^(.+?) (becomes? )an? ((?:[a-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
+    .replace(/^(.+?) (becomes? )an? ((?:[A-Za-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
     .replace(/^(.+?) become ((?:[a-z]+ )*?)creatures with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 become a $3/$4 $2creature$5')
     .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5');
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
@@ -3446,7 +3453,9 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     if (!m[2] && types.includes('Artifact')) node.retainTypes = true;
     if (colors.length) node.colors = colors;
     if (m[6] || m[7]) node.retainTypes = true;
-    if (m[5]) {
+    // Mutavault: "becomes a 2/2 creature with all creature types until end of turn"
+    if (m[5] === 'all creature types') node.subtypes = [...new Set([...(node.subtypes as string[]), ...SUBTYPES.creature])];
+    else if (m[5]) {
       const kws = parseKeywordList(m[5], b, false, true);
       if (!kws) return null;
       node.keywords = kws;

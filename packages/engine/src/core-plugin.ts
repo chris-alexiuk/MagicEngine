@@ -70,6 +70,12 @@ function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'):
   return turn;
 }
 
+/** "Until your next end step": this turn's, if it's your turn and that step is still to come; else your next turn's. */
+function nextEndStepTurn(g: GameState, player: PlayerId): number {
+  const before = g.active === player && g.step !== 'end' && g.step !== 'cleanup';
+  return before ? g.turn : lastTurnOf(g, player, 'next_turn');
+}
+
 /** Discards a card, remembering what it was (Hellhole Rats: "equal to that card's mana value", CR 608.2h). */
 function discardRecorded(ctx: EffectContext, id: string): void {
   const o = ctx.g.objects[id];
@@ -1963,7 +1969,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Exile the top card of your library. Until the end of your next turn, you may play that card."
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' | 'exiled'; free?: true; anyColor?: true | 'type' } | undefined;
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' | 'exiled' | 'next_end_step'; free?: true; anyColor?: true | 'type' } | undefined;
     const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
@@ -1978,8 +1984,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
           // "for as long as it remains exiled": until it leaves (the permission follows this object, CR 400.7).
-          const lastTurn = play.until === 'exiled' ? Number.MAX_SAFE_INTEGER : lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
-          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}), ...(play.anyColor ? { anyColor: play.anyColor } : {}) });
+          const lastTurn = play.until === 'exiled' ? Number.MAX_SAFE_INTEGER : play.until === 'next_end_step' ? nextEndStepTurn(g, ctx.controller) : lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.until === 'next_end_step' ? { untilEndStep: true as const } : {}), ...(play.free ? { free: true as const } : {}), ...(play.anyColor ? { anyColor: play.anyColor } : {}) });
         }
       }
     }
@@ -4246,7 +4252,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 700.13: "Whenever you commit a crime"
   crime(t, check) {
     const e = check.event;
-    return e.type === 'crime' && e.player === check.controller && !check.sourceLeft ? [{ player: e.player }] : [];
+    if (e.type !== 'crime' || check.sourceLeft) return [];
+    // "Whenever an opponent commits a crime"
+    if (t.who === 'opponent') return e.player !== check.controller ? [{ player: e.player }] : [];
+    return e.player === check.controller ? [{ player: e.player }] : [];
   },
   // CR 700.14: "Whenever you expend 4" — the mana you've spent on spells this turn reaches 4.
   expend(t, check) {
