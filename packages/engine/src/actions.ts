@@ -27,7 +27,8 @@ import { reduceCostBy, parseManaCost, type ManaCost } from './mana.js';
 import { lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
-import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
+import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, payOtherCosts, runManaAbility } from './payment.js';
+import { settlePhyrexian } from './autotap.js';
 import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets, divisionFor } from './targets.js';
@@ -56,7 +57,7 @@ import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { exileOnLeavePermission, freePermission, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
-import { replaceQuantity } from './quantities.js';
+import { lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -399,6 +400,7 @@ function addCost(into: ManaCost, extra: ManaCost): void {
   into.x += extra.x;
   into.hybrid.push(...extra.hybrid);
   into.unsupported.push(...extra.unsupported);
+  into.phyrexian.push(...extra.phyrexian);
   for (const [c, n] of Object.entries(extra.specific)) into.specific[c as ManaColor] = (into.specific[c as ManaColor] ?? 0) + (n ?? 0);
 }
 
@@ -731,6 +733,8 @@ function cast(
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
+  // CR 107.4f: each Phyrexian symbol is paid with mana of its color or with 2 life.
+  const phyrexianLife = settlePhyrexian(g, player, cost, costChoices.phyrexian, x, wantsAutoTap, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });
   // CR 601.2f: additional costs ("As an additional cost to cast this spell, sacrifice a creature").
   // "discard X cards", "pay X life": X is the value chosen for the spell (CR 107.3a).
   const additional: Cost = {
@@ -739,11 +743,15 @@ function cast(
       ...(alt?.cost.other ?? []),
       ...added.flatMap((a) => a.cost.other ?? []),
       ...(lifeInstead && manaValueOf(g, o) > 0 ? [{ type: 'pay_life', amount: manaValueOf(g, o) }] : []),
+      ...(phyrexianLife ? [{ type: 'pay_life', amount: phyrexianLife }] : []),
       // Terror of the Peaks: "Spells your opponents cast that target this creature cost an additional 3 life to cast."
       ...(targetLifeTax(g, player, targets) > 0 ? [{ type: 'pay_life', amount: targetLifeTax(g, player, targets) }] : []),
     ].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
   };
   checkOtherCosts(g, player, o, additional, costChoices);
+  // CR 119.4: all the life it costs at once.
+  const lifeTotal = (additional.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
+  if (lifeTotal > g.players[player]!.life) throw new RulesError(`You don’t have ${lifeTotal} life to pay.`);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
   // Creatures tapped for a cost (teamwork, conspire, harmonize) can't also tap for mana.
   if (wantsAutoTap) autoTap(g, player, cost, x, events, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });
@@ -817,6 +825,8 @@ function cast(
     ...(uncounterableCast ? { uncounterable: true as const } : {}),
     ...(hasteUntil !== undefined ? { hasteUntil } : {}),
     ...(palace ? { enterCounters: { '+1/+1': palace } } : {}),
+    // CR 702.150a: compleated — how many Phyrexian symbols were paid with life.
+    ...(phyrexianLife ? { phyrexianLife: phyrexianLife / 2 } : {}),
     // Addendum: cast during the caster's own main phase.
     ...(g.active === player && (g.step === 'main1' || g.step === 'main2') ? { mainPhase: true as const } : {}),
   };
@@ -926,7 +936,7 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
     const c = o.chosen?.color as ManaColor | undefined;
     if (!c) mana.unsupported.push('chosen');
     else {
-      const other = Object.entries(mana.specific).some(([k, n]) => k !== c && (n ?? 0) > 0) || mana.hybrid.some((h) => !h.includes(c));
+      const other = Object.entries(mana.specific).some(([k, n]) => k !== c && (n ?? 0) > 0) || mana.hybrid.some((h) => !h.includes(c)) || mana.phyrexian.length > 0;
       if (other) mana.unsupported.push('chosen');
       mana.specific[c] = (mana.specific[c] ?? 0) + mana.generic + mana.hybrid.length;
       mana.generic = 0;
@@ -1075,8 +1085,21 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     mana.generic -= bent.length;
     usesItself.push(...bent);
   }
+  // CR 107.4f: Phyrexian symbols — mana of that color or 2 life each (CR 119.4: with the other life it costs).
+  const phyrexianLife = settlePhyrexian(g, player, mana, choices.costs.phyrexian, choices.x, Boolean(choices.autoTap), usesItself, { kind: 'ability', source: o });
+  if (phyrexianLife) {
+    const other = (cost.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
+    if (phyrexianLife + other > g.players[player]!.life) throw new RulesError(`You don’t have ${phyrexianLife + other} life to pay.`);
+    if (playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
+  }
   if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
   if (cost.mana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
+  if (phyrexianLife) {
+    const ps = g.players[player]!;
+    const lost = lifeLoss(g, player, phyrexianLife);
+    ps.life -= lost;
+    events.push({ type: 'life', player, delta: -lost, life: ps.life });
+  }
   if (cost.tap) setTapped(g, id, true, events);
   if (cost.untap) setTapped(g, id, false, events);
   for (const b of bent) setTapped(g, b, true, events);

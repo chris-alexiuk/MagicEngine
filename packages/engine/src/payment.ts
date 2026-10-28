@@ -142,7 +142,7 @@ export function abilityCostReductions(g: GameState, o: GameObject, ability: { co
       if (a.effect.byYou && ability.mana) continue;
       // Fighter Class: "Equip abilities you activate …" (CR 702.6a).
       if (a.effect.equipOnly && !/^Equip\b/.test(ability.text ?? '')) continue;
-      const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.x;
+      const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.phyrexian.length + mana.x;
       if (mana.generic + others === 0) continue;
       const floor = a.effect.minOne && others === 0 ? 1 : 0;
       mana.generic = Math.max(floor, mana.generic - Number(a.effect.amount ?? 0));

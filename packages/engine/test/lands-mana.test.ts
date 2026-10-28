@@ -132,7 +132,15 @@ describe('paying mana costs', () => {
   });
 
   it('flags symbols that need player decisions not supported yet', () => {
-    expect(parseManaCost('{G/P}').unsupported).toEqual(['G/P']);
+    expect(parseManaCost('{S}').unsupported).toEqual(['S']);
+  });
+
+  it('CR 107.4f: Phyrexian symbols, one color or two', () => {
+    const cost = parseManaCost('{1}{G/P}{W/U/P}');
+    expect([cost.unsupported, cost.phyrexian]).toEqual([[], [['G'], ['W', 'U']]]);
+    // Not paid with life, they're paid with mana.
+    expect(payFromPool(pool({ G: 1, U: 1, R: 1 }), cost)).toEqual(emptyPool());
+    expect(payFromPool(pool({ G: 1, R: 2 }), cost)).toBeNull();
   });
 });
 

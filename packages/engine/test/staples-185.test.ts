@@ -396,6 +396,16 @@ const CARDS = [
   makeCard({ name: 'Chimeric Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{0}: Until end of turn, this artifact becomes a Construct artifact creature with "This creature\'s power and toughness are each equal to the number of charge counters on it."' }),
   makeCard({ name: 'Ajani Token Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create a white Avatar creature token. It has "This token\'s power and toughness are each equal to your life total."' }),
   makeCard({ name: 'Hoarding Dragon Lite', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "When this creature enters, you may search your library for an artifact card, exile it, then shuffle.\nWhen this creature dies, you may put the exiled card into its owner's hand." }),
+  makeCard({ name: 'Constrictor Lite', type_line: 'Creature — Snake', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: 'If one or more counters would be put on an artifact or creature you control, that many plus one of each of those kinds of counters are put on that permanent instead.\nIf you would get one or more counters, you get that many plus one of each of those kinds of counters instead.' }),
+  makeCard({ name: 'Dismember Lite', type_line: 'Instant', mana_cost: '{1}{B/P}{B/P}', cmc: 3, colors: ['B'], oracle_text: '({B/P} can be paid with either {B} or 2 life.)\nTarget creature gets -5/-5 until end of turn.' }),
+  makeCard({ name: 'Probe Lite', type_line: 'Sorcery', mana_cost: '{U/P}', cmc: 1, colors: ['U'], oracle_text: '({U/P} can be paid with either {U} or 2 life.)\nDraw a card.' }),
+  makeCard({ name: 'Hybrid Phyrexian Lite', type_line: 'Sorcery', mana_cost: '{G/U/P}', cmc: 1, colors: ['G', 'U'], oracle_text: 'Draw a card.' }),
+  makeCard({ name: 'Phyrexian Lens', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{W/P}, {T}: Draw a card.' }),
+  makeCard({ name: "K'rrik Lite", type_line: 'Legendary Creature — Phyrexian Horror Minion', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'For each {B} in a cost, you may pay 2 life rather than pay that mana.' }),
+  makeCard({ name: 'Black Draw', type_line: 'Sorcery', mana_cost: '{B}{B}', cmc: 2, colors: ['B'], oracle_text: 'Draw a card.' }),
+  makeCard({ name: 'Compleated Lite', type_line: 'Legendary Planeswalker — Test', mana_cost: '{G/U/P}{G/U/P}', cmc: 2, colors: ['G', 'U'], loyalty: '5', oracle_text: 'Compleated ({G/U/P} can be paid with {G}, {U}, or 2 life. If life was paid, this planeswalker enters with two fewer loyalty counters.)\n+1: You gain 1 life.' }),
+  makeCard({ name: 'Vraska Sting Lite', type_line: 'Legendary Planeswalker — Vraska', mana_cost: '{0}', loyalty: '12', oracle_text: '−2: Target creature becomes a Treasure artifact with "{T}, Sacrifice this artifact: Add one mana of any color" and loses all other card types and abilities.\n−9: If target player has fewer than nine poison counters, they get a number of poison counters equal to the difference.' }),
+  makeCard({ name: 'Nissa Animist Lite', type_line: 'Legendary Planeswalker — Nissa', mana_cost: '{0}', loyalty: '7', oracle_text: "+1: Create an X/X green Phyrexian Horror creature token, where X is Nissa's loyalty.\n−7: Until end of turn, creatures you control get +1/+1 for each Forest you control and gain trample." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4563,6 +4573,120 @@ describe('staples (slice 218)', () => {
     }
     expect(g.objects[dragon]!.zone).toBe('graveyard');
     expect(g.objects[trinket!]!.zone).toBe('hand');
+  });
+
+  it('Winding Constrictor: one more counter on your artifacts and creatures, and one more for you', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Constrictor Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const walker = give(g, 'alice', 'Walker Three', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: walker }));
+    expect(g.objects[walker]!.counters.loyalty).toBe(3);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolster Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(g.objects[cub]!.counters['+1/+1']).toBe(4);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: walker, ability: 0 }));
+    expect(g.objects[walker]!.counters.loyalty).toBe(4);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Energy Lite', 'hand') }));
+    expect(g.players.alice!.counters?.energy).toBe(4);
+  });
+});
+
+describe('staples (slice 219): Phyrexian mana (CR 107.4f)', () => {
+  it('each Phyrexian symbol is paid with mana of its color or 2 life — mana when it can, by default', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    g.players.alice!.pool.B = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Dismember Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+    expect(g.players.alice!.life).toBe(18);
+    expect(g.players.alice!.pool.B).toBe(0);
+  });
+
+  it('the caster may choose life for a symbol they could pay with mana', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.alice!.pool.U = 1;
+    const probe = give(g, 'alice', 'Probe Lite', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: probe, costs: { phyrexian: [] } })).toMatch(/Phyrexian/);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: probe, costs: { phyrexian: ['life'] } }));
+    expect([g.players.alice!.life, g.players.alice!.pool.U]).toEqual([18, 1]);
+  });
+
+  it('with no mana and too little life, it can\'t be cast; legal actions offer it when life pays', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const probe = give(g, 'alice', 'Probe Lite', 'hand');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === probe)).toBe(true);
+    g.players.alice!.life = 1;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: probe })).toBeTruthy();
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === probe)).toBe(false);
+  });
+
+  it('a hybrid Phyrexian symbol takes either color; an activated ability\'s Phyrexian cost too', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.alice!.pool.U = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Hybrid Phyrexian Lite', 'hand') }));
+    expect([g.players.alice!.life, g.players.alice!.pool.U]).toEqual([20, 0]);
+    const lens = give(g, 'alice', 'Phyrexian Lens', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: lens, ability: 0 }));
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([18, hand + 1]);
+  });
+
+  it("K'rrik: each {B} may be paid with 2 life", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const draw = give(g, 'alice', 'Black Draw', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: draw })).toBeTruthy();
+    give(g, 'alice', "K'rrik Lite", 'battlefield');
+    g.players.alice!.pool.B = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: draw }));
+    expect([g.players.alice!.life, g.players.alice!.pool.B]).toEqual([18, 0]);
+  });
+
+  it('compleated: two fewer loyalty counters for each Phyrexian symbol paid with life', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const a = give(g, 'alice', 'Compleated Lite', 'hand');
+    g.players.alice!.pool.G = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: a }));
+    expect([g.players.alice!.life, g.objects[a]!.counters.loyalty]).toEqual([18, 3]);
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const b = give(h, 'alice', 'Compleated Lite', 'hand');
+    h.players.alice!.pool.G = 1;
+    h.players.alice!.pool.U = 1;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: b }));
+    expect([h.players.alice!.life, h.objects[b]!.counters.loyalty]).toEqual([20, 5]);
+  });
+
+  it("Vraska, Betrayal's Sting: a creature becomes a Treasure that keeps only its mana ability; poison up to nine", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const vraska = give(g, 'alice', 'Vraska Sting Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: vraska }));
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: vraska, ability: 0, targets: [[{ kind: 'object', object: bear }]] }));
+    const c = chars(g, g.objects[bear]!);
+    expect([c.types, c.subtypes]).toEqual([['Artifact'], ['Treasure']]);
+    g = toStep(g, 'main1', 'bob');
+    g = act(g, { type: 'activate_mana', player: 'bob', object: bear, ability: 0, choice: 'G' } as never);
+    expect([g.objects[bear]!.zone, g.players.bob!.pool.G]).toEqual(['graveyard', 1]);
+    g = toStep(g, 'main1', 'alice');
+    g.players.bob!.poison = 3;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: vraska, ability: 1, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.poison).toBe(9);
+  });
+
+  it('Nissa, Ascended Animist: an X/X where X is her loyalty; +1/+1 for each Forest and trample', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const nissa = give(g, 'alice', 'Nissa Animist Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: nissa }));
+    g = settle(act(g, { type: 'activate', player: 'alice', object: nissa, ability: 0 }));
+    const token = g.zones.battlefield.find((id) => g.objects[id]!.token)!;
+    expect([chars(g, g.objects[token]!).power, chars(g, g.objects[token]!).toughness]).toEqual([8, 8]);
+    give(g, 'alice', 'Forest', 'battlefield');
+    give(g, 'alice', 'Forest', 'battlefield');
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'main1', 'alice');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: nissa, ability: 1 }));
+    const c = chars(g, g.objects[token]!);
+    expect([c.power, c.keywords.some((k) => k.id === 'trample')]).toEqual([10, true]);
   });
 });
 

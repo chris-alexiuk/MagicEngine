@@ -346,6 +346,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const s = statOfThe[1] === 'mana value' ? 'mana_value' : (statOfThe[1] as 'power' | 'toughness');
     if (of && !of.plural) return { kind: 'stat', stat: s, of: of.ref };
   }
+  // CR 306.5c: "~'s loyalty" (Nissa, Ascended Animist) — the loyalty counters on it.
+  if (t === "~'s loyalty") return { kind: 'counters', of: { ref: 'self' }, counter: 'loyalty' };
   // "its power", "~'s toughness", "that creature's power", "the sacrificed creature's power".
   const stat = /^(.+?)(?:'s?)? (power|toughness|mana value)$/.exec(t);
   if (stat) {

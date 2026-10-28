@@ -1,6 +1,6 @@
 import type { ManaSpend, ObjectFilter } from '@mtg/schema';
 import { matchesFilter } from './characteristics.js';
-import { MANA_COLORS, payFromPool, type ManaCost } from './mana.js';
+import { MANA_COLORS, manaOnly, payFromPool, type ManaCost } from './mana.js';
 import { anyColorPermission } from './permissions.js';
 import { spendAnyColor } from './player-rules.js';
 import type { GameObject, GameState, ManaPool, PlayerId, RestrictedMana } from './types.js';
@@ -56,6 +56,8 @@ export function asThoughAnyColor(g: GameState, player: PlayerId, purpose: ManaPu
  * takes one mana of any type; {C} still needs colorless mana (it isn't a color).
  */
 export function anyColorCost(cost: ManaCost, how: 'color' | 'type' = 'color'): ManaCost {
+  // CR 107.4f: Phyrexian symbols still to pay with mana are colored mana.
+  cost = manaOnly(cost);
   // "mana of any type" (Hostage Taker): {C} too.
   const kinds = how === 'type' ? MANA_COLORS : MANA_COLORS.filter((c) => c !== 'C');
   const colored = kinds.reduce((n, c) => n + (cost.specific[c] ?? 0), 0);

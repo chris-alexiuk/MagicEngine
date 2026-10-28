@@ -1794,6 +1794,9 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
     const suffix = / until end of turn$/.exec(tail);
     const options: [string, string][] = [[tail, '']];
     if (suffix) options.unshift([tail.slice(0, suffix.index), suffix[0]]);
+    // Nissa, Ascended Animist: "… get +1/+1 for each Forest you control and gain trample" — the count ends at "and gain".
+    const andGain = / and (?:gains?|has|have) [^]+$/.exec(tail);
+    if (andGain && /^[^]* (?:gets?|get) [+-]\d+\/[+-]\d+$/.test(s.slice(0, at))) options.unshift([tail.slice(0, andGain.index), andGain[0]]);
     for (const [what, rest] of options) {
       const r =
         attempt(b, (b) => {
@@ -1919,6 +1922,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner;
     });
     if (r) return r;
+  }
+  // Vraska, Betrayal's Sting: "If target player has fewer than nine poison counters, they get a number of poison counters
+  // equal to the difference." — none if they have that many already.
+  const upTo = /^If (target player|target opponent) has fewer than (\w+) poison counters, they get a number of poison counters equal to the difference$/.exec(s);
+  if (upTo) {
+    const who = parsePlayerRef(upTo[1]!, b);
+    const n = parseAmount(upTo[2]!);
+    if (who && typeof n === 'number') return [{ type: 'get_counters', who, counter: 'poison', amount: { kind: 'counters', of: who, counter: 'poison', times: -1, plus: n } }];
   }
   // Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — one spell.
   const yardSpell = /^[Yy]ou may cast (?:a|an) (.+?) spell from your graveyard this turn$/.exec(s);
@@ -3476,10 +3487,11 @@ const VERBS: Record<string, VerbHandler> = {
       b.milled = true;
       return [{ type: 'mill', amount: { kind: 'cards', zone: 'library', who: 'each', player, half: half[1] as 'up' | 'down' }, who }];
     }
-    // Drown in Dreams: "Target player mills twice X cards."
-    if (args === 'twice X cards') {
+    // Drown in Dreams: "Target player mills twice X cards."; Jace, the Perfected Mind: "… mills three times X cards."
+    const timesX = /^(twice|three times|four times) X cards$/.exec(args);
+    if (timesX) {
       b.milled = true;
-      return [{ type: 'mill', amount: { kind: 'x', times: 2 }, who }];
+      return [{ type: 'mill', amount: { kind: 'x', times: timesX[1] === 'twice' ? 2 : timesX[1] === 'three times' ? 3 : 4 }, who }];
     }
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
@@ -4460,16 +4472,21 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   // toughness are each equal to the number of lands you control."" — the same as "with" it.
   const gainsPT = / in addition to its other types and gains (QUOTED_\d+)( until end of turn)?$/.exec(c);
   if (gainsPT && quotedLivePT(gainsPT[1]!, b)) c = `${c.slice(0, gainsPT.index)} with ${gainsPT[1]} in addition to its other types${gainsPT[2] ?? ''}`;
+  // Vraska, Betrayal's Sting: "Target creature becomes a Treasure artifact with "…" and loses all other card types and
+  // abilities." (layers 4 and 6: it keeps the ability this gives it).
+  const loseAll = / and loses all other card types and abilities$/.exec(c);
+  if (loseAll) c = c.slice(0, loseAll.index);
   const m = /^(.+?) becomes? an? (?:(\d+|X)\/(\d+|X) )?(.+?)(?: with (.+?))?( that's still an? (?:land|planeswalker|artifact|enchantment))?( in addition to its other types)?( until end of turn)?$/.exec(c);
   if (!m) return null;
+  if (loseAll && (m[6] || m[7])) return null;
   // Without a P/T it keeps its own ("This Vehicle becomes an artifact creature", CR 702.122a).
   // Liquimetal Torque: "Target nonland permanent becomes an artifact in addition to its other types until end of turn".
-  if (!m[2] && !/\bcreature$/.test(m[4]!) && !m[7]) return null;
+  if (!m[2] && !/\bcreature$/.test(m[4]!) && !m[7] && !loseAll) return null;
   return attempt(b, (b) => {
     const what = parseObjectRef(m[1]!, b);
     if (!what) return null;
     const words = m[4]!.replace(/ and /g, ' ').split(' ');
-    if (words[words.length - 1] !== 'creature' && !m[7]) return null;
+    if (words[words.length - 1] !== 'creature' && !m[7] && !loseAll) return null;
     const colors: string[] = [];
     const types: string[] = [];
     const subtypes: string[] = [];
@@ -4482,7 +4499,8 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     const pt = (v: string) => (v === 'X' ? 'X' : Number(v));
     const node: EffectNode = { type: 'modify', what: what.ref, types, subtypes, ...(m[2] ? { setPower: pt(m[2]), setToughness: pt(m[3]!) } : {}), until: m[8] ? 'eot' : 'game' };
     // An artifact that becomes an artifact creature is still what it was (CR 205.1b).
-    if (!m[2] && types.includes('Artifact')) node.retainTypes = true;
+    if (!m[2] && types.includes('Artifact') && !loseAll) node.retainTypes = true;
+    if (loseAll) node.loseAbilities = true;
     if (colors.length) node.colors = colors;
     if (m[6] || m[7]) node.retainTypes = true;
     // Mutavault: "becomes a 2/2 creature with all creature types until end of turn"

@@ -397,6 +397,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       cost.hybrid.push(...extra.hybrid);
       for (const [k, n] of Object.entries(extra.specific)) cost.specific[k as ManaColor] = (cost.specific[k as ManaColor] ?? 0) + (n ?? 0);
       cost.unsupported.push(...extra.unsupported);
+      cost.phyrexian.push(...extra.phyrexian);
       cost.x += extra.x;
     }
     applyCostModifiers(g, player, o, face, cost);

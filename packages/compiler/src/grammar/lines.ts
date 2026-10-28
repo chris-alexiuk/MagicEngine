@@ -2287,6 +2287,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (keepMana) return { type: 'player_rule', who: keepMana[1] === 'You' ? 'you' : 'each', rule: 'keep_mana', ...(keepMana[2] ? { colors: [COLOR_WORDS[keepMana[2]]!] } : {}) };
   // Birgi, God of Storytelling (CR 702.142a)
   if (body === 'Creatures you control can boast twice during each of your turns rather than once') return { type: 'player_rule', who: 'you', rule: 'boast_twice' };
+  // K'rrik, Son of Yawgmoth: "For each {B} in a cost, you may pay 2 life rather than pay that mana." (CR 107.4f)
+  if (body === 'For each {B} in a cost, you may pay 2 life rather than pay that mana') return { type: 'player_rule', who: 'you', rule: 'black_as_phyrexian' };
   // Platinum Angel: "You can't lose the game and your opponents can't win the game." (CR 104.3a: conceding still works.)
   if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
   // Narset, Parter of Veils
@@ -2952,6 +2954,21 @@ export const quantityReplacementRule: GrammarRule = {
     if (anyTokens) {
       const op = quantityOp(anyTokens[1]!);
       return op ? make({ event: 'tokens', who: 'each', ...op }) : null;
+    }
+    // Winding Constrictor: "If you would get one or more counters, you get that many plus one of each of those kinds of counters
+    // instead." — counters on that player, whoever puts them.
+    const getCounters = /^If you would get one or more counters, you get (.+?) of each of those kinds of counters instead\.$/.exec(line);
+    if (getCounters) {
+      const op = quantityOp(getCounters[1]!);
+      return op ? make({ event: 'counters', ...op, players: 'you', onlyPlayers: true }) : null;
+    }
+    // Winding Constrictor: "If one or more counters would be put on an artifact or creature you control, that many plus one of
+    // each of those kinds of counters are put on that permanent instead."
+    const anyKind = /^If one or more counters would be put on (.+?), (.+?) of each of those kinds of counters are put on (?:it|that \w+) instead\.$/.exec(line);
+    if (anyKind) {
+      const op = quantityOp(anyKind[2]!);
+      const pf = parseFilter(anyKind[1]!.replace(/^(?:a|an) /, ''), b);
+      return op && pf && !pf.plural ? make({ event: 'counters', filter: pf.filter, ...op }) : null;
     }
     const counters = /^If one or more (\S+) counters would be put on (.+?), (.+?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (counters) {

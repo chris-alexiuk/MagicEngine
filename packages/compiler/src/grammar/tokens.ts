@@ -52,10 +52,12 @@ export interface ParsedToken {
  */
 export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // Dark Depths: "Marit Lage, a legendary 20/20 black Avatar creature token with flying and indestructible" — the name first.
-  const named = /^([A-Z][^,]+), (a legendary .+ token(?: with .+)?)$/.exec(text.trim());
+  // Tamiyo, Compleated Sage: "Tamiyo's Notebook, a legendary colorless Book artifact token" — the card's short name is "~".
+  const named = /^((?:~'s )?[A-Z][^,]+), (a legendary .+ token(?: with .+)?)$/.exec(text.trim());
   if (named) {
     const inner = parseTokenPhrase(named[2]!, b);
-    return inner && inner.amount === 1 ? { ...inner, face: { ...inner.face, name: named[1]! } } : null;
+    const name = named[1]!.replace(/^~/, b.env.faceName.split(',')[0]!);
+    return inner && inner.amount === 1 ? { ...inner, face: { ...inner.face, name } } : null;
   }
   // CR 111.4: "named X" gives it that name instead.
   // Koma: "a 3/3 blue Serpent creature token named Koma's Coil" — the card's own name was shortened to "~".
@@ -133,7 +135,9 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
 function withText(text: string, b: Binder): { text: string; quoted: string[] } | null {
   const items = text.split(/,\s*(?:and\s+)?|\s+and\s+/).filter(Boolean);
   const words = items.filter((i) => !isQuoted(i));
-  const quoted = items.filter(isQuoted).map((i) => quotedText(i, b));
+  // Tamiyo's Notebook: 'with "Spells you cast cost {2} less to cast" and "{T}: Draw a card."' — a quote in a list has no
+  // period of its own; as a line of the token's text it ends with one.
+  const quoted = items.filter(isQuoted).map((i) => quotedText(i, b)).map((t) => (t && !/[.:!]['’"]?$/.test(t) ? `${t}.` : t));
   if (quoted.some((t) => t === null)) return null;
   if (words.length && !parseKeywordList(words.join(', '), b)) return null;
   const lines = [...(words.length ? [words.join(', ').replace(/^\w/, (c) => c.toUpperCase())] : []), ...(quoted as string[])];

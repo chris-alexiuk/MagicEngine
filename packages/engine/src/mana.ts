@@ -87,8 +87,25 @@ export interface ManaCost {
   hybrid: string[][];
   /** Number of {X} symbols. */
   x: number;
-  /** Symbols this version can't pay automatically (Phyrexian, snow…). */
+  /** Symbols this version can't pay automatically (snow…). */
   unsupported: string[];
+  /** CR 107.4f: Phyrexian symbols — each paid with one mana of (one of) its color(s) or with 2 life. */
+  phyrexian: ManaColor[][];
+}
+
+/**
+ * CR 107.4f: the cost with its Phyrexian symbols paid with mana, except those at `life` (paid with 2 life each instead):
+ * "{B/P}" is then "{B}", "{G/U/P}" the hybrid "{G/U}".
+ */
+export function manaOnly(cost: ManaCost, life: readonly number[] = []): ManaCost {
+  if (!cost.phyrexian.length) return cost;
+  const out: ManaCost = { ...cost, specific: { ...cost.specific }, hybrid: [...cost.hybrid], phyrexian: [] };
+  cost.phyrexian.forEach((colors, i) => {
+    if (life.includes(i)) return;
+    if (colors.length === 1) out.specific[colors[0]!] = (out.specific[colors[0]!] ?? 0) + 1;
+    else out.hybrid.push([...colors]);
+  });
+  return out;
 }
 
 /**
@@ -103,13 +120,13 @@ export function reduceCostBy(cost: ManaCost, by: ManaCost): void {
     if (off) cost.specific[c] = have - off;
     generic += n - off;
   }
-  generic += by.hybrid.length;
+  generic += by.hybrid.length + by.phyrexian.length;
   cost.generic = Math.max(0, cost.generic - generic);
 }
 
 /** CR 107.4: parses "{2}{G}{G}", "{X}{R}", "{G/U}", "{2/W}". */
 export function parseManaCost(cost: string): ManaCost {
-  const out: ManaCost = { generic: 0, specific: {}, hybrid: [], x: 0, unsupported: [] };
+  const out: ManaCost = { generic: 0, specific: {}, hybrid: [], x: 0, unsupported: [], phyrexian: [] };
   for (const m of cost.matchAll(/\{([^}]+)\}/g)) {
     const sym = m[1]!;
     if (/^\d+$/.test(sym)) out.generic += Number(sym); // CR 107.4b
@@ -120,6 +137,9 @@ export function parseManaCost(cost: string): ManaCost {
     } else if (/^([WUBRGC2])\/([WUBRG])$/.test(sym)) {
       // CR 107.4e: either half pays; "2" means two mana of any type.
       out.hybrid.push(sym.split('/'));
+    } else if (/^[WUBRG](?:\/[WUBRG])?\/P$/.test(sym)) {
+      // CR 107.4f: "{B/P}", "{G/U/P}" — mana of that color (either color) or 2 life.
+      out.phyrexian.push(sym.split('/').slice(0, -1) as ManaColor[]);
     } else out.unsupported.push(sym);
   }
   return out;
@@ -133,6 +153,8 @@ export function parseManaCost(cost: string): ManaCost {
  */
 export function payFromPool(pool: ManaPool, cost: ManaCost, xValue = 0): ManaPool | null {
   if (cost.unsupported.length) return null;
+  // Phyrexian symbols not paid with life are paid with mana.
+  cost = manaOnly(cost);
   const left: ManaPool = { ...pool };
   for (const c of MANA_COLORS) {
     const need = cost.specific[c] ?? 0;
@@ -159,6 +181,7 @@ export function payFromPool(pool: ManaPool, cost: ManaCost, xValue = 0): ManaPoo
 /** Mana still owed after paying what the pool can: used to plan automatic tapping. */
 export function shortfall(pool: ManaPool, cost: ManaCost, xValue = 0): { specific: ManaColor[]; generic: number } | null {
   if (cost.unsupported.length) return null;
+  cost = manaOnly(cost);
   const left: ManaPool = { ...pool };
   const specific: ManaColor[] = [];
   for (const c of MANA_COLORS) {

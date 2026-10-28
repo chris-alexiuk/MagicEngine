@@ -377,7 +377,9 @@ export function moveObject(
       o.counters[kind] = (o.counters[kind] ?? 0) + entering(kind, o.cast.colors);
     }
     // CR 306.5b: a planeswalker enters with loyalty counters equal to its printed loyalty.
-    if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = entering('loyalty', Number(face.loyalty));
+    // CR 702.150a: compleated — two fewer for each Phyrexian mana symbol life was paid for.
+    const compleated = face.keywords.some((k) => k.id === 'compleated') && !castInfo?.copy ? 2 * (castInfo?.phyrexianLife ?? 0) : 0;
+    if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = entering('loyalty', Math.max(0, Number(face.loyalty) - compleated));
     // CR 310.4b: a battle enters with defense counters equal to its printed defense.
     if (face.defense !== undefined && /^\d+$/.test(face.defense)) o.counters.defense = entering('defense', Number(face.defense));
     onEnterBattlefield(g, o, events);

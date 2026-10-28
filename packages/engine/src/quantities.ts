@@ -100,7 +100,7 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       if (e.effectOnly && s.cost) return false;
       // Lae'zel: "or on yourself"; Vorinclex: "on a permanent or player".
       if (s.onPlayer !== undefined) return e.players === 'any' || (e.players === 'you' && s.onPlayer === you);
-      if (!s.object) return false;
+      if (!s.object || e.onlyPlayers) return false;
       return !e.filter || matchesFilter(g, s.object, e.filter, { controller: you, source });
     case 'damage': {
       if (!s.source || (e.noncombat && s.combat) || (e.combatOnly && !s.combat)) return false;

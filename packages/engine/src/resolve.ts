@@ -334,9 +334,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
     case 'counters': {
       // "the number of experience counters you have": counters on a player (CR 122.1).
-      if (e.of.ref === 'you') {
-        const pc = g.players[ctx.controller]?.counters ?? {};
-        return e.counter ? (pc[e.counter] ?? 0) : Object.values(pc).reduce((a, b) => a + (b ?? 0), 0);
+      // Vraska, Betrayal's Sting: "… they get a number of poison counters equal to the difference" — a target player's.
+      const playerTarget = e.of.ref === 'target' ? ctx.targets[e.of.index]?.[0] : undefined;
+      if (e.of.ref === 'you' || playerTarget?.kind === 'player') {
+        const ps = g.players[playerTarget?.kind === 'player' ? playerTarget.player : ctx.controller];
+        const pc = ps?.counters ?? {};
+        // CR 122.1f: poison counters are kept apart.
+        if (e.counter === 'poison') return ps?.poison ?? 0;
+        return e.counter ? (pc[e.counter] ?? 0) : Object.values(pc).reduce((a, b) => a + (b ?? 0), 0) + (ps?.poison ?? 0);
       }
       const [o] = refObjects(ctx, e.of);
       // CR 608.2h: "Sacrifice this creature: … for each counter on this creature" — as it last existed on the battlefield.

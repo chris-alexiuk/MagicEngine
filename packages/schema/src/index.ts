@@ -1094,6 +1094,8 @@ export interface QuantityReplacementNode extends EffectNode {
   /** counters: also counters put on players — 'you': on the putter themself (Lae'zel: "or on yourself"); 'any': any player
    * (Vorinclex, Monstrous Raider: "on a permanent or player"). */
   players?: 'you' | 'any';
+  /** counters: only counters on players (Winding Constrictor: "If you would get one or more counters"). */
+  onlyPlayers?: true;
   /** counters: "If an effect would put one or more counters …" (Doubling Season) — not counters put on as a cost. */
   effectOnly?: true;
   /** damage: only to opponents and their permanents; only noncombat damage. */
@@ -1118,6 +1120,8 @@ export const PLAYER_RULES = [
   'no_lose_for_life', 'cant_lose', 'opponents_cant_win', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
   /** Omniscience: "You may cast spells from your hand without paying their mana costs." */
   'free_from_hand',
+  /** K'rrik, Son of Yawgmoth: "For each {B} in a cost, you may pay 2 life rather than pay that mana." (CR 107.4f) */
+  'black_as_phyrexian',
   /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." (CR 121.2) */
   'max_one_draw',
   /** Thousand-Year Elixir: "You may activate abilities of creatures you control as though those creatures had haste." */
@@ -1213,6 +1217,8 @@ export const CORE_NODES = {
     'assist',
     // CR 702.127a: aftermath halves are cast from the graveyard (in the engine's casting rules).
     'aftermath',
+    // CR 702.150a: compleated — two fewer loyalty counters for each Phyrexian symbol paid with life (in the engine's entering).
+    'compleated',
     // CR 702.103: cast bestowed as an Aura (in the engine's casting and state-based rules).
     'bestow',
     // CR 702.190: cast during your declare blockers step by returning an unblocked attacker.

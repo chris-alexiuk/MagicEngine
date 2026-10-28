@@ -227,7 +227,7 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number> };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -724,6 +724,8 @@ export interface CostChoices {
   crew?: ObjectId[];
   /** Cards exiled to pay a cost ("Exile five other cards from your graveyard", escape). */
   exile?: ObjectId[];
+  /** CR 107.4f: how each Phyrexian mana symbol is paid, in order — with mana or with 2 life (by default: mana when it can). */
+  phyrexian?: ('life' | 'mana')[];
   /** CR 702.51a: creatures tapped to help cast a spell with convoke. */
   convoke?: ObjectId[];
   /** CR 702.66a: cards exiled from your graveyard for a spell with delve. */
