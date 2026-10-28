@@ -855,6 +855,22 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
     const n = applies ? r.amount * (r.per ? Math.max(0, amountOf(ctx, r.per)) : 1) : 0;
     if (n > 0) mana.generic = Math.max(0, mana.generic - n);
   }
+  // Training Grounds, Zirda: "Activated abilities of creatures you control cost {2} less to activate. This effect can't
+  // reduce the mana in that cost to less than one mana." (CR 601.2f, 118.7: generic mana only)
+  if (ability.cost.loyalty === undefined) {
+    for (const id of abilitySources(g)) {
+      const src = g.objects[id]!;
+      for (const a of objectAbilities(g, src)) {
+        if (a.kind !== 'static' || a.effect.type !== 'ability_cost_reduction') continue;
+        // Zirda: "Abilities you activate that aren't mana abilities …"
+        if (a.effect.byYou ? player !== src.controller : !matchesFilter(g, o, a.effect.filter as ObjectFilter, { controller: src.controller, source: src })) continue;
+        const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.x;
+        if (mana.generic + others === 0) continue;
+        const floor = a.effect.minOne && others === 0 ? 1 : 0;
+        mana.generic = Math.max(floor, mana.generic - Number(a.effect.amount ?? 0));
+      }
+    }
+  }
   if (!ability.powerUp) return;
   const entered = Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id));
   if (entered) reduceCostBy(mana, parseManaCost(faceOf(g, o).manaCost));

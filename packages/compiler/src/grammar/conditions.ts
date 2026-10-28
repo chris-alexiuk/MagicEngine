@@ -1,7 +1,7 @@
 import type { ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
-import { parseCount } from './amounts.js';
+import { movedThisWay, parseCount } from './amounts.js';
 import { COLOR_WORDS, parseAmount } from './words.js';
 
 /**
@@ -82,6 +82,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(lifeN[3]!);
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
+  }
+  if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
+  // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
+  const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed) this way$/.exec(t);
+  if (movedOne) {
+    const amount = movedThisWay(`${movedOne[1]} ${movedOne[2]} this way`, b);
+    if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
   }
   // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
   const greatest = /^you control the (\w+) with the greatest mana value or tied for the greatest mana value$/.exec(t);

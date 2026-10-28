@@ -62,7 +62,7 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
 }
 
 /** "creature destroyed this way", "cards exiled this way": what the resolution moved (by card type only). */
-function movedThisWay(text: string, b: Binder): AmountExpr | null {
+export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   const m = /^(.+?) (destroyed|exiled|sacrificed|milled) this way$/.exec(text.trim());
   if (!m) return null;
   const noun = m[1]!.replace(/^(?:a|an) /, '').replace(/ cards?$|^cards?$/, '');

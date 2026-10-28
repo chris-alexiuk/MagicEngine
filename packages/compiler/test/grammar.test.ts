@@ -1896,3 +1896,19 @@ describe('slice 162', () => {
     expect(parse('{B}, Sacrifice X Squirrels: Target creature gets +X/-X until end of turn.', 'Legendary Creature — Squirrel Warrior', 'C').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 'X', filter: { subtypes: ['Squirrel'] } }] } });
   });
 });
+
+describe('slice 163', () => {
+  it('reads twice X, the first combat phase, Expressive Iteration, Noxious Gearhulk and Mirror Entity', () => {
+    expect(parse('Create twice X 1/1 black and green Pest creature tokens.', 'Sorcery', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'x', times: 2 } }] });
+    expect(parse("Whenever equipped creature attacks, if it's the first combat phase of the turn, untap it. After this phase, there is an additional combat phase.", 'Artifact — Equipment', 'G').abilities[0]).toMatchObject({ condition: { type: 'first_combat' } });
+    expect(parse('Look at the top three cards of your library. Put one of them into your hand, put one of them on the bottom of your library, and exile one of them. You may play the exiled card this turn.', 'Instant', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'look_sort', amount: 3, slots: ['hand', 'bottom', 'exile_play'] }] });
+    expect(parse('When this creature enters, you may destroy another target creature. If a creature is destroyed this way, you gain life equal to its toughness.', 'Artifact Creature — Construct', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'may' }, { type: 'if', cond: { type: 'amount', amount: { kind: 'moved_this_way', how: 'destroyed' } } }] });
+    expect(parse('{X}: Until end of turn, creatures you control have base power and toughness X/X and gain all creature types.', 'Creature — Shapeshifter', 'M').abilities[0]).toMatchObject({ effects: [{ type: 'modify', setPower: 'X', setToughness: 'X', allCreatureTypes: true, until: 'eot' }] });
+  });
+  it('reads activated ability cost reductions, Demonic Consultation and Tainted Pact', () => {
+    expect(parse("Activated abilities of creatures you control cost {2} less to activate. This effect can't reduce the mana in that cost to less than one mana.", 'Enchantment', 'T').abilities[0]).toMatchObject({ effect: { type: 'ability_cost_reduction', amount: 2, minOne: true, filter: { types: ['Creature'], controller: 'you' } } });
+    expect(parse("Abilities you activate that aren't mana abilities cost {2} less to activate. This effect can't reduce the mana in that cost to less than one mana.", 'Legendary Creature — Elemental Fox', 'Z').abilities[0]).toMatchObject({ effect: { type: 'ability_cost_reduction', byYou: true } });
+    expect(parse('Choose a card name. Exile the top six cards of your library, then reveal cards from the top of your library until you reveal a card with the chosen name. Put that card into your hand and exile all other cards revealed this way.', 'Instant', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'name_and_dig', exileFirst: 6 }] });
+    expect(parse('Exile the top card of your library. You may put that card into your hand unless it has the same name as another card exiled this way. Repeat this process until you put a card into your hand or you exile two cards with the same name, whichever comes first.', 'Instant', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'tainted_pact' }] });
+  });
+});

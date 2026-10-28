@@ -2669,6 +2669,24 @@ export const topPermissionRule: GrammarRule = {
   },
 };
 
+/**
+ * Training Grounds, Zirda: "Activated abilities of creatures you control cost {2} less to activate. This effect can't
+ * reduce the mana in that cost to less than one mana." (CR 601.2f)
+ */
+export const abilityCostReductionRule: GrammarRule = {
+  id: 'ability_cost_reduction',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const zirda = /^Abilities you activate that aren't mana abilities cost \{(\d+)\} less to activate\. This effect can't reduce the mana in that cost to less than one mana\.$/.exec(line);
+    if (zirda) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, amount: Number(zirda[1]), minOne: true } } as StaticAbility;
+    const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
+    if (!env || !m || !m[3]) return null;
+    const pf = parseFilter(m[1]!.replace(/ and /g, ' or '), new Binder(env));
+    if (!pf || !pf.plural || pf.filter.zone) return null;
+    return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', filter: pf.filter, amount: Number(m[2]), minOne: true } } as StaticAbility;
+  },
+};
+
 /** Terror of the Peaks: "Spells your opponents cast that target this creature cost an additional 3 life to cast." */
 export const targetLifeTaxRule: GrammarRule = {
   id: 'target_life_tax',
@@ -2813,6 +2831,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   grantedFlashbackRule,
   grantedEscapeRule,
   targetLifeTaxRule,
+  abilityCostReductionRule,
   chapterRule,
   entersWithCountersRule,
   entersTappedUnlessRule,

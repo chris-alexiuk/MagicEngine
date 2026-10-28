@@ -394,6 +394,8 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
     ps.upkeeps = [...(ps.upkeeps ?? []).slice(-1), ++g.clock];
   }
   events.push({ type: 'step', step });
+  // Genji Glove, Karlach: "if it's the first combat phase of the turn" — count the combat phases (CR 500.8).
+  if (step === 'beginning_of_combat') g.turnLog.combatPhases = (g.turnLog.combatPhases ?? 0) + 1;
 
   switch (step) {
     case 'untap': {

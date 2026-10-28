@@ -577,6 +577,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.combat ? { combat: node.combat as CombatRules } : {}),
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
+      // Mirror Entity: "… and gain all creature types" (layer 4).
+      ...(node.allCreatureTypes ? { types: [], subtypes: [...SUBTYPES.creature], retainTypes: true } : {}),
       // "the color of your choice", "the creature type of your choice" — chosen earlier as this resolved.
       ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : [c as Color])) } : {}),
       ...(Array.isArray(node.creatureTypes) ? { creatureTypes: (node.creatureTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.creatureType ? [chosen.creatureType] : []) : [t])) } : {}),
@@ -2342,6 +2344,100 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Demonic Consultation: name a card, exile six, then reveal until that name; it goes to hand, the rest are exiled.
+  name_and_dig(node, ctx) {
+    const g = ctx.g;
+    const answer = answerOf(ctx, 'choose_option');
+    const other = 'Another card name (none of the cards in this game)';
+    if (!answer) {
+      const names = new Set<string>();
+      for (const def of Object.values(g.cards)) {
+        const face = def.faces[0];
+        if (!face || def.layout === 'token') continue;
+        names.add(def.faces.length > 1 && (def.layout === 'split' || def.layout === 'adventure') ? def.name : face.name);
+      }
+      return { ask: { kind: 'choose_option', player: ctx.controller, options: [...[...names].sort(), other], text: 'Choose a card name.', sourceName: sourceName(ctx) } };
+    }
+    const name = answer.choice;
+    const library = zoneList(g, 'library', ctx.controller);
+    for (const id of library.slice(0, Number(node.exileFirst ?? 0))) moveObject(g, id, 'exile', ctx.events);
+    const revealed: string[] = [];
+    let found: string | null = null;
+    for (const id of [...zoneList(g, 'library', ctx.controller)]) {
+      revealed.push(id);
+      const def = g.cards[g.objects[id]!.card]!;
+      if (name !== other && (def.name === name || def.faces.some((f) => f.name === name))) {
+        found = id;
+        break;
+      }
+    }
+    ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...revealed] });
+    for (const id of revealed) moveObject(g, id, id === found ? 'hand' : 'exile', ctx.events);
+    return true;
+  },
+
+  // Tainted Pact: exile the top card; it may go to your hand unless its name repeats; again until one does or a name repeats.
+  tainted_pact(_node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { names?: string[]; current?: string };
+    memo.names ??= [];
+    let answer = answerOf(ctx, 'may');
+    for (;;) {
+      if (memo.current) {
+        if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Put ${nameOf(g, g.objects[memo.current]!)} into your hand?`, sourceName: sourceName(ctx) } };
+        const take = answer.yes;
+        answer = null;
+        if (take) {
+          moveObject(g, memo.current, 'hand', ctx.events);
+          return true;
+        }
+        delete memo.current;
+      }
+      const top = zoneList(g, 'library', ctx.controller)[0];
+      if (!top) return true;
+      moveObject(g, top, 'exile', ctx.events);
+      const name = nameOf(g, g.objects[top]!);
+      if (memo.names.includes(name)) return true;
+      memo.names.push(name);
+      memo.current = top;
+    }
+  },
+
+  // Expressive Iteration: the cards looked at go one to each place in turn — into the hand, on the bottom, into exile (with a
+  // permission to play it this turn).
+  look_sort(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { looked?: string[]; slot?: number; done?: string[] };
+    const looked = (memo.looked ??= zoneList(g, 'library', ctx.controller).slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
+    const slots = node.slots as ('hand' | 'bottom' | 'exile_play')[];
+    let answer = answerOf(ctx, 'choose_objects');
+    for (let i = memo.slot ?? 0; i < slots.length; i++) {
+      const left = looked.filter((id) => g.objects[id]!.zone === 'library' && !(memo.done ?? []).includes(id));
+      if (!left.length) break;
+      let id = left[0]!;
+      if (left.length > 1) {
+        if (!answer) {
+          memo.slot = i;
+          const where = slots[i] === 'hand' ? 'into your hand' : slots[i] === 'bottom' ? 'on the bottom of your library' : 'into exile (you may play it this turn)';
+          return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: left, min: 1, max: 1, text: `Choose a card to put ${where}.`, seen: left } };
+        }
+        if (answer.objects.length !== 1 || !left.includes(answer.objects[0]!)) throw new RulesError('Choose one of those cards.');
+        id = answer.objects[0]!;
+        answer = null;
+      }
+      (memo.done ??= []).push(id);
+      if (slots[i] === 'hand') moveObject(g, id, 'hand', ctx.events);
+      else if (slots[i] === 'bottom') moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+      else {
+        moveObject(g, id, 'exile', ctx.events);
+        const o = g.objects[id]!;
+        (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: 'play', lastTurn: g.turn });
+      }
+      memo.slot = i + 1;
+    }
+    return true;
+  },
+
   // Isochron Scepter (CR 707.12): a copy of the card is created and cast without paying its mana cost; one that isn't
   // cast ceases to exist, so it's made only once the player says yes.
   cast_copy_of(node, ctx) {
@@ -3644,7 +3740,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'target_life_tax'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'target_life_tax', 'ability_cost_reduction'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

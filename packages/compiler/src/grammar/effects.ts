@@ -64,6 +64,27 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Dauthi Voidwalker: the choice and the permission go together.
   const voidPlay = /^Choose an exiled card (an opponent owns|you own) with an? \S+ counter on it\. You may play it this turn without paying its mana cost\.$/.exec(text.trim());
   if (voidPlay) return parseSentence(text.trim().replace(/\.$/, ''), b);
+  // Mirror Entity: "Until end of turn, creatures you control have base power and toughness X/X and gain all creature types."
+  const mirror = /^Until end of turn, (.+?) have base power and toughness (X|\d+)\/(X|\d+) and gain all creature types\.$/.exec(text.trim());
+  if (mirror) {
+    const what = attempt(b, (b) => parseObjectRef(mirror[1]!.replace(/^\w/, (c) => c.toLowerCase()), b));
+    const p = parseAmount(mirror[2]!);
+    const t = parseAmount(mirror[3]!);
+    return what && what.plural && p !== null && t !== null ? [{ type: 'modify', what: what.ref, setPower: p, setToughness: t, allCreatureTypes: true, until: 'eot' }] : null;
+  }
+  // Demonic Consultation (CR 201.3: any card name may be chosen).
+  if (/^Choose a card name\. Exile the top six cards of your library, then reveal cards from the top of your library until you reveal a card with the chosen name\. Put that card into your hand and exile all other cards revealed this way\.$/.test(text.trim())) {
+    return [{ type: 'name_and_dig', exileFirst: 6 }];
+  }
+  // Tainted Pact
+  if (/^Exile the top card of your library\. You may put that card into your hand unless it has the same name as another card exiled this way\. Repeat this process until you put a card into your hand or you exile two cards with the same name, whichever comes first\.$/.test(text.trim())) {
+    return [{ type: 'tainted_pact' }];
+  }
+  // Expressive Iteration: "Look at the top three cards of your library. Put one of them into your hand, put one of them on
+  // the bottom of your library, and exile one of them. You may play the exiled card this turn."
+  if (/^Look at the top three cards of your library\. Put one of them into your hand, put one of them on the bottom of your library, and exile one of them\. You may play the exiled card this turn\.$/.test(text.trim())) {
+    return [{ type: 'look_sort', amount: 3, slots: ['hand', 'bottom', 'exile_play'] }];
+  }
   // Torment of Hailfire: "Repeat the following process X times. Each opponent loses 3 life unless …"
   const repeatN = /^Repeat the following process (\w+) times\. ([^.]+\.)$/.exec(text.trim());
   if (repeatN) {
@@ -1922,6 +1943,13 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && who.ref === 'you' ? [{ type: 'surveil', amount }] : null;
   },
   create(args, who, b) {
+    // Pest Infestation: "Create twice X 1/1 black and green Pest creature tokens …"
+    const twiceX = /^twice X (.+)$/.exec(args);
+    if (twiceX) {
+      const r = attempt(b, (b) => VERBS.create!(`X ${twiceX[1]}`, who, b, true));
+      const node = r?.length === 1 && r[0]!.type === 'create_token' && r[0]!.amount === 'X' ? r[0]! : null;
+      return node ? [{ ...node, amount: { kind: 'x', times: 2 } }] : null;
+    }
     // CR 707.2: "a token that's a copy of target creature you control, except it has haste".
     const copy = /^(a|an|one|two|three|four|five|X|that many) (tapped )?tokens? (?:that's a copy|that are copies) of (.+?)(?:,? except (.+))?$/.exec(args);
     if (copy) {

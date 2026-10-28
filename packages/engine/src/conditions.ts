@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -22,6 +22,8 @@ export interface TurnLog {
   /** How much life each player gained / lost this turn (Haliya: "if you've gained 3 or more life this turn"). */
   lifeGained?: Record<PlayerId, number>;
   lifeLost?: Record<PlayerId, number>;
+  /** Combat phases begun this turn (Genji Glove: "if it's the first combat phase of the turn"). */
+  combatPhases?: number;
   /** Damage dealt to each player this turn (Spinerock Knoll). */
   damageTaken?: Record<PlayerId, number>;
   spellsCast: Record<PlayerId, number>;
@@ -353,6 +355,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     // Field of the Dead: "you control seven or more lands with different names" (CR 201.2)
     // Guardian Project: "if it doesn't have the same name as another creature you control or a creature card in your
     // graveyard" (a face-down creature has no name, CR 708.2).
+    case 'first_combat':
+      return (g.turnLog.combatPhases ?? 0) <= 1;
     // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
     case 'greatest_mv': {
       const all = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
