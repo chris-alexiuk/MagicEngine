@@ -233,6 +233,22 @@ const CARDS = [
   makeCard({ name: 'Tree Lite', type_line: 'Creature — Plant', mana_cost: '{0}', power: '0', toughness: '13', oracle_text: "Defender\n{T}: Exchange your life total with this creature's toughness." }),
   makeCard({ name: 'Soul Conduit Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{0}, {T}: Two target players exchange life totals.' }),
   makeCard({ name: 'Leyline Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Your opponents can't gain life." }),
+  makeCard({ name: 'Mox Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "If this artifact would enter, you may discard a land card instead. If you do, put this artifact onto the battlefield. If you don't, put it into its owner's graveyard.\n{T}: Add one mana of any color." }),
+  makeCard({ name: 'Artifact Watcher', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever an artifact you control enters, you gain 1 life.\nWhenever an artifact is put into a graveyard from the battlefield, you gain 2 life.\nWhenever a card is put into your graveyard from anywhere, you gain 5 life.' }),
+  makeCard({ name: 'Lake Lite', type_line: 'Land', mana_cost: '', oracle_text: "If this land would enter, sacrifice a Swamp instead. If you do, put this land onto the battlefield. If you don't, put it into its owner's graveyard.\n{T}: Add {B}." }),
+  makeCard({ name: 'Mentor Lite', type_line: 'Creature — Human Cleric', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Whenever an opponent activates an ability of an artifact, creature, or land on the battlefield, if it isn't a mana ability, this creature deals 2 damage to that player." }),
+  makeCard({ name: 'Fetch Lite', type_line: 'Land', mana_cost: '', oracle_text: '{T}, Pay 1 life, Sacrifice this land: Search your library for a basic land card, put it onto the battlefield, then shuffle.' }),
+  makeCard({ name: 'Doom Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Choose up to two creatures, then destroy the rest.' }),
+  makeCard({ name: 'Reckoning Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player chooses a creature they control. Destroy the rest.' }),
+  makeCard({ name: 'Colossus Lite', type_line: 'Creature — Plant Beast', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'When this creature enters, you may put a land card from your hand onto the battlefield tapped. If you do, draw a card and repeat this process.' }),
+  makeCard({ name: 'Key Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Search your library for an artifact card with a mana ability or a basic land card, reveal it, put it into your hand, then shuffle.' }),
+  makeCard({ name: 'Signet Lite', type_line: 'Artifact', mana_cost: '{2}', cmc: 2, oracle_text: '{T}: Add {C}.' }),
+  makeCard({ name: 'Show Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player may put an artifact, creature, enchantment, or land card from their hand onto the battlefield.' }),
+  makeCard({ name: 'Jeskai Wheel', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player may discard their hand and draw five cards.' }),
+  makeCard({ name: 'Final Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each opponent loses all counters.' }),
+  makeCard({ name: 'Vanity Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Choose a creature or planeswalker, then destroy all other creatures and planeswalkers.' }),
+  makeCard({ name: 'Scry Command', type_line: 'Instant', mana_cost: '{X}', oracle_text: 'Target player scries X, then draws a card.' }),
+  makeCard({ name: 'Feed Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target opponent loses life equal to the amount of life they lost this turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -2589,5 +2605,197 @@ describe('staples (slice 206): exchanges (CR 701.12)', () => {
     g = toStep(g, 'main1', 'alice');
     g = settle(act(g, { type: 'activate', player: 'alice', object: conduit, ability: 0, targets: [[ply('alice'), ply('bob')]] }));
     expect([g.players.alice!.life, g.players.bob!.life]).toEqual([30, 5]);
+  });
+});
+
+describe('staples (slice 206): Mox Diamond', () => {
+  it('enters only if a land card is discarded instead', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Artifact Watcher', 'battlefield');
+    const land = give(g, 'alice', 'Forest', 'hand');
+    const mox = give(g, 'alice', 'Mox Lite', 'hand');
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: mox }));
+    expect(g.pending).toMatchObject({ kind: 'as_enters', choice: 'discard_or_leave' });
+    expect(g.pending?.kind === 'as_enters' && g.pending.candidates).toContain(land);
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', reveal: land } }));
+    expect([g.objects[mox]!.zone, g.objects[land]!.zone]).toEqual(['battlefield', 'graveyard']);
+    // It entered (+1) and the land went to the graveyard (+5).
+    expect(g.players.alice!.life).toBe(life + 6);
+  });
+
+  it("if you don't, it goes to the graveyard without ever entering", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Artifact Watcher', 'battlefield');
+    const land = give(g, 'alice', 'Forest', 'hand');
+    const mox = give(g, 'alice', 'Mox Lite', 'hand');
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: mox }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'as_enters', reveal: null } }));
+    expect([g.objects[mox]!.zone, g.objects[land]!.zone]).toEqual(['graveyard', 'hand']);
+    // Only "put into your graveyard from anywhere": no entering, nothing from the battlefield.
+    expect(g.players.alice!.life).toBe(life + 5);
+  });
+
+  it('with no land card in hand, it goes straight to the graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of g.zones.hand.alice!.filter((id) => g.objects[id]!.card && /Forest|Island|Plains|Swamp|Mountain/.test(g.cards[g.objects[id]!.card]!.name))) g.objects[id]!.zone = 'library';
+    g.zones.hand.alice = g.zones.hand.alice!.filter((id) => g.objects[id]!.zone === 'hand');
+    const mox = give(g, 'alice', 'Mox Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: mox }));
+    expect(g.pending).toBeFalsy();
+    expect(g.objects[mox]!.zone).toBe('graveyard');
+  });
+});
+
+describe('staples (slice 206): Lake of the Dead', () => {
+  it('a Swamp is sacrificed for it to enter; with none, it goes to the graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lake = give(g, 'alice', 'Lake Lite', 'hand');
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: lake }));
+    expect(g.objects[lake]!.zone).toBe('graveyard');
+    g.players.alice!.landsPlayedThisTurn = 0;
+    const swamp = give(g, 'alice', 'Swamp', 'battlefield');
+    const lake2 = give(g, 'alice', 'Lake Lite', 'hand');
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: lake2 }));
+    expect([g.objects[lake2]!.zone, g.objects[swamp]!.zone]).toEqual(['battlefield', 'graveyard']);
+  });
+});
+
+describe('staples (slice 207): Harsh Mentor', () => {
+  it('a land sacrificed to pay for its ability still counts; mana abilities never do', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'bob', 'Mentor Lite', 'battlefield');
+    const fetch = give(g, 'alice', 'Fetch Lite', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    const life = g.players.alice!.life;
+    g = act(g, { type: 'activate_mana', player: 'alice', object: forest, ability: 0 });
+    expect(g.players.alice!.life).toBe(life);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: fetch, ability: 0 }));
+    if (g.pending?.kind === 'search') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [] } } as never));
+    expect(g.players.alice!.life).toBe(life - 1 - 2);
+  });
+});
+
+describe('staples (slice 207): keep some, destroy the rest', () => {
+  it('Mount Doom: you choose up to two creatures (anyone\'s) and the rest are destroyed', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a1, a2] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+    const [b1, b2] = [give(g, 'bob', 'Ogre', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Doom Lite', 'hand') }));
+    expect(g.pending?.kind).toBe('choose_objects');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [a1, b1] } }));
+    expect([a1, a2, b1, b2].map((id) => g.objects[id]!.zone)).toEqual(['battlefield', 'graveyard', 'battlefield', 'graveyard']);
+  });
+
+  it('Divine Reckoning: each player keeps one creature of theirs', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a1, a2] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+    const b1 = give(g, 'bob', 'Ogre', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Reckoning Lite', 'hand') }));
+    expect(g.pending?.kind).toBe('choose_objects');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [a2] } }));
+    expect([a1, a2, b1].map((id) => g.objects[id]!.zone)).toEqual(['graveyard', 'battlefield', 'battlefield']);
+  });
+});
+
+describe('staples (slice 207): Cultivator Colossus', () => {
+  it('put a land from hand, draw, and again — until you don\'t (or can\'t)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of g.zones.hand.alice!) g.objects[id]!.zone = 'library';
+    g.zones.library.alice!.unshift(...g.zones.hand.alice!);
+    g.zones.hand.alice = [];
+    const land = give(g, 'alice', 'Forest', 'hand');
+    const top = give(g, 'alice', 'Bear', 'library');
+    g.zones.library.alice = [top, ...g.zones.library.alice!.filter((id) => id !== top)];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Colossus Lite', 'hand') }));
+    expect(g.pending?.kind).toBe('may');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } }));
+    expect(g.objects[land]!.zone).toBe('battlefield');
+    expect(g.objects[land]!.tapped).toBe(true);
+    expect(g.objects[top]!.zone).toBe('hand');
+    // No land card in hand now: it ends, with nothing more drawn.
+    expect(g.pending).toBeFalsy();
+    expect(g.zones.hand.alice).toEqual([top]);
+  });
+});
+
+describe('staples (slice 207): Moonsilver Key', () => {
+  it('an artifact card with a mana ability or a basic land card', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const signet = give(g, 'alice', 'Signet Lite', 'library');
+    const trinket = give(g, 'alice', 'Trinket', 'library');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Key Lite', 'hand') });
+    g = settle(g);
+    expect(g.pending?.kind).toBe('search');
+    const p = g.pending as { candidates?: string[] };
+    expect(p.candidates).toContain(signet);
+    expect(p.candidates).not.toContain(trinket);
+  });
+});
+
+describe('staples (slice 207): each player may', () => {
+  it('Show and Tell: each chooses in turn, then everything chosen enters at once', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Ogre', 'hand');
+    const theirs = give(g, 'bob', 'Bear', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Show Lite', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'alice', min: 0 });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [mine] } });
+    // Nothing has entered yet while Bob chooses.
+    expect(g.objects[mine]!.zone).toBe('hand');
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [theirs] } }));
+    expect([g.objects[mine]!.zone, g.objects[theirs]!.zone]).toEqual(['battlefield', 'battlefield']);
+    expect([g.objects[mine]!.controller, g.objects[theirs]!.controller]).toEqual(['alice', 'bob']);
+  });
+
+  it('Will of the Jeskai: each player chooses whether to discard their hand and draw five', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bobHand = [...g.zones.hand.bob!];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Jeskai Wheel', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'may', player: 'alice' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+    expect(g.pending).toMatchObject({ kind: 'may', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'may', yes: false } }));
+    expect(g.zones.hand.alice!.length).toBe(5);
+    expect(g.zones.hand.bob).toEqual(bobHand);
+  });
+
+  it('Final Act: each opponent loses all counters', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.bob!.poison = 7;
+    g.players.bob!.counters = { energy: 3 };
+    g.players.alice!.poison = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Final Lite', 'hand') }));
+    expect([g.players.bob!.poison, g.players.bob!.counters?.energy ?? 0, g.players.alice!.poison]).toEqual([0, 0, 2]);
+  });
+
+  it('Deadly Vanity: "other" is other than the chosen one', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b, c] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'bob', 'Ogre', 'battlefield'), give(g, 'bob', 'Cub', 'battlefield')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Vanity Lite', 'hand') }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [b] } }));
+    expect([a, b, c].map((id) => g.objects[id]!.zone)).toEqual(['graveyard', 'battlefield', 'graveyard']);
+  });
+
+  it("Kozilek's Command: the target player scries and draws", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.alice!.pool.C = 2;
+    const hand = g.zones.hand.bob!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Scry Command', 'hand'), x: 2, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.pending).toMatchObject({ kind: 'scry', player: 'bob' });
+    const top = (g.pending as { objects: string[] }).objects;
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'scry', top: [], bottom: top } }));
+    expect(g.zones.hand.bob!.length).toBe(hand + 1);
+    expect(g.zones.library.bob!.slice(-2).sort()).toEqual([...top].sort());
+  });
+
+  it('Astarion: life equal to the life that player lost this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Feed Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(life - 3);
   });
 });

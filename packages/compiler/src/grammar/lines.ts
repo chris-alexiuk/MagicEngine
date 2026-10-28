@@ -1741,7 +1741,7 @@ export const triggeredRule: GrammarRule = {
     const m = /^(When|Whenever|At) (.+)$/s.exec(
       // "Whenever you activate an ability, if it isn't a mana ability, …": mana abilities never trigger these (CR 605.3b).
       line
-        .replace(/^(Whenever .+? activates? an ability(?: of [^,]+?)?), if it isn't a mana ability, /, (_m, head: string) => `${head} that isn't a mana ability, `)
+        .replace(/^(Whenever .+? activates? an ability(?: of .+?)?), if it isn't a mana ability, /, (_m, head: string) => `${head} that isn't a mana ability, `)
         .replace(/^Whenever an ability of ((?:equipped|enchanted) creature) is activated, if it isn't a mana ability, /, "Whenever an ability of $1 that isn't a mana ability is activated, "),
     );
     if (!env || !m) return null;
@@ -1980,6 +1980,14 @@ export const continuousRule: GrammarRule = {
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
       parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
+    // Off the battlefield, continuous effects reach only keyword grants (Lier's flashback, Jo Grant's cycling) and the
+    // spells on the stack; Yixlid Jailer's "Cards in graveyards lose all abilities" isn't applied there.
+    if (effect.type === 'continuous') {
+      const ce = effect as ContinuousEffectNode;
+      const zone = ce.affected?.ref === 'all' ? (ce.affected.filter as { zone?: string }).zone : undefined;
+      const extra = Object.keys(ce).filter((k) => !['type', 'affected', 'keywords', 'condition', 'fromGraveyard'].includes(k));
+      if (zone && zone !== 'battlefield' && zone !== 'stack' && extra.length) return null;
+    }
     if (fromGraveyard) {
       if (effect.type !== 'continuous') return null;
       effect.fromGraveyard = true;
@@ -2959,6 +2967,24 @@ export const asEntersRule: GrammarRule = {
   id: 'as_enters',
   parse(line, original, ctx) {
     const env = envOf(ctx);
+    // Mox Diamond: "If ~ would enter, you may discard a land card instead. If you do, put ~ onto the battlefield. If you
+    // don't, put it into its owner's graveyard." (CR 614.1c) — chosen as it would enter (CR 614.12).
+    const mox = /^If ~ would enter, you may discard (?:a|an) (.+?) instead\. If you do, put ~ onto the battlefield\. If you don't, put (?:it|~) into its owner's graveyard\.$/.exec(line);
+    if (mox && env) {
+      const pf = parseFilter(`${mox[1]!} in your hand`, new Binder(env));
+      if (!pf || pf.plural) return null;
+      const effect: AsEntersNode = { type: 'as_enters', choice: 'discard_or_leave', filter: pf.filter };
+      return { kind: 'static', text: original, effect } as StaticAbility;
+    }
+    // Lake of the Dead: "If this land would enter, sacrifice a Swamp instead. If you do, put this land onto the
+    // battlefield. If you don't, put it into its owner's graveyard."
+    const sac = /^If ~ would enter, sacrifice (a|an|two) (.+?) instead\. If you do, put ~ onto the battlefield\. If you don't, put (?:it|~) into its owner's graveyard\.$/.exec(line);
+    if (sac && env) {
+      const pf = parseFilter(`${sac[1] === 'two' ? '' : 'a '}${sac[2]!} you control`, new Binder(env));
+      if (!pf || pf.plural !== (sac[1] === 'two') || pf.filter.zone) return null;
+      const effect: AsEntersNode = { type: 'as_enters', choice: 'sacrifice_or_leave', filter: pf.filter, amount: sac[1] === 'two' ? 2 : 1 };
+      return { kind: 'static', text: original, effect } as StaticAbility;
+    }
     const m = /^(~ enters tapped\. )?As (?:~|it) enters, (.+)\.$/.exec(line);
     if (!env || !m) return null;
     const what = m[2]!;

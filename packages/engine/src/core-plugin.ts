@@ -910,6 +910,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   scry(node, ctx) {
+    // Kozilek's Command: "Target player scries X" — done by that player.
+    if (node.who) {
+      const [p] = refPlayers(ctx, ref(node, 'who'));
+      if (p === undefined) return true;
+      return { expand: [{ type: 'scry', amount: amountOf(ctx, node.amount), asPlayer: p }] };
+    }
     // CR 701.22a: look at the top N, put any number on the bottom and the rest on top, in any order.
     return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry');
   },
@@ -1951,11 +1957,39 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // decides; then those who do, do it, and the rest are punished.
   opponents_may(node, ctx) {
     const g = ctx.g;
-    const opponents = apnap(g).filter((p) => p !== ctx.controller && livePlayers(g).includes(p));
+    // Will of the Jeskai: "Each player may …" — you too.
+    const opponents = apnap(g).filter((p) => (node.everyone || p !== ctx.controller) && livePlayers(g).includes(p));
     const memo = ctx.memo as { i?: number; asking?: PlayerId; out?: EffectNode[] };
     memo.i ??= 0;
     memo.out ??= [];
     const theirs = node.effects as EffectNode[];
+    // Show and Tell: "Each player may put an artifact, creature, enchantment, or land card from their hand onto the
+    // battlefield." — each chooses in turn, seeing the earlier choices, then they all go at once (CR 101.4).
+    const put = theirs.length === 1 && theirs[0]!.type === 'choose_from_hand' && theirs[0]!.then === 'battlefield' ? theirs[0]! : null;
+    if (put) {
+      const picks = ((memo as { picks?: [PlayerId, ObjectId[]][] }).picks ??= []);
+      let answer = answerOf(ctx, 'choose_objects');
+      for (; memo.i < opponents.length; memo.i++) {
+        const p = opponents[memo.i]!;
+        const pctx = { ...ctx, controller: p };
+        const n = amountOf(pctx, put.amount ?? 1);
+        const filter = liveFilter(pctx, { ...((put.filter ?? {}) as ObjectFilter), zone: 'hand' as const });
+        const candidates = zoneList(g, 'hand', p).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: p, source: ctx.source ?? null }));
+        if (!candidates.length) continue;
+        if (answer && memo.asking === p) {
+          const chosen = answer.objects;
+          if (chosen.length > n || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) throw new RulesError(`Choose up to ${n >= 99 ? 'any number of' : n} of those cards.`);
+          picks.push([p, chosen]);
+          memo.asking = undefined;
+          answer = null;
+          continue;
+        }
+        memo.asking = p;
+        return { ask: { kind: 'choose_objects', player: p, candidates, min: 0, max: Math.min(n, candidates.length), text: `You may put ${n === 1 ? 'a card' : 'any number of cards'} from your hand onto the battlefield.`, sourceName: sourceName(ctx) } };
+      }
+      for (const [p, ids] of picks) for (const id of ids) if (g.objects[id]?.zone === 'hand') moveObject(g, id, 'battlefield', ctx.events, { controller: p, ...(put.tapped ? { tapped: true } : {}) });
+      return true;
+    }
     const doIt = (p: PlayerId) => theirs.map((e) => ({ ...structuredClone(e), asPlayer: p }));
     const declined = (p: PlayerId) => ((node.declined as EffectNode[] | undefined) ?? []).map((e) => ({ ...structuredClone(e), eachPlayer: p }));
     const answer = answerOf(ctx, 'may');
@@ -2681,8 +2715,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     memo.kept ??= {};
     memo.p ??= 0;
     memo.slot ??= 0;
+    // Mount Doom: "Choose up to two creatures, then destroy the rest." — any of them, chosen by you.
     const mine = (p: PlayerId) =>
-      g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, pool, { controller: p, source: ctx.source ?? null }));
+      g.zones.battlefield.filter((id) => (node.anyController || g.objects[id]!.controller === p) && matchesFilter(g, g.objects[id]!, pool, { controller: p, source: ctx.source ?? null }));
     let answer = answerOf(ctx, 'choose_objects');
     for (; memo.p < players.length; memo.p++, memo.slot = 0) {
       const p = players[memo.p]!;
@@ -2710,13 +2745,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           kept.push(...all);
           continue;
         }
-        if (!answer) return { ask: { kind: 'choose_objects', player: p, candidates: all, min: node.upTo ? 0 : n, max: n, text: `Choose ${node.upTo ? 'up to ' : ''}${n} to keep (the rest are sacrificed).`, sourceName: sourceName(ctx) } };
+        if (!answer) return { ask: { kind: 'choose_objects', player: p, candidates: all, min: node.upTo ? 0 : n, max: n, text: `Choose ${node.upTo ? 'up to ' : ''}${n} to keep (the rest are ${node.destroy ? 'destroyed' : 'sacrificed'}).`, sourceName: sourceName(ctx) } };
         if (answer.objects.length > n || answer.objects.length < (node.upTo ? 0 : n) || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => all.includes(id))) {
           throw new RulesError(`Choose ${node.upTo ? 'up to ' : ''}${n} of those permanents to keep.`);
         }
         kept.push(...answer.objects);
         answer = null;
       }
+    }
+    // Divine Reckoning, Mount Doom: "… destroy the rest" (all at once, CR 608.2c).
+    if (node.destroy) {
+      const keptAll = new Set(Object.values(memo.kept).flat());
+      for (const id of new Set(players.flatMap((p) => mine(p)))) if (!keptAll.has(id)) destroy(g, g.objects[id]!, ctx.events);
+      return true;
     }
     for (const p of players) for (const id of mine(p)) if (!memo.kept[p]!.includes(id)) sacrificeObject(g, g.objects[id]!, p, ctx.events);
     return true;
@@ -3466,7 +3507,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 603.12: "Sacrifice it. When you do, …" — not optional; what follows happens only if it could be done.
     if (node.mandatory) return { expand: [...first, ...then] };
     if (!answer) return { ask: { kind: 'may', player: chooser, text: describeEffects([...first, ...then]), sourceName: sourceName(ctx) } };
-    return { expand: answer.yes ? [...first, ...then] : otherwise };
+    // Cultivator Colossus: "If you do, draw a card and repeat this process."
+    return { expand: answer.yes ? [...first, ...then, ...(node.repeat ? [structuredClone(node)] : [])] : otherwise };
   },
 
   delayed(node, ctx) {
@@ -3598,6 +3640,36 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       g.effects.push({ id: `e${g.nextId++}`, timestamp, source, controller: ctx.controller, objects: [{ id: o.id, zcc: o.zcc }], control: to, until: 'game' });
     }
     applyControlEffects(g, ctx.events);
+    return true;
+  },
+
+  // Final Showdown: "Choose a creature you control." — "it" is then that one (none if there's none).
+  choose_object(node, ctx) {
+    const g = ctx.g;
+    const filter = liveFilter(ctx, (node.filter ?? {}) as ObjectFilter);
+    const candidates = g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+    if (!candidates.length || !ctx.resolution) return true;
+    let pick = candidates.length === 1 ? candidates[0] : undefined;
+    if (!pick) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: 'Choose one.', sourceName: sourceName(ctx) } };
+      if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of them.');
+      pick = answer.objects[0]!;
+    }
+    const o = g.objects[pick]!;
+    ctx.resolution.chosenObject = { id: o.id, zcc: o.zcc };
+    return true;
+  },
+
+  // Final Act: "Each opponent loses all counters." (CR 122.1)
+  player_counters_lost(node, ctx) {
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      const ps = ctx.g.players[p]!;
+      if (ps.poison) ctx.events.push({ type: 'player_counters', player: p, counter: 'poison', delta: -ps.poison });
+      for (const [counter, n] of Object.entries(ps.counters ?? {})) if (n) ctx.events.push({ type: 'player_counters', player: p, counter, delta: -n });
+      ps.poison = 0;
+      ps.counters = {};
+    }
     return true;
   },
 
@@ -3872,6 +3944,11 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   // "Exchange control of this creature and target creature an opponent controls. If you do, …" (CR 701.12a).
   if (e.type === 'exchange_control') return exchangePair(ctx, e) !== null;
   if (e.type === 'exchange_life') return lifeExchange(ctx, e) !== null;
+  // Cultivator Colossus: "you may put a land card from your hand onto the battlefield tapped. If you do, …"
+  if (e.type === 'choose_from_hand' && refPlayers(ctx, ref(e, 'who')).includes(chooser)) {
+    const filter = liveFilter(ctx, { ...((e.filter ?? {}) as ObjectFilter), zone: 'hand' as const });
+    return zoneList(g, 'hand', chooser).some((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }));
+  }
   if (e.type === 'sacrifice_choice' && refPlayers(ctx, ref(e, 'who')).includes(chooser)) {
     const filter = bindFilter(ctx, (e.filter ?? {}) as ObjectFilter);
     const n = g.zones.battlefield.filter((id) => {
@@ -4717,7 +4794,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.other && e.source === check.source.id) return [];
     if (t.subject) {
       const src = check.g.objects[e.source];
-      if (!src || !subjectMatches(check, t.subject as Ref, src)) return [];
+      // Harsh Mentor and a fetch land: a source sacrificed to pay the cost is looked at as it last was (CR 603.10a-style).
+      const last = src && src.zone !== 'battlefield' ? check.g.lastKnown?.[src.id] : undefined;
+      const lookBack = Boolean(last && last.zcc === src!.zcc - 1);
+      if (!src || !subjectMatches(check, t.subject as Ref, src, lookBack ? { lookBack: true, anyZone: true } : {})) return [];
     }
     return [{ player: e.player, entry: e.entry }];
   },

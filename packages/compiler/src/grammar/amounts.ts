@@ -219,6 +219,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Archfiend of Despair: "the life that player lost this turn" — each of the players in turn.
   const theirLife = /^the life (?:they|that player) (lost|gained) this turn$/.exec(t);
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
+  // Astarion: "Target opponent loses life equal to the amount of life they lost this turn." — that one player.
+  const oneLife = /^the (?:amount of )?life (?:they|that player) (lost|gained) this turn$/.exec(t);
+  if (oneLife && b.player && b.player.ref !== 'players' && b.player.ref !== 'you') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(oneLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // "the amount of life you gained this turn", "the total amount of life your opponents have lost this turn"
   const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);

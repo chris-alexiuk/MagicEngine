@@ -76,6 +76,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   // Agent of Treachery: "permanents you don't own" (CR 108.3: the other players own them).
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
+  // Moonsilver Key: "an artifact card with a mana ability"; Midnight Arsonist: "artifacts without mana abilities" (CR 605.1a).
+  [/ with (?:a mana ability|mana abilities)$/, (f) => f.manaAbility === undefined && ((f.manaAbility = true), true)],
+  [/ without mana abilities$/, (f) => f.manaAbility === undefined && ((f.manaAbility = false), true)],
   // "a land card with a basic land type" (Boseiju)
   [/ with a basic land type$/, (f) => !f.subtypes && ((f.subtypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']), true)],
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
@@ -113,7 +116,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.zone = 'graveyard'), (f.ownedBy = who), true));
   }],
-  [/ (?:from|in) all graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  // Kozilek's Command: "up to X target cards from graveyards".
+  [/ (?:from|in) (?:all )?graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
@@ -293,7 +297,17 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
       const anyOf: ObjectFilter[] = [];
       for (const part of parts) {
         const alt: ObjectFilter = base.zone ? { zone: base.zone } : {};
-        if (!parseHeadPhrase(part, alt)) return null;
+        if (!parseHeadPhrase(part, alt)) {
+          // Moonsilver Key: "an artifact card with a mana ability or a basic land card" — an alternative with its own
+          // qualities.
+          let core = part;
+          for (let guard = 0; guard < 4 && / with /.test(core); guard++) {
+            const hit = SUFFIXES.map(([re, apply]) => [re.exec(core), apply] as const).find(([m, apply]) => m && m.index > 0 && apply(alt, m, b));
+            if (!hit) break;
+            core = core.slice(0, hit[0]!.index);
+          }
+          if (core === part || / with /.test(core) || parseHeadPhrase(core, alt)?.plural !== head.plural || alt.anyOf) return null;
+        }
         anyOf.push(alt);
       }
       // "target spell or permanent" (Venser, Commit): each alternative in its own zone (CR 115.2).

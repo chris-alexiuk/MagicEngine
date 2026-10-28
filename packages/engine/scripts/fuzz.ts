@@ -262,8 +262,10 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     }
     case 'as_enters':
       if (p.choice === 'pay_life') return { player: me, answer: { kind: 'as_enters', pay: g.players[me]!.life >= (p.amount ?? 0) && rnd() < 0.6 } };
+      if (p.choice === 'discard_or_leave') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };
       if (p.choice === 'reveal') return { player: me, answer: { kind: 'as_enters', reveal: p.candidates?.length && rnd() < 0.8 ? pick(p.candidates) : null } };
       if (p.choice === 'counter') return { player: me, answer: { kind: 'as_enters', pay: rnd() < 0.5 } };
+      if (p.choice === 'sacrifice_or_leave') return { player: me, answer: { kind: 'as_enters', sacrifice: [...(p.candidates ?? [])].sort(() => rnd() - 0.5).slice(0, p.amount ?? 1) } };
       if (p.choice === 'devour') return { player: me, answer: { kind: 'as_enters', sacrifice: (p.candidates ?? []).filter(() => rnd() < 0.3) } };
       if (p.choice === 'copy') return { player: me, answer: { kind: 'as_enters', copy: p.candidates?.length && rnd() < 0.9 ? pick(p.candidates) : null } };
       return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };

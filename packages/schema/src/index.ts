@@ -374,6 +374,8 @@ export interface ObjectFilter {
   manaValue?: Compare;
   /** CR 702.134a (mentor): power less than the source's. */
   powerBelowSource?: true;
+  /** Moonsilver Key: "an artifact card with a mana ability" (false: "without mana abilities"). */
+  manaAbility?: boolean;
   /** Selvala: "its power is greater than each other creature's power" — the greatest, not tied. */
   powerAboveOthers?: true;
   /** The Darkness Crystal: "exiled with ~" — cards its abilities exiled (CR 607.2a). */
@@ -914,7 +916,9 @@ export interface AsEntersNode extends EffectNode {
   /** card_name: "As ~ enters, choose a nonland card name" (CR 201.3; `filter` says what kind of card). */
   /** card_type: "As ~ enters, choose artifact, creature, enchantment, instant, or sorcery" (`options`; all card types if absent). */
   /** player: "As ~ enters, choose a player" (`opponent`: "choose an opponent"). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player';
+  /** discard_or_leave: Mox Diamond's "If ~ would enter, you may discard a land card instead. … If you don't, put it into its owner's graveyard." */
+  /** sacrifice_or_leave: Lake of the Dead's "If this land would enter, sacrifice a Swamp instead. …" (`amount` of `filter`). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave';
   opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */
@@ -1118,7 +1122,7 @@ export const CORE_NODES = {
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'exile_until', 'tap_choice', 'destroy', 'move', 'counter', 'tap', 'untap',
     'put_from_milled', 'grant_play', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
-    'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
+    'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',

@@ -884,6 +884,11 @@ export function matchesFilter(
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
   if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
+  // CR 605.1a: "with a mana ability" — the abilities it has where it is (printed ones off the battlefield).
+  if (f.manaAbility !== undefined) {
+    const abilities = o.zone === 'battlefield' ? abilitiesOf(g, o) : printedAbilities(faceOf(g, o));
+    if (abilities.some((a) => a.kind === 'activated' && Boolean((a as { mana?: boolean }).mana)) !== f.manaAbility) return false;
+  }
   // "exiled with ~" (CR 607.2a): what this object's abilities exiled while it was on the battlefield (or on its way).
   if (f.exiledWithSource && !(o.zone === 'exile' && ctx.source && o.exiledBy?.id === ctx.source.id && o.exiledBy.zcc === battlefieldZcc(g, ctx.source))) return false;
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;

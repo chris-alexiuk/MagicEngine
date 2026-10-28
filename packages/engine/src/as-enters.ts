@@ -5,7 +5,7 @@ import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
-import { faceOf, livePlayers, nameOf, zoneList } from './zones.js';
+import { discardCard, faceOf, livePlayers, moveObject, nameOf, zoneList } from './zones.js';
 
 /**
  * Choices made as a permanent enters (CR 614.12): "As ~ enters, you may pay 2 life. If you
@@ -28,8 +28,24 @@ function candidatesFor(g: GameState, o: GameObject, node: AsEntersNode): string[
   return zoneList(g, 'hand', o.controller).filter((id) => matchesFilter(g, g.objects[id]!, node.filter ?? {}, { controller: o.controller, source: o }));
 }
 
+/**
+ * Mox Diamond: "If you don't, put it into its owner's graveyard." — it never entered: the held event of its entering is
+ * dropped (nothing triggers on it), and it goes to the graveyard from where it was coming from.
+ */
+function neverEntered(g: GameState, o: GameObject, events: GameEvent[]): void {
+  const held = g.heldEvents ?? [];
+  const at = held.findIndex((e) => e.type === 'moved' && e.object === o.id && e.to === 'battlefield');
+  const came = at >= 0 ? held[at]! : events.find((e) => e.type === 'moved' && e.object === o.id && e.to === 'battlefield');
+  const from = came?.type === 'moved' ? came.from : 'stack';
+  if (at >= 0) held.splice(at, 1);
+  else if (came) events.splice(events.indexOf(came), 1);
+  const n = events.length;
+  moveObject(g, o.id, 'graveyard', events);
+  for (const e of events.slice(n)) if (e.type === 'moved' && e.object === o.id) e.from = from;
+}
+
 /** Asks for the next pending "as enters" choice. True if a choice is now pending. */
-export function promptAsEnters(g: GameState): boolean {
+export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean {
   while (g.asEnters?.length && !g.pending) {
     const next = g.asEnters[0]!;
     const o = g.objects[next.object];
@@ -46,6 +62,30 @@ export function promptAsEnters(g: GameState): boolean {
       case 'reveal':
         g.pending = { ...base, text: `Reveal a card, or ${nameOf(g, o)} enters tapped.`, candidates: candidatesFor(g, o, node) };
         break;
+      case 'discard_or_leave': {
+        // CR 614.1c: with nothing to discard, it can't enter.
+        const candidates = candidatesFor(g, o, node);
+        if (!candidates.length) {
+          g.asEnters.shift();
+          neverEntered(g, o, events);
+          continue;
+        }
+        g.pending = { ...base, text: `Discard a card for ${nameOf(g, o)} to enter, or put it into its owner's graveyard.`, candidates };
+        break;
+      }
+      case 'sacrifice_or_leave': {
+        // Lake of the Dead: not optional — with too few to sacrifice it can't enter; with no choice to make, done now.
+        const n = node.amount ?? 1;
+        const candidates = g.zones.battlefield.filter((id) => id !== o.id && g.objects[id]!.controller === o.controller && matchesFilter(g, g.objects[id]!, node.filter ?? {}, { controller: o.controller, source: o }));
+        if (candidates.length <= n) {
+          g.asEnters.shift();
+          if (candidates.length < n) neverEntered(g, o, events);
+          else for (const id of candidates) sacrifice(g, g.objects[id]!, o.controller, events);
+          continue;
+        }
+        g.pending = { ...base, text: `Sacrifice ${n} for ${nameOf(g, o)} to enter.`, candidates, amount: n };
+        break;
+      }
       case 'color':
         g.pending = { ...base, text: 'Choose a color.', options: COLORS.filter((c) => c !== node.except) };
         break;
@@ -142,6 +182,19 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       }
       break;
     }
+    case 'sacrifice_or_leave': {
+      const chosen = answer.sacrifice ?? [];
+      if (new Set(chosen).size !== chosen.length || chosen.length !== (p.amount ?? 1) || !chosen.every((id) => p.candidates?.includes(id))) throw new RulesError(`Choose ${p.amount ?? 1} of the permanents that qualify to sacrifice.`);
+      for (const id of chosen) sacrifice(g, g.objects[id]!, player, events);
+      break;
+    }
+    case 'discard_or_leave': {
+      if (answer.reveal) {
+        if (!p.candidates?.includes(answer.reveal) || g.objects[answer.reveal]?.zone !== 'hand') throw new RulesError('Discard one of the cards that qualify.');
+        discardCard(g, answer.reveal, events);
+      } else neverEntered(g, o, events);
+      break;
+    }
     case 'reveal': {
       if (answer.reveal) {
         if (!p.candidates?.includes(answer.reveal)) throw new RulesError('Reveal one of the cards that qualify.');
@@ -211,5 +264,5 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
 
 /** CR 603.6d / 707.5: while a permanent is choosing what to enter as a copy of, its "enters" triggers wait. */
 export function copyChoicePending(g: GameState): boolean {
-  return Boolean(g.asEnters?.some((e) => (e.node.choice === 'copy' || e.node.choice === 'read_ahead') && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
+  return Boolean(g.asEnters?.some((e) => (e.node.choice === 'copy' || e.node.choice === 'read_ahead' || e.node.choice === 'discard_or_leave' || e.node.choice === 'sacrifice_or_leave') && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
 }

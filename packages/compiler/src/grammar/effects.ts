@@ -268,6 +268,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Divine Reckoning: "Each player chooses a creature they control. Destroy the rest."
+      if (sentences[i + 1] === 'Destroy the rest' && / chooses .+ they control$/.test(s)) {
+        const kept = parseSentence(`${s}, then destroys the rest`, b);
+        if (!kept) return null;
+        out.push(...kept);
+        i++;
+        continue;
+      }
       // CR 608.2b doesn't apply: "This ability still resolves if its target becomes illegal." (Gilded Drake)
       if (s === 'This ability still resolves if its target becomes illegal' && b.targets.length) {
         for (const spec of b.targets) spec.stillResolves = true;
@@ -537,9 +545,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       if (mayDo && then) {
         const first = mayFirst(mayDo[1]!);
-        const rest = first ? parseSentence(capitalise(then[1]!), b) : null;
+        // Cultivator Colossus: "If you do, draw a card and repeat this process." — the choice comes again (CR 608.2c).
+        const repeat = / and repeat this process$/.exec(then[1]!);
+        const rest = first ? parseSentence(capitalise(then[1]!.replace(/ and repeat this process$/, '')), b) : null;
         if (!first || !rest) return null;
-        out.push({ type: 'may_do', effects: first, then: rest });
+        out.push({ type: 'may_do', effects: first, then: rest, ...(repeat ? { repeat: true } : {}) });
         i++;
         continue;
       }
@@ -1185,6 +1195,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (last?.type === 'search' && last.amount === 1 && (!last.who || (last.who as Ref).ref === 'target') && ['battlefield', 'hand', 'exile'].includes(String(last.to))) b.it = { ref: 'created' };
     }
     if (anyColorAt.size) return null;
+    // Deadly Vanity: "Choose a creature or planeswalker, then destroy all other creatures and planeswalkers." — "other"
+    // after the choice is other than the chosen one.
+    const chose = out.findIndex((e) => e.type === 'choose_object');
+    if (chose >= 0) {
+      for (let k = chose + 1; k < out.length; k++) {
+        const js = JSON.stringify(out[k]);
+        if (js.includes('"other":true')) out[k] = JSON.parse(js.replace(/"other":true/g, '"otherThan":{"ref":"chosen_object"}')) as EffectNode;
+      }
+    }
     return out.length ? out : null;
   });
 }
@@ -1549,6 +1568,33 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const declined = parseSentence(capitalise(punisher[2]!), b);
       b.player = saved;
       return declined ? [{ type: 'opponents_may', effects: theirs, declined }] : null;
+    });
+    if (r) return r;
+  }
+  // Will of the Jeskai: "Each player may discard their hand and draw five cards." — each in turn chooses (CR 101.4).
+  const eachMay = /^Each (player|opponent) may (.+)$/.exec(s);
+  if (eachMay) {
+    const r = attempt(b, (b) => {
+      const asThem = capitalise(eachMay[2]!.replace(/ of their choice\b/g, '').replace(/\btheir\b/g, 'your').replace(/\bthey (control|own)\b/g, 'you $1'));
+      if (/\b(?:they|them|their|that player)\b/.test(asThem)) return null;
+      const before = b.targets.length;
+      const theirs = parseSentence(asThem, b);
+      if (!theirs || b.targets.length !== before || JSON.stringify(theirs).includes('"ref":"target"')) return null;
+      return [{ type: 'opponents_may', effects: theirs, ...(eachMay[1] === 'player' ? { everyone: true } : {}) }];
+    });
+    if (r) return r;
+  }
+  // Final Showdown: "Choose a creature you control. It gains indestructible until end of turn." — chosen as it resolves,
+  // not targeted (CR 608.2c); "it" is that one.
+  const chooseOne = /^Choose (a|an|another) (?!target\b)(.+)$/.exec(s);
+  if (chooseOne) {
+    const r = attempt(b, (b) => {
+      const pf = parseFilter(chooseOne[2]!, b);
+      if (!pf || pf.plural || pf.filter.zone || !pf.filter.types?.length) return null;
+      if (chooseOne[1] === 'another') pf.filter.other = true;
+      b.it = { ref: 'chosen_object' };
+      for (const n of ['that creature', 'that permanent', 'the chosen creature', 'the chosen permanent']) b.named[n] = { ref: 'chosen_object' };
+      return [{ type: 'choose_object', filter: pf.filter }];
     });
     if (r) return r;
   }
@@ -2066,12 +2112,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // from among the nonland permanents they control, …"; Liliana: "Each opponent chooses a permanent they control of each
   // permanent type and sacrifices the rest."; Planetary Annihilation: "Each player chooses six lands they control, then
   // sacrifices the rest."
-  const keep = /^(.+?) chooses (?:from among the permanents they control )?(.+?)(?: from among the (nonland )?permanents they control)?,? (?:then|and) sacrifices the rest$/.exec(s);
+  // Mount Doom: "Choose up to two creatures, then destroy the rest." — any creatures, chosen by you (CR 101.4 isn't needed).
+  const chooseDestroy = /^Choose (up to )?(\w+) (.+?),? then destroy the rest$/.exec(s);
+  if (chooseDestroy) {
+    const r = attempt(b, (b) => {
+      const n = chooseDestroy[2] === 'a' || chooseDestroy[2] === 'an' ? 1 : parseAmount(chooseDestroy[2]!);
+      const pf = parseFilter(chooseDestroy[3]!, b);
+      if (typeof n !== 'number' || !pf || pf.plural !== n > 1 || pf.filter.zone) return null;
+      return [{ type: 'keep_choose', who: { ref: 'you' }, pool: pf.filter, count: n, anyController: true, destroy: true, ...(chooseDestroy[1] ? { upTo: true } : {}) } as EffectNode];
+    });
+    if (r) return r;
+  }
+  // Divine Reckoning: "Each player chooses a creature they control. Destroy the rest." (read as one: see the sentence loop)
+  const keep = /^(.+?) chooses (?:from among the permanents they control )?(.+?)(?: from among the (nonland )?permanents they control)?,? (?:then|and) (sacrifices|destroys) the rest$/.exec(s);
   if (keep) {
     const r = attempt(b, (b) => {
       const who = parsePlayerRef(keep[1]!, b);
       if (!who) return null;
       const pool: ObjectFilter = keep[3] ? { notTypes: ['Land'] } : {};
+      if (keep[4] === 'destroys' && !/^(?:up to )?\w+ .+? they control$/.test(keep[2]!)) return null;
       if (keep[2] === 'a permanent they control of each permanent type') {
         return [{ type: 'keep_choose', who, pool, slots: ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'].map((t) => ({ types: [t] })) } as EffectNode];
       }
@@ -2082,7 +2141,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const n = counted[2] === 'a' || counted[2] === 'an' ? 1 : parseAmount(counted[2]!);
       const pf = parseFilter(counted[3]!, b);
       if (typeof n !== 'number' || !pf || pf.plural !== n > 1 || pf.filter.zone || pf.filter.controller) return null;
-      return [{ type: 'keep_choose', who, pool: pf.filter, count: n, ...(counted[1] ? { upTo: true } : {}) } as EffectNode];
+      return [{ type: 'keep_choose', who, pool: pf.filter, count: n, ...(counted[1] ? { upTo: true } : {}), ...(keep[4] === 'destroys' ? { destroy: true } : {}) } as EffectNode];
     });
     if (r) return r;
   }
@@ -2878,6 +2937,8 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
   },
   lose(args, who) {
+    // Final Act: "Each opponent loses all counters." (CR 122.1: poison, energy, experience, …)
+    if (args === 'all counters') return [{ type: 'player_counters_lost', who }];
     // Debt to the Deathless: "Each opponent loses two times X life."
     if (/^(?:twice|two times) X life$/.test(args)) return [{ type: 'lose_life', amount: { kind: 'x', times: 2 }, who }];
     const m = /^(\S+) life$/.exec(args);
@@ -2914,6 +2975,11 @@ const VERBS: Record<string, VerbHandler> = {
       b.milled = true;
       return [{ type: 'mill', amount: { kind: 'cards', zone: 'library', who: 'each', player, half: half[1] as 'up' | 'down' }, who }];
     }
+    // Drown in Dreams: "Target player mills twice X cards."
+    if (args === 'twice X cards') {
+      b.milled = true;
+      return [{ type: 'mill', amount: { kind: 'x', times: 2 }, who }];
+    }
     const m = /^(\S+) cards?$/.exec(args);
     const amount = m && parseAmount(m[1]!);
     if (amount === null || amount === undefined) return null;
@@ -2927,7 +2993,10 @@ const VERBS: Record<string, VerbHandler> = {
   },
   scry(args, who) {
     const amount = parseAmount(args);
-    return amount !== null && who.ref === 'you' ? [{ type: 'scry', amount }] : null;
+    if (amount === null) return null;
+    // Kozilek's Command: "Target player scries X, then draws a card." — that player looks and chooses.
+    if (who.ref === 'target') return [{ type: 'scry', amount, who }];
+    return who.ref === 'you' ? [{ type: 'scry', amount }] : null;
   },
   surveil(args, who) {
     const amount = parseAmount(args);

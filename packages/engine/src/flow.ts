@@ -49,7 +49,7 @@ export function settle(g: GameState, events: GameEvent[]): void {
     collectTriggers(g, events);
     if (g.pending || !g.started) return;
     // CR 614.12: choices for permanents that just entered ("As ~ enters, …").
-    if (promptAsEnters(g)) return;
+    if (promptAsEnters(g, events)) return;
     applyControlEffects(g, events);
     // CR 702.145c/d/f/g: day and night follow daybound and nightbound permanents.
     syncDayNight(g, events);
