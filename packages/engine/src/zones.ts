@@ -235,7 +235,16 @@ export function moveObject(
   // "for each creature destroyed this way": the resolving effect that moved it, and what it was.
   if (g.resolving) {
     const r = g.resolving;
-    (r.moves ??= []).push({ id, effect: String(r.effects[r.index]?.type ?? ''), from, to, types: from === 'battlefield' ? [...(g.lastKnown?.[id]?.types ?? [])] : [...chars(g, o).types], controller: o.controller, ...(o.token ? { token: true as const } : {}) });
+    (r.moves ??= []).push({
+      id,
+      effect: String(r.effects[r.index]?.type ?? ''),
+      from,
+      to,
+      types: from === 'battlefield' ? [...(g.lastKnown?.[id]?.types ?? [])] : [...chars(g, o).types],
+      subtypes: from === 'battlefield' ? [...(g.lastKnown?.[id]?.subtypes ?? [])] : [...chars(g, o).subtypes],
+      controller: o.controller,
+      ...(o.token ? { token: true as const } : {}),
+    });
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;
   const faceBefore = o.face;

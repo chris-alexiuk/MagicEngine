@@ -179,6 +179,38 @@ const CARDS = [
   makeCard({ name: 'Celebrant Lite', type_line: 'Creature — Human Warrior', mana_cost: '{0}', power: '4', toughness: '1', oracle_text: "Vigilance\nIf this creature hasn't been exerted this turn, you may exert it as it attacks. When you do, untap all other creatures you control and after this phase, there is an additional combat phase." }),
   makeCard({ name: 'Scourge Lite', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: "Whenever this creature attacks for the first time each turn, if it's attacking the player with the most life or tied for most life, untap all attacking creatures. After this phase, there is an additional combat phase." }),
   makeCard({ name: 'Kambal Lite', type_line: 'Legendary Creature — Human Advisor', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: "Whenever one or more tokens your opponents control enter, for each of them, create a tapped token that's a copy of it. This ability triggers only once each turn." }),
+  makeCard({ name: 'Omnath Lite', type_line: 'Legendary Creature — Elemental', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Landfall — Whenever a land you control enters, you gain 4 life if this is the first time this ability has resolved this turn. If it's the second time, add {R}{G}{W}{U}. If it's the third time, Omnath Lite deals 4 damage to each opponent and each planeswalker you don't control." }),
+  makeCard({ name: 'Rumor Gatherer Lite', type_line: 'Creature — Elf Wizard', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: 'Alliance — Whenever another creature you control enters, scry 1. If this is the second time this ability has resolved this turn, draw a card instead.' }),
+  makeCard({ name: 'Soulbright Lite', type_line: 'Creature — Elemental Sorcerer', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: '{0}: Target creature you control gains trample until end of turn. If this is the third time this ability has resolved this turn, add {R}{R}{R}{R}.' }),
+  makeCard({ name: 'Nissa Lite', type_line: 'Legendary Creature — Elf Scout', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Landfall — Whenever a land you control enters, add one mana of any color. Then if this is the second time this ability has resolved this turn, reveal cards from the top of your library until you reveal an Elf or Elemental card. Put that card into your hand and the rest on the bottom of your library in a random order.' }),
+  makeCard({ name: 'Ignus Lite', type_line: 'Creature — Elemental', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{R}, Return this creature to its owner\'s hand: Add {C}{C}{R}. Activate only as a sorcery.' }),
+  makeCard({ name: 'Shigeki Lite', type_line: 'Legendary Enchantment Creature — Snake Druid', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: "{0}, Return Shigeki Lite to its owner's hand: Reveal the top four cards of your library. You may put a land card from among them onto the battlefield tapped. Put the rest into your graveyard." }),
+  makeCard({ name: 'Pod Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "{0}, Sacrifice a creature: Search your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the battlefield, then shuffle. Activate only as a sorcery." }),
+  makeCard({ name: 'Neoform Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "As an additional cost to cast this spell, sacrifice a creature.\nSearch your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the battlefield with an additional +1/+1 counter on it, then shuffle." }),
+  makeCard({
+    name: 'Praetor Lite // Scriptures Lite',
+    layout: 'transform',
+    type_line: 'Legendary Creature — Phyrexian Praetor // Enchantment — Saga',
+    oracle_text: '',
+    mana_cost: '{0}',
+    card_faces: [
+      { object: 'card_face', name: 'Praetor Lite', type_line: 'Legendary Creature — Phyrexian Praetor', mana_cost: '{0}', power: '4', toughness: '5', oracle_text: '{0}: Exile Praetor Lite, then return it to the battlefield transformed under its owner\'s control. Activate only as a sorcery and only if an opponent has eight or more cards in their graveyard.' },
+      { object: 'card_face', name: 'Scriptures Lite', type_line: 'Enchantment — Saga', mana_cost: '', oracle_text: '(As this Saga enters and after your draw step, add a lore counter.)\nI — Each opponent discards three cards, then mills three cards.\nII — You gain 1 life.\nIII — You gain 1 life.' },
+    ],
+  } as never),
+  makeCard({ name: 'Vivien Hunt Lite', type_line: 'Legendary Planeswalker — Vivien', mana_cost: '{0}', loyalty: '4', oracle_text: "+2: You may sacrifice a creature. If you do, search your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put it onto the battlefield, then shuffle." }),
+  makeCard({ name: 'Sorcery Elf', type_line: 'Creature — Elf Druid', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{T}: Add {G}{G}. Activate only as a sorcery.' }),
+  makeCard({ name: 'Archway Lite', type_line: 'Land — Desert', mana_cost: '', oracle_text: "When this land enters, return a land you control to its owner's hand. If another Desert was returned this way, surveil 1.\n{T}: Add {C}{C}." }),
+  makeCard({ name: 'Desert Lite', type_line: 'Land — Desert', mana_cost: '', oracle_text: '{T}: Add {C}.' }),
+  makeCard({ name: 'Commando Lite', type_line: 'Creature — Angel Soldier', mana_cost: '{0}', power: '4', toughness: '3', oracle_text: 'Flying\nWhenever another player attacks with two or more creatures, they draw a card if none of those creatures attacked you.' }),
+  makeCard({ name: 'Wrath Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Choose up to one target creature, then airbend all other creatures.\nUntil your next turn, your opponents can't cast spells from anywhere other than their hands." }),
+  makeCard({ name: 'Fighter Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Equip abilities you activate cost {2} less to activate.' }),
+  makeCard({ name: 'Heavy Sword', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +1/+1.\nEquip {3}\n{2}: You gain 1 life.' }),
+  makeCard({ name: 'Two Salve', type_line: 'Instant', mana_cost: '{2}', cmc: 2, oracle_text: 'You gain 2 life.' }),
+  makeCard({ name: 'Battlecrier Lite', type_line: 'Creature — Orc Ranger', mana_cost: '{0}', power: '4', toughness: '3', oracle_text: 'During your turn, spells you cast cost {1} less to cast for each creature you control with power 4 or greater.' }),
+  makeCard({ name: 'Glare Lite', type_line: 'Sorcery', mana_cost: '{X}', oracle_text: 'Destroy target creature with power X or less.' }),
+  makeCard({ name: 'Lyre Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{X}, {T}: Tap target creature with power X or less.' }),
+  makeCard({ name: 'Sprite Lite', type_line: 'Creature — Faerie Wizard', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flash\nWhen this creature enters, counter target spell with mana value X or less, where X is the number of Faeries you control.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -1926,5 +1958,322 @@ describe('staples (slice 201): Kambal', () => {
     const mine = g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice');
     expect(mine.length).toBe(2);
     expect(mine.every((id) => g.objects[id]!.tapped)).toBe(true);
+  });
+});
+
+describe('staples (slice 202): "if this is the second time this ability has resolved this turn"', () => {
+  it('Omnath: life, then mana, then damage, as its landfall ability resolves the first, second and third time', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Omnath Lite', 'battlefield');
+    const forests = [give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library')];
+    const life = g.players.alice!.life;
+    const bob = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Forest Call', 'hand') }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: forests } }));
+    expect(g.stack.length).toBe(0);
+    expect(g.players.alice!.life).toBe(life + 4);
+    expect([g.players.alice!.pool.R, g.players.alice!.pool.G, g.players.alice!.pool.W, g.players.alice!.pool.U]).toEqual([1, 1, 1, 1]);
+    expect(g.players.bob!.life).toBe(bob - 4);
+  });
+
+  it('Rumor Gatherer: scry 1 the first time, draw a card instead the second time', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Rumor Gatherer Lite', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Make Two', 'hand') });
+    let scries = 0;
+    for (let i = 0; i < 40 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'scry') {
+        scries++;
+        g = act(g, { type: 'choose', player: p.player, answer: { kind: 'scry', top: p.objects, bottom: [] } });
+      } else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(scries).toBe(1);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+
+  it('Soulbright: an activated ability counts its own resolutions; the count starts over each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sb = give(g, 'alice', 'Soulbright Lite', 'battlefield');
+    const once = (g: GameState) => settle(act(g, { type: 'activate', player: 'alice', object: sb, ability: 0, targets: [[{ kind: 'object', object: sb }]] }));
+    g = once(once(g));
+    expect(g.players.alice!.pool.R ?? 0).toBe(0);
+    g = once(g);
+    expect(g.players.alice!.pool.R).toBe(4);
+    g = once(g);
+    expect(g.players.alice!.pool.R).toBe(4);
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'main1', 'alice');
+    g = once(once(once(g)));
+    expect(g.players.alice!.pool.R).toBe(4);
+  });
+
+  it('Nissa: the second time, reveal until an Elf or Elemental card and put it into your hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Nissa Lite', 'battlefield');
+    const forests = [give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library')];
+    const elf = give(g, 'alice', 'Rumor Gatherer Lite', 'library');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Forest Call', 'hand') }));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: forests } });
+    // The search shuffled; the Elf goes on top now, before the landfall abilities resolve.
+    g.zones.library.alice = [elf, ...g.zones.library.alice!.filter((id) => id !== elf)];
+    for (let i = 0; i < 40 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'choose_option') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_option', choice: p.options[0]! } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.objects[elf]!.zone).toBe('hand');
+  });
+});
+
+describe('staples (slice 202): returning the permanent to its owner\'s hand as a cost', () => {
+  it('Grinning Ignus: a mana ability activated only as a sorcery', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ignus = give(g, 'alice', 'Ignus Lite', 'battlefield');
+    g.players.alice!.pool.R = 1;
+    expect(legalActions(g, 'alice').some((a) => a.type === 'activate_mana' && a.object === ignus)).toBe(true);
+    g = act(g, { type: 'activate_mana', player: 'alice', object: ignus, ability: 0 });
+    expect(g.objects[ignus]!.zone).toBe('hand');
+    expect([g.players.alice!.pool.C, g.players.alice!.pool.R]).toEqual([2, 1]);
+    // Not with a spell on the stack.
+    const again = give(g, 'alice', 'Ignus Lite', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') });
+    expect(legalActions(g, 'alice').some((a) => a.type === 'activate_mana' && a.object === again)).toBe(false);
+    expect(illegal(g, { type: 'activate_mana', player: 'alice', object: again, ability: 0 })).toMatch(/as a sorcery/);
+  });
+
+  it('a sorcery-speed mana ability is never tapped for while casting (CR 602.5d)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const elf = give(g, 'alice', 'Sorcery Elf', 'battlefield');
+    g.objects[elf]!.sick = false;
+    const bear = give(g, 'alice', 'Bear', 'hand');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === bear)).toBe(false);
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bear, autoTap: true })).toBeTruthy();
+    g = act(g, { type: 'activate_mana', player: 'alice', object: elf, ability: 0 });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+  });
+
+  it('Shigeki: returned to hand, then a land from the top four onto the battlefield tapped', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sh = give(g, 'alice', 'Shigeki Lite', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'library');
+    g.zones.library.alice = [forest, ...g.zones.library.alice!.filter((id) => id !== forest)];
+    const top = g.zones.library.alice!.slice(0, 4);
+    g = act(g, { type: 'activate', player: 'alice', object: sh, ability: 0 });
+    expect(g.objects[sh]!.zone).toBe('hand');
+    g = settle(g);
+    for (let i = 0; i < 5 && g.pending; i++) {
+      const p = g.pending as { kind: string; player: string; candidates?: string[] };
+      g = settle(act(g, { type: 'choose', player: p.player, answer: { kind: p.kind, objects: [forest] } as never }));
+    }
+    expect(g.objects[forest]!.zone).toBe('battlefield');
+    expect(g.objects[forest]!.tapped).toBe(true);
+    expect(top.filter((id) => id !== forest).every((id) => g.objects[id]!.zone === 'graveyard')).toBe(true);
+  });
+});
+
+describe('staples (slice 202): "with mana value equal to 1 plus the sacrificed creature\'s mana value"', () => {
+  it('Birthing Pod: only a creature card with mana value one more', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const pod = give(g, 'alice', 'Pod Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre Three', 'library');
+    const other = give(g, 'alice', 'Bear', 'library');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: pod, ability: 0, costs: { sacrifice: [bear] } }));
+    const p = g.pending as { kind: string; candidates: string[] };
+    expect(p.kind).toBe('search');
+    expect(p.candidates).toContain(ogre);
+    expect(p.candidates).not.toContain(other);
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [ogre] } }));
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+  });
+
+  it('Vivien on the Hunt: the creature sacrificed as the ability resolves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const viv = give(g, 'alice', 'Vivien Hunt Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre Three', 'library');
+    const other = give(g, 'alice', 'Bear', 'library');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: viv, ability: 0 }));
+    for (let i = 0; i < 6 && g.pending && g.pending.kind !== 'search'; i++) {
+      const p = g.pending as { kind: string; player: string };
+      if (p.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } as never });
+      else if (p.kind === 'choose_objects' || p.kind === 'sacrifice') g = act(g, { type: 'choose', player: p.player, answer: { kind: p.kind, objects: [bear] } as never });
+      else throw new Error(p.kind);
+    }
+    const p = g.pending as { kind: string; candidates: string[] };
+    expect(p.kind).toBe('search');
+    expect(p.candidates).toContain(ogre);
+    expect(p.candidates).not.toContain(other);
+  });
+
+  it('Neoform: it enters with an additional +1/+1 counter', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const ogre = give(g, 'alice', 'Ogre Three', 'library');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Neoform Lite', 'hand'), costs: { sacrifice: [bear] } }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [ogre] } }));
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+    expect(g.objects[ogre]!.counters['+1/+1']).toBe(1);
+  });
+});
+
+describe('staples (slice 202): "Activate only as a sorcery and only if an opponent has eight or more cards in their graveyard"', () => {
+  it('Sheoldred: transforms once an opponent has eight cards in their graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const pr = give(g, 'alice', 'Praetor Lite // Scriptures Lite', 'battlefield');
+    for (let i = 0; i < 7; i++) give(g, 'bob', 'Forest', 'graveyard');
+    expect(kitActions(g, pr).length).toBe(0);
+    give(g, 'bob', 'Forest', 'graveyard');
+    expect(kitActions(g, pr).length).toBe(1);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: pr, ability: 0 }));
+    const back = g.zones.battlefield.find((id) => g.objects[id]!.card === g.objects[pr]!.card)!;
+    expect(back).toBeDefined();
+    expect(g.objects[back]!.face).toBe(1);
+  });
+});
+
+describe('staples (slice 202): "If another Desert was returned this way"', () => {
+  for (const [what, surveils] of [['another Desert', true], ['itself', false], ['a Forest', false]] as const) {
+    it(`Arid Archway returning ${what}: ${surveils ? 'surveil 1' : 'no surveil'}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const desert = give(g, 'alice', 'Desert Lite', 'battlefield');
+      const forest = give(g, 'alice', 'Forest', 'battlefield');
+      const arch = give(g, 'alice', 'Archway Lite', 'hand');
+      g = settle(act(g, { type: 'play_land', player: 'alice', object: arch }));
+      expect(g.pending?.kind).toBe('choose_objects');
+      const pick = what === 'itself' ? arch : what === 'a Forest' ? forest : desert;
+      g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [pick] } }));
+      expect(g.objects[pick]!.zone).toBe('hand');
+      expect(g.pending?.kind === 'surveil').toBe(surveils);
+    });
+  }
+});
+
+describe('staples (slice 202): Firemane Commando', () => {
+  for (const [label, atAlice, draws] of [['attacking only others', false, true], ['one of them attacking you', true, false]] as const) {
+    it(`another player attacks with two creatures, ${label}: ${draws ? 'they draw' : 'no card'}`, () => {
+      let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'bob');
+      give(g, 'alice', 'Commando Lite', 'battlefield');
+      const [x, y] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+      for (const id of [x, y]) g.objects[id]!.sick = false;
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      const hand = g.zones.hand.bob!.length;
+      g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: x, target: { kind: 'player', player: 'carol' } }, { attacker: y, target: { kind: 'player', player: atAlice ? 'alice' : 'carol' } }] } });
+      g = settle(g);
+      expect(g.zones.hand.bob!.length).toBe(hand + (draws ? 1 : 0));
+    });
+  }
+});
+
+describe("staples (slice 202): Avatar's Wrath", () => {
+  it('spares the chosen creature; opponents cast only from their hands until your next turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const kept = give(g, 'bob', 'Bear', 'battlefield');
+    const gone = give(g, 'bob', 'Bear', 'battlefield');
+    const mine = give(g, 'alice', 'Ogre', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Wrath Lite', 'hand'), targets: [[{ kind: 'object', object: kept }]] }));
+    expect(g.objects[kept]!.zone).toBe('battlefield');
+    expect([g.objects[gone]!.zone, g.objects[mine]!.zone]).toEqual(['exile', 'exile']);
+    g.players.alice!.pool.C = 2;
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === mine)).toBe(true);
+    g.players.alice!.pool.C = 0;
+    g = toStep(g, 'main1', 'bob');
+    g.players.bob!.pool.C = 2;
+    expect(legalActions(g, 'bob').some((a) => a.type === 'cast' && a.object === gone)).toBe(false);
+    expect(illegal(g, { type: 'cast', player: 'bob', object: gone })).toMatch(/can't/);
+    const salve = give(g, 'bob', 'Salve', 'hand');
+    expect(legalActions(g, 'bob').some((a) => a.type === 'cast' && a.object === salve)).toBe(true);
+  });
+});
+
+describe('staples (slice 202): cost reductions', () => {
+  it('Fighter Class: equip abilities cost {2} less, other abilities don\'t', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Fighter Lite', 'battlefield');
+    const sword = give(g, 'alice', 'Heavy Sword', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    expect(illegal(g, { type: 'activate', player: 'alice', object: sword, ability: 0 })).toBeTruthy();
+    g = settle(act(g, { type: 'activate', player: 'alice', object: sword, ability: 1, targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[sword]!.attachedTo?.id).toBe(bear);
+    expect(g.players.alice!.pool.C ?? 0).toBe(0);
+  });
+
+  it('Temur Battlecrier: {1} less for each creature with power 4 or greater, during your turn only', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Battlecrier Lite', 'battlefield');
+    give(g, 'alice', 'Ogre', 'battlefield');
+    g.players.alice!.pool.R = 1;
+    const ogre = give(g, 'alice', 'Ogre Three', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: ogre }));
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+    // On another player's turn: full price.
+    g = toStep(g, 'upkeep', 'bob');
+    g = act(g, { type: 'pass', player: 'bob' });
+    expect(g.priority).toBe('alice');
+    g.players.alice!.pool.C = 1;
+    const salve = give(g, 'alice', 'Two Salve', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: salve })).toMatch(/Not enough mana/);
+  });
+});
+
+describe('staples (slice 202): targets "with mana value X or less" (CR 601.2b–c)', () => {
+  it('Killing Glare: X announced, then a creature with power X or less', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const small = give(g, 'bob', 'Bear', 'battlefield');
+    const big = give(g, 'bob', 'Ogre', 'battlefield');
+    const glare = give(g, 'alice', 'Glare Lite', 'hand');
+    g.players.alice!.pool.C = 2;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: glare, x: 2, targets: [[{ kind: 'object', object: big }]] })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: glare, x: 2, targets: [[{ kind: 'object', object: small }]] }));
+    expect(g.objects[small]!.zone).toBe('graveyard');
+    expect(g.objects[big]!.zone).toBe('battlefield');
+  });
+
+  it('Entrancing Lyre: an activated ability with {X}', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lyre = give(g, 'alice', 'Lyre Lite', 'battlefield');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    expect(illegal(g, { type: 'activate', player: 'alice', object: lyre, ability: 0, x: 1, targets: [[{ kind: 'object', object: bear }]] })).toBeTruthy();
+    g.players.alice!.pool.C = 2;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: lyre, ability: 0, x: 2, targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[bear]!.tapped).toBe(true);
+  });
+
+  it('Spellstutter Sprite: X is the number of Faeries, counted as targets are chosen and again as it resolves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Sprite Lite', 'battlefield');
+    g.players.bob!.pool.C = 3;
+    const spell = give(g, 'bob', 'Ogre Spell', 'hand');
+    g = act(g, { type: 'cast', player: 'bob', object: spell });
+    g = act(g, { type: 'pass', player: 'bob' });
+    // Two Faeries once this one enters: a 3-mana spell can't be the target.
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Sprite Lite', 'hand') });
+    for (let i = 0; i < 10 && g.stack.length > 1 && !g.pending; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(g.stack.some((e) => e.kind === 'ability')).toBe(false);
+    give(g, 'alice', 'Sprite Lite', 'battlefield');
+    g = settle(g);
+    expect(g.objects[spell]!.zone).toBe('graveyard');
+    expect(g.players.bob!.life).toBe(23);
+  });
+
+  it('Spellstutter Sprite: with three Faeries, it counters a 3-mana spell', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Sprite Lite', 'battlefield');
+    give(g, 'alice', 'Sprite Lite', 'battlefield');
+    g.players.bob!.pool.C = 3;
+    const spell = give(g, 'bob', 'Ogre Spell', 'hand');
+    g = act(g, { type: 'cast', player: 'bob', object: spell });
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Sprite Lite', 'hand') });
+    g = settle(g);
+    expect(g.objects[spell]!.zone).toBe('graveyard');
+    expect(g.players.bob!.life).toBe(20);
   });
 });

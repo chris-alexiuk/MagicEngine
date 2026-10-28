@@ -493,6 +493,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** How many times this ability has resolved this turn, counting this time ("if this is the second time …"). */
+  abilityCount?: number;
   /** Cosmium Confluence: "Put three +1/+1 counters on a Cave you control. It becomes …" — the one chosen. */
   chosenObject?: ObjectRef;
   /** "An opponent draws a card": the opponent chosen as this resolution needed one. */
@@ -521,7 +523,7 @@ export interface Resolution {
   excess?: number;
   /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
   /** `controller`: who controlled it as it moved ("its controller creates a 2/2 green Boar creature token"). */
-  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; controller: PlayerId; token?: true }[];
+  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; subtypes?: string[]; controller: PlayerId; token?: true }[];
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
   /** CR 701.30d: "If you win" after "Clash with an opponent". */
@@ -938,7 +940,7 @@ export interface GameState {
   /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
   playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
-  castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number }[];
+  castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[] }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   exiledUntil?: { source: ObjectRef; object: ObjectRef }[];
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */

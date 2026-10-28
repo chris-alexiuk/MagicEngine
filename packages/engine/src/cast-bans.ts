@@ -36,6 +36,7 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
     !filter || matchesFilter(g, o, filter, { controller, source, anyZone: true });
   for (const ban of g.castBans ?? []) {
     if (ban.lastTurn < g.turn || !ban.players.includes(player)) continue;
+    if (ban.fromZones && !ban.fromZones.includes(spell.zone)) continue;
     if (matches(ban.filter, ban.controller, null)) return `${face.name} can't be cast: ${g.players[player]?.name ?? player} can't cast ${ban.filter ? 'spells like it' : 'spells'} now.`;
   }
   for (const id of abilitySources(g)) {

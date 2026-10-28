@@ -33,9 +33,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Vedalken Shackles: "target creature with power less than or equal to the number of Islands you control".
   // (A power compared with this creature's own stays powerBelowSource, below.)
   // Buster Sword: "with mana value less than or equal to that damage" — how much the trigger event was.
-  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature)|that damage)$/, (f, m, b) => {
+  // Birthing Pod: "a creature card with mana value equal to 1 plus the sacrificed creature's mana value" (CR 608.2h).
+  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature)|that damage|\w+ plus the sacrificed (?:creature|artifact|permanent)'s mana value)$/, (f, m, b) => {
     const key = m[1] === 'mana value' ? 'manaValue' : (m[1] as 'power' | 'toughness');
     if (key !== 'manaValue' && !/^the number of /.test(m[3]!)) return false;
+    if (/ plus the sacrificed /.test(m[3]!) && m[2] !== 'equal to') return false;
     // "… in your library" is the card's zone: peeled first.
     if (f[key] || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[3]!)) return false;
     if (m[3] === 'that damage' && !b.eventAmount) return false;
@@ -157,6 +159,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
+  // Scourge of Fleets: "each creature your opponents control with toughness X or less, where X is …".
+  [/ with (power|toughness) X or less$/, (f, m) => compare(f, m[1]!, 'X', 'le')],
   // Steel Hellkite: "each nonland permanent with mana value X"
   [/ with mana value X$/, (f) => compare(f, 'mana value', 'X', 'eq')],
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"

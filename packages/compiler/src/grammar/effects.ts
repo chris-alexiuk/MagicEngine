@@ -1,7 +1,7 @@
 import type { AddManaEffect, AmountExpr, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
 import { SUBTYPES } from '@mtg/schema';
 import { parseManaProduction } from '../rules/mana.js';
-import { attempt, type Binder } from './binder.js';
+import { attempt, bindTargetsX, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { parseCopyExcept } from './copies.js';
@@ -291,6 +291,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // "the exiled card" after "you may exile it" isn't something this ability can find; nor can its targets use counts
         // (Sandbender Scavengers: "with mana value less than or equal to this creature's power").
         if (!inner || rb.unsupported || (!pay && JSON.stringify(inner).includes('"exiled_with"'))) return null;
+        // Halo Forager: "you may pay {X}. When you do, … target … card with mana value X" — the X paid (bound as it's
+        // paid); with nothing paying X, a target "with mana value X" means nothing.
+        if (/"n":"X"/.test(JSON.stringify(rb.targets)) && !pay?.[1]!.includes('{X}')) return null;
         const ability = { kind: 'triggered', text: `When you do, ${restText}`, trigger: { type: 'reflexive' }, effects: inner, ...(rb.targets.length ? { targets: rb.targets } : {}) };
         const reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
         if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive], ...(capX ? { maxX: capX } : {}) });
@@ -769,7 +772,21 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       if (iff && cond) {
-        const yes = parseSentence(capitalise(iff[2]!), b);
+        let yes = parseSentence(capitalise(iff[2]!), b);
+        // Nissa, Resurgent Animist: "Then if this is the second time …, reveal cards from the top of your library until you
+        // reveal an Elf or Elemental card. Put that card into your hand and the rest on the bottom …" — an instruction that
+        // takes two sentences, both under the condition.
+        // Frenetic Sliver: "If you win the flip, exile this permanent and return it to the battlefield … at the beginning of
+        // the next end step." — a sentence only the paragraph rules read (a delayed return).
+        if (!yes) yes = attempt(b, (b) => parseEffectText(`${capitalise(iff[2]!)}.`, b));
+        if (!yes && sentences[i + 1] && !/^(?:Otherwise|If|Then) /.test(sentences[i + 1]!)) {
+          const both = attempt(b, (b) => parseEffectText(`${capitalise(iff[2]!)}. ${sentences[i + 1]}.`, b));
+          if (both) {
+            out.push({ type: 'if', cond, effects: both });
+            i++;
+            continue;
+          }
+        }
         if (!yes) return null;
         const node: EffectNode = { type: 'if', cond, effects: yes };
         const otherwise = sentences[i + 1] ? /^Otherwise, (.+)$/.exec(sentences[i + 1]!) : null;
@@ -1046,6 +1063,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         /^At (end of combat), (.+)$/.exec(s);
       if (delayed) {
         const [what, when] = delayed[0].startsWith('At ') ? [delayed[2]!, delayed[1]!] : [delayed[1]!, delayed[2]!];
+        const step = when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep';
+        // "Exile target creature you control and return it to the battlefield … at the beginning of the next end step" — the
+        // exile is now; only the return waits (CR 603.7).
+        const andReturn = !delayed[0].startsWith('At ') ? /^(.+?) and (return (?:it|them|that card|those cards) .+)$/.exec(what) : null;
+        if (andReturn) {
+          const now = attempt(b, (b) => {
+            const first = parseSentence(capitalise(andReturn[1]!), b);
+            const later = first ? parseSentence(capitalise(andReturn[2]!), b) : null;
+            return first && later ? [...first, { type: 'delayed', step, effects: later } as EffectNode] : null;
+          });
+          if (!now) return null;
+          out.push(...now);
+          continue;
+        }
         const inner = parseSentence(capitalise(what), b);
         if (!inner) return null;
         // Fickle Efreet: "flip a coin at end of combat. If you lose the flip, …" — the flip's outcome waits for it too.
@@ -1595,12 +1626,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       // instruction is about, so that's read first.
       if (perEach(what, where[1]!, b)) return null;
       if (pointsBack(what, where[1]!)) {
+        const from = b.targets.length;
         const inner = parseSentence(where[1]!, b);
         const expr = inner && parseCount(what, b);
+        if (inner && expr) bindTargetsX(b, from, expr);
         return inner && expr ? bindX(inner, expr) : null;
       }
       const expr = parseCount(what, b);
+      const from = b.targets.length;
       const inner = expr && parseSentence(where[1]!, b);
+      if (inner && expr) bindTargetsX(b, from, expr);
       return inner && expr ? bindX(inner, expr) : null;
     });
   }
@@ -2275,9 +2310,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const who = /^players$/i.test(cantCast[2]!) ? ({ ref: 'players', who: 'each' } as Ref) : parsePlayerRef(cantCast[2]!, b);
       const ban = who ? parseCastBan(cantCast[3]!, b) : null;
-      if (!who || !ban || ban.during || ban.fromZones || ban.maxPerTurn) return null;
+      if (!who || !ban || ban.during || ban.maxPerTurn) return null;
       const until = /next turn/i.test(cantCast[1] ?? cantCast[4]!) ? 'your_next_turn' : 'eot';
-      return [{ type: 'prohibit_casting', who, until, ...(ban.filter ? { filter: ban.filter } : {}) }];
+      // Avatar's Wrath: "your opponents can't cast spells from anywhere other than their hands".
+      return [{ type: 'prohibit_casting', who, until, ...(ban.filter ? { filter: ban.filter } : {}), ...(ban.fromZones ? { fromZones: ban.fromZones } : {}) }];
     });
     if (r) return r;
   }
@@ -3169,7 +3205,7 @@ const VERBS: Record<string, VerbHandler> = {
       ];
     }
     const m =
-      /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?|into your graveyard), then shuffle$/.exec(args) ??
+      /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?(?: with an additional (\+1\/\+1) counter on it)?|into your graveyard), then shuffle$/.exec(args) ??
       /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
     if (!m) return null;
     // Krosan Verge: "a Forest card and a Plains card" — one of each.
@@ -3202,6 +3238,11 @@ const VERBS: Record<string, VerbHandler> = {
     if (theirs) node.who = who;
     if (q[2] || anyNumber) node.upTo = true;
     if (m[3]) node.tapped = true;
+    // Neoform: "put that card onto the battlefield with an additional +1/+1 counter on it" (CR 614.1c).
+    if (m[4]) {
+      if (amount !== 1) return null;
+      node.counters = { [m[4]]: 1 };
+    }
     if (share) node.sameLandType = true;
     return [node];
   },
@@ -3386,7 +3427,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 701.65a: "Airbend target nonland permanent", "airbend up to one other target creature or spell".
   const airbend = /^airbend (.+)$/i.exec(c);
   if (airbend) {
+    const it = b.it;
     const what = parseObjectRef(airbend[1]!, b);
+    // Avatar's Wrath: "Choose up to one target creature, then airbend all other creatures" — other than that one.
+    if (what && what.ref.ref === 'all' && what.ref.filter?.other && it?.ref === 'target') {
+      const { other: _o, ...filter } = what.ref.filter;
+      return [{ type: 'airbend', what: { ...what.ref, filter: { ...filter, otherThan: it } } }];
+    }
     return what ? [{ type: 'airbend', what: what.ref }] : null;
   }
   // CR 701.66a: "Earthbend N" — "Target land you control becomes a 0/0 land creature with haste in addition to its other

@@ -28,12 +28,27 @@ export function withTriggerInfo<T>(info: TriggerInfo | undefined, fn: () => T): 
  * equal to the number of Plains you control" — counted whenever the target is checked (as it's chosen, and again as it
  * resolves, CR 608.2b).
  */
+/**
+ * CR 601.2b–c: X is announced before targets are chosen, so "target creature with mana value X or less" is checked with
+ * that X (and again as it resolves, CR 608.2b).
+ */
+let targetX: number | undefined;
+export function withTargetX<T>(x: number | undefined, fn: () => T): T {
+  const before = targetX;
+  targetX = x;
+  try {
+    return fn();
+  } finally {
+    targetX = before;
+  }
+}
+
 function countedFilter(g: GameState, controller: PlayerId, filter: ObjectFilter, source: GameObject | null): ObjectFilter {
-  const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object');
+  const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object' || (filter[k]?.n === 'X' && targetX !== undefined));
   if (!keys.length) return filter;
-  const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: 0, memo: {}, ...(triggerInfo ? { trigger: triggerInfo } : {}) } as EffectContext;
+  const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: targetX ?? 0, memo: {}, ...(triggerInfo ? { trigger: triggerInfo } : {}) } as EffectContext;
   const out: ObjectFilter = { ...filter };
-  for (const k of keys) out[k] = { ...filter[k]!, n: amountOf(ctx, filter[k]!.n) };
+  for (const k of keys) out[k] = { ...filter[k]!, n: filter[k]!.n === 'X' ? targetX! : amountOf(ctx, filter[k]!.n) };
   return out;
 }
 
@@ -201,6 +216,10 @@ export function targetsRequired(g: GameState, controller: PlayerId, spec: Target
 }
 
 export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): TargetPrompt[] {
+  return withTargetX(x, () => targetPromptsNow(g, controller, specs, source, x));
+}
+
+function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number): TargetPrompt[] {
   return specs.map((spec) => {
     const candidates = targetCandidates(g, controller, spec, source);
     const min = spec.perPlayer ? targetsRequired(g, controller, spec, candidates) : spec.upTo ? spec.min : undefined;
@@ -219,6 +238,10 @@ export function targetPrompts(g: GameState, controller: PlayerId, specs: TargetS
 
 /** CR 601.2c / CR 115.6: whether enough legal targets exist for every spec. */
 export function canChooseTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): boolean {
+  return withTargetX(x, () => canChooseTargetsNow(g, controller, specs, source, x));
+}
+
+function canChooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number): boolean {
   return specs.every((spec) => {
     const candidates = targetCandidates(g, controller, spec, source);
     return candidates.length >= targetsRequired(g, controller, spec, candidates, x);
@@ -272,6 +295,10 @@ function findDivided(effects: EffectNode[]): EffectNode | undefined {
 
 /** A default legal choice: the first candidates for each spec (UIs let the player change them). */
 export function defaultTargets(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x = 0): Target[][] | null {
+  return withTargetX(x, () => defaultTargetsNow(g, controller, specs, source, x));
+}
+
+function defaultTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number): Target[][] | null {
   const out: Target[][] = [];
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source).filter((t) => !another(spec) || !out.flat().some((u) => sameTarget(t, u)));
@@ -320,6 +347,10 @@ export function chooseTargets(
   source: GameObject | null,
   x = 0,
 ): TargetRef[][] {
+  return withTargetX(x, () => chooseTargetsNow(g, controller, specs, chosen, source, x));
+}
+
+function chooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], chosen: Target[][] | undefined, source: GameObject | null, x: number): TargetRef[][] {
   const given = chosen ?? [];
   if (given.length !== specs.length) {
     throw new RulesError(specs.length ? `Choose targets: ${specs.map((s) => s.text).join('; ')}.` : 'This doesn’t take targets.');

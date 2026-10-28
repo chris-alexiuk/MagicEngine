@@ -919,6 +919,8 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
         if (a.kind !== 'static' || a.effect.type !== 'ability_cost_reduction') continue;
         // Zirda: "Abilities you activate that aren't mana abilities …"
         if (a.effect.byYou ? player !== src.controller : !matchesFilter(g, o, a.effect.filter as ObjectFilter, { controller: src.controller, source: src })) continue;
+        // Fighter Class: "Equip abilities you activate …" (CR 702.6a).
+        if (a.effect.equipOnly && !/^Equip\b/.test(ability.text ?? '')) continue;
         const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.x;
         if (mana.generic + others === 0) continue;
         const floor = a.effect.minOne && others === 0 ? 1 : 0;
@@ -1061,7 +1063,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
-  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self') ? [id] : []), ...(choices.costs.sacrifice ?? []), ...(choices.costs.crew ?? [])];
+  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(choices.costs.sacrifice ?? []), ...(choices.costs.crew ?? [])];
   // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the generic mana.
   const bent = choices.costs.waterbend ?? [];
   if (bent.length) {

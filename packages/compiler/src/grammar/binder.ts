@@ -6,6 +6,8 @@ export interface GrammarEnv {
   cardName: string;
   faceName: string;
   typeLine: string;
+  /** The face's mana cost, when known ("{X}" in it: X is announced as the spell is cast). */
+  manaCost?: string;
   keywords: KeywordRegistry;
   /** Quoted ability texts set aside from the line being parsed, by QUOTED_n index (see quoted.ts). */
   quotes?: string[];
@@ -47,6 +49,8 @@ export class Binder {
   votes: string[] = [];
   /** Set when the text uses something the engine can't do (the line stays unread). */
   unsupported = false;
+  /** X is announced for this ability (a spell or activated ability with X in its cost), so a target can be "with mana value X". */
+  xAllowed = false;
   /** The ability mills cards, so "from among them" can mean the milled cards. */
   milled = false;
   /** Peer into the Abyss: "… half the number of cards in their library … Round up each time." — how "half" rounds. */
@@ -68,6 +72,7 @@ export class Binder {
     b.damaged = this.damaged;
     b.votes = this.votes;
     b.unsupported = this.unsupported;
+    b.xAllowed = this.xAllowed;
     b.milled = this.milled;
     b.halfDir = this.halfDir;
     return b;
@@ -86,13 +91,14 @@ export class Binder {
     this.damaged = other.damaged;
     this.votes = other.votes;
     this.unsupported = other.unsupported;
+    this.xAllowed = other.xAllowed;
     this.milled = other.milled;
     this.halfDir = other.halfDir;
   }
 
   addTarget(spec: TargetSpec): Ref {
-    // "target spell with mana value X or less, where X is …": the engine can't check X as targets are chosen yet.
-    if ((spec.filter as { manaValue?: { n?: unknown } } | undefined)?.manaValue?.n === 'X') this.unsupported = true;
+    // "target creature with mana value X or less": X is the one announced (CR 601.2b comes before 601.2c) — parseProgram
+    // keeps it only for a spell or an activated ability with X in its cost; "…, where X is …" binds it (bindTargetsX).
     // A counted amount ("with mana value less than or equal to the number of Plains you control", "… Alesha's power") is
     // counted as the target is checked — only one that doesn't depend on the event or the resolution.
     const f = (spec.filter ?? {}) as Record<string, { n?: unknown } | undefined>;
@@ -100,6 +106,22 @@ export class Binder {
     if (counted.some((n) => !targetCountable(n))) this.unsupported = true;
     this.targets.push(spec);
     return { ref: 'target', index: this.targets.length - 1 };
+  }
+}
+
+/**
+ * Spellstutter Sprite: "counter target spell with mana value X or less, where X is the number of Faeries you control" —
+ * X in the targets added since `from` is that count, if it's one the engine can work out as targets are chosen.
+ */
+export function bindTargetsX(b: Binder, from: number, expr: unknown): void {
+  for (const spec of b.targets.slice(from)) {
+    const f = spec.filter as Record<string, { op: string; n: unknown } | undefined> | undefined;
+    if (!f) continue;
+    for (const k of ['manaValue', 'power', 'toughness']) {
+      if (f[k]?.n !== 'X') continue;
+      if (!targetCountable(expr)) b.unsupported = true;
+      spec.filter = { ...spec.filter, [k]: { ...f[k]!, n: expr } } as never;
+    }
   }
 }
 

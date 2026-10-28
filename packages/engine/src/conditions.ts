@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before', 'same_name',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -70,6 +70,8 @@ export interface TurnLog {
   attackedAs?: Record<ObjectId, number>;
   /** Lurrus: the "once during each of your turns" graveyard permissions used this turn (source id:zcc). */
   graveyardCasts?: string[];
+  /** Alliance-style "if this is the second time this ability has resolved this turn": resolutions so far, by ability (source id:zcc:text). */
+  abilityResolutions?: Record<string, number>;
   /** Port Razer: the players each creature (as this object) attacked this turn. */
   attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
@@ -280,6 +282,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && last.types?.includes(String(cond.cardType)));
     }
     // Minas Tirith: "if you attacked with two or more creatures this turn"
+    // Firemane Commando: "if none of those creatures attacked you" — the creatures attacking you (not your planeswalkers).
+    case 'attacking_you': {
+      const n = Object.values(g.combat?.attackers ?? {}).filter((a) => a.target.kind === 'player' && a.target.player === controller).length;
+      return cmp(n, cond);
+    }
     case 'attacked_with': {
       const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => g.objects[id]?.controller === controller).length;
       return n >= Number(cond.n ?? 1);
@@ -414,6 +421,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return Math.max(0, ...counts.values()) >= Number(cond.min ?? 1);
     }
     case 'graveyard': {
+      // "an opponent has eight or more cards in their graveyard"
+      if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(zoneList(g, 'graveyard', p).length, cond));
       const cards = zoneList(g, 'graveyard', controller).map((id) => g.objects[id]!);
       // Delirium: "four or more card types among cards in your graveyard" (CR 300.1's card types).
       if (cond.cardTypes) return cmp(new Set(cards.flatMap((o) => faceOf(g, o).types)).size, cond);
@@ -449,6 +458,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     // graveyard" (a face-down creature has no name, CR 708.2).
     case 'first_combat':
       return (g.turnLog.combatPhases ?? 0) <= 1;
+    // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn" — counting this resolution
+    // (and copies of the ability, which are the same ability). Rose Room Treasurer: "the first or second time" (max).
+    case 'ability_resolutions': {
+      const n = g.resolving?.abilityCount ?? 0;
+      return cond.max !== undefined ? n <= (cond.max as number) : n === (cond.n as number);
+    }
     // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
     case 'greatest_power': {
       // "the creature with the greatest power or tied for the greatest power"

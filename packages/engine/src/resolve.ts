@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { isLegalTarget, withTriggerInfo } from './targets.js';
+import { isLegalTarget, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
 import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
@@ -552,7 +552,7 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
 }
 
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
-export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean }): NonNullable<Resolution['moves']> {
+export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean }): NonNullable<Resolution['moves']> {
   const how = e.how;
   return (ctx.resolution?.moves ?? []).filter((m) => {
     const right =
@@ -564,7 +564,12 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
             ? /^sacrifice/.test(m.effect) && m.from === 'battlefield'
             : how === 'graveyard'
               ? m.to === 'graveyard'
-              : m.effect === 'mill' && m.from === 'library';
+              : how === 'returned'
+                ? m.to === 'hand' && m.from === 'battlefield'
+                : m.effect === 'mill' && m.from === 'library';
+    // Arid Archway: "If another Desert was returned this way" — not the source itself.
+    if (e.other && ctx.source && m.id === ctx.source.id) return false;
+    if (e.subtypes && !e.subtypes.some((t) => (m.subtypes ?? []).includes(t))) return false;
     return right && (!e.types || e.types.some((t) => m.types.includes(t))) && !(e.notTypes ?? []).some((t) => m.types.includes(t)) && (e.token === undefined || Boolean(m.token) === e.token);
   });
 }
@@ -622,14 +627,17 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
   const source = g.objects[sourceId] ?? null;
   let chosen = 0;
   let legal = 0;
+  // CR 608.2b: "with mana value X or less" — the X it was cast or activated with.
   const out = withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
-    program.specs.map((spec, i) =>
-      (entry.targets[i] ?? []).filter((t) => {
-        chosen++;
-        const ok = isLegalTarget(g, entry.controller, spec, t, source);
-        if (ok) legal++;
-        return ok;
-      }),
+    withTargetX(entry.x, () =>
+      program.specs.map((spec, i) =>
+        (entry.targets[i] ?? []).filter((t) => {
+          chosen++;
+          const ok = isLegalTarget(g, entry.controller, spec, t, source);
+          if (ok) legal++;
+          return ok;
+        }),
+      ),
     ),
   );
   return chosen > 0 && legal === 0 ? null : out;
@@ -643,6 +651,12 @@ export function startResolution(g: GameState, entry: StackEntry, targets: Target
   const att = src?.attachedTo ? g.objects[src.attachedTo.id] : undefined;
   if (att && att.zcc === src!.attachedTo!.zcc && lki[att.id] === undefined) lki[att.id] = att.controller;
   g.resolving = { entry, effects: structuredClone(entry.program!.effects), index: 0, memo: {}, targets, lki };
+  // "If this is the second time this ability has resolved this turn": this resolution counts (a copy is the same ability).
+  if (entry.kind === 'ability' && JSON.stringify(entry.program!.effects).includes('"ability_resolutions"')) {
+    const key = `${entry.source.id}:${entry.source.zcc}:${entry.text}`;
+    const counts = (g.turnLog.abilityResolutions ??= {});
+    g.resolving.abilityCount = counts[key] = (counts[key] ?? 0) + 1;
+  }
 }
 
 /**

@@ -72,17 +72,20 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
 /** "creature destroyed this way", "cards exiled this way": what the resolution moved (by card type only). */
 export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   // Terastodon: "each permanent put into a graveyard this way" — from the battlefield to a graveyard.
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard) this way$/.exec(text.trim());
+  // Arid Archway: "another Desert returned this way" — returned to its owner's hand from the battlefield, other than the source.
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned) this way$/.exec(text.trim());
   if (!m) return null;
-  const noun = m[1]!.replace(/^(?:a|an) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard';
-  if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how };
+  const another = /^another /.test(m[1]!);
+  const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
+  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned';
+  if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
   const pf = parseFilter(noun, b.clone());
   if (!pf) return null;
   const f = pf.filter;
-  if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes' && k !== 'token')) return null;
+  if (another) f.other = true;
+  if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes' && k !== 'token' && k !== 'subtypes' && k !== 'other')) return null;
   // Blood Money: "each nontoken creature destroyed this way".
-  return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}), ...(f.token !== undefined ? { token: f.token } : {}) };
+  return { kind: 'moved_this_way', how, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(f.subtypes ? { subtypes: f.subtypes } : {}), ...(f.other ? { other: true } : {}) };
 }
 
 /** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
@@ -362,12 +365,27 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
     }
     return v;
   };
+  // Eldritch Evolution: "a creature card with mana value X or less, where X is …"; Scourge of Fleets: "each creature your
+  // opponents control with toughness X or less" — a comparison in a filter, wherever the filter is.
+  const STATS = ['manaValue', 'power', 'toughness'] as const;
+  const bindFilterX = (f: ObjectFilter): ObjectFilter => {
+    const out: ObjectFilter = { ...f };
+    for (const k of STATS) if (f[k]?.n === 'X') out[k] = { ...f[k]!, n: expr };
+    return out;
+  };
+  const deep = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(deep);
+    if (!v || typeof v !== 'object') return v;
+    const o = v as Record<string, unknown>;
+    if (o.ref && o.filter && typeof o.filter === 'object') return { ...o, filter: bindFilterX(o.filter as ObjectFilter) };
+    return v;
+  };
   return effects.map((e) => {
     const out: EffectNode = { ...e };
     for (const [k, v] of Object.entries(e)) {
       if ((k === 'effects' || k === 'then' || k === 'else' || k === 'cant') && Array.isArray(v)) out[k] = bindX(v as EffectNode[], expr);
-      // Eldritch Evolution: "a creature card with mana value X or less, where X is …"
-      else if (k === 'filter' && (v as ObjectFilter | undefined)?.manaValue?.n === 'X') out[k] = { ...(v as ObjectFilter), manaValue: { ...(v as ObjectFilter).manaValue!, n: expr } };
+      else if (k === 'filter' && v && typeof v === 'object') out[k] = bindFilterX(v as ObjectFilter);
+      else if (v && typeof v === 'object' && (v as { ref?: string }).ref) out[k] = deep(v);
       else out[k] = sub(v);
     }
     return out;

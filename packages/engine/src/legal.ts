@@ -246,6 +246,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     if (activationProhibited(g, player, o, true)) continue;
     manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap || ab.cost.mana || (ab.effects[0] as AddManaEffect | undefined)?.anyColor) return;
+      if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
       const costs = defaultCostChoices(g, player, o, ab.cost.other ?? []);
       if (costs) out.push({ type: 'activate_mana', player, object: id, ability, ...withCosts(costs) });
     });
@@ -260,6 +261,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const manaBanned = activationProhibited(g, player, o, true);
     if (mine && !manaBanned) manaAbilities(g, o).forEach((ab, ability) => {
       if (ab.cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
+      if (ab.timing === 'sorcery' && !sorcerySpeed) return;
       // CR 107.6: {Q} — untapping it is the cost (Pili-Pala).
       if (ab.cost.untap && (!o.tapped || !canActivateTapAbilities(g, o))) return;
       // Selvala: "{G}, {T}: Add X mana …" — with that mana already in the pool (mana abilities aren't autotapped for).

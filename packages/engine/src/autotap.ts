@@ -35,7 +35,8 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {
       // Only simple "{T}: Add …" abilities are used automatically.
-      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn) return;
+      // CR 602.5d: "Activate only as a sorcery" can't be activated while a spell or ability is being paid for.
+      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn || ab.timing === 'sorcery') return;
       // CR 602.5b: "Activate only if you control a Swamp."
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       const effect = ab.effects[0] as AddManaEffect;

@@ -76,6 +76,8 @@ function modeCount(word: string, options: number): { min: number; max: number } 
  */
 export function parseProgram(text: string, b: Binder): Program | null {
   const program = parseProgramText(text, b);
+  // "target creature with mana value X or less": only where X is announced (CR 107.3a).
+  if (program && !b.xAllowed && /"n":"X"/.test(JSON.stringify([program.targets ?? [], program.modes ?? null]))) return null;
   return program && !b.unsupported && !countsEachTarget(program, b) ? program : null;
 }
 
@@ -166,6 +168,7 @@ export const spellRule: GrammarRule = {
     if (!env || !/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
+    b.xAllowed = /\{X\}/.test(env.manaCost ?? '');
     const variant = variantOf(line, env);
     if (variant === null) return null;
     const program = parseProgram(variant ? variant.base : line, b);
@@ -391,6 +394,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Mm]ill (a card|two cards|three cards)$/.test(item)) (cost.other ??= []).push({ type: 'mill', amount: { 'a card': 1, 'two cards': 2, 'three cards': 3 }[/^[Mm]ill (.+)$/.exec(item)![1]!]! });
     // Relic of Progenitus, Plaza of Heroes: "Exile this artifact", "Exile this land" (CR 118.3).
     else if (/^[Ee]xile ~$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_battlefield' });
+    // Shigeki, Maze's End: "Return this land to its owner's hand" (CR 118.3).
+    else if (/^[Rr]eturn ~ to its owner's hand$/.test(item)) (cost.other ??= []).push({ type: 'return_self' });
     // Lion's Eye Diamond: "Discard your hand" (CR 701.9b).
     else if (/^[Dd]iscard your hand$/.test(item)) (cost.other ??= []).push({ type: 'discard_hand' });
     // "Remove a +1/+1 counter from ~", "Remove three spore counters from ~" (CR 118.3).
@@ -510,12 +515,15 @@ export const activatedRule: GrammarRule = {
       }
       // "Activate only if you control an Island." (CR 602.5b); Temple of Civilization: "Activate only if you attacked with
       // three or more creatures this turn and only as a sorcery."
-      const onlyIf = / Activate only if ([^.]+?)( and only as a sorcery)?\.$/.exec(effectText);
+      // Sheoldred // The True Scriptures: "Activate only as a sorcery and only if an opponent has eight or more cards in
+      // their graveyard."
+      const onlyIf = / Activate only if ([^.]+?)( and only as a sorcery)?\.$/.exec(effectText) ?? / Activate only (as a sorcery) and only if ([^.]+?)\.$/.exec(effectText);
       if (onlyIf) {
-        const cond = parseCondition(onlyIf[1]!, new Binder(env));
+        const sorceryFirst = onlyIf[1] === 'as a sorcery';
+        const cond = parseCondition(sorceryFirst ? onlyIf[2]! : onlyIf[1]!, new Binder(env));
         if (!cond) return null;
         andIf(node, cond);
-        if (onlyIf[2]) node.timing = 'sorcery';
+        if (onlyIf[2] || sorceryFirst) node.timing = 'sorcery';
         effectText = effectText.slice(0, onlyIf.index);
         changed = true;
       }
@@ -621,10 +629,10 @@ export const activatedRule: GrammarRule = {
         return { ...node, effects: [{ type: 'if', cond, effects: [alt], else: [effect] }], mana: true };
       }
       if (mana && effect) {
-        // Mana abilities with timing restrictions ("Activate only as a sorcery") aren't modelled yet ("only as an
-        // instant" is: only with priority); conditions ("Activate only if you control a Swamp") are checked as
-        // they're activated (CR 602.5b).
-        if (node.timing === 'sorcery' || node.maxPerTurn || node.oncePerGame) return null;
+        // Grinning Ignus: "Activate only as a sorcery" (CR 602.5d) — not while a spell is being cast, so never for
+        // autotapping; "only as an instant" is only with priority; conditions ("Activate only if you control a Swamp")
+        // are checked as they're activated (CR 602.5b).
+        if (node.maxPerTurn || node.oncePerGame) return null;
         // "{T}: Add {R} or {W}. ~ deals 1 damage to you." — extra untargeted effects (CR 605.1a allows them).
         const b = new Binder(env);
         b.it = { ref: 'self' };
@@ -638,6 +646,8 @@ export const activatedRule: GrammarRule = {
     if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice')) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
+    // "{X}, {T}: Tap target creature with power X or less."; "−X: Return target creature card with mana value X …".
+    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1;
     // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
     // (its power as it was, CR 608.2h).
     const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));
@@ -954,11 +964,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'attacks', subject: { ref: 'all', filter: pf.filter }, defender: 'you' }, it: { ref: 'trigger_object' }, player: null };
   }
   // Aurelia, the Law Above: "Whenever a player attacks with three or more creatures" — anyone (CR 508.3d).
-  const playerAttacks = /^a player attacks with (\w+) or more creatures$/.exec(t);
+  // Firemane Commando: "Whenever another player attacks with two or more creatures, they draw a card if none of those
+  // creatures attacked you."
+  const playerAttacks = /^(a|another) player attacks with (\w+) or more creatures$/.exec(t);
   if (playerAttacks) {
-    const min = NUMBER_WORDS[playerAttacks[1]!];
+    const min = NUMBER_WORDS[playerAttacks[2]!];
     if (!min) return null;
-    return { trigger: { type: 'you_attack', anyone: true, min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    b.named['those creatures'] = { ref: 'all', filter: { types: ['Creature'], combat: 'attacking' } };
+    return { trigger: { type: 'you_attack', anyone: true, min, ...(playerAttacks[1] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // CR 508.3d: "Whenever you attack", "… with two or more creatures", "Whenever one or more creatures you control attack".
   const youAttack = /^(?:you attack|one or more creatures you control attack)(?: with (\w+) or more creatures)?$/.exec(t);
@@ -2583,7 +2596,15 @@ export const costModifierRule: GrammarRule = {
       return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...a } as CostModifierNode };
     }
     // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
-    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(body);
+    // Temur Battlecrier: "During your turn, spells you cast cost {1} less to cast for each creature you control with power
+    // 4 or greater."; Animar: "Creature spells you cast cost {1} less to cast for each +1/+1 counter on Animar."
+    let rest = body;
+    const duringYours = /^During your turn, /.test(rest);
+    if (duringYours) rest = rest.replace(/^During your turn, /, '').replace(/^\w/, (c) => c.toUpperCase());
+    const perEach = / to cast for each (.+)$/.exec(rest);
+    if (perEach) rest = `${rest.slice(0, perEach.index)} to cast`;
+    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
+    if (others && (duringYours || perEach) && others[2] !== 'you') return null;
     if (others) {
       const suffix = others[3] ? ` ${others[3].trim()}` : '';
       others.splice(3, 1);
@@ -2604,6 +2625,12 @@ export const costModifierRule: GrammarRule = {
       if (chosenType) filter.chosenType = true;
       const who = !others[2] ? 'each' : others[2] === 'you' ? 'you' : 'opponents';
       const node: CostModifierNode = { type: 'cost_modifier', who, filter, change: others[4]!.toLowerCase() as 'less' | 'more', ...a };
+      if (perEach) {
+        const each = parseForEach(perEach[1]!, b);
+        if (!each || typeof a.amount !== 'number') return null;
+        node.amount = { ...each, times: (each.times ?? 1) * a.amount };
+      }
+      if (duringYours) node.condition = { type: 'your_turn', value: true };
       const ability: StaticAbility = { kind: 'static', text: original, effect: node };
       return ability;
     }
@@ -3464,6 +3491,9 @@ export const abilityCostReductionRule: GrammarRule = {
     const env = envOf(ctx);
     const zirda = /^Abilities you activate that aren't mana abilities cost \{(\d+)\} less to activate\. This effect can't reduce the mana in that cost to less than one mana\.$/.exec(line);
     if (zirda) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, amount: Number(zirda[1]), minOne: true } } as StaticAbility;
+    // Fighter Class: "Equip abilities you activate cost {2} less to activate." (CR 702.6a: generic mana only, CR 601.2f)
+    const equip = /^Equip abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
+    if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1]) } } as StaticAbility;
     const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
     if (!env || !m || !m[3]) return null;
     const pf = parseFilter(m[1]!.replace(/ and /g, ' or '), new Binder(env));

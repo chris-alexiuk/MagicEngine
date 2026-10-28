@@ -634,7 +634,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     if (!players.length) return true;
     const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : g.turn;
-    g.castBans = [...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn), { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}) }];
+    g.castBans = [
+      ...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn),
+      { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}), ...(node.fromZones ? { fromZones: node.fromZones as string[] } : {}) },
+    ];
     return true;
   },
 
@@ -2575,7 +2578,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of chosen) {
         // Archdruid's Charm: "Put it onto the battlefield tapped if it's a land card. Otherwise, put it into your hand."
         if (node.landsTo === 'battlefield' && hasType(g, g.objects[id]!, 'Land')) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(node.landsTapped ? { tapped: true } : {}) });
-        else moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}) } : {});
+        else moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}), ...(node.counters ? { counters: node.counters as Record<string, number> } : {}) } : {});
       }
       // Fabled Passage: "… put it onto the battlefield tapped, then shuffle. Then if …, untap that land." — what was found.
       if (ctx.resolution && chosen.length) ctx.resolution.created = chosen.map((id) => ({ id, zcc: g.objects[id]!.zcc }));
@@ -4321,6 +4324,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       return atYou.length >= Number(t.min ?? 1) ? [{ player: g.active }] : [];
     }
     if (!t.anyone && check.g.active !== check.controller) return [];
+    // Firemane Commando: "Whenever another player attacks …".
+    if (t.other && check.g.active === check.controller) return [];
     // General Kreat: "Whenever one or more Goblins you control attack" — only those count.
     const attacks = t.filter ? e.attacks.filter(({ attacker }) => check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.filter as ObjectFilter, { controller: check.controller, source: check.source ?? null })) : e.attacks;
     if (!attacks.length) return [];

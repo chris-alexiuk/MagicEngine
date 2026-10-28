@@ -27,6 +27,8 @@ export interface ParseContext {
   cardName: string;
   faceName: string;
   typeLine: string;
+  /** The face's mana cost: "{X}" in it means X is announced as the spell is cast (CR 107.3a). */
+  manaCost?: string;
   /** Filled in by the registry for grammar rules that need to recognise keywords. */
   keywords?: KeywordRegistry;
   /** Filled in by the registry: compiles another ability text (a token's, say). */

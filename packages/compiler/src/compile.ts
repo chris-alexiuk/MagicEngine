@@ -110,7 +110,7 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
   const typeLine = face.type_line ?? card.type_line ?? '';
   const oracle = face.oracle_text ?? '';
   const manaCost = face.mana_cost ?? '';
-  const parsed = registry.parse(oracle, { cardName: card.name, faceName: face.name, typeLine });
+  const parsed = registry.parse(oracle, { cardName: card.name, faceName: face.name, typeLine, manaCost });
 
   const out: FaceDef = {
     name: face.name,
@@ -146,7 +146,7 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
 export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry): CardDB {
   const reparse = (card: CardDef): CardDef => {
     const faces = card.faces.map((f) => {
-      const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine });
+      const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine, manaCost: f.manaCost });
       const { manualKeywords: _old, ...rest } = f;
       return { ...rest, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed, ...(p.manualKeywords.length ? { manualKeywords: p.manualKeywords } : {}) };
     });

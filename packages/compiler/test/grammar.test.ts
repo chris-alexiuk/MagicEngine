@@ -727,9 +727,9 @@ describe('extra turns, switching P/T, cost LKI (slice 24)', () => {
       effects: [{ type: 'gain_life', amount: { kind: 'cost_lki', cost: 'sacrificed', stat: 'toughness' } }],
     });
     expect(one('Destroy target creature that was dealt damage this turn.', 'Instant')).toMatchObject({ targets: [{ filter: { damagedThisTurn: true } }] });
-    // Mana abilities with a condition on activating (CR 602.5b); timing restrictions stay unread.
+    // Mana abilities with a condition on activating (CR 602.5b) or a timing restriction (CR 602.5d, slice 202).
     expect(parse('{T}: Add {G}. Activate only during your turn.', 'Creature — Elf', 'Elf').abilities[0]).toMatchObject({ mana: true, activateIf: { type: 'your_turn', value: true } });
-    expect(parse('{T}: Add {G}. Activate only as a sorcery.', 'Creature — Elf', 'Elf').unparsed).toHaveLength(1);
+    expect(parse('{T}: Add {G}. Activate only as a sorcery.', 'Creature — Elf', 'Elf').abilities[0]).toMatchObject({ mana: true, timing: 'sorcery' });
   });
 });
 
@@ -1502,8 +1502,12 @@ describe('slices 139–141', () => {
     });
     expect(parse('{1}{W}, {T}: Draw a card. Activate only if you attacked with two or more creatures this turn.', 'Land', 'Tirith').abilities[0]).toMatchObject({ activateIf: { type: 'attacked_with', n: 2 } });
     expect(parse('Search your library for a creature card with mana value X or less, put it onto the battlefield, then shuffle.', 'Instant', 'Chord').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { op: 'le', n: 'X' } } }] });
-    // A target with mana value X can't be checked as targets are chosen: unread.
-    expect(parse('When this creature enters, counter target spell with mana value X or less, where X is the number of Faeries you control.', 'Creature — Faerie', 'Sprite').unparsed).toHaveLength(1);
+    // A target with mana value X: counted as targets are chosen (slice 202); an X nothing announces stays unread.
+    expect(parse('When this creature enters, counter target spell with mana value X or less, where X is the number of Faeries you control.', 'Creature — Faerie', 'Sprite').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { op: 'le', n: { kind: 'count' } } } }] });
+    expect(parse('When this creature enters, destroy target creature with mana value X or less.', 'Creature — Faerie', 'Sprite').unparsed).toHaveLength(1);
+    expect(parse('Destroy target creature with power X or less.', 'Instant', 'Glare').unparsed).toHaveLength(1);
+    expect(parser.parse('Destroy target creature with power X or less.', { cardName: 'Glare', faceName: 'Glare', typeLine: 'Instant', manaCost: '{X}{B}' }).abilities[0]).toMatchObject({ targets: [{ filter: { power: { op: 'le', n: 'X' } } }] });
+    expect(parse('{X}, {T}: Tap target creature with power X or less.', 'Artifact', 'Lyre').abilities[0]).toMatchObject({ targets: [{ filter: { power: { n: 'X' } } }] });
     expect(parse('Double the power and toughness of each creature you control until end of turn.', 'Instant', 'G').abilities[0]).toMatchObject({ effects: [{ type: 'modify', double: 'both', until: 'eot' }] });
     expect(parse('Double the number of +1/+1 counters on each creature you control.', 'Sorcery', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'double_counters', counter: '+1/+1' }] });
   });
@@ -2584,5 +2588,21 @@ describe('slice 201 (more)', () => {
     expect(parse("Whenever one or more tokens your opponents control enter, for each of them, create a tapped token that's a copy of it.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', copyOf: { ref: 'created' }, copyEach: true, tapped: true }] });
     expect(parse("Whenever one or more creatures an opponent controls attack you and aren't blocked, that player draws three cards and gains control of this artifact. Untap it.", 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'unblocked', you: true, batch: true }, effects: [{ type: 'draw', who: { ref: 'trigger_player' } }, { type: 'gain_control', to: { ref: 'trigger_player' } }, { type: 'untap' }] });
     expect(parse("At the beginning of combat on your turn, put three +1/+1 counters on target artifact you control. If it's not a creature, it becomes a 0/0 Robot artifact creature.", 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters' }, { type: 'if', cond: { type: 'not', cond: { type: 'is', filter: { types: ['Creature'] } } } }] });
+  });
+});
+
+describe('slice 202', () => {
+  it('reads the times an ability has resolved this turn, returning the source as a cost, and plus-one searches', () => {
+    expect(parse("Landfall — Whenever a land you control enters, you gain 4 life if this is the first time this ability has resolved this turn. If it's the second time, add {R}{G}{W}{U}. If it's the third time, Omnath deals 4 damage to each opponent and each planeswalker you don't control.", 'Legendary Creature', 'Omnath, Locus of Creation').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'ability_resolutions', n: 1 } }, { type: 'if', cond: { type: 'ability_resolutions', n: 2 } }, { type: 'if', cond: { type: 'ability_resolutions', n: 3 } }] });
+    expect(parse('Alliance — Whenever another creature you control enters, scry 1. If this is the second time this ability has resolved this turn, draw a card instead.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'ability_resolutions', n: 2 }, effects: [{ type: 'draw' }], else: [{ type: 'scry' }] }] });
+    expect(parse('Landfall — Whenever a land you control enters, add one mana of any color. Then if this is the second time this ability has resolved this turn, reveal cards from the top of your library until you reveal an Elf or Elemental card. Put that card into your hand and the rest on the bottom of your library in a random order.', 'Legendary Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana' }, { type: 'if', effects: [{ type: 'reveal_until', to: 'hand' }] }] });
+    expect(parse("{R}, Return this creature to its owner's hand: Add {C}{C}{R}. Activate only as a sorcery.", 'Creature').abilities[0]).toMatchObject({ cost: { other: [{ type: 'return_self' }] }, timing: 'sorcery', mana: true });
+    expect(parse("{1}{G/P}, {T}, Sacrifice a creature: Search your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the battlefield, then shuffle. Activate only as a sorcery.", 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'search', filter: { manaValue: { op: 'eq', n: { kind: 'cost_lki', plus: 1 } } } }] });
+    expect(parse("Search your library for a creature card with mana value equal to 1 plus the sacrificed creature's mana value, put that card onto the battlefield with an additional +1/+1 counter on it, then shuffle.", 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'search', counters: { '+1/+1': 1 } }] });
+    expect(parse("{4}{B}: Exile Sheoldred, then return it to the battlefield transformed under its owner's control. Activate only as a sorcery and only if an opponent has eight or more cards in their graveyard.", 'Legendary Creature', 'Sheoldred').abilities[0]).toMatchObject({ timing: 'sorcery', activateIf: { type: 'graveyard', n: 8, who: 'any_opponent' } });
+  });
+
+  it('exiles now and returns later ("exile … and return it … at the beginning of the next end step")', () => {
+    expect(parse("Exile target creature you control and return it to the battlefield under its owner's control at the beginning of the next end step.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile' }, { type: 'delayed', step: 'end', effects: [{ type: 'move', to: 'battlefield' }] }] });
   });
 });

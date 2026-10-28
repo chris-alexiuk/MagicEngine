@@ -15,7 +15,7 @@ import { lifeLoss, replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'];
+export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -241,6 +241,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       // CR 701.9b: always possible, even with no cards in hand.
     } else if (c.type === 'exile_self_battlefield') {
       if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t exile ${nameOf(g, o)}.`);
+    } else if (c.type === 'return_self') {
+      if (o.zone !== 'battlefield' || o.controller !== player) throw new RulesError(`You can’t return ${nameOf(g, o)} to its owner's hand.`);
     } else if (c.type === 'put_counters_self') {
       // Devoted Druid: "Put a -1/-1 counter on this creature" — it must be on the battlefield (CR 118.3).
       if (o.zone !== 'battlefield') throw new RulesError(`${nameOf(g, o)} isn’t on the battlefield.`);
@@ -316,6 +318,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'exile_self' || c.type === 'exile_self_hand' || c.type === 'exile_self_battlefield') {
       // CR 701.13a
       moveObject(g, o.id, 'exile', events);
+    } else if (c.type === 'return_self') {
+      moveObject(g, o.id, 'hand', events);
     } else if (c.type === 'discard_hand') {
       // CR 701.9b: "Discard your hand" — every card in it (possible with none).
       for (const id of [...zoneList(g, 'hand', player)]) discardCard(g, id, events);
@@ -392,6 +396,10 @@ export function runManaAbility(
   // CR 602.5b: "Activate only if you control a Swamp."
   if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
     throw new RulesError(`${nameOf(g, o)}'s ability can't be activated now.`);
+  }
+  // CR 602.5d: "Activate only as a sorcery" — so not while casting a spell (it's on the stack), nor during combat.
+  if (ability.timing === 'sorcery' && !(g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0)) {
+    throw new RulesError('That ability can only be activated as a sorcery.');
   }
   // "Activate only once each turn." (kept apart from its other abilities' activations).
   const onceKey = -1 - index;

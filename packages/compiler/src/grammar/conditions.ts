@@ -73,6 +73,13 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn. If it's the second time, …";
+  // Rose Room Treasurer: "if this is the first or second time this ability has resolved this turn".
+  const nth = /^(?:this is|it's) the (first|second|third|fourth|fifth)(?: or (second|third|fourth))? time(?: this ability has resolved this turn)?$/.exec(t);
+  if (nth && (/ this ability has resolved this turn$/.test(t) || t.startsWith("it's"))) {
+    const ORD: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+    return nth[2] ? { type: 'ability_resolutions', max: ORD[nth[2]]! } : { type: 'ability_resolutions', n: ORD[nth[1]!]! };
+  }
   // Haliya: "if you've gained 3 or more life this turn"; Bloodchief Ascension: "if an opponent lost 2 or more life this
   // turn"; Spinerock Knoll: "if an opponent was dealt 7 or more damage this turn".
   // Y'shtola, Night's Blessed: "if a player lost 4 or more life this turn".
@@ -125,12 +132,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Ghirapur Orrery: "if that player has no cards in hand" — the player the trigger is about.
   if (t === 'that player has no cards in hand' && b.player) return { type: 'hand', op: 'le', n: 0, who: b.player };
   if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
+  // Firemane Commando: "if none of those creatures attacked you" — the attackers just declared.
+  if (t === 'none of those creatures attacked you' && b.named['those creatures']) return { type: 'attacking_you', max: 0 };
   // CR 120.10: "If excess damage was dealt this way", "… to that creature this way", "… to a permanent this way".
   if (/^excess damage was dealt (?:to (?:that creature|that permanent|a permanent|a creature) )?this way$/.test(t)) return { type: 'amount', amount: { kind: 'excess_this_way' }, op: 'ge', n: 1 };
   // Saw in Half: "If that creature dies this way" — put into a graveyard from the battlefield by this (CR 700.4).
   if (/^(?:that creature|it) dies this way$/.test(t)) return { type: 'amount', amount: { kind: 'moved_this_way', how: 'graveyard' }, op: 'ge', n: 1 };
   // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
-  const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed) this way$/.exec(t);
+  const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed|returned) this way$/.exec(t) ?? /^(another .+?) (?:is|was) (returned) this way$/.exec(t);
   if (movedOne) {
     const amount = movedThisWay(`${movedOne[1]} ${movedOne[2]} this way`, b);
     if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
@@ -453,6 +462,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (gy) {
     const c = compare(gy[1]!);
     return c ? { type: 'graveyard', ...c } : null;
+  }
+  // Sheoldred // The True Scriptures: "an opponent has eight or more cards in their graveyard".
+  const oppGy = /^an opponent has (\w+ or more) cards in their graveyard$/.exec(t);
+  if (oppGy) {
+    const c = compare(oppGy[1]!);
+    return c ? { type: 'graveyard', ...c, who: 'any_opponent' } : null;
   }
   // The Warring Triad: "there are fewer than eight cards in your graveyard"
   const fewerGy = /^there are fewer than (\w+) cards in your graveyard$/.exec(t);
