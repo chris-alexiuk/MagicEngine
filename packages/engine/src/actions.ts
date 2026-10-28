@@ -28,7 +28,7 @@ import { lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from '.
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
 import { autoTap, checkOtherCosts, costLKI, payOtherCosts, runManaAbility } from './payment.js';
-import { appendProgram, activatedAbilities, flatten, spellPrograms } from './program.js';
+import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets, divisionFor } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
@@ -1036,6 +1036,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   const targets = chooseTargets(g, player, program.specs, choices.targets, o, choices.x);
   const division = divisionFor(program.effects, targets, choices.x, choices.divide, (a) => amountOf({ g, controller: player, source: o, events: [], targets, x: choices.x, memo: {} }, a as Amount));
   const source = { id, zcc: o.zcc };
+  // "Choose one that hasn't been chosen this turn —" (Kargan Intimidator).
+  recordModes(g, source, ability, choices.modes);
 
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
   const mana = parseManaCost(cost.mana ?? '');

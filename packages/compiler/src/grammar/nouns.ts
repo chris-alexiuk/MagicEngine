@@ -610,6 +610,9 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'each player') return { ref: 'players', who: 'each' };
   // In a free-for-all game (CR 806), every other player is an opponent: "each other player sacrifices a creature".
   if (t === 'each opponent' || t === 'each of your opponents' || t === 'your opponents' || t === 'each other player') return { ref: 'players', who: 'opponents' };
+  // Papalymo Totolymo: "each opponent who lost life this turn"
+  const lost = /^each (opponent|player) who lost life this turn$/.exec(t);
+  if (lost) return { ref: 'players', who: lost[1] === 'player' ? 'each' : 'opponents', lostLife: true };
   // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.

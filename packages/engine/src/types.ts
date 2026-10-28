@@ -498,6 +498,8 @@ export interface Resolution {
   voted?: ObjectRef[];
   /** Cards each player discarded as this resolved ("the greatest number of cards a player discarded this way"). */
   discarded?: Record<PlayerId, number>;
+  /** Cards each player drew as this resolved (Cut a Deal: "for each opponent who drew a card this way"). */
+  drew?: Record<PlayerId, number>;
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
   chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
@@ -555,7 +557,8 @@ export type PendingChoice =
       sourceName: string;
       text: string;
       prompts: TargetPrompt[];
-      modes?: { min: number; max: number; repeat?: true; options: { text: string; prompts: TargetPrompt[] }[] };
+      /** used: modes that can't be chosen again ("choose one that hasn't been chosen this turn"). */
+      modes?: { min: number; max: number; repeat?: true; used?: number[]; options: { text: string; prompts: TargetPrompt[] }[] };
     }
   /** reorder: "put them back in any order" — nothing goes to the bottom. */
   | { kind: 'scry'; player: PlayerId; objects: ObjectId[]; reorder?: true }
@@ -571,7 +574,8 @@ export type PendingChoice =
   /** mustChange: "change the target" — to another legal one, if there is one (CR 115.7a). */
   | { kind: 'copy_targets'; player: PlayerId; object: ObjectId; ability?: true; sourceName: string; text: string; prompts: TargetPrompt[]; current: Target[][]; mustChange?: true }
   /** CR 118.12: an optional cost paid as a spell or ability resolves ("you may pay {2}", "unless … pays {3}"). */
-  | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string }
+  /** x: the cost has {X} ("you may pay {X}"), the payer choosing it (no more than `max`, "where X is less than or equal to …"). */
+  | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string; x?: { max?: number } }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
   /** sameLandType: the cards found must share a land type (Myriad Landscape). */
   | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true }
@@ -634,7 +638,7 @@ export type ChoiceAnswer =
   | { kind: 'discard'; objects: ObjectId[] }
   | { kind: 'may'; yes: boolean }
   | { kind: 'choose_option'; choice: string }
-  | { kind: 'pay'; pay: boolean }
+  | { kind: 'pay'; pay: boolean; x?: number }
   | { kind: 'search'; objects: ObjectId[] }
   | { kind: 'sacrifice'; objects: ObjectId[] }
   | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
@@ -853,6 +857,8 @@ export type GameEvent =
   | { type: 'game_over'; winner: PlayerId | null };
 
 export interface GameState {
+  /** "Choose one that hasn't been chosen": the modes each object's ability had chosen (keyed by object, zcc and text). */
+  modesChosen?: Record<string, { turn: number; modes: number[] }>;
   /** High Tide: triggered mana abilities a resolved spell set up for the rest of this turn. */
   manaTriggers?: { controller: PlayerId; ability: TriggeredAbility; turn: number }[];
   /**

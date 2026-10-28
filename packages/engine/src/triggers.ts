@@ -3,7 +3,7 @@ import type { Amount, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNod
 import { abilitiesOf, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
-import { flatten, programRuns } from './program.js';
+import { flatten, programRuns, recordModes, usedModes } from './program.js';
 import { matchTrigger } from './registry.js';
 import { amountOf, apnap } from './resolve.js';
 import { chooseTargets, dividedCap, divisionFor, targetCandidates, targetPrompts, targetsRequired } from './targets.js';
@@ -351,6 +351,12 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
   }
   if (!answer) {
     const modal = Boolean(ability.modes);
+    // "Choose one that hasn't been chosen this turn": with every mode chosen already, none can be (CR 700.2b).
+    const used = usedModes(g, t.source, ability);
+    if (ability.modes && used.length && ability.modes.options.every((_, i) => used.includes(i))) {
+      g.triggers = g.triggers.filter((x) => x !== t);
+      return;
+    }
     const candidates = specs.map((s) => targetCandidates(g, t.controller, s, source));
     // CR 603.3d (via CR 601.2c): with too few legal targets the ability is removed from the stack.
     // "from a single graveyard": what one graveyard has.
@@ -392,6 +398,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
                 min: ability.modes.min,
                 max: ability.modes.max,
                 ...(ability.modes.repeat ? { repeat: true as const } : {}),
+                ...(used.length ? { used } : {}),
                 options: ability.modes.options.map((m) => ({ text: m.text, prompts: targetPrompts(g, t.controller, m.targets ?? [], source) })),
               },
             }
@@ -404,6 +411,7 @@ function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer
 
   const program = flatten([ability], answer.modes);
   const targets = chooseTargets(g, t.controller, program.specs, answer.targets, source);
+  recordModes(g, t.source, ability, answer.modes);
   const division = divisionFor(program.effects, targets, 0, (answer as { divide?: number[] }).divide, (a) =>
     amountOf({ g, controller: t.controller, source: source ?? undefined, events: [], targets, x: 0, memo: {}, trigger: t.info } as EffectContext, a as Amount),
   );
@@ -436,8 +444,9 @@ export function answerTriggerTargets(g: GameState, player: PlayerId, modes: numb
   if (ability.modes) {
     // CR 700.2b: a mode with no legal targets can't be chosen; if no mode can be, the ability is removed.
     if (!modes?.length && ability.modes.min > 0) {
-      const anyLegal = ability.modes.options.some((m) =>
-        (m.targets ?? []).every((s) => {
+      const used = usedModes(g, t.source, ability);
+      const anyLegal = ability.modes.options.some((m, i) =>
+        !used.includes(i) && (m.targets ?? []).every((s) => {
           const c = targetCandidates(g, t.controller, s, g.objects[t.source.id] ?? null);
           return c.length >= targetsRequired(g, t.controller, s, c);
         }),

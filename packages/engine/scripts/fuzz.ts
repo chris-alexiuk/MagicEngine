@@ -205,7 +205,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     }
     case 'pay':
       // Try to pay half the time; the main loop falls back to declining if it can't be paid.
-      return { player: me, answer: { kind: 'pay', pay: rnd() < 0.5 } };
+      // "You may pay {X}": a small X (no more than it allows).
+      return { player: me, answer: { kind: 'pay', pay: rnd() < 0.5, ...(p.x ? { x: Math.floor(rnd() * (Math.min(p.x.max ?? 4, 4) + 1)) } : {}) } };
     case 'sacrifice':
       return { player: me, answer: { kind: 'sacrifice', objects: shuffle([...p.candidates]).slice(0, p.count) } };
     case 'search': {
@@ -347,6 +348,7 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       if (p.modes) {
         const legal = p.modes.options
           .map((o, i) => ({ i, o }))
+          .filter(({ i }) => !p.modes!.used?.includes(i))
           .filter(({ o }) => o.prompts.every((pr) => (pr.upTo ? pr.candidates.length >= (pr.min ?? 0) : pr.candidates.length >= pr.count)));
         const n = Math.max(p.modes.min, Math.min(p.modes.max, p.modes.repeat ? p.modes.max : legal.length, 1 + Math.floor(rnd() * p.modes.max)));
         const picked = shuffle(legal).slice(0, n);

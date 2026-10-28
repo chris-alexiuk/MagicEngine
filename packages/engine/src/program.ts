@@ -46,6 +46,23 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
   return { specs, effects, ...(manual ? { manual: true as const } : {}) };
 }
 
+/** "Choose one that hasn't been chosen [this turn] —": the modes this object's ability can't choose now. */
+export function usedModes(g: GameState, source: { id: string; zcc: number } | null | undefined, ability: Program & { text: string }): number[] {
+  const how = ability.modes?.unchosen;
+  if (!how || !source) return [];
+  const rec = g.modesChosen?.[`${source.id}:${source.zcc}:${ability.text}`];
+  return rec && (how === 'ever' || rec.turn === g.turn) ? rec.modes : [];
+}
+
+/** Remembers the modes chosen as the ability is activated or put on the stack (CR 700.2a–b); refuses one used already. */
+export function recordModes(g: GameState, source: { id: string; zcc: number } | null | undefined, ability: Program & { text: string }, modes: readonly number[] | undefined): void {
+  if (!ability.modes?.unchosen || !source || !modes?.length) return;
+  const used = usedModes(g, source, ability);
+  if (modes.some((m) => used.includes(m))) throw new RulesError('That mode has already been chosen.');
+  g.modesChosen ??= {};
+  g.modesChosen[`${source.id}:${source.zcc}:${ability.text}`] = { turn: g.turn, modes: [...used, ...modes] };
+}
+
 /** CR 702.47c: a spell with more text after its own (spliced cards' rules text): its targets come after the spell's. */
 export function appendProgram(base: CompiledProgram, extra: CompiledProgram): CompiledProgram {
   const offset = base.specs.length;

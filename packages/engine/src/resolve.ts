@@ -1,5 +1,5 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
-import { chars, colorsAmong, creatureTypesOf, filterZones, matchesFilter, power, toughness } from './characteristics.js';
+import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -151,7 +151,7 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       return ctx.eachPlayer && live.includes(ctx.eachPlayer) ? [ctx.eachPlayer] : [];
     case 'players': {
       const not = ref.except ? refPlayers(ctx, ref.except) : [];
-      const all = apnap(g).filter((p) => (ref.who === 'each' || p !== ctx.controller) && !not.includes(p));
+      const all = apnap(g).filter((p) => (ref.who === 'each' || p !== ctx.controller) && !not.includes(p) && (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0));
       if (!ref.attacking) return all;
       // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
       const defenders = refPlayers(ctx, ref.attacking);
@@ -305,8 +305,18 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       counters ??= {};
       return e.counter ? (counters[e.counter] ?? 0) : Object.values(counters).reduce((a, b) => a + b, 0);
     }
-    case 'players':
-      return livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller).length;
+    case 'players': {
+      // Smuggler's Share: "… who had two or more lands enter the battlefield under their control this turn".
+      const lands = (p: PlayerId) => (g.turnLog.entered?.[p] ?? []).filter((id) => g.objects[id] && (g.objects[id]!.zone === 'battlefield' ? hasType(g, g.objects[id]!, 'Land') : faceOf(g, g.objects[id]!).types.includes('Land'))).length;
+      return livePlayers(g).filter(
+        (p) =>
+          (e.who === 'each' || p !== ctx.controller) &&
+          (!e.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
+          (e.drew === undefined || (g.turnLog.drawn?.[p] ?? 0) >= e.drew) &&
+          (e.landsEntered === undefined || lands(p) >= e.landsEntered) &&
+          (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0),
+      ).length;
+    }
     case 'devotion':
       return devotion(ctx, e.colors);
     case 'domain': {

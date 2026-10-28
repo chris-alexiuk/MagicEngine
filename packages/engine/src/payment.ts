@@ -513,13 +513,13 @@ export function payEnergy(g: GameState, player: PlayerId, n: number, events: Gam
 }
 
 /** Pays a mana cost (or energy) as a spell or ability resolves (CR 118.12), tapping automatically. */
-export function payDuringResolution(g: GameState, player: PlayerId, mana: string, events: GameEvent[]): void {
+export function payDuringResolution(g: GameState, player: PlayerId, mana: string, events: GameEvent[], x = 0): void {
   if (/^(?:\{E\})+$/.test(mana)) {
     payEnergy(g, player, mana.length / 3, events);
     return;
   }
   const cost = parseManaCost(mana);
   if (cost.unsupported.length) throw new RulesError(`Paying ${mana} isn’t supported yet.`);
-  if (!payFromPool(spendablePool(g, player, OTHER_PURPOSE), cost)) autoTap(g, player, cost, 0, events);
-  if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`You can’t pay ${mana}.`);
+  if (!payFromPool(spendablePool(g, player, OTHER_PURPOSE), cost, x)) autoTap(g, player, cost, x, events);
+  if (!payMana(g, player, cost, x, OTHER_PURPOSE)) throw new RulesError(`You can’t pay ${mana}.`);
 }

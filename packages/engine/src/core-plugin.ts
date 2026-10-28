@@ -263,8 +263,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   draw(node, ctx) {
     // CR 121.2: several cards are drawn one at a time; CR 702.52a: each may be replaced by a dredge.
-    const memo = ctx.memo as { n?: number; players?: PlayerId[]; done?: number };
+    const memo = ctx.memo as { n?: number; players?: PlayerId[]; done?: number; before?: Record<PlayerId, number> };
     memo.players ??= refPlayers(ctx, ref(node, 'who'));
+    memo.before ??= { ...(ctx.g.turnLog.drawn ?? {}) };
     // "may draw up to two cards": the player says how many first.
     if (memo.n === undefined && node.upTo) {
       const most = amountOf(ctx, node.amount);
@@ -298,6 +299,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (chosen !== null && !options.includes(chosen)) throw new RulesError('Choose a card with dredge, or none.');
       answer = null;
       drawOrDredge(ctx.g, p, options.length ? chosen : null, ctx.events);
+    }
+    // "for each opponent who drew a card this way" (CR 121.2: one that couldn't didn't).
+    if (ctx.resolution) {
+      const drew = (ctx.resolution.drew ??= {});
+      for (const p of new Set(memo.players)) {
+        const n = (ctx.g.turnLog.drawn?.[p] ?? 0) - (memo.before[p] ?? 0);
+        if (n > 0) drew[p] = (drew[p] ?? 0) + n;
+      }
     }
     return true;
   },
@@ -2145,29 +2154,39 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'pay');
     const n = node.times ? (ctx.memo.times as number | undefined) ?? amountOf(ctx, node.times) : 1;
     ctx.memo.times = n;
-    const cost = String(node.cost ?? '').repeat(Math.max(0, n));
+    // Primordial Ooze: "you may pay {X}, where X is the number of +1/+1 counters on it" — counted as it resolves.
+    const fixedX = node.xIs !== undefined ? ((ctx.memo.xIs as number | undefined) ?? Math.max(0, amountOf(ctx, node.xIs as Amount))) : undefined;
+    if (fixedX !== undefined) ctx.memo.xIs = fixedX;
+    const cost = String(node.cost ?? '').replace(/\{X\}/g, fixedX !== undefined ? `{${fixedX}}` : '{X}').repeat(Math.max(0, n));
     // "Cumulative upkeep—Pay 1 life": life for each age counter (CR 119.4).
     const life = Number(node.life ?? 0) * Math.max(0, n);
-    const otherwise = (node.else as EffectNode[] | undefined) ?? [];
+    const otherwise = fixedX !== undefined ? bindX((node.else as EffectNode[] | undefined) ?? [], fixedX) : ((node.else as EffectNode[] | undefined) ?? []);
     if (!cost && !life) return { expand: node.effects as EffectNode[] };
     // Dance of the Dead: "that player may pay {1}{B}" — someone other than the ability's controller.
     const payer = node.payer ? refPlayers(ctx, ref(node, 'payer'))[0] : ctx.controller;
     if (!payer) return { expand: otherwise };
+    // "You may pay {X}. If you do, draw X cards." — the payer chooses X as they pay (CR 107.1c); "where X is less than or
+    // equal to the amount of life you gained" bounds it.
+    const hasX = cost.includes('{X}');
+    const maxX = hasX && node.maxX !== undefined ? Math.max(0, amountOf(ctx, node.maxX as Amount)) : undefined;
     if (!answer) {
       const price = [cost, life ? `${life} life` : ''].filter(Boolean).join(' and ');
       const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
-      return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx) } };
+      return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx), ...(hasX ? { x: maxX !== undefined ? { max: maxX } : {} } : {}) } };
     }
     if (!answer.pay) return { expand: otherwise };
+    const x = hasX ? (answer.x ?? 0) : 0;
+    if (!Number.isInteger(x) || x < 0) throw new RulesError('X must be a whole number, 0 or more.');
+    if (maxX !== undefined && x > maxX) throw new RulesError(`X can’t be greater than ${maxX}.`);
     const ps = ctx.g.players[payer]!;
     if (life && ps.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
-    if (cost) payDuringResolution(ctx.g, payer, cost, ctx.events);
+    if (cost) payDuringResolution(ctx.g, payer, cost, ctx.events, x);
     if (life) {
       const lost = lifeLoss(ctx.g, payer, life);
       ps.life -= lost;
       ctx.events.push({ type: 'life', player: payer, delta: -lost, life: ps.life });
     }
-    return { expand: node.effects as EffectNode[] };
+    return { expand: hasX || fixedX !== undefined ? bindX(node.effects as EffectNode[], fixedX ?? x) : (node.effects as EffectNode[]) };
   },
 
   unless_pays(node, ctx) {
@@ -3333,6 +3352,28 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Tempting offer (CR 207.2c): "Each opponent may [do it too]. For each opponent who does, [you do it again]." Each
+  // opponent who can, in turn order (CR 101.4), chooses; those who accept do it as though they were you, then you do it
+  // once for each of them.
+  tempting_offer(node, ctx) {
+    const g = ctx.g;
+    const theirs = node.theirs as EffectNode[];
+    const opponents = apnap(g).filter((p) => refPlayers(ctx, { ref: 'players', who: 'opponents' } as Ref).includes(p));
+    const memo = ctx.memo as { i?: number; yes?: PlayerId[] };
+    memo.i ??= 0;
+    memo.yes ??= [];
+    let answer = answerOf(ctx, 'may');
+    for (; memo.i < opponents.length; memo.i++) {
+      const p = opponents[memo.i]!;
+      if (!theirs.every((e) => feasible(e, { ...ctx, controller: p }, p))) continue;
+      if (!answer) return { ask: { kind: 'may', player: p, text: `Tempting offer: ${describeEffects(theirs)}?`, sourceName: sourceName(ctx) } };
+      if (answer.yes) memo.yes.push(p);
+      answer = null;
+    }
+    const as = (p: PlayerId) => theirs.map((e) => ({ ...structuredClone(e), asPlayer: p }));
+    return { expand: [...memo.yes.flatMap(as), ...memo.yes.flatMap(() => structuredClone(node.mine as EffectNode[]))] };
+  },
+
   may(node, ctx) {
     // CR 603.5: an optional effect — the controller (or the player it names) chooses as it resolves.
     const answer = answerOf(ctx, 'may');
@@ -3361,6 +3402,22 @@ function freezeTargetAmounts(list: EffectNode[], ctx: EffectContext): EffectNode
       return amountOf(ctx, o as unknown as Amount);
     }
     return Object.fromEntries(Object.entries(o).map(([k, x]) => [k, fix(x)]));
+  };
+  return fix(list) as EffectNode[];
+}
+
+/**
+ * "You may pay {X}. If you do, draw X cards." / "When you do, … X damage …": the X paid, in what follows (and in a
+ * reflexive ability's effects and targets). A token's "X/X" follows its `size`.
+ */
+function bindX(list: EffectNode[], x: number): EffectNode[] {
+  const fix = (v: unknown, key?: string): unknown => {
+    if (v === 'X') return x;
+    if (Array.isArray(v)) return v.map((e) => fix(e));
+    if (!v || typeof v !== 'object' || key === 'token') return v;
+    const e = v as { kind?: unknown; times?: number; plus?: number; half?: 'up' | 'down' };
+    if (e.kind === 'x') return (e.half ? (e.half === 'up' ? Math.ceil(x / 2) : Math.floor(x / 2)) : x) * (e.times ?? 1) + (e.plus ?? 0);
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, e]) => [k, k === 'text' ? e : fix(e, k)]));
   };
   return fix(list) as EffectNode[];
 }
@@ -3449,6 +3506,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   // CR 701.68b, 701.61a
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
+  // Tempt with Immortality: "return a creature card from your graveyard to the battlefield" — only with one there.
+  if (e.type === 'return_chosen') return zoneList(g, 'graveyard', chooser).some((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null, anyZone: true }));
   return true;
 }
 

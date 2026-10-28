@@ -321,6 +321,7 @@ export class ParserRegistry {
       const block = [line];
       if (
         /\bchoose (?:one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i.test(line) ||
+        /\bchoose one that hasn['’]t been chosen(?: this turn)?(?: —|\.)$/i.test(line) ||
         /^Choose (?:one|two)\. If .+ instead\.$/.test(line) ||
         /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line)
       ) {

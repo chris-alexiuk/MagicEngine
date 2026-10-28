@@ -51,7 +51,7 @@ function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
 // Programs: effect text, possibly modal
 // ---------------------------------------------------------------------------
 
-const MODAL_HEADER = /^choose (one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i;
+const MODAL_HEADER = /^choose (one|two|three|four|five|one or both|one or more|any number|up to one|up to two)(?: —$|( that hasn['’]t been chosen( this turn)?)(?: —|\.)$)/i;
 
 function modeCount(word: string, options: number): { min: number; max: number } {
   switch (word.toLowerCase()) {
@@ -143,7 +143,9 @@ function parseProgramText(text: string, b: Binder): Program | null {
     if (options.every((o) => o.manual)) return null;
     const { min, max } = modeCount(modal[1]!, options.length);
     if (min > options.length) return null;
-    return { effects: [], modes: { min, max, options } };
+    // "Choose one that hasn't been chosen this turn —": each mode once per turn (or once while it's this object).
+    const unchosen = modal[2] ? { unchosen: modal[3] ? ('turn' as const) : ('ever' as const) } : {};
+    return { effects: [], modes: { min, max, options, ...unchosen } };
   }
   if (bullets.length) return null;
   const effects = parseEffectText(head!, b);
@@ -225,6 +227,8 @@ function hasFreeX(v: unknown): boolean {
   if (!v || typeof v !== 'object') return false;
   if (Array.isArray(v)) return v.some(hasFreeX);
   if ((v as { kind?: unknown }).kind === 'x') return true;
+  // "You may pay {X}. If you do, draw X cards." — that X is the one paid.
+  if ((v as { type?: unknown }).type === 'may_pay' && (String((v as { cost?: unknown }).cost).includes('{X}') || 'xIs' in v)) return false;
   return Object.entries(v).some(([k, x]) => k !== 'token' && k !== 'abilities' && k !== 'grant' && hasFreeX(x));
 }
 

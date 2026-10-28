@@ -114,6 +114,16 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
+  // Teysa, Opulent Oligarch: "for each opponent who lost life this turn"
+  const lost = /^(opponent|player|of your opponents) who lost life this turn$/.exec(t);
+  if (lost) return { kind: 'players', who: lost[1] === 'player' ? 'each' : 'opponents', lostLife: true };
+  // Smuggler's Share: "for each opponent who drew two or more cards this turn", "… who had two or more lands enter the
+  // battlefield under their control this turn".
+  if (/^opponent who drew a card this way$/.test(t)) return { kind: 'players', who: 'opponents', drewThisWay: true };
+  const drewN = /^(opponent|player) who drew (two|three|four) or more cards this turn$/.exec(t);
+  if (drewN) return { kind: 'players', who: drewN[1] === 'player' ? 'each' : 'opponents', drew: parseAmount(drewN[2]!) as number };
+  const landsN = /^(opponent|player) who had (two|three) or more lands enter the battlefield under their control this turn$/.exec(t);
+  if (landsN) return { kind: 'players', who: landsN[1] === 'player' ? 'each' : 'opponents', landsEntered: parseAmount(landsN[2]!) as number };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"
   if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
   // CR 702.121a (melee): "for each opponent you attacked with a creature this combat"
@@ -176,6 +186,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // "the amount of life you gained this turn", "the total amount of life your opponents have lost this turn"
   const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
+  // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
+  if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
   // Ghalta: "the total power of creatures you control"
   const totalPower = /^the total (power|mana value) of (.+)$/.exec(t);
   if (totalPower) {

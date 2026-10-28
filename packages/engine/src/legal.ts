@@ -1,6 +1,6 @@
 import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
-import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter } from '@mtg/schema';
+import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { canActivateTapAbilities, chars, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
@@ -10,7 +10,7 @@ import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
-import { activatedAbilities, flatten, spellPrograms } from './program.js';
+import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
@@ -556,8 +556,12 @@ function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typ
 
 function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject, programs: Parameters<typeof flatten>[0], holds?: Parameters<typeof flatten>[2]): Choice | null {
   const modal = programs.find((p) => p.modes);
+  // "Choose one that hasn't been chosen this turn": not those.
+  const used = modal && 'text' in modal ? usedModes(g, source, modal as Program & { text: string }) : [];
   const modeSets: (number[] | undefined)[] = modal
-    ? modal.modes!.options.map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => (modal.modes!.repeat ? i : i + k))).filter((m) => m.every((i) => i < modal.modes!.options.length))
+    ? modal.modes!.options
+        .map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => (modal.modes!.repeat ? i : i + k)))
+        .filter((m) => m.every((i) => i < modal.modes!.options.length && !used.includes(i)))
     : [undefined];
   // Modes the engine runs come first; one it can't read is still a legal choice.
   const manual = (modes: number[] | undefined) => (modes ?? []).some((i) => modal!.modes!.options[i]!.manual);

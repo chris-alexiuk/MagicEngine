@@ -42,6 +42,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Eldritch Evolution: "Search your library for … X or less, where X is …. Put that card onto the battlefield, then
   // shuffle." — the same as one sentence.
   text = text.replace(/(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (?:that card|it) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./, '$1, put it $3, then shuffle$2.');
+  // Tempt with Discovery: "Search your library for a land card and put it onto the battlefield. … Then each player who
+  // searched a library this way shuffles." — each search, then a shuffle.
+  if (/ Then each player who searched a library this way shuffles\.$/.test(text.trim())) {
+    text = text.replace(/([Ss]earch (?:your|their) library for [^.]+?) and put it onto the battlefield\./g, '$1, put it onto the battlefield, then shuffle.');
+  }
   // Thassa's Oracle: "look at the top X cards of your library, where X is your devotion to blue. Put up to one of them on
   // top of your library and the rest on the bottom of your library in a random order. If X is greater than or equal to
   // the number of cards in your library, you win the game."
@@ -170,6 +175,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Tempting offer (an ability word, CR 207.2c): "Each opponent may [do it too]. For each opponent who does, [you do it
+      // again]." — each opponent in turn order (CR 101.4) chooses; those who accept do it as though they were you; then you
+      // do it once for each.
+      const tempt = /^Each opponent may (.+)$/.exec(s);
+      const forEachWho = tempt && sentences[i + 1] ? /^For each (?:opponent|player) who (?:does|searches a library this way), (.+)$/.exec(sentences[i + 1]!) : null;
+      if (tempt && forEachWho) {
+        const asThem = capitalise(tempt[1]!.replace(/\btheir\b/g, 'your').replace(/\bthey (control|own)\b/g, 'you $1'));
+        const theirs = parseSentence(asThem, b);
+        const mine = theirs && parseSentence(capitalise(forEachWho[1]!), b);
+        if (!theirs || !mine || /\b(?:they|them|their)\b/.test(asThem)) return null;
+        out.push({ type: 'tempting_offer', theirs, mine });
+        i++;
+        // "Then each player who searched a library this way shuffles." — searching shuffles anyway.
+        if (/^Then each player who searched a library this way shuffles$/.test(sentences[i + 1] ?? '')) i++;
+        continue;
+      }
       // Plaguecrafter: "Each player sacrifices a creature or planeswalker of their choice. Each player who can't discards a card."
       const whoCant = /^Each (?:player|opponent) who can't (.+)$/.exec(s);
       const lastNode = out[out.length - 1];
@@ -202,7 +223,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // with its own targets, which triggers only if the action was taken.
       const whenYouDo = sentences[i + 1] ? /^When you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (whenYouDo) {
-        const pay = /^You may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
+        const pay = /^You may pay ((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)$/.exec(s);
         const may = /^You may (.+)$/.exec(s);
         const first = pay ? [] : parseSentence(capitalise(may ? may[1]! : s), b);
         if (!first) return null;
@@ -215,14 +236,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const keepsIt = first.every((x) => ['lose_life', 'gain_life', 'draw', 'mill', 'forage'].includes(x.type));
         if (!keepsIt || !rb.it || !['self', 'trigger_object'].includes(rb.it.ref)) rb.it = null;
         if (rb.player && !['you', 'trigger_player'].includes(rb.player.ref)) rb.player = null;
-        const restText = `${[whenYouDo[1]!, ...sentences.slice(i + 2)].join('. ')}.`;
+        // "X can't be greater than …" after what's paid for.
+        const rest = [whenYouDo[1]!, ...sentences.slice(i + 2)];
+        const capX = pay && pay[1]!.includes('{X}') ? xCap(rest, b) : null;
+        if (capX === undefined) return null;
+        const restText = `${rest.join('. ')}.`;
         const inner = parseEffectText(capitalise(restText), rb);
         // "the exiled card" after "you may exile it" isn't something this ability can find; nor can its targets use counts
         // (Sandbender Scavengers: "with mana value less than or equal to this creature's power").
         if (!inner || rb.unsupported || (!pay && JSON.stringify(inner).includes('"exiled_with"'))) return null;
         const ability = { kind: 'triggered', text: `When you do, ${restText}`, trigger: { type: 'reflexive' }, effects: inner, ...(rb.targets.length ? { targets: rb.targets } : {}) };
         const reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
-        if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive] });
+        if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive], ...(capX ? { maxX: capX } : {}) });
         else out.push({ type: 'may_do', effects: first, then: [reflexive], ...(may ? {} : { mandatory: true }) });
         break;
       }
@@ -234,9 +259,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
       // Mana the engine can pay as a resolution-time cost (no {X}, snow or Phyrexian symbols), or energy (CR 107.14).
       // CR 119.4: "You may pay 3 life", Ripples of Undeath: "you may pay {1} and 3 life" — life only if you have that much.
-      const payParts = /^You may pay (?:((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)(?: and (\d+) life)?|(\d+) life)$/.exec(s);
+      // "You may pay {X}. If you do, draw X cards." — X chosen as it's paid; ", where X is less than or equal to …" bounds
+      // it, ", where X is …" fixes it (Primordial Ooze).
+      const payParts = /^(?:Then )?[Yy]ou may pay (?:((?:\{(?:\d+|X|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+|(?:\{E\})+)(?: and (\d+) life)?|(\d+) life)(?:, where X is (less than or equal to )?(.+))?$/.exec(s);
       const pay = payParts ? ([payParts[0], payParts[1] ?? ''] as const) : null;
       const payLife = payParts ? Number(payParts[2] ?? payParts[3] ?? 0) : 0;
+      const hasX = Boolean(pay?.[1].includes('{X}'));
+      const whereX = payParts?.[5] ? parseCount(payParts[5], b) : null;
+      if (payParts && (hasX ? payParts[5] && !whereX : payParts[5])) return null;
+      const fixX = whereX && !payParts![4] ? { xIs: whereX } : {};
       const then = sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && then) {
         const inner = parseSentence(capitalise(then[1]!), b);
@@ -245,8 +276,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const otherwise = sentences[i + 2] ? /^(?:Otherwise|If you don't), (.+)$/.exec(sentences[i + 2]!) : null;
         const no = otherwise ? parseSentence(capitalise(otherwise[1]!), b) : null;
         if (otherwise && !no) return null;
-        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), effects: inner, ...(no ? { else: no } : {}) });
-        i += otherwise ? 2 : 1;
+        // Mortarion: "… X can't be greater than the amount of life you lost this turn."
+        const after = i + (otherwise ? 3 : 2);
+        const cap = hasX && !whereX ? xCap(sentences.slice(after, after + 1), b) : null;
+        if (cap === undefined) return null;
+        const maxX = whereX && payParts![4] ? { maxX: whereX } : cap ? { maxX: cap } : {};
+        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), ...fixX, ...maxX, effects: inner, ...(no ? { else: no } : {}) });
+        i += (otherwise ? 2 : 1) + (cap ? 1 : 0);
         continue;
       }
       // Dance of the Dead: "that player may pay {1}{B}. If the player does, untap that creature." — another player pays.
@@ -263,9 +299,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // "You may pay {2}. If you don't, blight 2." / "… sacrifice it."
       const payDont = pay && sentences[i + 1] ? /^If you don't, (.+)$/.exec(sentences[i + 1]!) : null;
       if (pay && payDont) {
+        // With X, only an X the text fixes means anything here.
+        if (hasX && !('xIs' in fixX)) return null;
         const no = parseSentence(capitalise(payDont[1]!), b);
         if (!no) return null;
-        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), effects: [], else: no });
+        out.push({ type: 'may_pay', cost: pay[1]!, ...(payLife ? { life: payLife } : {}), ...fixX, effects: [], else: no });
         i++;
         continue;
       }
@@ -1104,6 +1142,19 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
     return { node: { type: 'dig', amount, take, to: 'top', optional: true, rest: 'graveyard' }, used: 2 };
   }
   return null;
+}
+
+/**
+ * Mortarion: "X can't be greater than the amount of life you lost this turn." among the sentences after a "you may pay
+ * {X}" — the bound (and the sentence is taken out), null without one, undefined if it doesn't read.
+ */
+function xCap(list: string[], b: Binder): AmountExpr | null | undefined {
+  const at = list.findIndex((t) => /^X can't be greater than /.test(t));
+  if (at < 0) return null;
+  const expr = parseCount(list[at]!.replace(/^X can't be greater than /, '').replace(/\.$/, ''), b);
+  if (!expr) return undefined;
+  list.splice(at, 1);
+  return expr;
 }
 
 function capitalise(s: string): string {

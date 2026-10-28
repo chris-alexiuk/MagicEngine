@@ -2257,3 +2257,26 @@ describe('slice 183', () => {
     expect(parse('When this creature enters, earthbend 1.', 'Creature — Badger Mole').abilities[0]).toMatchObject({ targets: [{ filter: { types: ['Land'], controller: 'you' } }], effects: [{ type: 'modify', setPower: 0, keywords: [{ id: 'haste' }] }, { type: 'add_counters', amount: 1 }, { type: 'delayed_leave' }] });
   });
 });
+
+describe('slice 185', () => {
+  it('reads "choose one that hasn\'t been chosen"', () => {
+    const turn = parse("Whenever you discard a card, choose one that hasn't been chosen this turn —\n• Draw a card.\n• Create a Treasure token.\n• Each opponent loses 3 life.", 'Artifact');
+    expect(turn.abilities[0]).toMatchObject({ kind: 'triggered', modes: { min: 1, max: 1, unchosen: 'turn' } });
+    const ever = parse("{2}, {T}: Choose one that hasn't been chosen —\n• Draw a card.\n• You gain 3 life.", 'Artifact');
+    expect(ever.abilities[0]).toMatchObject({ kind: 'activated', modes: { unchosen: 'ever' } });
+    // Lita: the header ends with a period.
+    expect(parse("Whenever another creature you control enters, choose one that hasn't been chosen this turn.\n• Create a Food token.\n• Scry 1.", 'Creature').abilities[0]).toMatchObject({ modes: { unchosen: 'turn' } });
+  });
+  it('reads "you may pay {X}"', () => {
+    expect(parse('Whenever you gain life, you may pay {X}, where X is less than or equal to the amount of life you gained. If you do, draw X cards.', 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{X}', maxX: { kind: 'event' }, effects: [{ type: 'draw', amount: 'X' }] }] });
+    expect(parse("At the beginning of your end step, you may pay {X}. If you do, draw X cards. X can't be greater than the amount of life you gained this turn.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', maxX: { kind: 'life_this_turn' } }] });
+    expect(parse("At the beginning of your upkeep, put a +1/+1 counter on this creature. Then you may pay {X}, where X is the number of +1/+1 counters on it. If you don't, tap this creature and it deals X damage to you.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters' }, { type: 'may_pay', xIs: { kind: 'counters' }, else: [{ type: 'tap' }, { type: 'deal_damage', amount: 'X' }] }] });
+    expect(parse('Whenever another creature you control enters, you may pay {X}. When you do, put X +1/+1 counters on that creature.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', cost: '{X}', effects: [{ type: 'reflexive' }] }] });
+  });
+  it('reads tempting offers', () => {
+    const glory = parse('Tempting offer — Put a +1/+1 counter on each creature you control. Each opponent may put a +1/+1 counter on each creature they control. For each opponent who does, put a +1/+1 counter on each creature you control.', 'Sorcery');
+    expect(glory.abilities[0]).toMatchObject({ effects: [{ type: 'add_counters' }, { type: 'tempting_offer', theirs: [{ type: 'add_counters', what: { filter: { controller: 'you' } } }], mine: [{ type: 'add_counters' }] }] });
+    const discovery = parse('Tempting offer — Search your library for a land card and put it onto the battlefield. Each opponent may search their library for a land card and put it onto the battlefield. For each opponent who searches a library this way, search your library for a land card and put it onto the battlefield. Then each player who searched a library this way shuffles.', 'Sorcery');
+    expect(discovery.abilities[0]).toMatchObject({ effects: [{ type: 'search' }, { type: 'tempting_offer', theirs: [{ type: 'search' }], mine: [{ type: 'search' }] }] });
+  });
+});

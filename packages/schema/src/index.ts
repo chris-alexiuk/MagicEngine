@@ -153,6 +153,11 @@ export interface ModeChoice {
   bonus?: { condition: ConditionNode; max: number };
   /** CR 700.2d: "You may choose the same mode more than once." */
   repeat?: true;
+  /**
+   * "Choose one that hasn't been chosen this turn —" ('turn'), "… that hasn't been chosen —" ('ever': while it's the
+   * same object, CR 400.7): a mode this object's ability had chosen before can't be chosen again (CR 700.2a–b).
+   */
+  unchosen?: 'turn' | 'ever';
 }
 
 export interface ModeOption {
@@ -452,7 +457,8 @@ export type Ref =
   | { ref: 'you' }
   /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
   /** `except`: Kediss's "each other opponent" — not the player the trigger was about. */
-  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref }
+  /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true }
   | { ref: 'controller_of'; of: Ref }
   | { ref: 'owner_of'; of: Ref }
   /** CR 607.2a: "the exiled card", "cards exiled with ~" — what this object's linked ability exiled. */
@@ -496,7 +502,12 @@ export type AmountExpr = (
   | { kind: 'life'; who: Ref }
   | { kind: 'counters'; of: Ref; counter?: string }
   /** Players: "for each opponent". */
-  | { kind: 'players'; who: 'opponents' | 'each' }
+  /**
+   * `lostLife`: "for each opponent who lost life this turn" (Teysa, Opulent Oligarch); Smuggler's Share: `drew`, "who drew
+   * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
+   */
+  /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
+  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -1052,7 +1063,7 @@ export const CORE_NODES = {
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
-    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend',
+    'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
@@ -1164,7 +1175,7 @@ export function nodeTags(a: AbilityNode): { effects: string[]; statics: string[]
       out.effects.push(e.type);
       amounts(e);
       nested(e);
-      for (const key of ['effects', 'then', 'else', 'action']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
+      for (const key of ['effects', 'then', 'else', 'action', 'theirs', 'mine']) if (Array.isArray(e[key])) visit(e[key] as EffectNode[]);
       if (e.cond) cond(e.cond as ConditionNode);
     }
   };
