@@ -859,6 +859,10 @@ export function matchesFilter(
     });
     if (enchanted !== f.enchanted) return false;
   }
+  if (f.equipped && !g.zones.battlefield.some((id) => {
+    const a = g.objects[id]!;
+    return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && chars(g, a).subtypes.includes('Equipment');
+  })) return false;
   if (f.attachedTo) {
     const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;
     if (!host || o.attachedTo?.id !== host.id || o.attachedTo.zcc !== host.zcc) return false;

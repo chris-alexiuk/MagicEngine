@@ -2430,3 +2430,26 @@ describe('slice 194', () => {
     expect(parse('Exile the top card of your library. Until your next end step, you may play it.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', play: { until: 'next_end_step' } }] });
   });
 });
+
+describe('slice 194 (more)', () => {
+  it('reads Opposition Agent, chosen exiles and "and you may"', () => {
+    expect(parse("You control your opponents while they're searching their libraries.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'search_control' } });
+    expect(parse('When ~ enters, you may exile a creature card from your graveyard. If you do, exile target artifact or enchantment an opponent controls.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may_do', effects: [{ type: 'return_chosen', to: 'exile', filter: { types: ['Creature'] } }] }] });
+    expect(parse('Whenever equipped creature deals combat damage to a player, you gain 3 life and you may return up to one target creature card from your graveyard to your hand.', 'Artifact — Equipment').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'may' }] });
+    expect(parse('−2: Mill three cards, then you may return a creature card with mana value 2 or less from your graveyard to the battlefield.', 'Legendary Planeswalker — Tyvar').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'may', effects: [{ type: 'return_chosen', filter: { manaValue: { op: 'le', n: 2 } } }] }] });
+    expect(parse("{T}: Add {C} for each Urza's land you control.", 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'add_mana', times: { kind: 'count', filter: { subtypes: ['Urza’s'] } } }] });
+    expect(parse('Creatures you control also get +1/+0 and have trample as long as you control six or more creatures.', 'Creature').abilities[0]).toMatchObject({ effect: { power: 1, keywords: [{ id: 'trample' }], condition: { type: 'count', min: 6 } } });
+    expect(parse('Other creatures you control get +2/+2 until end of turn. Put an indestructible counter on each of them.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'modify' }, { type: 'add_counters', what: { ref: 'all', filter: { other: true } } }] });
+  });
+});
+
+describe('slice 195', () => {
+  it('reads Lignify, any player drawing, hand counts and enchanted or equipped creatures', () => {
+    expect(parse('Enchanted creature is a Treefolk with base power and toughness 0/4 and loses all abilities.', 'Enchantment — Aura').abilities[0]).toMatchObject({ effect: { creatureTypes: ['Treefolk'], setPower: 0, setToughness: 4, loseAbilities: true } });
+    expect(parse('Whenever a player draws a card, ~ deals 1 damage to that player.', 'Enchantment').abilities[0]).toMatchObject({ trigger: { type: 'draw', who: 'any' }, effects: [{ type: 'deal_damage', to: { ref: 'trigger_player' } }] });
+    expect(parse('{T}: Draw a card. Activate only if you have seven or more cards in your hand.', 'Artifact').abilities[0]).toMatchObject({ activateIf: { type: 'hand', op: 'ge', n: 7 } });
+    expect(parse('Destroy target artifact or enchantment if its mana value is less than or equal to the number of cards in your hand.', 'Instant').unparsed).toHaveLength(0);
+    expect(parse('Enchanted creatures you control have shroud.', 'Enchantment').abilities[0]).toMatchObject({ effect: { affected: { filter: { enchanted: true } } } });
+    expect(parse('Creatures you control that are enchanted or equipped have double strike.', 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { anyOf: [{ enchanted: true }, { equipped: true }] } } } });
+  });
+});

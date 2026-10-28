@@ -145,6 +145,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Winds of Rath: "all creatures that aren't enchanted"
   [/ (?:that aren't|that isn't|that's not) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = false), true)],
   [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
+  // Halvar, God of Battle: "Creatures you control that are enchanted or equipped"
+  [/ (?:that are|that's) enchanted or equipped$/, (f) => !f.anyOf && ((f.anyOf = [{ enchanted: true }, { equipped: true }]), true)],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
@@ -380,6 +382,9 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     else if (w === 'attacking') f.combat = 'attacking';
     // Vengeful Ancestor: "Whenever a goaded creature attacks" (CR 701.15)
     else if (w === 'goaded') f.goaded = true;
+    // Greater Auramancy: "Enchanted creatures you control have shroud."; "equipped creatures you control".
+    else if (w === 'enchanted' && f.enchanted === undefined) f.enchanted = true;
+    else if (w === 'equipped') f.equipped = true;
     else if (w === 'blocking') f.combat = 'blocking';
     else if (SUPERTYPE_WORDS[w]) (f.supertypes ??= []).push(SUPERTYPE_WORDS[w]!);
     else if (TYPE_NOUNS[w] && w === TYPE_NOUNS[w]!.toLowerCase()) adjTypes.push(TYPE_NOUNS[w]!);
@@ -390,6 +395,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean } | n
     // Lithoform Engine: "target permanent spell you control" — a spell that will become a permanent.
     else if (w === 'permanent' && /^(?:cards?|spells?)$/.test(lower)) f.types = [...PERMANENT_TYPES];
     else if (subtypeOf(raw) === raw) (f.subtypes ??= []).push(raw);
+    // "Urza's land": the subtype is spelled with a curly apostrophe.
+    else if (raw.includes("'") && subtypeOf(raw)) (f.subtypes ??= []).push(subtypeOf(raw)!);
     else return null;
   }
 
@@ -490,6 +497,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       b.selfZone = 'hand';
       return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     }
+    // Summon: Knights of Round: "Other creatures you control get +2/+2 until end of turn. Put an indestructible counter on
+    // each of them." — that group.
+    if (/^each of them$/i.test(t) && b.it?.ref === 'all') return { ref: b.it, plural: true, targeted: false };
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
       // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target), nor is a

@@ -31,6 +31,7 @@ import type {
   TriggerNode,
   TriggeredAbility,
 } from '@mtg/schema';
+import { SUBTYPES } from '@mtg/schema';
 import type { GrammarRule } from '../parser.js';
 import { combinationColors, parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
@@ -1361,6 +1362,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', nth: ['first', 'second', 'third'].indexOf(nth[2]!) + 1 }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
   }
   if (t === 'an opponent draws a card') return { trigger: { type: 'draw', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  // Spiteful Visions, Kami of the Crescent Moon: "Whenever a player draws a card"
+  if (t === 'a player draws a card') return { trigger: { type: 'draw', who: 'any' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // Orcish Bowmasters: "whenever an opponent draws a card except the first one they draw in each of their draw steps"
   const exceptFirst = /^(you draw|an opponent draws) a card except the first one (?:you|they) draw in each of (?:your|their) draw steps$/.exec(t);
   if (exceptFirst) {
@@ -1994,6 +1997,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
 
 /** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
+  // Jetmir, Nexus of Revels: "Creatures you control also get +1/+0 and have trample as long as …" — "also" adds nothing.
+  body = body.replace(/^(.+?) also (?=(?:gets?|ha(?:s|ve)) )/, '$1 ');
   // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — the player too.
   const youToo = /^You, (.+), and (.+?) have (hexproof|shroud)$/.exec(body) ?? /^You and (.+?)() have (hexproof|shroud)$/.exec(body);
   if (youToo) {
@@ -2060,7 +2065,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2150,6 +2155,17 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       if (colors) effect.colors = colors as Color[];
       effect.setPower = Number(isA[4]);
       effect.setToughness = Number(isA[5]);
+      effect.setLayer = '7b';
+      continue;
+    }
+    // Lignify: "is a Treefolk with base power and toughness 0/4" — its creature types replaced, its card types kept.
+    const isKind = /^is an? ((?:[A-Z][\w’'-]* )+)with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    if (isKind && !effect.creatureTypes && effect.setPower === undefined) {
+      const kinds = isKind[1]!.trim().split(' ');
+      if (kinds.some((w) => subtypeOf(w) !== w || !(SUBTYPES.creature as readonly string[]).includes(w))) return null;
+      effect.creatureTypes = kinds;
+      effect.setPower = Number(isKind[2]);
+      effect.setToughness = Number(isKind[3]);
       effect.setLayer = '7b';
       continue;
     }
@@ -2574,6 +2590,13 @@ export const staticPreventionRule: GrammarRule = {
     if (half) {
       const node: StaticPreventionNode = { type: 'prevent_damage', half: 'up', ...(half[1]!.startsWith('you') ? { toYou: true as const } : {}), ...(half[1]!.includes('permanent') ? { to: { controller: 'you' } } : {}) };
       return { kind: 'static', text: original, effect: node } as StaticAbility;
+    }
+    // Opposition Agent (CR 722): "You control your opponents while they're searching their libraries." / "While an opponent
+    // is searching their library, they exile each card they find. You may play those cards for as long as they remain
+    // exiled, and you may spend mana as though it were mana of any color to cast them."
+    if (line === "You control your opponents while they're searching their libraries.") return { kind: 'static', text: original, effect: { type: 'search_control' } } as StaticAbility;
+    if (line === 'While an opponent is searching their library, they exile each card they find. You may play those cards for as long as they remain exiled, and you may spend mana as though it were mana of any color to cast them.') {
+      return { kind: 'static', text: original, effect: { type: 'search_exile' } } as StaticAbility;
     }
     // CR 615.12: Frenzied Baloth: "Combat damage can't be prevented."; "Damage can't be prevented."
     const cant = /^(Combat damage|Damage) can't be prevented\.$/.exec(line);

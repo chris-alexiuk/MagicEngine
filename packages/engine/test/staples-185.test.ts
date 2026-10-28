@@ -84,6 +84,18 @@ const CARDS = [
   makeCard({ name: 'Oko Lite', type_line: 'Legendary Planeswalker — Oko', mana_cost: '{0}', loyalty: '4', oracle_text: '+1: Target artifact or creature loses all abilities and becomes a green Elk creature with base power and toughness 3/3.' }),
   makeCard({ name: 'Wiccan Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Exile the top card of your library. Until your next end step, you may play it.' }),
   makeCard({ name: 'Peacemaker Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever an opponent commits a crime, you gain 2 life.' }),
+  makeCard({ name: 'Opposition Agent', type_line: 'Creature — Human Rogue', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: "Flash\nYou control your opponents while they're searching their libraries.\nWhile an opponent is searching their library, they exile each card they find. You may play those cards for as long as they remain exiled, and you may spend mana as though it were mana of any color to cast them." }),
+  makeCard({ name: 'Tutor Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Search your library for a card, put that card into your hand, then shuffle.' }),
+  makeCard({ name: "Black Sun's Twilight", type_line: 'Sorcery', mana_cost: '{X}{B}', oracle_text: 'Up to one target creature gets -X/-X until end of turn. If X is 5 or more, return a creature card with mana value X or less from your graveyard to the battlefield tapped.' }),
+  makeCard({ name: 'Big Ogre', type_line: 'Creature — Ogre', mana_cost: '{4}{R}', cmc: 5, power: '5', toughness: '5', oracle_text: '' }),
+  makeCard({ name: 'Masked Vandal', type_line: 'Creature — Shapeshifter', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: 'Changeling\nWhen this creature enters, you may exile a creature card from your graveyard. If you do, exile target artifact or enchantment an opponent controls.' }),
+  makeCard({ name: 'Knights Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Other creatures you control get +2/+2 until end of turn. Put an indestructible counter on each of them.' }),
+  makeCard({ name: "Urza's Workshop", type_line: 'Land', mana_cost: '', oracle_text: "Metalcraft — {T}: Add {C} for each Urza's land you control. Activate only if you control three or more artifacts." }),
+  makeCard({ name: "Urza's Mine", type_line: 'Land — Urza’s Mine', mana_cost: '', oracle_text: '' }),
+  makeCard({ name: 'Lignify', type_line: 'Tribal Enchantment — Treefolk Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nEnchanted creature is a Treefolk with base power and toughness 0/4 and loses all abilities.' }),
+  makeCard({ name: 'Spiteful Visions', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of each player\'s draw step, that player draws an additional card.\nWhenever a player draws a card, this enchantment deals 1 damage to that player.' }),
+  makeCard({ name: 'Auramancy Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Enchanted creatures you control have shroud.' }),
+  makeCard({ name: 'Plain Aura', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nEnchanted creature gets +1/+0.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -940,5 +952,103 @@ describe('staples (slice 194)', () => {
     const life = g.players.alice!.life;
     g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
     expect(g.players.alice!.life).toBe(life - 3 + 2);
+  });
+});
+
+describe('staples (slice 194): Opposition Agent', () => {
+  it("the Agent's controller searches for them, and what they find is exiled for the Agent's controller to play", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'bob', 'Opposition Agent', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'library');
+    const hand = g.zones.hand.alice!.length;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tutor Lite', 'hand') });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'search', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'search', objects: [bear] } }));
+    expect(g.objects[bear]!.zone).toBe('exile');
+    expect(g.zones.hand.alice!.length).toBe(hand);
+    // Bob may cast it on his turn, with mana of any color.
+    g = toStep(g, 'main1', 'bob');
+    g.players.bob!.pool.R = 2;
+    g = settle(act(g, { type: 'cast', player: 'bob', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+    expect(g.objects[bear]!.controller).toBe('bob');
+  });
+});
+
+describe('staples (slice 194): chosen cards from your graveyard', () => {
+  it("Black Sun's Twilight: X of 5 or more returns a creature card with mana value X or less", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(g, 'alice', 'Big Ogre', 'graveyard');
+    g.players.alice!.pool.B = 1;
+    g.players.alice!.pool.C = 5;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', "Black Sun's Twilight", 'hand'), x: 5, targets: [[]] });
+    g = settle(g);
+    if (g.pending?.kind === 'choose_objects') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [ogre] } }));
+    expect(g.objects[ogre]!.zone).toBe('battlefield');
+    expect(g.objects[ogre]!.tapped).toBe(true);
+  });
+
+  it('Masked Vandal: only by exiling a creature card from your graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const relic = give(g, 'bob', 'Trinket', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'graveyard');
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Masked Vandal', 'hand') });
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: relic }]] } });
+      else if (p?.kind === 'may') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.objects[bear]!.zone, g.objects[relic]!.zone]).toEqual(['exile', 'exile']);
+  });
+
+  it('"Put an indestructible counter on each of them": the creatures just pumped', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [bear, theirs] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Knights Lite', 'hand') }));
+    expect(g.objects[bear]!.counters.indestructible).toBe(1);
+    expect(g.objects[theirs]!.counters.indestructible ?? 0).toBe(0);
+  });
+
+  it("Urza's Workshop: {C} for each Urza's land, with metalcraft", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const shop = give(g, 'alice', "Urza's Workshop", 'battlefield');
+    give(g, 'alice', "Urza's Mine", 'battlefield');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'activate_mana' && a.object === shop)).toBe(false);
+    for (let i = 0; i < 3; i++) give(g, 'alice', 'Trinket', 'battlefield');
+    const act1 = legalActions(g, 'alice').find((a) => a.type === 'activate_mana' && a.object === shop);
+    expect(act1).toBeTruthy();
+    g = act(g, act1!);
+    expect(g.players.alice!.pool.C).toBe(1);
+  });
+});
+
+describe('staples (slice 195)', () => {
+  it('Lignify: a 0/4 Treefolk with no abilities, still a creature', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(g, 'bob', 'Ogre', 'battlefield');
+    const aura = give(g, 'alice', 'Lignify', 'battlefield');
+    g.objects[aura]!.attachedTo = { id: ogre, zcc: g.objects[ogre]!.zcc };
+    const c = chars(g, g.objects[ogre]!);
+    expect([c.types, c.subtypes, c.power, c.toughness]).toEqual([['Creature'], ['Treefolk'], 0, 4]);
+  });
+
+  it('Spiteful Visions: each player who draws takes 1 damage', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Spiteful Visions', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Gift of Words', 'hand') }));
+    expect(g.players.bob!.life).toBe(life - 2);
+  });
+
+  it('Greater Auramancy: only enchanted creatures you control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Auramancy Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    const aura = give(g, 'alice', 'Plain Aura', 'battlefield');
+    g.objects[aura]!.attachedTo = { id: a, zcc: g.objects[a]!.zcc };
+    expect([chars(g, g.objects[a]!).keywords.some((k) => k.id === 'shroud'), chars(g, g.objects[b]!).keywords.some((k) => k.id === 'shroud')]).toEqual([true, false]);
   });
 });

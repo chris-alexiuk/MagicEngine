@@ -70,6 +70,24 @@ function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'):
   return turn;
 }
 
+/**
+ * Opposition Agent: an opponent's permanent that controls this player while they search (`chooser`) and has what they
+ * find exiled for its controller (`exiler`).
+ */
+function searchHijack(g: GameState, player: PlayerId): { chooser?: PlayerId; exiler?: PlayerId } {
+  const out: { chooser?: PlayerId; exiler?: PlayerId } = {};
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id];
+    if (!src || src.zone !== 'battlefield' || src.controller === player) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static') continue;
+      if (a.effect.type === 'search_control') out.chooser ??= src.controller;
+      if (a.effect.type === 'search_exile') out.exiler ??= src.controller;
+    }
+  }
+  return out;
+}
+
 /** "Until your next end step": this turn's, if it's your turn and that step is still to come; else your next turn's. */
 function nextEndStepTurn(g: GameState, player: PlayerId): number {
   const before = g.active === player && g.step !== 'end' && g.step !== 'cleanup';
@@ -2409,6 +2427,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const mustFind = !quality && !node.upTo;
     const memo = ctx.memo as { found?: ObjectId[] };
     const split = node.split as { to: 'battlefield'; tapped?: true } | undefined;
+    // Opposition Agent: "You control your opponents while they're searching their libraries. While an opponent is
+    // searching their library, they exile each card they find." (CR 722: controlling another player.)
+    const hijack = owner === player ? searchHijack(g, player) : {};
     let chosen: ObjectId[];
     if (memo.found) chosen = memo.found;
     else {
@@ -2418,7 +2439,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ctx.events.push({ type: 'searched', player, owner });
           return true;
         }
-        return { ask: { kind: 'search', player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
+        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
@@ -2440,6 +2461,21 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const types = (id: ObjectId) => chars(g, g.objects[id]!).subtypes;
         const common = types(chosen[0]!).filter((t) => chosen.every((id) => types(id).includes(t)));
         if (!common.length) throw new RulesError('The cards must share a land type.');
+      }
+      // Opposition Agent: what they find is exiled, and its controller may play it (spending mana as though any color).
+      if (hijack.exiler) {
+        for (const id of chosen) {
+          if (g.objects[id]?.zone !== 'library') continue;
+          moveObject(g, id, 'exile', ctx.events);
+          const o = g.objects[id]!;
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: hijack.exiler, mode: 'play', lastTurn: Number.MAX_SAFE_INTEGER, anyColor: true });
+        }
+        chosen = chosen.filter((id) => g.objects[id]?.zone !== 'exile');
+        if (!chosen.length) {
+          shuffleInPlace(g, zoneList(g, 'library', owner));
+          ctx.events.push({ type: 'shuffled', player });
+          return true;
+        }
       }
       // Cultivate: revealed, then the player picks which one goes onto the battlefield.
       if (split && chosen.length) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
@@ -2926,17 +2962,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // Takenuma: "return a creature or planeswalker card from your graveyard to your hand" — chosen as it resolves.
   return_chosen(node, ctx) {
     const g = ctx.g;
-    const filter = node.filter as ObjectFilter;
+    // Black Sun's Twilight: "a creature card with mana value X or less" — the X paid.
+    const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
     const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
     if (!candidates.length) return true;
     const max = Math.min(amountOf(ctx, node.amount ?? 1), candidates.length);
     const min = node.optional ? 0 : max;
-    const where = node.to === 'hand' ? 'to your hand' : 'to the battlefield';
+    const where = node.to === 'hand' ? 'to your hand' : node.to === 'exile' ? 'into exile' : 'to the battlefield';
     let chosen: string[];
     if (candidates.length === max && min === max) chosen = candidates;
     else {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard to return ${where}.` } };
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard to ${node.to === 'exile' ? 'exile' : `return ${where}`}.` } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
       }
@@ -2944,7 +2981,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     const moved: ObjectRef[] = [];
     for (const id of chosen) {
-      if (node.to === 'hand') moveObject(g, id, 'hand', ctx.events);
+      if (node.to === 'hand' || node.to === 'exile') moveObject(g, id, node.to, ctx.events);
       else moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
       moved.push({ id, zcc: g.objects[id]!.zcc });
     }
@@ -3634,7 +3671,7 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
   // Tempt with Immortality: "return a creature card from your graveyard to the battlefield" — only with one there.
-  if (e.type === 'return_chosen') return zoneList(g, 'graveyard', chooser).some((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null, anyZone: true }));
+  if (e.type === 'return_chosen') return zoneList(g, 'graveyard', chooser).some((id) => matchesFilter(g, g.objects[id]!, bindFilter(ctx, (e.filter ?? {}) as ObjectFilter), { controller: chooser, source: ctx.source ?? null, anyZone: true }));
   // Leatherhead: "you may remove a counter from her. When you do, …" — only with a counter there to remove.
   if (e.type === 'remove_counters' && e.amount !== 'all') {
     const n = Math.max(1, amountOf(ctx, e.amount));
@@ -4131,7 +4168,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'drew' || check.sourceLeft) return [];
     // "Whenever an opponent draws a card"
-    if (t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
+    if (t.who === 'any' ? false : t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     // "Whenever you draw your second card each turn"
     if (t.nth && e.nth !== t.nth) return [];
     // Orcish Bowmasters: "except the first one they draw in each of their draw steps"
@@ -4489,7 +4526,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

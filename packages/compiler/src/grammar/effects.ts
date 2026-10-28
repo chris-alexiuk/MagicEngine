@@ -2492,6 +2492,12 @@ function countedClause(s: string, b: Binder, subject: Ref | null): Clause | null
 function parseSentenceWithSubject(s: string, b: Binder, subject: Ref | null): EffectNode[] | null {
   const whole = countedClause(s, b, subject);
   if (whole) return whole.effects;
+  // Sword of Light and Shadow: "you gain 3 life and you may return up to one target creature card …" — a choice of its own.
+  const youMay = /^you may (.+)$/.exec(s);
+  if (youMay) {
+    const r = attempt(b, (b) => parseSentence(`You may ${youMay[1]}`, b));
+    if (r) return r;
+  }
   // Tataru Taru: "you draw a card and target opponent may draw a card" — another player's choice (CR 603.5).
   const theyMay = /^(.+?) may (.+)$/.exec(s);
   if (theyMay && theyMay[1] !== 'you') {
@@ -2844,6 +2850,15 @@ const VERBS: Record<string, VerbHandler> = {
   },
   destroy: objectVerb('destroy'),
   exile(args, who, b, imperative) {
+    // Masked Vandal: "you may exile a creature card from your graveyard. If you do, …" — chosen as it resolves (no target).
+    const chosenExile = imperative && who.ref === 'you' ? /^(a|an) ((?!.*\btarget\b).+? card) from your graveyard$/.exec(args) : null;
+    if (chosenExile) {
+      const pf = parseFilter(`${chosenExile[2]} in your graveyard`, b);
+      if (!pf || pf.plural) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      b.it = { ref: 'created' };
+      return [{ type: 'return_chosen', filter, amount: 1, to: 'exile' }];
+    }
     // "that player exiles the top card of their library" (ingest), "Exile the top two cards of target player's library".
     // Necropotence: "Exile the top card of your library face down." (only you may look at it)
     const top = /^the top (card|(\w+) cards) of (your|their|(.+?)'s) library( face down)?$/.exec(args);
@@ -2887,7 +2902,8 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // Takenuma: "return a creature or planeswalker card from your graveyard to your hand" — chosen as it resolves (no
     // target). Blossoming Tortoise: "… to the battlefield tapped".
-    const chosenReturn = /^(a|an|up to (?:one|two|three)) ((?!.*\btarget\b).+? cards?) from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
+    // Tyvar, Jubilant Brawler: "a creature card with mana value 2 or less".
+    const chosenReturn = /^(a|an|up to (?:one|two|three)) ((?!.*\btarget\b).+? cards?(?: with (?:mana value|power|toughness) .+?)?) from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
     if (chosenReturn && who.ref === 'you') {
       const n = chosenReturn[1]!.startsWith('up to ') ? parseAmount(chosenReturn[1]!.slice(6)) : 1;
       const pf = parseFilter(`${chosenReturn[2]} in your graveyard`, b);

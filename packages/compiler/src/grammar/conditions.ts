@@ -356,6 +356,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(life[2]!);
     return c ? { type: 'life', ...c, ...(life[1] === 'you' ? {} : { who: life[1] === 'a player' ? 'any_player' : 'any_opponent' }) } : null;
   }
+  // Resonating Lute: "… cards in your hand" means the same.
+  if (/^you have /.test(t)) t = t.replace(/ cards in your hand( than|$)/, ' cards in hand$1');
   if (/^you have no cards in hand$/.test(t)) return { type: 'hand', op: 'le', n: 0 };
   // "you have more cards in hand than each opponent"
   const moreHand = /^you have (more|fewer) cards in hand than (each|an) opponent$/.exec(t);
