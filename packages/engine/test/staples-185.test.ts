@@ -370,6 +370,11 @@ const CARDS = [
   makeCard({ name: 'Ripples Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Proliferate, then choose any number of permanents you control that had a counter put on them this way. Those permanents phase out.' }),
   makeCard({ name: 'Breach Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Each player mills ten cards. For each player, choose a creature or planeswalker card in that player's graveyard. Put those cards onto the battlefield under your control. Then each creature you control becomes a Phyrexian in addition to its other types." }),
   makeCard({ name: 'Faith Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Prevent the next 3 damage that would be dealt to target creature this turn. For each 1 damage prevented this way, put a +1/+1 counter on that creature.' }),
+  makeCard({ name: 'Moraug Lite', type_line: 'Legendary Creature — Minotaur Warrior', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "Each creature you control gets +1/+0 for each time it has attacked this turn.\nLandfall — Whenever a land you control enters, if it's your main phase, there's an additional combat phase after this phase. At the beginning of that combat, untap all creatures you control." }),
+  makeCard({ name: 'Vapor Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Return target nonland permanent to its owner's hand. Then that permanent's controller may sacrifice a land of their choice. If the player does, they may copy this spell and may choose a new target for that copy." }),
+  makeCard({ name: 'Lightning Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "This spell deals 3 damage to any target. Then that player or that permanent's controller may pay {R}{R}. If the player does, they may copy this spell and may choose a new target for that copy." }),
+  makeCard({ name: 'Beseech Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Bargain\nSearch your library for a card, exile it face down, then shuffle. If this spell was bargained, you may cast the exiled card without paying its mana cost if that spell's mana value is 4 or less. Put the exiled card into your hand if it wasn't cast this way." }),
+  makeCard({ name: 'Ugin Lite', type_line: 'Legendary Planeswalker — Ugin', mana_cost: '{0}', loyalty: '4', oracle_text: '+1: Exile the top card of your library face down and look at it. Create a 2/2 colorless Spirit creature token. When that token leaves the battlefield, put the exiled card into your hand.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -4151,6 +4156,58 @@ describe('staples (slice 215)', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
     expect(g.objects[ogre]).toMatchObject({ damage: 3, counters: { '+1/+1': 3 } });
   });
+  it('Moraug: landfall in main 2 adds a combat that begins by untapping; +1/+0 for each attack this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Moraug Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const attack = () => {
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } });
+    };
+    attack();
+    expect(chars(g, g.objects[bear]!).power).toBe(3);
+    g = toStep(g, 'main2', 'alice');
+    expect(g.objects[bear]!.tapped).toBe(true);
+    g = settle(act(g, { type: 'play_land', player: 'alice', object: give(g, 'alice', 'Forest', 'hand') }));
+    g = settle(g);
+    for (let i = 0; i < 20 && g.step !== 'beginning_of_combat'; i++) if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    g = settle(g);
+    expect(g.step).toBe('beginning_of_combat');
+    for (let i = 0; i < 10 && g.objects[bear]!.tapped && g.priority; i++) g = act(g, { type: 'pass', player: g.priority });
+    expect(g.objects[bear]!.tapped).toBe(false);
+    g = toAttack(g);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } });
+    expect(chars(g, g.objects[bear]!).power).toBe(4);
+  });
+  it('Chain of Vapor: the bounced permanent\'s controller may sacrifice a land to copy it, with a new target', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const land = give(g, 'bob', 'Forest', 'battlefield');
+    const trinket = give(g, 'alice', 'Trinket', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Vapor Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob' });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [land] } });
+    expect(g.pending).toMatchObject({ kind: 'may', player: 'bob' });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'may', yes: true } });
+    expect(g.pending).toMatchObject({ kind: 'copy_targets', player: 'bob' });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'copy_targets', targets: [[{ kind: 'object', object: trinket }]] } });
+    g = settle(g);
+    // Alice may now chain it back; she has no land.
+    expect([g.objects[bear]!.zone, g.objects[land]!.zone, g.objects[trinket]!.zone]).toEqual(['hand', 'graveyard', 'hand']);
+  });
+  it('Chain Lightning: the damaged player may pay {R}{R} to copy it back', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b] = [g.players.alice!.life, g.players.bob!.life];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Lightning Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.pending).toMatchObject({ kind: 'pay', player: 'bob' });
+    g.players.bob!.pool.R = 2;
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'pay', pay: true } });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'may', yes: true } });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'copy_targets', targets: [[{ kind: 'player', player: 'alice' }]] } });
+    g = settle(g);
+    if (g.pending?.kind === 'pay') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: false } }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([a - 3, b - 3]);
+  });
   it('Ripples of Potential: proliferate, then phase out any of yours that got a counter', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const [a, b] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
@@ -4184,6 +4241,38 @@ describe('staples (slice 215)', () => {
     g = settle(g);
     expect(g.players.alice!.life).toBe(life + 6);
     expect(g.zones.hand.bob!.length).toBe(hand + 2);
+  });
+});
+
+describe('staples (slice 216)', () => {
+  it('Ugin, the Ineffable: the face-down card comes to hand when the Spirit token leaves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ugin = give(g, 'alice', 'Ugin Lite', 'battlefield');
+    g.objects[ugin]!.counters.loyalty = 4;
+    const top = g.zones.library.alice![0]!;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: ugin, ability: 0 }));
+    expect(g.objects[top]).toMatchObject({ zone: 'exile', hiddenFor: 'alice' });
+    const token = g.zones.battlefield.find((id) => g.objects[id]!.token)!;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: token }]] }));
+    expect(g.objects[top]!.zone).toBe('hand');
+  });
+  it('Beseech the Mirror: bargained, cast the found card free (mana value 4 or less); otherwise it goes to hand', () => {
+    for (const bargain of [true, false]) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const trinket = give(g, 'alice', 'Trinket', 'battlefield');
+      const bear = give(g, 'alice', 'Bear', 'library');
+      const beseech = give(g, 'alice', 'Beseech Lite', 'hand');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: beseech, ...(bargain ? { extras: ['bargain'], costs: { sacrifice: [trinket] } } : {}) }));
+      g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [bear] } });
+      if (bargain) {
+        expect(g.pending).toMatchObject({ kind: 'cast_free', object: bear });
+        g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: true } }));
+        expect([g.objects[bear]!.zone, g.objects[trinket]!.zone]).toEqual(['battlefield', 'graveyard']);
+      } else {
+        g = settle(g);
+        expect(g.objects[bear]!.zone).toBe('hand');
+      }
+    }
   });
 });
 

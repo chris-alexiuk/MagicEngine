@@ -201,6 +201,31 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   if (/^Proliferate, then choose any number of permanents you control that had a counter put on them this way\. Those permanents phase out\.$/.test(text.trim())) {
     return [{ type: 'proliferate' }, { type: 'phase_out_proliferated' }];
   }
+  // Beseech the Mirror: "Search your library for a card, exile it face down, then shuffle. If this spell was bargained, you may
+  // cast the exiled card without paying its mana cost if that spell's mana value is 4 or less. Put the exiled card into your
+  // hand if it wasn't cast this way."
+  const beseech = /^Search your library for a card, exile it face down, then shuffle\. If (.+?), you may cast the exiled card without paying its mana cost if that spell's mana value is (\d+) or less\. Put the exiled card into your hand if it wasn't cast this way\.$/.exec(text.trim());
+  if (beseech) {
+    const cond = parseCondition(beseech[1]!, b);
+    if (!cond) return null;
+    return [
+      { type: 'search', filter: { zone: 'library', owner: 'you' }, amount: 1, to: 'exile', faceDown: true },
+      { type: 'if', cond, effects: [{ type: 'cast_free', what: { ref: 'created' }, maxMV: Number(beseech[2]) }] },
+      { type: 'move', what: { ref: 'created' }, to: 'hand' },
+    ];
+  }
+  // Ugin, the Ineffable: "Exile the top card of your library face down and look at it. Create a 2/2 colorless Spirit creature
+  // token. When that token leaves the battlefield, put the exiled card into your hand."
+  const ugin = /^Exile the top card of your library face down and look at it\. (Create an? [^.]+? token)\. When that token leaves the battlefield, put the exiled card into your hand\.$/.exec(text.trim());
+  if (ugin) {
+    const made = parseSentence(ugin[1]!, b);
+    if (!made || made.length !== 1 || made[0]!.type !== 'create_token' || made[0]!.amount !== 1) return null;
+    return [
+      { type: 'exile_top', amount: 1, who: { ref: 'you' }, faceDown: true, lookAt: true },
+      ...made,
+      { type: 'delayed_leave', what: { ref: 'created' }, anyZone: true, effects: [{ type: 'move', what: { ref: 'moved_onto' }, to: 'hand' }] },
+    ];
+  }
   // Conduit of Worlds: "Choose target nonland permanent card in your graveyard. If you haven't cast a spell this turn, you may
   // cast that card. If you do, you can't cast additional spells this turn." — cast as it resolves, paying its costs (CR 608.2g).
   const conduit = /^Choose (target .+?)\. If (.+?), you may cast that card\. If you do, you can't cast additional spells this turn\.$/.exec(text.trim());
@@ -296,6 +321,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
+      // The Chains: "Then that player or that permanent's controller may pay {R}{R}. If the player does, they may copy this
+      // spell and may choose a new target for that copy." (Chain of Vapor: "may sacrifice a land of their choice"; Chain of
+      // Plasma: "may discard a card"; Chain of Acid: "may copy this spell …" outright.)
+      const chainWho = /^(?:that player or that permanent's controller|that (?:permanent|creature|land)'s controller|that player)$/;
+      const chainCost = /^(that player or that permanent's controller|that (?:permanent|creature|land)'s controller|that player) may (pay ((?:\{[^}]+\})+)|sacrifice a land of their choice|discard a card)$/i.exec(s.replace(/^Then /, ''));
+      const chainNow = /^(that player or that permanent's controller|that (?:permanent|creature|land)'s controller|that player) may copy (?:this spell|~) and may choose a new target for that copy$/i.exec(s.replace(/^Then /, ''));
+      const chainNext = chainCost && /^If the player does, they may copy (?:this spell|~) and may choose a new target for that copy$/.test(sentences[i + 1] ?? '');
+      if ((chainCost && chainNext) || chainNow) {
+        const lower = (chainCost ?? chainNow)![1]!.toLowerCase();
+        const target = b.targets.length ? { ref: 'target' as const, index: b.targets.length - 1 } : null;
+        if (!target || !chainWho.test(lower) || !/\bSorcery\b|\bInstant\b/.test(b.env.typeLine)) return null;
+        const c = chainCost?.[2];
+        const cost = !c ? undefined : chainCost![3] ? { mana: chainCost![3] } : /^sacrifice/.test(c) ? { sacrifice: { types: ['Land'] } } : { discard: 1 };
+        out.push({ type: 'chain_copy', who: target, ...(cost ? { cost } : {}) });
+        if (chainNext) i++;
+        continue;
+      }
       // Hunter's Insight: "Choose target creature you control. Whenever that creature deals combat damage to a player or
       // planeswalker this turn, draw that many cards."; Massacre Girl: "Whenever a creature dies this turn, …" — a triggered
       // ability for the rest of the turn (CR 603.7).
@@ -589,6 +631,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const SAFE = new Set(['create_token', 'deal_damage', 'gain_life', 'lose_life', 'draw', 'add_counters']);
         if (!inner || pb.targets.length !== before || pb.unsupported || !inner.every((e) => SAFE.has(e.type) && !e.copyOf)) return null;
         last.then = inner;
+        continue;
+      }
+      // Moraug: "… there's an additional combat phase after this phase. At the beginning of that combat, untap all creatures
+      // you control." — a delayed trigger for the beginning of that combat phase (CR 500.8, 603.7).
+      const thatCombat = i > 0 ? /^At the beginning of that combat, (.+)$/.exec(s) : null;
+      if (thatCombat) {
+        const last = out[out.length - 1];
+        if (last?.type !== 'extra_combat' || last.begin) return null;
+        const inner = parseSentence(capitalise(thatCombat[1]!), b);
+        if (!inner) return null;
+        last.begin = inner;
         continue;
       }
       const spendOnly = i > 0 ? /^Spend this mana only (.+)$/.exec(s) : null;
@@ -4200,6 +4253,7 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return what ? [{ type: 'phase_out', what: what.ref }] : null;
   }
   // CR 500.8: "After this phase, there is an additional combat phase (followed by an additional main phase)."
+  c = c.replace(/^there's an additional/i, 'there is an additional');
   const extraCombat =
     /^after this (?:main )?phase, there is an additional combat phase( followed by an additional main phase)?$/i.exec(c) ??
     /^there is an additional combat phase( followed by an additional main phase)? after this (?:main )?phase$/i.exec(c) ??

@@ -442,7 +442,7 @@ export interface DelayedTrigger {
   sourceName: string;
   text: string;
   /** CR 511.2: "at end of combat" is the end of combat step. */
-  step: 'end' | 'upkeep' | 'end_of_combat' | 'main' | 'main1';
+  step: 'end' | 'upkeep' | 'end_of_combat' | 'main' | 'main1' | 'beginning_of_combat';
   createdTurn: number;
   createdStep: Step;
   effects: EffectNode[];
@@ -457,6 +457,8 @@ export interface DelayedTrigger {
   on?: { who: 'you'; filter: ObjectFilter };
   /** Earthbend (CR 701.66a): "When that land dies or is put into exile" — this permanent leaving for those zones. */
   leaves?: ObjectRef;
+  /** Ugin, the Ineffable: "When that token leaves the battlefield" — for any zone. */
+  leavesAnyZone?: true;
 }
 
 /** CR 615: a prevention effect from a resolved spell or ability, this turn only. */
@@ -1017,7 +1019,7 @@ export interface GameState {
   /** CR 702.26b: phased-out permanents — still on the battlefield, but not in its list (they're treated as though they don't exist). */
   phasedOut?: ObjectId[];
   /** CR 500.8: additional combat phases to come after the current phase (each maybe followed by a main phase). */
-  extraPhases?: { main: boolean }[];
+  extraPhases?: { main: boolean; begin?: { effects: EffectNode[]; controller: PlayerId; source: ObjectRef; sourceName: string } }[];
   /** The phases being added now: whether a main phase follows this combat, and the step the turn goes back to. */
   inExtra?: { main: boolean; then: Step; mainNow?: true };
   lastTurnSpells: Record<PlayerId, number>;

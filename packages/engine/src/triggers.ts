@@ -611,16 +611,17 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
     if (e.type === 'moved' && e.from === 'battlefield' && g.delayed.some((d) => d.leaves?.id === e.object)) {
       const o = g.objects[e.object];
       for (const d of [...g.delayed]) {
-        if (d.leaves?.id !== e.object || !o || o.zcc !== d.leaves.zcc + 1) continue;
+        // A token that left has ceased to exist (CR 111.7) — it still left.
+        if (d.leaves?.id !== e.object || (o ? o.zcc !== d.leaves.zcc + 1 : !d.leavesAnyZone)) continue;
         g.delayed = g.delayed.filter((x) => x.id !== d.id);
-        if (e.to !== 'graveyard' && e.to !== 'exile') continue;
+        if (!d.leavesAnyZone && e.to !== 'graveyard' && e.to !== 'exile') continue;
         g.triggers.push({
           id: `t${g.nextId++}`,
           controller: d.controller,
           source: d.source,
           sourceName: d.sourceName,
           ability: { kind: 'triggered', text: d.text, trigger: { type: 'leaves', subject: { ref: 'self' } }, effects: d.effects },
-          info: { object: { id: o.id, zcc: o.zcc } },
+          info: { ...d.info, object: { id: e.object, zcc: o ? o.zcc : d.leaves.zcc + 1 } },
           boundTargets: [],
         });
       }

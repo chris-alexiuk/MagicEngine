@@ -120,6 +120,11 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (moved) return moved;
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Moraug: "for each time it has attacked this turn".
+  if (t === 'time it has attacked this turn') {
+    const of = parseObjectRef('it', b.clone(), 'static');
+    if (of && !of.plural) return { kind: 'attacks_this_turn', of: of.ref };
+  }
   // Otharri: "for each experience counter you have" (CR 122.1: counters on a player).
   const playerCounter = /^(\w+) counter you have$/.exec(t);
   if (playerCounter) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounter[1]! };

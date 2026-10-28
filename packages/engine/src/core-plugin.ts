@@ -2230,6 +2230,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const src = ctx.source;
         if (src && src.id !== id && src.zone !== 'stack') o.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
         exiled.push({ id, zcc: o.zcc });
+        // Ugin, the Ineffable: "Exile the top card of your library face down and look at it." — you may look at it.
+        if (node.faceDown && node.lookAt) o.hiddenFor = ctx.controller;
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
           // "for as long as it remains exiled": until it leaves (the permission follows this object, CR 400.7).
@@ -2240,6 +2242,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     // "that card", "those cards" in what follows.
     if (ctx.resolution) ctx.resolution.created = exiled;
+    // "the exiled card" afterwards (Ugin, the Ineffable), even once a token has been created.
+    if (ctx.resolution) ctx.resolution.movedOnto = exiled;
     return true;
   },
 
@@ -2502,7 +2506,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 500.8: "After this phase, there is an additional combat phase [followed by an additional main phase]."
   extra_combat(node, ctx) {
-    (ctx.g.extraPhases ??= []).push({ main: Boolean(node.main) });
+    // Moraug: "At the beginning of that combat, untap all creatures you control." — set up as that phase begins.
+    const begin = node.begin ? { begin: { effects: node.begin as EffectNode[], controller: ctx.controller, source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 }, sourceName: sourceName(ctx) } } : {};
+    (ctx.g.extraPhases ??= []).push({ main: Boolean(node.main), ...begin });
     return true;
   },
 
@@ -2823,6 +2829,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // Archdruid's Charm: "Put it onto the battlefield tapped if it's a land card. Otherwise, put it into your hand."
         if (node.landsTo === 'battlefield' && hasType(g, g.objects[id]!, 'Land')) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(node.landsTapped ? { tapped: true } : {}) });
         else moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}), ...(node.counters ? { counters: node.counters as Record<string, number> } : {}) } : {});
+        // Beseech the Mirror: "exile it face down" — only the player who found it may look at it (CR 406.3).
+        if (to === 'exile' && node.faceDown && g.objects[id]?.zone === 'exile') g.objects[id]!.hiddenFor = player;
       }
       // Fabled Passage: "… put it onto the battlefield tapped, then shuffle. Then if …, untap that land." — what was found.
       if (ctx.resolution && chosen.length) ctx.resolution.created = chosen.map((id) => ({ id, zcc: g.objects[id]!.zcc }));
@@ -2973,6 +2981,63 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 707.10: "copy target instant or sorcery spell", "copy that spell", storm's "copy it for each …",
   // "copy target activated or triggered ability you control", "copy that ability".
+  // The Chains (Chain Lightning, Chain of Vapor, …): "Then that player or that permanent's controller may pay {R}{R}. If the
+  // player does, they may copy this spell and may choose a new target for that copy." — the copy is theirs (CR 707.10).
+  chain_copy(node, ctx) {
+    const g = ctx.g;
+    const entry = ctx.resolution?.entry;
+    if (!entry || entry.kind !== 'spell') return true;
+    const memo = ctx.memo as { p?: PlayerId | null; paid?: boolean; made?: string };
+    if (memo.p === undefined) {
+      const who = ref(node, 'who') as Ref;
+      // "that player or that permanent's controller": the targeted player, or the targeted permanent's controller.
+      const players = who.ref === 'target' ? [...refPlayers(ctx, who), ...refPlayers(ctx, { ref: 'controller_of', of: who } as Ref)] : refPlayers(ctx, who);
+      memo.p = players[0] ?? null;
+    }
+    const p = memo.p;
+    if (!p || g.players[p]?.lost) return true;
+    const cost = node.cost as { mana?: string; sacrifice?: ObjectFilter; discard?: number } | undefined;
+    const name = nameOf(g, g.objects[entry.object]!);
+    if (memo.paid === undefined) {
+      if (!cost) memo.paid = true;
+      else if (cost.mana) {
+        const a = answerOf(ctx, 'pay');
+        if (!a) return { ask: { kind: 'pay', player: p, cost: cost.mana, text: `Pay ${cost.mana} to copy ${name}?`, sourceName: sourceName(ctx) } };
+        if (a.pay) payDuringResolution(g, p, cost.mana, ctx.events);
+        memo.paid = a.pay;
+      } else if (cost.sacrifice || cost.discard) {
+        const candidates = cost.sacrifice
+          ? g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, cost.sacrifice!, { controller: p, source: ctx.source ?? null }))
+          : [...zoneList(g, 'hand', p)];
+        if (!candidates.length) return true;
+        const a = answerOf(ctx, 'choose_objects');
+        if (!a) return { ask: { kind: 'choose_objects', player: p, candidates, min: 0, max: 1, text: `${cost.sacrifice ? 'Sacrifice a land' : 'Discard a card'} to copy ${name}? (Choose none to decline.)` } };
+        if (a.objects.length > 1 || !a.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose at most one of those.');
+        const pick = a.objects[0];
+        if (pick && cost.sacrifice) sacrifice(g, g.objects[pick]!, p, ctx.events);
+        if (pick && cost.discard) discardCard(g, pick, ctx.events);
+        memo.paid = Boolean(pick);
+      }
+      if (!memo.paid) return true;
+    }
+    if (!memo.made) {
+      const a = answerOf(ctx, 'may');
+      if (!a) return { ask: { kind: 'may', player: p, text: `Copy ${name}?`, sourceName: sourceName(ctx) } };
+      if (!a.yes) return true;
+      memo.made = copySpell(g, entry, p, ctx.events);
+      const copy = g.stack.find((s) => s.kind === 'spell' && s.object === memo.made);
+      if (!copy?.program?.specs.length) return true;
+      const current = copy.targets.map((list) => list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })));
+      const prompts = targetPrompts(g, p, copy.program.specs, g.objects[memo.made] ?? null);
+      return { ask: { kind: 'copy_targets', player: p, object: memo.made, sourceName: sourceName(ctx), text: name, prompts, current } };
+    }
+    const a = answerOf(ctx, 'copy_targets');
+    const copy = g.stack.find((s) => s.kind === 'spell' && s.object === memo.made);
+    if (a?.targets && copy?.program) copy.targets = chooseTargets(g, p, copy.program.specs, a.targets, g.objects[memo.made] ?? null, copy.x ?? 0);
+    if (copy) announceTargets(copy, ctx.events);
+    return true;
+  },
+
   copy_spell(node, ctx) {
     const g = ctx.g;
     if (!ctx.memo.made) {
@@ -3467,6 +3532,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   cast_free(node, ctx) {
     const o = refObjects(ctx, ref(node, 'what'))[0];
     if (!o || o.zone === 'stack' || o.zone === 'battlefield' || !castableCard(ctx.g, o)) return true;
+    // Beseech the Mirror: "… if that spell's mana value is 4 or less" (cast without its mana cost, X is 0: CR 107.3b).
+    if (node.maxMV !== undefined && manaValueOf(ctx.g, o) > Number(node.maxMV)) return true;
     // "If that spell would be put into your graveyard, exile it instead."
     if (node.exileOnLeave) ctx.memo.exileOnLeave = true;
     return offerFreeCast(ctx, o.id) ?? true;
@@ -3764,7 +3831,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: source ? { id: source.id, zcc: ctx.resolution?.found?.[source.id] === source.zcc ? source.zcc : (ctx.sourceZcc ?? source.zcc) } : { id: '', zcc: 0 },
       sourceName: sourceName(ctx),
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
-      step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' ? node.step : 'end',
+      step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' || node.step === 'beginning_of_combat' ? node.step : 'end',
       ...(node.whose === 'you' ? { whose: 'you' as const } : {}),
       ...(node.laterTurn ? { laterTurn: true as const } : {}),
       createdTurn: g.turn,
@@ -3818,13 +3885,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         controller: ctx.controller,
         source: ctx.source ? { id: ctx.source.id, zcc: ctx.sourceZcc ?? ctx.source.zcc } : { id: '', zcc: 0 },
         sourceName: sourceName(ctx),
-        text: `When ${nameOf(g, o)} dies or is put into exile, return it to the battlefield tapped under your control.`,
+        text: node.anyZone ? `When ${nameOf(g, o)} leaves the battlefield, …` : `When ${nameOf(g, o)} dies or is put into exile, return it to the battlefield tapped under your control.`,
         step: 'end',
         createdTurn: g.turn,
         createdStep: g.step,
         effects: node.effects as EffectNode[],
         targets: [],
         leaves: { id: o.id, zcc: o.zcc },
+        // Ugin, the Ineffable: "When that token leaves the battlefield, put the exiled card into your hand." — to anywhere,
+        // and "the exiled card" is the one this resolution exiled.
+        ...(node.anyZone ? { leavesAnyZone: true as const } : {}),
+        ...(ctx.resolution?.movedOnto ? { info: { movedOnto: ctx.resolution.movedOnto } } : {}),
       });
     }
     return true;

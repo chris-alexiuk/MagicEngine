@@ -314,6 +314,11 @@ function extraPhaseStep(g: GameState, next: Step | null): Step | null {
   const queued = g.extraPhases?.shift();
   if (queued) {
     g.inExtra = { main: queued.main, then: x ? x.then : (next ?? 'end') };
+    // Moraug: "At the beginning of that combat, …" — a delayed trigger for this phase's beginning of combat step (CR 603.7).
+    if (queued.begin) {
+      const b = queued.begin;
+      g.delayed.push({ id: `d${g.nextId++}`, controller: b.controller, source: b.source, sourceName: b.sourceName, text: `${b.sourceName}: at the beginning of that combat`, step: 'beginning_of_combat', createdTurn: g.turn, createdStep: g.step, effects: b.effects, targets: [] });
+    }
     return 'beginning_of_combat';
   }
   if (x) {
