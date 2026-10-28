@@ -511,6 +511,8 @@ export interface Resolution {
   chosen?: { color?: Color; creatureType?: string; landType?: string };
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
   lifeLost?: number;
+  /** Myr Battlesphere: how many permanents "you may tap X untapped Myr" tapped. */
+  tappedThisWay?: number;
   /** Damage this resolution's effects dealt ("You gain life equal to the damage dealt this way"). */
   damageDealt?: number;
   /** CR 120.10: excess damage this resolution dealt to permanents ("the amount of excess damage dealt this way"). */

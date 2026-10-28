@@ -168,6 +168,13 @@ const CARDS = [
   makeCard({ name: 'Rotpriest Lite', type_line: 'Creature — Phyrexian Druid', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: 'Whenever a creature you control becomes the target of a spell, target opponent gets a poison counter.' }),
   makeCard({ name: 'Thalisse Lite', type_line: 'Legendary Creature — Human Cleric', mana_cost: '{0}', power: '2', toughness: '3', oracle_text: 'At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.' }),
   makeCard({ name: 'Make Two', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create two 1/1 white Soldier creature tokens.' }),
+  makeCard({ name: 'Specimen Lite', type_line: 'Creature — Weird', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: 'Flash\nWhen this creature enters, you may change the target of target instant or sorcery spell with a single target to this creature.' }),
+  makeCard({ name: 'Trawler Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{3}', cmc: 3, power: '3', toughness: '2', oracle_text: 'Whenever this creature dies or another artifact you control is put into a graveyard from the battlefield, return to your hand target artifact card in your graveyard with lesser mana value.' }),
+  makeCard({ name: 'Two Rock', type_line: 'Artifact', mana_cost: '{2}', cmc: 2, oracle_text: '' }),
+  makeCard({ name: 'Shatter Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy target artifact.' }),
+  makeCard({ name: 'Etali Lite', type_line: 'Legendary Creature — Elder Dinosaur', mana_cost: '{0}', power: '7', toughness: '7', oracle_text: 'When Etali enters, each player exiles cards from the top of their library until they exile a nonland card. You may cast any number of spells from among the nonland cards exiled this way without paying their mana costs.' }),
+  makeCard({ name: 'Battlesphere Lite', type_line: 'Artifact Creature — Myr Construct', mana_cost: '{0}', power: '4', toughness: '7', oracle_text: "Whenever this creature attacks, you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and deals X damage to the player or planeswalker it's attacking." }),
+  makeCard({ name: 'Myr Lite', type_line: 'Artifact Creature — Myr', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -511,7 +518,10 @@ describe('staples (slice 187): from the library', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const chip = give(g, 'alice', 'Reality Chip Lite', 'battlefield');
     const bear = give(g, 'alice', 'Zombie', 'battlefield');
-    const top = g.zones.library.alice![0]!;
+    // A card that can be played from the top (whatever the shuffle put there).
+    const top = give(g, 'alice', 'Salve', 'library');
+    g.zones.library.alice!.splice(g.zones.library.alice!.indexOf(top), 1);
+    g.zones.library.alice!.unshift(top);
     const playsTop = () => legalActions(g, 'alice').some((a) => (a.type === 'cast' || a.type === 'play_land') && (a as { object: string }).object === top);
     g.players.alice!.pool.C = 9;
     g.players.alice!.pool.G = 9;
@@ -1755,5 +1765,94 @@ describe('staples (slice 200): combat and token counts', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Make Two', 'hand') }));
     g = settle(toStep(g, 'end', 'alice'));
     expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(4);
+  });
+});
+
+describe('staples (slice 200): redirecting a spell', () => {
+  it('Hydroelectric Specimen: the spell now targets this creature', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const ogre = give(g, 'alice', 'Ogre', 'battlefield');
+    const bolt = give(g, 'bob', 'Bolt', 'hand');
+    g = act(g, { type: 'cast', player: 'bob', object: bolt, targets: [[{ kind: 'object', object: ogre }]] });
+    g = act(g, { type: 'pass', player: 'bob' });
+    const spec = give(g, 'alice', 'Specimen Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: spec });
+    for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bolt }]] } });
+      else if (p?.kind === 'may') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'may', yes: true } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.objects[ogre]!.damage, g.objects[spec]!.damage]).toEqual([0, 3]);
+  });
+});
+
+describe('staples (slice 200): targets counted from the event', () => {
+  it('Scrap Trawler: an artifact card with lesser mana value than the one that went to the graveyard', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Trawler Lite', 'battlefield');
+    const rock = give(g, 'alice', 'Two Rock', 'battlefield');
+    const [one, zero, three] = [give(g, 'alice', 'Trinket', 'graveyard'), give(g, 'alice', 'Food Card', 'graveyard'), give(g, 'alice', 'Three Relic', 'graveyard')];
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Shatter Lite', 'hand'), targets: [[{ kind: 'object', object: rock }]] });
+    let offered: string[] = [];
+    for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'trigger_targets') {
+        offered = p.prompts[0]!.candidates.map((c) => (c.kind === 'object' ? c.object : ''));
+        g = act(g, { type: 'choose', player: p.player, answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: one }]] } });
+      } else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(offered.includes(one) && offered.includes(zero) && !offered.includes(rock) && !offered.includes(three)).toBe(true);
+    expect(g.objects[one]!.zone).toBe('hand');
+  });
+});
+
+describe('staples (slice 200): Etali, Primal Conqueror', () => {
+  it('each player exiles until a nonland card; you cast them free', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const top = (p: string, name: string) => {
+      const id = give(g, p, name, 'library');
+      const lib = g.zones.library[p]!;
+      lib.splice(lib.indexOf(id), 1);
+      lib.unshift(id);
+      return id;
+    };
+    const salve = top('alice', 'Salve');
+    top('alice', 'Forest');
+    const draw = top('bob', 'Draw Three');
+    const [life, hand] = [g.players.alice!.life, g.zones.hand.alice!.length];
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Etali Lite', 'hand') });
+    for (let i = 0; i < 40 && (g.stack.length || g.pending); i++) {
+      const p = g.pending;
+      if (p?.kind === 'choose_objects') {
+        expect([...p.candidates].sort()).toEqual([salve, draw].sort());
+        g = act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_objects', objects: [salve, draw] } });
+      } else if (p?.kind === 'cast_free') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'cast_free', cast: true } } as never);
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.players.alice!.life, g.zones.hand.alice!.length]).toEqual([life + 3, hand - 1 + 1 + 3]);
+  });
+});
+
+describe('staples (slice 200): Myr Battlesphere', () => {
+  it('X Myr tapped: +X/+0 and X damage to the player it attacks', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sphere = give(g, 'alice', 'Battlesphere Lite', 'battlefield');
+    const myr = [give(g, 'alice', 'Myr Lite', 'battlefield'), give(g, 'alice', 'Myr Lite', 'battlefield')];
+    const life = g.players.bob!.life;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: sphere, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      const p = g.pending;
+      if (p?.kind === 'choose_objects') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_objects', objects: myr } });
+      else if (p?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: p.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (p) throw new Error(p.kind);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(myr.every((id) => g.objects[id]!.tapped)).toBe(true);
+    expect(g.players.bob!.life).toBe(life - 2 - 6);
   });
 });

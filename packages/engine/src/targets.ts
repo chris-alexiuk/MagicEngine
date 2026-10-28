@@ -2,7 +2,7 @@ import type { EffectNode, ObjectFilter, TargetSpec } from '@mtg/schema';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import { filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
-import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef } from './types.js';
+import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TriggerInfo } from './types.js';
 import { playerRule } from './player-rules.js';
 import { livePlayers, nameOf } from './zones.js';
 
@@ -10,6 +10,18 @@ import { livePlayers, nameOf } from './zones.js';
  * Targeting (CR 115). `source` is the object the spell or ability comes from: the
  * spell itself for a spell, or the permanent whose ability it is.
  */
+
+/** The event a triggered ability's targets are being chosen or checked for (Scrap Trawler: "with lesser mana value"). */
+let triggerInfo: TriggerInfo | undefined;
+export function withTriggerInfo<T>(info: TriggerInfo | undefined, fn: () => T): T {
+  const before = triggerInfo;
+  triggerInfo = info;
+  try {
+    return fn();
+  } finally {
+    triggerInfo = before;
+  }
+}
 
 /**
  * Alesha: "target creature card with mana value less than or equal to Alesha's power", Lay Down Arms: "… less than or
@@ -19,7 +31,7 @@ import { livePlayers, nameOf } from './zones.js';
 function countedFilter(g: GameState, controller: PlayerId, filter: ObjectFilter, source: GameObject | null): ObjectFilter {
   const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object');
   if (!keys.length) return filter;
-  const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: 0, memo: {} } as EffectContext;
+  const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: 0, memo: {}, ...(triggerInfo ? { trigger: triggerInfo } : {}) } as EffectContext;
   const out: ObjectFilter = { ...filter };
   for (const k of keys) out[k] = { ...filter[k]!, n: amountOf(ctx, filter[k]!.n) };
   return out;

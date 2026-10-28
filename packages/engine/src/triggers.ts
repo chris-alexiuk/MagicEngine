@@ -6,7 +6,7 @@ import type { EffectContext } from './registry.js';
 import { flatten, programRuns, recordModes, usedModes } from './program.js';
 import { matchTrigger } from './registry.js';
 import { amountOf, apnap } from './resolve.js';
-import { chooseTargets, dividedCap, divisionFor, targetCandidates, targetPrompts, targetsRequired } from './targets.js';
+import { chooseTargets, dividedCap, divisionFor, targetCandidates, targetPrompts, targetsRequired, withTriggerInfo } from './targets.js';
 import {
   RulesError,
   type GameEvent,
@@ -332,6 +332,11 @@ export function stackTriggers(g: GameState, events: GameEvent[]): void {
 
 /** Puts one trigger on the stack, asking for modes and targets when there's a real choice (CR 603.3c–d). */
 function putOnStack(g: GameState, t: PendingTrigger, events: GameEvent[], answer?: { modes?: number[]; targets: Target[][] }): void {
+  // Scrap Trawler: targets counted from the event ("with lesser mana value" than the artifact that died).
+  withTriggerInfo(t.info, () => putOnStackNow(g, t, events, answer));
+}
+
+function putOnStackNow(g: GameState, t: PendingTrigger, events: GameEvent[], answer?: { modes?: number[]; targets: Target[][] }): void {
   const ability = abilityOf(g, t);
   const source = g.objects[t.source.id] ?? null;
   const specs = ability.targets ?? [];

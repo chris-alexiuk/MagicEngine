@@ -2558,3 +2558,20 @@ describe('slice 200', () => {
     expect(parse('At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'tokens_created_this_turn' } }] });
   });
 });
+
+describe('slice 200 (more)', () => {
+  it('reads redirection to the source, targets counted from the event and Sword of Hearth and Home', () => {
+    expect(parse('When this creature enters, you may change the target of target instant or sorcery spell with a single target to this creature.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'may', effects: [{ type: 'retarget', change: true, toSelf: true }] }] });
+    expect(parse('Whenever this creature dies or another artifact you control is put into a graveyard from the battlefield, return to your hand target artifact card in your graveyard with lesser mana value.', 'Artifact Creature').abilities[0]).toMatchObject({ trigger: { type: 'either' }, targets: [{ filter: { manaValue: { op: 'lt', n: { kind: 'stat', of: { ref: 'trigger_object' } } } } }] });
+    expect(parse('Whenever equipped creature deals combat damage to a player, exile up to one target creature you own, then search your library for a basic land card. Put both cards onto the battlefield under your control, then shuffle.', 'Artifact').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile' }, { type: 'move', to: 'battlefield', under: 'you' }, { type: 'search', to: 'battlefield' }] });
+    // "lesser mana value" means nothing without an event object.
+    expect(parse('Return target artifact card in your graveyard with lesser mana value to your hand.', 'Sorcery').unparsed).toHaveLength(1);
+  });
+});
+
+describe('slice 201', () => {
+  it('reads exiling until a nonland card for each player and tapping X creatures', () => {
+    expect(parse('When Etali enters, each player exiles cards from the top of their library until they exile a nonland card. You may cast any number of spells from among the nonland cards exiled this way without paying their mana costs.', 'Creature', 'Etali, Primal Conqueror').abilities[0]).toMatchObject({ effects: [{ type: 'exile_until', who: { ref: 'players', who: 'each' }, filter: { notTypes: ['Land'] } }, { type: 'cast_among_free', what: { ref: 'created' } }] });
+    expect(parse("Whenever this creature attacks, you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and deals X damage to the player or planeswalker it's attacking.", 'Artifact Creature').abilities[0]).toMatchObject({ effects: [{ type: 'tap_choice', filter: { subtypes: ['Myr'] } }, { type: 'modify', power: { kind: 'tapped_this_way' } }, { type: 'deal_damage', amount: { kind: 'tapped_this_way' }, to: { ref: 'attacked_by' } }] });
+  });
+});

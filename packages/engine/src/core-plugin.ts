@@ -342,6 +342,47 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Myr Battlesphere: "you may tap X untapped Myr you control" — any number of them; X is how many.
+  tap_choice(node, ctx) {
+    const g = ctx.g;
+    const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
+    const candidates = g.zones.battlefield.filter((id) => {
+      const o = g.objects[id]!;
+      return o.controller === ctx.controller && !o.tapped && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
+    });
+    let chosen: string[] = [];
+    if (candidates.length) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: candidates.length, text: 'Choose any number of them to tap.' } };
+      if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose untapped permanents among those.');
+      chosen = answer.objects;
+    }
+    for (const id of chosen) setTapped(g, id, true, ctx.events);
+    if (ctx.resolution) ctx.resolution.tappedThisWay = chosen.length;
+    return true;
+  },
+
+  // Etali, Primal Conqueror: "each player exiles cards from the top of their library until they exile a nonland card" —
+  // "the nonland cards exiled this way" are the ones that stopped it.
+  exile_until(node, ctx) {
+    const g = ctx.g;
+    const filter = (node.filter ?? {}) as ObjectFilter;
+    const hits: ObjectRef[] = [];
+    const players = refPlayers(ctx, ref(node, 'who'));
+    for (const p of apnap(g).filter((x) => players.includes(x))) {
+      for (const id of [...zoneList(g, 'library', p)]) {
+        moveObject(g, id, 'exile', ctx.events);
+        const o = g.objects[id]!;
+        if (matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })) {
+          hits.push(refTo(o));
+          break;
+        }
+      }
+    }
+    if (ctx.resolution) ctx.resolution.created = hits;
+    return true;
+  },
+
   // CR 119.5: "Your life total becomes 10", "… half your starting life total, rounded up" (The Endstone) — the player
   // gains or loses the necessary amount of life.
   set_life(node, ctx) {
@@ -2742,6 +2783,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'copy_targets');
     // CR 115.7a: "change the target" — to another legal target if there is one; otherwise it stays.
     const current0 = entry.targets.flat()[0];
+    // Hydroelectric Specimen: "… to this creature" — only if it's a legal target for that spell; otherwise it stays.
+    if (node.toSelf) {
+      const me = ctx.source;
+      if (!me || me.zone !== 'battlefield' || (current0?.kind === 'object' && current0.id === me.id)) return true;
+      try {
+        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, [[{ kind: 'object', object: me.id }]], source, entry.x ?? 0);
+        announceTargets(entry, ctx.events);
+      } catch (err) {
+        if (!(err instanceof RulesError)) throw err;
+      }
+      return true;
+    }
     const sameAs = (t: Target | undefined) => Boolean(t && current0 && (t.kind === 'player' ? current0.kind === 'player' && current0.player === t.player : t.kind === 'ability' ? current0.kind === 'ability' && current0.entry === t.entry : current0.kind === 'object' && current0.id === t.object));
     if (answer) {
       if (node.change && answer.targets && sameAs(answer.targets.flat()[0])) throw new RulesError('Choose a different target.');

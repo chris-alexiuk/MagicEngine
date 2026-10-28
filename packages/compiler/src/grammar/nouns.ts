@@ -162,6 +162,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
   [/ with mana cost ((?:\{[^}]+\})+)(?: or ((?:\{[^}]+\})+))?$/, (f, m) => !f.manaCostIs && ((f.manaCostIs = [m[1]!, ...(m[2] ? [m[2]] : [])]), true)],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
+  // Scrap Trawler: "target artifact card in your graveyard with lesser mana value" — than the artifact that triggered it.
+  [/ with lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'lt', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
   // Kozilek's Unsealing: "a creature spell with mana value 4, 5, or 6" — any of them.
   [/ with mana value (\d+), (\d+),? or (\d+)$/, (f, m) => !f.anyOf && !f.manaValue && ((f.anyOf = [m[1], m[2], m[3]].map((n) => ({ manaValue: { op: 'eq' as const, n: Number(n) } }))), true)],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"

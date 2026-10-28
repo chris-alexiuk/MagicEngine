@@ -1148,6 +1148,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!one) return null;
     return { trigger: { type: 'either', of: [one.trigger, { type: 'fully_unlocked' }] }, it: { ref: 'trigger_object' }, player: one.player };
   }
+  // Scrap Trawler: "Whenever this creature dies or another artifact you control is put into a graveyard from the
+  // battlefield" — either event; "it" is what died.
+  const selfOrOther = /^(~ dies) or ((?:a|an|another) .+? (?:dies|is put into a graveyard from the battlefield))$/.exec(t);
+  if (selfOrOther) {
+    const one = parseTrigger(word, selfOrOther[1]!, b);
+    const two = one ? parseTrigger(word, selfOrOther[2]!, b) : null;
+    if (one && two) return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: null };
+  }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
   const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?)$/.exec(t);

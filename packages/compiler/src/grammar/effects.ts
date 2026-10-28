@@ -46,6 +46,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Sword of Hearth and Home: "exile up to one target creature you own, then search your library for a basic land card. Put
+  // both cards onto the battlefield under your control, then shuffle." — the exiled card returns; the land is put there.
+  text = text.replace(
+    /([Ee]xile up to one target creature you own), then (search your library for a basic land card)\. Put both cards onto the battlefield under your control, then shuffle\./,
+    '$1, then return that card to the battlefield under your control. $2, put it onto the battlefield, then shuffle.',
+  );
   // Braids, Arisen Nightmare: "… each opponent may sacrifice a permanent of their choice that shares a card type with it.
   // For each opponent who doesn't, that player loses 2 life and you draw a card." — one instruction.
   text = text.replace(/(each opponent may [^.]+)\. For each opponent who doesn't, ([^.]+)\./, "$1; for each opponent who doesn't, $2.");
@@ -466,6 +472,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const what = parseObjectRef(copyCard[1]!, b);
         if (!what || what.plural) return null;
         out.push({ type: 'cast_copy_of', what: what.ref });
+        i++;
+        continue;
+      }
+      // Myr Battlesphere: "you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and
+      // deals X damage to …" — X is how many were tapped.
+      const tapX = /^You may tap X untapped (.+? you control)$/.exec(s);
+      const tapThen = tapX && sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (tapX && tapThen) {
+        const r = attempt(b, (b) => {
+          const pf = parseFilter(tapX[1]!, b);
+          if (!pf || !(pf.plural || pf.invariant) || pf.filter.zone) return null;
+          const inner = parseSentence(capitalise(tapThen[1]!), b);
+          return inner ? [{ type: 'tap_choice', filter: pf.filter } as EffectNode, ...bindX(inner, { kind: 'tapped_this_way' })] : null;
+        });
+        if (!r) return null;
+        out.push(...r);
         i++;
         continue;
       }
@@ -1683,7 +1705,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     return [{ type: 'play_exiled', filter: { zone: 'exile', owner: chooseExiled[1] === 'you own' ? 'you' : 'opponent', counter: chooseExiled[2]! }, free: true }];
   }
   // Etali, Primal Storm: "you may cast any number of spells from among those cards without paying their mana costs"
-  const castAmong = /^[Yy]ou may cast any number of spells from among (?:those cards|them|the exiled cards) without paying their mana costs$/.exec(s);
+  const castAmong = /^[Yy]ou may cast any number of spells from among (?:those cards|them|the exiled cards|the nonland cards exiled this way) without paying their mana costs$/.exec(s);
   if (castAmong && b.it?.ref === 'created') return [{ type: 'cast_among_free', what: { ref: 'created' } }];
   // Hideaway: "You may play the exiled card without paying its mana cost." — a land, too.
   const playFree = /^[Yy]ou may play (the exiled card|that card|it) without paying its mana cost$/.exec(s);
@@ -2459,6 +2481,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     return [{ type: 'move', what: { ref: 'all', filter: { commander: true, zone: 'command', owner: 'you' } }, to: 'hand' }];
   }
   // CR 701.57a: "discover N".
+  // Etali, Primal Conqueror: "each player exiles cards from the top of their library until they exile a nonland card".
+  const exileUntil = /^[Ee]ach player exiles cards from the top of their library until they exile a nonland card$/.exec(s);
+  if (exileUntil) {
+    b.it = { ref: 'created' };
+    return [{ type: 'exile_until', who: { ref: 'players', who: 'each' }, filter: { notTypes: ['Land'] } }];
+  }
   // CR 119.5: "Your life total becomes 10"; The Endstone: "your life total becomes half your starting life total, rounded
   // up"; Oketra's Last Mercy: "… becomes equal to your starting life total"; Sorin Markov: "Target opponent's life total
   // becomes 10."
@@ -3019,6 +3047,9 @@ const VERBS: Record<string, VerbHandler> = {
     return [{ type: 'move', what: what.ref, to: 'exile', ...(until ? { until: 'source_leaves' } : {}) }];
   },
   return(args, who, b, imperative) {
+    // Scrap Trawler: "return to your hand target artifact card in your graveyard with lesser mana value".
+    const handFirst = /^to (your|its owner's) hand (.+)$/.exec(args);
+    if (handFirst) return VERBS.return!(`${handFirst[2]} to ${handFirst[1]} hand`, who, b, imperative);
     // "Each player returns all creature cards from their graveyard to the battlefield": each returns their own,
     // so every such card in every graveyard (under its owner's control, to its owner's hand).
     if (!imperative) {
@@ -3170,14 +3201,15 @@ const VERBS: Record<string, VerbHandler> = {
   },
   // CR 115.7a: "Change the target of target spell or ability with a single target." (Bolt Bend, Redirect Lightning)
   change(args, who, b, imperative) {
-    const m = imperative ? /^the target of (target .+?) with a single target$/.exec(args) : null;
+    // Hydroelectric Specimen: "… with a single target to this creature" — to it, if it's a legal target (CR 115.7a).
+    const m = imperative ? /^the target of (target .+?) with a single target( to (?:this creature|~))?$/.exec(args) : null;
     if (!m) return null;
     const what = parseObjectRef(m[1]!, b);
     if (!what?.targeted || what.plural || what.ref.ref !== 'target') return null;
     const spec = b.targets[what.ref.index];
     if (!spec || (spec.what !== 'ability' && spec.filter?.zone !== 'stack')) return null;
     spec.singleTarget = true;
-    return [{ type: 'retarget', what: what.ref, change: true }];
+    return [{ type: 'retarget', what: what.ref, change: true, ...(m[2] ? { toSelf: true } : {}) }];
   },
   // "choose target instant or sorcery card in your graveyard, then roll a d20" — the target, for what follows.
   choose(args, who, b, imperative) {

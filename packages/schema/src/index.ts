@@ -560,6 +560,8 @@ export type AmountExpr = (
   | { kind: 'drawn_this_turn' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
   | { kind: 'tokens_created_this_turn' }
+  /** Myr Battlesphere: "you may tap X untapped Myr you control" — how many were tapped. */
+  | { kind: 'tapped_this_way' }
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
   | { kind: 'discarded_this_way'; max?: true }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
@@ -1100,7 +1102,7 @@ export interface TokenSpec {
  */
 export const CORE_NODES = {
   effects: [
-    'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'destroy', 'move', 'counter', 'tap', 'untap',
+    'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'exile_until', 'tap_choice', 'destroy', 'move', 'counter', 'tap', 'untap',
     'put_from_milled', 'grant_play', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
@@ -1128,7 +1130,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

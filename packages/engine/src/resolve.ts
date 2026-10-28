@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { isLegalTarget } from './targets.js';
+import { isLegalTarget, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
 import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
@@ -234,7 +234,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -364,6 +364,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
     case 'tokens_created_this_turn':
       return g.turnLog.tokensCreated?.[ctx.controller] ?? 0;
+    case 'tapped_this_way':
+      return ctx.resolution?.tappedThisWay ?? 0;
     case 'damage_this_way':
       return ctx.resolution?.damageDealt ?? 0;
     case 'excess_this_way':
@@ -620,13 +622,15 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
   const source = g.objects[sourceId] ?? null;
   let chosen = 0;
   let legal = 0;
-  const out = program.specs.map((spec, i) =>
-    (entry.targets[i] ?? []).filter((t) => {
-      chosen++;
-      const ok = isLegalTarget(g, entry.controller, spec, t, source);
-      if (ok) legal++;
-      return ok;
-    }),
+  const out = withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
+    program.specs.map((spec, i) =>
+      (entry.targets[i] ?? []).filter((t) => {
+        chosen++;
+        const ok = isLegalTarget(g, entry.controller, spec, t, source);
+        if (ok) legal++;
+        return ok;
+      }),
+    ),
   );
   return chosen > 0 && legal === 0 ? null : out;
 }

@@ -107,6 +107,8 @@ export class Binder {
 function targetCountable(n: unknown): boolean {
   const e = n as { kind?: string; of?: { ref?: string } };
   const json = JSON.stringify(n);
+  // Scrap Trawler: "with lesser mana value" than the object the trigger is about — known as targets are chosen.
+  if (e.kind === 'stat' && e.of?.ref === 'trigger_object' && json === JSON.stringify({ kind: 'stat', stat: (n as { stat: string }).stat, of: { ref: 'trigger_object' } })) return true;
   if (/"ref":"(?!self"|you")/.test(json)) return false;
   return e.kind === 'count' || e.kind === 'cards' || ((e.kind === 'stat' || e.kind === 'counters') && e.of?.ref === 'self');
 }
