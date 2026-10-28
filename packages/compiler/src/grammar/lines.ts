@@ -77,7 +77,7 @@ function modeCount(word: string, options: number): { min: number; max: number } 
 export function parseProgram(text: string, b: Binder): Program | null {
   const program = parseProgramText(text, b);
   // "target creature with mana value X or less": only where X is announced (CR 107.3a).
-  if (program && !b.xAllowed && /"n":"X"/.test(JSON.stringify([program.targets ?? [], program.modes ?? null]))) return null;
+  if (program && !b.xAllowed && /"n":"X"|"maxTotalMV":"X"/.test(JSON.stringify([program.targets ?? [], program.modes ?? null]))) return null;
   return program && !b.unsupported && !countsEachTarget(program, b) ? program : null;
 }
 
@@ -96,14 +96,14 @@ function parseProgramText(text: string, b: Binder): Program | null {
   const [head, ...bullets] = text.split('\n');
   // "Choose one. If you control a commander as you cast this spell, you may choose both instead."
   const bonus =
-    /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|three) instead\.$/.exec(head!.trim()) ??
+    /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|two|three) instead\.$/.exec(head!.trim()) ??
     // CR 702.194b: "Choose one. If this spell was cast using teamwork, choose both instead."
     /^Choose (one|two)\. If ~ (was cast using teamwork), choose (both|any number|three) instead\.$/.exec(head!.trim());
   if (bonus) {
     const cond = bonus[2] === 'was cast using teamwork' ? ({ type: 'paid', cost: 'teamwork' } as ConditionNode) : parseCondition(bonus[2]!, b);
     const inner = cond && parseProgram([`Choose ${bonus[1]} —`, ...bullets].join('\n'), b);
     if (!cond || !inner?.modes) return null;
-    const max = bonus[3] === 'both' ? 2 : bonus[3] === 'three' ? 3 : inner.modes.options.length;
+    const max = bonus[3] === 'both' || bonus[3] === 'two' ? 2 : bonus[3] === 'three' ? 3 : inner.modes.options.length;
     return { ...inner, modes: { ...inner.modes, bonus: { condition: cond, max } } };
   }
   // CR 706.3: a die roll and its results table ("1—9 | Draw a card.", "20 | …"), all one ability (CR 706.3b).
@@ -220,6 +220,15 @@ function variantOf(line: string, env: GrammarEnv): { base: string; condition: Co
  * resolution can (Malcolm: "you may cast the discarded card").
  */
 const unfindable = (program: object): boolean => JSON.stringify(program).includes('"ref":"discarded_this_way"') && !JSON.stringify(program).includes('"type":"discard"');
+
+/** Whether these effects add mana themselves (not a Treasure token's ability, nor a granted one). */
+function addsMana(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(addsMana);
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  if (o.type === 'add_mana') return true;
+  return Object.entries(o).some(([k, x]) => k !== 'token' && k !== 'abilities' && k !== 'keywords' && addsMana(x));
+}
 
 /** Whether a program has a target count that is "X" (TargetSpec.countX). */
 const hasCountX = (program: object): boolean => JSON.stringify(program).includes('"countX":true');
@@ -620,6 +629,12 @@ export const activatedRule: GrammarRule = {
         effect.spend = spend;
         mana[2] = spendOnly[2]!;
       }
+      // Powerstone: "This mana can't be spent to cast a nonartifact spell." — anything else it can pay for (CR 106.6).
+      const cantSpend = mana?.[2] ? /^This mana can't be spent to cast (?:a )?nonartifact spells?\.(?: (.+))?$/.exec(mana[2]) : null;
+      if (mana && effect && cantSpend && !effect.spend) {
+        effect.spend = { spells: { types: ['Artifact'] }, abilities: {}, special: ['unlock', 'face_up'], other: true };
+        mana[2] = cantSpend[1] ?? '';
+      }
       // Path of Ancestry: "When that mana is spent to cast a creature spell that shares a creature type with your commander, scry 1."
       const spentWhen = mana?.[2] ? /^When that mana is spent to cast (.+?), (.+)\.$/.exec(mana[2]) : null;
       if (mana && effect && spentWhen) {
@@ -641,6 +656,12 @@ export const activatedRule: GrammarRule = {
         if (!pf || pf.filter.zone !== 'stack') return null;
         const { zone: _z, ...filter } = pf.filter;
         effect.spentHaste = { filter, ...(spentHaste[2] ? { eot: true as const } : {}) };
+        mana[2] = '';
+      }
+      // Opal Palace: "If you spend this mana to cast your commander, it enters with a number of additional +1/+1 counters on it
+      // equal to the number of times it's been cast from the command zone this game."
+      if (mana && effect && mana[2] === "If you spend this mana to cast your commander, it enters with a number of additional +1/+1 counters on it equal to the number of times it's been cast from the command zone this game.") {
+        effect.spentCommanderCounters = true;
         mana[2] = '';
       }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
@@ -697,6 +718,9 @@ export const activatedRule: GrammarRule = {
     }
     // "{X}, {T}: Tap X target creatures." — X paid in the cost; not "up to X target …, where X is …".
     if (hasCountX(program) && !(node.cost.mana?.includes('{X}') || node.cost.other?.some((c) => c.amount === 'X'))) return null;
+    // CR 605.1a: an activated ability that could add mana, has no targets and isn't a loyalty ability is a mana ability (it
+    // doesn't use the stack) — one the mana-ability path above didn't read isn't something to put on the stack instead.
+    if (!program.targets?.length && !program.modes && node.cost.loyalty === undefined && addsMana(program.effects)) return null;
     return { ...node, ...program };
   },
 };

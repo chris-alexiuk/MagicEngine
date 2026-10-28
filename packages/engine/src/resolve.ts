@@ -564,11 +564,15 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const types = PERMANENT_CARD_TYPES.filter((t) => was.includes(t));
     return bindFilter(ctx, { ...rest, types: rest.types ? rest.types.filter((t) => types.includes(t)) : types });
   }
-  if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs) return f;
+  if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs && !f.differentNameAs) return f;
   const out: ObjectFilter = { ...f };
   if (f.sameNameAs) {
     const [o] = refObjects(ctx, f.sameNameAs as Ref);
     out.sameName = o ? nameOf(ctx.g, o) : '\u0000';
+  }
+  if (f.differentNameAs) {
+    const [o] = refObjects(ctx, f.differentNameAs as Ref);
+    out.differentName = o ? nameOf(ctx.g, o) : '\u0000';
   }
   if (f.sharesCreatureTypeWith) {
     const [o] = refObjects(ctx, f.sharesCreatureTypeWith as Ref);

@@ -950,6 +950,7 @@ export function matchesFilter(
   if (f.sharesCreatureTypes && !creatureTypesOf(c).some((t) => f.sharesCreatureTypes!.includes(t))) return false;
   if (f.sameName !== undefined && nameOf(g, o) !== f.sameName) return false;
   if (f.sameNameAs && f.sameName === undefined) return false;
+  if (f.differentName !== undefined && nameOf(g, o) === f.differentName) return false;
   if (f.otherThan && f.notObject === undefined && !((f.otherThan as { ref?: string }).ref === 'self' && ctx.source && ctx.source.id !== o.id)) return false;
   if (f.notObject !== undefined && f.notObject === o.id) return false;
   if (f.chosenColor && !(ctx.source?.chosen?.color && c.colors.includes(ctx.source.chosen.color))) return false;

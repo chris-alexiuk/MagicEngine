@@ -123,6 +123,44 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const t = parseAmount(mirror[3]!);
     return what && what.plural && p !== null && t !== null ? [{ type: 'modify', what: what.ref, setPower: p, setToughness: t, allCreatureTypes: true, until: 'eot' }] : null;
   }
+  // Springheart Nantuko: "you may pay {1}{G} if this permanent is attached to a creature you control. If you do, create a
+  // token that's a copy of that creature. If you didn't create a token this way, create a 1/1 green Insect creature token."
+  const nantuko = /^[Yy]ou may pay ((?:\{[^}]+\})+) if ~ is attached to a creature you control\. If you do, create a token that's a copy of that creature\. If you didn't create a token this way, (create .+)\.$/.exec(text.trim());
+  if (nantuko) {
+    const insect = parseSentence(capitalise(nantuko[2]!), b);
+    if (!insect) return null;
+    return [
+      {
+        type: 'if',
+        cond: { type: 'is', of: { ref: 'attached' }, filter: { controller: 'you', types: ['Creature'] } },
+        effects: [{ type: 'may_pay', cost: nantuko[1]!, effects: [{ type: 'create_token', amount: 1, copyOf: { ref: 'attached' }, who: { ref: 'you' } }], else: insect }],
+        else: structuredClone(insect),
+      },
+    ];
+  }
+  // Tibalt's Trickery: "Counter target spell. Choose 1, 2, or 3 at random. Its controller mills that many cards, then exiles
+  // cards from the top of their library until they exile a nonland card with a different name than that spell. They may cast
+  // that card without paying its mana cost. Then they put the exiled cards on the bottom of their library in a random order."
+  if (/^Counter target spell\. Choose 1, 2, or 3 at random\. Its controller mills that many cards, then exiles cards from the top of their library until they exile a nonland card with a different name than that spell\. They may cast that card without paying its mana cost\. Then they put the exiled cards on the bottom of their library in a random order\.$/.test(text.trim())) {
+    const spell = parseObjectRef('target spell', b);
+    if (!spell) return null;
+    const who: Ref = { ref: 'controller_of', of: spell.ref };
+    return [
+      { type: 'counter', what: spell.ref },
+      { type: 'roll_die', sides: 3, random: true },
+      { type: 'mill', amount: { kind: 'die_result' }, who },
+      { type: 'reveal_until', who, filter: { notTypes: ['Land'], differentNameAs: spell.ref }, to: 'cast', rest: 'bottom', exile: true },
+    ];
+  }
+  // Conduit of Worlds: "Choose target nonland permanent card in your graveyard. If you haven't cast a spell this turn, you may
+  // cast that card. If you do, you can't cast additional spells this turn." — cast as it resolves, paying its costs (CR 608.2g).
+  const conduit = /^Choose (target .+?)\. If (.+?), you may cast that card\. If you do, you can't cast additional spells this turn\.$/.exec(text.trim());
+  if (conduit) {
+    const what = parseObjectRef(conduit[1]!, b);
+    const cond = what && !what.plural ? parseCondition(conduit[2]!, b) : null;
+    if (!what || !cond) return null;
+    return [{ type: 'if', cond, effects: [{ type: 'cast_paid', what: what.ref, then: [{ type: 'prohibit_casting', who: { ref: 'you' }, until: 'eot' }] }] }];
+  }
   // Scapeshift: "Sacrifice any number of lands. Search your library for up to that many land cards, put them onto the
   // battlefield tapped, then shuffle."
   const shift = /^Sacrifice any number of (.+?)\. Search your library for up to that many (.+?), put them onto the battlefield( tapped)?, then shuffle\.$/.exec(text.trim());
@@ -473,6 +511,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         return null;
       }
       // CR 106.6: "Add {R}{R}{R}. Spend this mana only to cast instant or sorcery spells."
+      // Karn, Legacy Reforged: "This mana can't be spent to cast nonartifact spells." (Powerstone mana, CR 106.6)
+      if (i > 0 && /^This mana can't be spent to cast (?:a )?nonartifact spells?$/.test(s)) {
+        const last = out[out.length - 1] as AddManaEffect | undefined;
+        if (last?.type !== 'add_mana' || last.spend) return null;
+        last.spend = { spells: { types: ['Artifact'] }, abilities: {}, special: ['unlock', 'face_up'], other: true };
+        continue;
+      }
       const spendOnly = i > 0 ? /^Spend this mana only (.+)$/.exec(s) : null;
       if (spendOnly) {
         const last = out[out.length - 1] as AddManaEffect | undefined;
@@ -666,7 +711,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const thatMany = b.eventAmount ? /^([Ll]ook at|[Rr]eveal) that many cards from the top of your library$/.exec(s) : null;
       const look = thatMany ? [s, thatMany[1]!, 'X', undefined] : /^([Ll]ook at|[Rr]eveal) the top (\w+) cards of your library(?:, where X is (.+))?$/.exec(s);
       if (look && sentences[i + 1]) {
-        const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b);
+        const dig = parseDig(look[2]!, sentences[i + 1]!, sentences[i + 2], b, sentences[i + 3]);
         if (!dig || !bindDig(dig, look[3])) return null;
         if (thatMany) Object.assign(dig.node, bindX([dig.node], { kind: 'event' })[0]);
         // Revealed: everyone sees the cards (CR 701.20a).
@@ -1323,7 +1368,10 @@ function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] 
       else {
         // The player who loses, mills or discards: one player, counted as they do (CR 608.2h).
         if (!one(e.who)) return out;
-        out.amount = kinds[0] === 'life' ? { kind: 'life', who: e.who, half: dir } : { kind: 'cards', zone: kinds[0] === 'library' ? 'library' : 'hand', who: 'you', player: e.who, half: dir };
+        // Singularity Rupture: "any number of target players each mill half their library" — each of them their own.
+        const many = (e.who as Ref).ref === 'target' && ((b.targets[(e.who as { index: number }).index]?.count ?? 1) > 1);
+        const player: Ref = many && e.type === 'mill' ? { ref: 'each_player' } : (e.who as Ref);
+        out.amount = kinds[0] === 'life' ? { kind: 'life', who: e.who, half: dir } : { kind: 'cards', zone: kinds[0] === 'library' ? 'library' : 'hand', who: 'you', player, half: dir };
       }
       bound++;
       return out;
@@ -1361,7 +1409,7 @@ function eachOfPair(many: string, noun: string, zone: 'library' | 'hand', b: Bin
 }
 
 /** The sentences after "Look at the top N cards of your library." (CR 701.16 isn't a keyword action: just looking). */
-function parseDig(count: string, next: string, after: string | undefined, b: Binder): { node: EffectNode; used: number } | null {
+function parseDig(count: string, next: string, after: string | undefined, b: Binder, afterRest?: string): { node: EffectNode; used: number } | null {
   // "Look at the top X cards of your library" — the X paid, or one the text defines (bound by the caller).
   const amount = count === 'X' ? 'X' : parseAmount(count);
   if (amount !== 'X' && (typeof amount !== 'number' || amount < 1)) return null;
@@ -1400,13 +1448,18 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
     const rest = shuffled ? { rest: 'shuffle' } : putFrom[5] ? REST[putFrom[5]] : restOf(after);
     if (shuffled && putFrom[5]) return null;
     const n = putFrom[1] === 'any number of' ? 99 : putFrom[1]!.startsWith('up to ') ? parseAmount(putFrom[1]!.slice(6)) : 1;
-    const pf = parseFilter(`${putFrom[2]} in your library`, b);
+    // Michelangelo's Technique: "up to two creature cards with total mana value 6 or less"; Smelting Vat: "… with total mana
+    // value less than or equal to the sacrificed artifact's mana value".
+    const totalM = / with total mana value (?:(\d+|X) or less|less than or equal to (.+))$/.exec(putFrom[2]!);
+    const totalMV = totalM ? (totalM[1] ? parseAmount(totalM[1]) : parseCount(totalM[2]!, b)) : undefined;
+    if (totalM && (!totalMV || typeof n !== 'number' || n < 2)) return null;
+    const pf = parseFilter(`${totalM ? putFrom[2]!.slice(0, totalM.index) : putFrom[2]} in your library`, b);
     if (!rest || typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     const to = putFrom[3]!.startsWith('into your hand') ? 'hand' : putFrom[3]!.startsWith('onto') ? 'battlefield' : 'graveyard';
     // "up to N": any number of them; "a land card": one if there is one.
     return {
-      node: { type: 'dig', amount, take: n, to, filter, ...(putFrom[1]!.startsWith('up to ') || putFrom[1] === 'any number of' ? { optional: true } : {}), ...rest, ...(putFrom[4] ? { tapped: true } : {}) },
+      node: { type: 'dig', amount, take: n, to, filter, ...(putFrom[1]!.startsWith('up to ') || putFrom[1] === 'any number of' ? { optional: true } : {}), ...rest, ...(putFrom[4] ? { tapped: true } : {}), ...(totalMV !== undefined ? { totalMV } : {}) },
       used: putFrom[5] || shuffled ? 1 : 2,
     };
   }
@@ -1414,6 +1467,12 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
   // Calix: "… and put that card into your hand"; Karumonix: "You may reveal any number of Rat cards from among them and put
   // the revealed cards into your hand."
   const reveal = /^You may (reveal|put) (a|an|up to \w+|any number of) (.+?) from among (?:them|those cards)(?: and put (?:it|them|that card|the revealed cards))? (into your hand|onto the battlefield( tapped)?|into your graveyard)$/.exec(next);
+  // Planar Genesis: "You may put a land card from among them onto the battlefield tapped. If you don't, put a card from among
+  // them into your hand. Put the rest …"
+  if (reveal && after === "If you don't, put a card from among them into your hand" && reveal[1] === 'put' && reveal[2] === 'a') {
+    const inner = parseDig(count, next, afterRest, b);
+    return inner && inner.used === 2 ? { node: { ...inner.node, orElse: { to: 'hand' } }, used: 3 } : null;
+  }
   if (reveal) {
     if (shuffled) return null;
     const rest = restOf(after);
@@ -1631,6 +1690,12 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Whelming Wave: "Return all creatures to their owners' hands except for Krakens, Leviathans, Octopuses, and Serpents."
+  const except = /^(.*?\ball )(creatures)\b(.*?) except for ((?:[A-Z][\w-]*, )*(?:and )?[A-Z][\w-]*)$/.exec(s);
+  if (except) {
+    const subs = except[4]!.split(/, (?:and )?|,? and /).map((w) => subtypeOf(w));
+    if (subs.every(Boolean)) return parseSentence(`${except[1]}${subs.map((x) => `non-${x}`).join(', ')} ${except[2]}${except[3]}`, b);
+  }
   // Agadeem's Awakening: "Return from your graveyard to the battlefield any number of target creature cards that each have
   // a different mana value X or less."
   const distinctMV = /^Return from your graveyard to the battlefield any number of target (.+?) cards that each have a different mana value (X|\d+) or less$/.exec(s);
@@ -1641,6 +1706,20 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const spec = b.targets[from];
       if (!inner || !spec || b.targets.length !== from + 1) return null;
       spec.distinctManaValues = true;
+      return inner;
+    });
+    if (r) return r;
+  }
+  // Flames of Rebirth: "Return any number of target creature cards with total mana value 6 or less from your graveyard to the
+  // battlefield" — the targets together (CR 601.2c).
+  const totalMV = /^(.*?\b(?:any number of|up to (?:two|three|four|five|X)) target .+?) with total mana value (\d+|X) or less\b(.*)$/.exec(s);
+  if (totalMV) {
+    const r = attempt(b, (b) => {
+      const from = b.targets.length;
+      const inner = parseSentence(`${totalMV[1]}${totalMV[3]}`, b);
+      const spec = b.targets[from];
+      if (!inner || !spec || b.targets.length !== from + 1 || !(spec.upTo || spec.countX || (spec.count ?? 1) > 1)) return null;
+      spec.maxTotalMV = parseAmount(totalMV[2]!) as number | 'X';
       return inner;
     });
     if (r) return r;
@@ -1811,7 +1890,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       // Rush of Blood: "Target creature gets +X/+0 until end of turn, where X is its power." — "its" is what the
       // instruction is about, so that's read first.
       if (perEach(what, where[1]!, b)) return null;
-      if (pointsBack(what, where[1]!)) {
+      // Pact of the Serpent: "Target player draws X cards and loses X life, where X is the number of creatures they control
+      // …" — "they" is that target player, so the instruction is read first.
+      const theirs = /\b(?:they|that player)\b/.test(what) && /^[Tt]arget (?:player|opponent)\b/.test(where[1]!.trim());
+      if (pointsBack(what, where[1]!) || theirs) {
         const from = b.targets.length;
         const inner = parseSentence(where[1]!, b);
         const expr = inner && parseCount(what, b);
@@ -3180,7 +3262,8 @@ const VERBS: Record<string, VerbHandler> = {
     // Maddening Cacophony: "each opponent mills half their library, rounded up" — each of them counts their own.
     const half = /^half (?:their|your|his or her) library, rounded (up|down)$/.exec(args);
     if (half) {
-      const player: Ref = who.ref === 'players' ? { ref: 'each_player' } : who;
+      // Singularity Rupture: "any number of target players each mill half their library" — each of them their own.
+      const player: Ref = who.ref === 'players' || who.ref === 'target' ? { ref: 'each_player' } : who;
       b.milled = true;
       return [{ type: 'mill', amount: { kind: 'cards', zone: 'library', who: 'each', player, half: half[1] as 'up' | 'down' }, who }];
     }
@@ -3212,6 +3295,13 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && who.ref === 'you' ? [{ type: 'surveil', amount }] : null;
   },
   create(args, who, b) {
+    // Ghalta and Mavren: "Create a tapped and attacking X/X green Dinosaur creature token" — the same as "… token that's tapped
+    // and attacking" (CR 508.4).
+    const preAttacking = /^(a|an|one|two|three|four|five|X) tapped and attacking (.+)$/.exec(args);
+    if (preAttacking && !/ (?:that are|that's|that is) tapped/.test(preAttacking[2]!)) {
+      const one = /^(?:a|an|one)$/.test(preAttacking[1]!);
+      args = `${preAttacking[1]} ${preAttacking[2]} ${one ? "that's" : 'that are'} tapped and attacking`;
+    }
     // Pest Infestation: "Create twice X 1/1 black and green Pest creature tokens …"
     const twiceX = /^twice X (.+)$/.exec(args);
     if (twiceX) {
@@ -3524,15 +3614,20 @@ const VERBS: Record<string, VerbHandler> = {
     // Takenuma: "return a creature or planeswalker card from your graveyard to your hand" — chosen as it resolves (no
     // target). Blossoming Tortoise: "… to the battlefield tapped".
     // Tyvar, Jubilant Brawler: "a creature card with mana value 2 or less".
-    const chosenReturn = /^(a|an|up to (?:one|two|three)) ((?!.*\btarget\b).+? cards?(?: with (?:mana value|power|toughness) .+?)?) from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
+    // Lively Dirge: "up to two creature cards with total mana value 4 or less"; Technomancer: "any number of artifact creature
+    // cards with total mana value 6 or less".
+    const chosenReturn = /^(a|an|up to (?:one|two|three)|any number of) ((?!.*\btarget\b).+? cards?(?: with (?:mana value|power|toughness) (?:(?!total ).)+?)?)(?: with total mana value (\d+|X) or less)? from your graveyard to (your hand|the battlefield( tapped)?)$/.exec(args);
     if (chosenReturn && who.ref === 'you') {
-      const n = chosenReturn[1]!.startsWith('up to ') ? parseAmount(chosenReturn[1]!.slice(6)) : 1;
+      const any = chosenReturn[1] === 'any number of';
+      const n = any ? 2 : chosenReturn[1]!.startsWith('up to ') ? parseAmount(chosenReturn[1]!.slice(6)) : 1;
       const pf = parseFilter(`${chosenReturn[2]} in your graveyard`, b);
       if (typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;
+      const total = chosenReturn[3] ? parseAmount(chosenReturn[3]) : undefined;
+      if (total === null) return null;
       // "it" afterwards: the returned card.
       b.it = { ref: 'created' };
-      return [{ type: 'return_chosen', filter, amount: n, to: chosenReturn[3] === 'your hand' ? 'hand' : 'battlefield', ...(chosenReturn[4] ? { tapped: true } : {}), ...(chosenReturn[1]!.startsWith('up to ') ? { optional: true } : {}) }];
+      return [{ type: 'return_chosen', filter, amount: any ? 'all' : n, to: chosenReturn[4] === 'your hand' ? 'hand' : 'battlefield', ...(chosenReturn[5] ? { tapped: true } : {}), ...(chosenReturn[1]!.startsWith('up to ') || any ? { optional: true } : {}), ...(total !== undefined ? { totalMV: total } : {}) }];
     }
     const hand = /^(.+?) to (its owner's|their owners'|their owner's|your|its owners') hands?$/.exec(args);
     if (hand) {
@@ -3660,6 +3755,9 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = q[1] ? 1 : anyNumber ? 999 : parseAmount(q[2] ?? q[3]!);
     // "up to X basic land cards, where X is …" (Traverse the Outlands): the sentence binds X.
     if (typeof amount !== 'number' && !(amount === 'X' && q[2])) return null;
+    // Protean Hulk: "any number of creature cards with total mana value 6 or less".
+    const totalMV = / with total mana value (\d+|X) or less$/.exec(q[4]!);
+    if (totalMV) q[4] = q[4]!.slice(0, totalMV.index);
     // Myriad Landscape: "up to two basic land cards that share a land type"
     const share = / that share a land type$/.test(q[4]!);
     const pf = parseFilter(`${q[4]!.replace(/ that share a land type$/, '')} in your library`, b);
@@ -3669,6 +3767,7 @@ const VERBS: Record<string, VerbHandler> = {
     if (zones) node.zones = zones;
     if (theirs) node.who = who;
     if (q[2] || anyNumber) node.upTo = true;
+    if (totalMV) node.totalMV = parseAmount(totalMV[1]!) as number | 'X';
     if (m[3]) node.tapped = true;
     // Neoform: "put that card onto the battlefield with an additional +1/+1 counter on it" (CR 614.1c).
     if (m[4]) {
@@ -4016,6 +4115,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;
   if (produced) return [produced];
+  // Klauth: "add X mana in any combination of colors, where X is …" (bound by the sentence); "X mana of any one color".
+  const addX = add ? /^X mana (in any combination of colors|of any one color)$/.exec(add[1]!) : null;
+  if (addX) return [addX[1]!.startsWith('in') ? { type: 'add_mana', combination: { amount: 'X', colors: ['W', 'U', 'B', 'R', 'G'] } } : { type: 'add_mana', anyColor: 1, times: 'X' }];
   // Mana Drain: "add an amount of {C} equal to that spell's mana value".
   const addAmount = add ? /^an amount of (\{[WUBRGC]\}) equal to (.+)$/.exec(add[1]!) : null;
   if (addAmount) {

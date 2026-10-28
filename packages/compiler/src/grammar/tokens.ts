@@ -13,7 +13,7 @@ const PREDEFINED: Record<string, { typeLine: string; text: string; colors?: Colo
   Shard: { typeLine: 'Enchantment — Shard', text: '{2}, Sacrifice this token: Scry 1, then draw a card.' }, // CR 111.10e
   Clue: { typeLine: 'Artifact — Clue', text: '{2}, Sacrifice this token: Draw a card.' }, // CR 111.10f
   Blood: { typeLine: 'Artifact — Blood', text: '{1}, {T}, Discard a card, Sacrifice this token: Draw a card.' }, // CR 111.10g
-  Powerstone: { typeLine: 'Artifact — Powerstone', text: '{T}: Add {C}. This mana can’t be spent to cast a nonartifact spell.' },
+  Powerstone: { typeLine: 'Artifact — Powerstone', text: "{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." },
   'Cursed Role': { typeLine: 'Enchantment — Aura Role', name: 'Cursed', text: 'Enchant creature\nEnchanted creature has base power and toughness 1/1.' },
   'Monster Role': { typeLine: 'Enchantment — Aura Role', name: 'Monster', text: 'Enchant creature\nEnchanted creature gets +1/+1 and has trample.' },
   'Royal Role': { typeLine: 'Enchantment — Aura Role', name: 'Royal', text: 'Enchant creature\nEnchanted creature gets +1/+1 and has ward {1}.' },
@@ -33,7 +33,7 @@ const PREDEFINED: Record<string, { typeLine: string; text: string; colors?: Colo
   Junk: { typeLine: 'Artifact — Junk', text: '{T}, Sacrifice this token: Exile the top card of your library. You may play that card this turn. Activate only as a sorcery.' },
   Lander: { typeLine: 'Artifact — Lander', text: '{2}, {T}, Sacrifice this token: Search your library for a basic land card, put it onto the battlefield tapped, then shuffle.' },
   Mutagen: { typeLine: 'Artifact — Mutagen', text: '{1}, {T}, Sacrifice this token: Put a +1/+1 counter on target creature. Activate only as a sorcery.' },
-  Vibranium: { typeLine: 'Artifact — Vibranium', text: 'Indestructible\n{T}: Add {C}. This mana can’t be spent to cast a nonartifact spell.' },
+  Vibranium: { typeLine: 'Artifact — Vibranium', text: "Indestructible\n{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." },
   Heartwood: { typeLine: 'Artifact — Heartwood', text: '{T}: Add {R} or {G}.', colors: ['R', 'G'] },
 };
 

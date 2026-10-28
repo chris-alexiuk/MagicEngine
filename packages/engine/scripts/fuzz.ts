@@ -162,7 +162,7 @@ function randomiseTargets(g: GameState, a: Action): Action {
   const x = (a as { x?: number }).x ?? 0;
   // Agadeem's Awakening, Run Away Together, Secret Tunnel: related targets (a related set of the random ones, or none).
   const distinct = (spec: (typeof specs)[number], picked: Target[]) => {
-    if (!spec.distinctManaValues && !spec.differentControllers && !spec.shareCreatureType && !spec.shareCardType) return picked;
+    if (!spec.distinctManaValues && !spec.differentControllers && !spec.shareCreatureType && !spec.shareCardType && spec.maxTotalMV === undefined) return picked;
     const pick = relatedPick(g, spec, picked, picked.length);
     return pick.length >= (spec.upTo ? (spec.min ?? 0) : (spec.count ?? 1)) ? pick : relatedPick(g, spec, targetCandidates(g, a.player, spec, o), spec.count ?? 1);
   };
@@ -226,6 +226,11 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         const sub = (id: string) => g.cards[g.objects[id]!.card]!.faces[0]!.subtypes;
         pool = [pool[0]!, ...pool.slice(1).filter((id) => sub(id).some((t) => sub(pool[0]!).includes(t)))];
       }
+      // Protean Hulk: keep under the total mana value.
+      if (p.totalMV) {
+        let left = p.totalMV.max;
+        pool = pool.filter((id) => (p.totalMV!.of[id]! <= left ? ((left -= p.totalMV!.of[id]!), true) : false));
+      }
       return { player: me, answer: { kind: 'search', objects: pool.slice(0, n) } };
     }
     case 'scry': {
@@ -256,6 +261,12 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           used.add(k);
           objects.push(id);
         }
+        return { player: me, answer: { kind: 'choose_objects', objects } };
+      }
+      // Lively Dirge: keep under the total mana value.
+      if (p.totalMV) {
+        let left = p.totalMV.max;
+        const objects = shuffle([...p.candidates]).filter((id) => (p.totalMV!.of[id]! <= left ? ((left -= p.totalMV!.of[id]!), true) : false)).slice(0, Math.max(n, p.min));
         return { player: me, answer: { kind: 'choose_objects', objects } };
       }
       return { player: me, answer: { kind: 'choose_objects', objects: shuffle([...p.candidates]).slice(0, n) } };

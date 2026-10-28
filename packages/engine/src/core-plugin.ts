@@ -42,6 +42,34 @@ function answerOf<K extends ChoiceAnswer['kind']>(ctx: EffectContext, kind: K): 
 }
 
 /** Sludge Titan, Ojer Kaslem: "a creature card and/or a land card" — whether each chosen card can stand for a different kind. */
+/** After a dig's chosen cards have gone: the rest of the cards looked at go where the text says. */
+function digRest(ctx: EffectContext, node: EffectNode, looked: ObjectId[], chosen: ObjectId[], library: ObjectId[], who: PlayerId, done: () => EffectResult): EffectResult {
+  const g = ctx.g;
+  const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
+  if (node.rest === 'graveyard' || node.rest === 'hand') {
+    for (const id of rest) moveObject(g, id, node.rest, ctx.events);
+    return done();
+  }
+  // Famished Worldsire: "…, then shuffle." — the rest stay in the library, which is shuffled (CR 701.24a).
+  if (node.rest === 'shuffle') {
+    shuffleInPlace(g, library);
+    ctx.events.push({ type: 'shuffled', player: who });
+    return done();
+  }
+  if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
+    if (node.order === 'random') shuffleInPlace(g, rest);
+    if (node.rest !== 'top') for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+    return done();
+  }
+  // "on the bottom of your library in any order": the player orders them.
+  return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: rest, min: rest.length, max: rest.length, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).', ordered: true } };
+}
+
+/** "… with total mana value N or less": the limit, and each candidate's mana value (so a chooser can stay under it). */
+function totalMVLimit(ctx: EffectContext, a: unknown, candidates: ObjectId[]): { max: number; of: Record<ObjectId, number> } {
+  return { max: amountOf(ctx, a), of: Object.fromEntries(candidates.map((id) => [id, manaValueOf(ctx.g, ctx.g.objects[id]!)])) };
+}
+
 function eachAssignable(fits: (id: string, i: number) => boolean, kinds: number, ids: string[], used: boolean[] = []): boolean {
   return !ids.length || Array.from({ length: kinds }, (_, i) => i).some((i) => !used[i] && fits(ids[0]!, i) && eachAssignable(fits, kinds, ids.slice(1), Object.assign([...used], { [i]: true })));
 }
@@ -218,10 +246,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const ps = ctx.g.players[ctx.controller]!;
     // CR 106.6: "Spend this mana only to …" — kept apart from the rest of the pool.
     const onSpent = effect.abilities?.find((a): a is TriggeredAbility => a.kind === 'triggered' && a.trigger.type === 'mana_spent');
-    if (effect.spend || effect.keep || onSpent || effect.spentHaste) {
+    if (effect.spend || effect.keep || onSpent || effect.spentHaste || effect.spentCommanderCounters) {
       // "a creature spell of the chosen type": remember which permanent's choice that is (and whose mana it was).
       const source = ctx.source && (onSpent || effect.spentHaste || JSON.stringify(effect.spend ?? {}).includes('"chosen')) ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {};
-      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}), ...(effect.spentHaste ? { haste: effect.spentHaste } : {}) });
+      for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}), ...(effect.spentHaste ? { haste: effect.spentHaste } : {}), ...(effect.spentCommanderCounters ? { commanderCounters: true as const } : {}) });
     } else for (const c of mana) ps.pool[c]++;
     ctx.events.push({ type: 'mana_added', player: ctx.controller, mana });
     return true;
@@ -693,7 +721,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const sides = Number(node.sides);
       const rolls = Array.from({ length: Number(node.count ?? 1) }, () => 1 + Math.floor(nextRandom(g) * sides));
       const kept = node.ignoreLower ? [Math.max(...rolls)] : rolls;
-      for (const r of kept) ctx.events.push({ type: 'die_rolled', player: ctx.controller, sides, result: r });
+      // Tibalt's Trickery: "Choose 1, 2, or 3 at random." — random, but no die is rolled (CR 706.1).
+      if (!node.random) for (const r of kept) ctx.events.push({ type: 'die_rolled', player: ctx.controller, sides, result: r });
       memo.result = kept.reduce((a, b) => a + b, 0);
       if (ctx.resolution) ctx.resolution.dieResult = memo.result;
     }
@@ -1174,6 +1203,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
             ...(node.then === 'library_top' ? { ordered: true as const } : {}),
             ...(node.revealHand ? { revealed: [...hand] } : {}),
+            // Michelangelo: the kinds each card can stand for.
+            ...(each ? { kinds: Object.fromEntries(candidates.map((id) => [id, each.flatMap((_, i) => (fits(id, i) ? [i] : []))])) } : {}),
           },
         };
       }
@@ -1209,7 +1240,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // "Look at the top N cards of your library. Put K of them into your hand and the rest …"
   dig(node, ctx) {
     const g = ctx.g;
-    const memo = ctx.memo as { looked?: string[]; chosen?: string[] };
+    const memo = ctx.memo as { looked?: string[]; chosen?: string[]; orElse?: true; orElseDone?: true };
     // "If you didn't put a card into your hand this way, draw a card."
     const done = (): EffectResult => (node.ifNone && !memo.chosen?.length ? { expand: node.ifNone as EffectNode[] } : true);
     // Chaos Warp: "… reveals the top card of their library" — another player's library, and they put it onto the battlefield.
@@ -1229,16 +1260,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const candidates = each ? looked.filter((id) => each.some((_, i) => fits(id, i))) : filter ? looked.filter((id) => matchesFilter(g, g.objects[id]!, filter, fctx)) : looked;
       const max = Math.min(take, candidates.length);
       const min = node.optional || node.upTo ? 0 : max;
+      // Michelangelo's Technique: "up to two creature cards with total mana value 6 or less".
+      const total = node.totalMV !== undefined ? totalMVLimit(ctx, node.totalMV, candidates) : undefined;
       if (answer) {
         if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
           throw new RulesError(min === max ? `Choose ${max} of those cards.` : `Choose up to ${max} of those cards.`);
         }
         if (each && !eachAssignable(fits, each.length, answer.objects)) throw new RulesError('Choose at most one card of each kind.');
+        if (total && answer.objects.reduce((n, id) => n + total.of[id]!, 0) > total.max) throw new RulesError(`Their total mana value must be ${total.max} or less.`);
         memo.chosen = answer.objects;
-      } else if (min === max && (max === 0 || candidates.length === max)) {
+      } else if (min === max && (max === 0 || candidates.length === max) && !total) {
         memo.chosen = candidates.slice(0, max);
       } else {
-        return { ask: { kind: 'choose_objects', player: who, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards.`, seen: looked } };
+        const kinds = each ? Object.fromEntries(candidates.map((id) => [id, each.flatMap((_, i) => (fits(id, i) ? [i] : []))])) : undefined;
+        return { ask: { kind: 'choose_objects', player: who, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards${total ? ` with total mana value ${total.max} or less` : ''}.`, seen: looked, ...(total ? { totalMV: total } : {}), ...(kinds ? { kinds } : {}) } };
       }
       // The chosen cards go where the text says.
       const chosen = memo.chosen;
@@ -1254,24 +1289,24 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // Turntimber Symbiosis: "If that card has mana value 3 or less, …" — what was put onto the battlefield.
         if (to === 'battlefield' && ctx.resolution) ctx.resolution.created = chosen.filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
       }
-      const rest = looked.filter((id) => !chosen.includes(id) && g.objects[id]!.zone === 'library');
-      if (node.rest === 'graveyard' || node.rest === 'hand') {
-        for (const id of rest) moveObject(g, id, node.rest, ctx.events);
-        return done();
+      // Planar Genesis: "If you don't, put a card from among them into your hand."
+      const pool = looked.filter((id) => g.objects[id]!.zone === 'library');
+      if (node.orElse && !chosen.length && pool.length) {
+        if (pool.length > 1) {
+          memo.orElse = true;
+          return { ask: { kind: 'choose_objects', player: who, candidates: pool, min: 1, max: 1, text: 'Choose a card to put into your hand.', seen: pool } };
+        }
+        moveObject(g, pool[0]!, 'hand', ctx.events);
       }
-      // Famished Worldsire: "…, then shuffle." — the rest stay in the library, which is shuffled (CR 701.24a).
-      if (node.rest === 'shuffle') {
-        shuffleInPlace(g, library);
-        ctx.events.push({ type: 'shuffled', player: who });
-        return done();
-      }
-      if (node.rest === 'top' || rest.length < 2 || node.order === 'random') {
-        if (node.order === 'random') shuffleInPlace(g, rest);
-        if (node.rest !== 'top') for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
-        return done();
-      }
-      // "on the bottom of your library in any order": the player orders them.
-      return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: rest, min: rest.length, max: rest.length, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).', ordered: true } };
+      return digRest(ctx, node, looked, chosen, library, who, done);
+    }
+    // Planar Genesis: the card for your hand.
+    if (memo.orElse && !memo.orElseDone) {
+      const pool = looked.filter((id) => g.objects[id]!.zone === 'library');
+      if (!answer || answer.objects.length !== 1 || !pool.includes(answer.objects[0]!)) throw new RulesError('Choose one of those cards.');
+      memo.orElseDone = true;
+      moveObject(g, answer.objects[0]!, 'hand', ctx.events);
+      return digRest(ctx, node, looked, memo.chosen, library, who, done);
     }
     // The order for the bottom.
     const rest = looked.filter((id) => !memo.chosen!.includes(id) && g.objects[id]!.zone === 'library');
@@ -2638,7 +2673,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ctx.events.push({ type: 'searched', player, owner });
           return true;
         }
-        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}) } };
+        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}), ...(node.totalMV !== undefined ? { totalMV: totalMVLimit(ctx, node.totalMV, candidates) } : {}) } };
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
@@ -2655,6 +2690,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (chosen.length > count || chosen.length < need || new Set(chosen).size !== chosen.length || !chosen.every((id) => candidates.includes(id))) {
         throw new RulesError(mustFind ? `Choose ${need} card(s).` : `Choose up to ${count} matching card(s).`);
       }
+      // Protean Hulk: "any number of creature cards with total mana value 6 or less".
+      if (node.totalMV !== undefined && chosen.reduce((n, id) => n + manaValueOf(g, g.objects[id]!), 0) > amountOf(ctx, node.totalMV)) throw new RulesError(`Their total mana value must be ${amountOf(ctx, node.totalMV)} or less.`);
       // Myriad Landscape: "up to two basic land cards that share a land type".
       if (node.sameLandType && chosen.length > 1) {
         const types = (id: ObjectId) => chars(g, g.objects[id]!).subtypes;
@@ -3210,17 +3247,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
     const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
     if (!candidates.length) return true;
-    const max = Math.min(amountOf(ctx, node.amount ?? 1), candidates.length);
+    // Technomancer: "any number of …"; Lively Dirge: "… with total mana value 4 or less".
+    const max = Math.min(node.amount === 'all' ? candidates.length : amountOf(ctx, node.amount ?? 1), candidates.length);
     const min = node.optional ? 0 : max;
+    const total = node.totalMV !== undefined ? totalMVLimit(ctx, node.totalMV, candidates) : undefined;
     const where = node.to === 'hand' ? 'to your hand' : node.to === 'exile' ? 'into exile' : 'to the battlefield';
     let chosen: string[];
-    if (candidates.length === max && min === max) chosen = candidates;
+    if (candidates.length === max && min === max && !total) chosen = candidates;
     else {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard to ${node.to === 'exile' ? 'exile' : `return ${where}`}.` } };
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}) } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
       }
+      if (total && answer.objects.reduce((n, id) => n + total.of[id]!, 0) > total.max) throw new RulesError(`Their total mana value must be ${total.max} or less.`);
       chosen = answer.objects;
     }
     const moved: ObjectRef[] = [];
@@ -3473,7 +3513,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)}, paying its costs?` } };
     if (!answer.cast) return otherwise;
     castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { pay: true });
-    return true;
+    // Conduit of Worlds: "If you do, you can't cast additional spells this turn."
+    return node.then ? { expand: node.then as EffectNode[] } : true;
   },
 
   // CR 702.85a: cascade.
@@ -3485,7 +3526,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // rest on the bottom of your library in a random order." — and "Exile cards … until you exile …" (CR 701.20a).
   reveal_until(node, ctx) {
     const g = ctx.g;
-    const memo = ctx.memo as { seen?: string[]; hit?: string | null };
+    const memo = ctx.memo as { seen?: string[]; hit?: string | null; who?: PlayerId };
+    // Tibalt's Trickery: "Its controller … exiles cards from the top of their library until …. They may cast that card …"
+    const who = (memo.who ??= node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller);
+    if (!who) return true;
+    if (who !== ctx.controller) return effects.reveal_until!(node, { ...ctx, controller: who });
     if (!memo.seen) {
       const filter = liveFilter(ctx, { ...((node.filter ?? {}) as ObjectFilter), zone: 'library' as const });
       const seen: string[] = [];

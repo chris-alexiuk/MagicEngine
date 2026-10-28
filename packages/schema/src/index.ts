@@ -302,6 +302,8 @@ export interface TargetSpec {
   sameOwner?: true;
   /** Agadeem's Awakening: "any number of target creature cards that each have a different mana value". */
   distinctManaValues?: true;
+  /** Flames of Rebirth: "any number of target creature cards with total mana value 6 or less" (X: the X announced). */
+  maxTotalMV?: number | 'X';
   /** Gilded Drake: "This ability still resolves if its target becomes illegal." (no CR 608.2b check). */
   stillResolves?: true;
   /** Run Away Together: "two target creatures controlled by different players". */
@@ -436,6 +438,9 @@ export interface ObjectFilter {
   /** Mirror Box: "with the same name as that creature" — the name it has (CR 201.2); `sameName` is set by the engine. */
   sameNameAs?: Ref;
   sameName?: string;
+  /** Tibalt's Trickery: "a nonland card with a different name than that spell" — `differentName` is set by the engine. */
+  differentNameAs?: Ref;
+  differentName?: string;
   /** "each other attacking creature that shares a creature type with it": other than it, not other than the source. */
   otherThan?: Ref;
   /** Set by the engine as an effect applies: the creature types `sharesCreatureTypeWith` stands for, and `otherThan`'s id. */
@@ -686,6 +691,8 @@ export interface AddManaEffect extends EffectNode {
 spend?: ManaSpend;
   /** Arena of Glory: "If any of that mana is spent on a creature spell, it gains haste until end of turn." (`eot`; for good without it) */
   spentHaste?: { filter: ObjectFilter; eot?: true };
+  /** Opal Palace: "If you spend this mana to cast your commander, it enters with a number of additional +1/+1 counters on it equal to the number of times it's been cast from the command zone this game." */
+  spentCommanderCounters?: true;
   /** "Until end of turn, you don't lose this mana as steps and phases end." (CR 500.5); firebending's "until end of combat". */
   keep?: 'end_of_turn' | 'end_of_combat';
   /** "Add {G} for each Elf you control", "an amount of {G} equal to ~'s power": the option this many times. */
@@ -707,6 +714,8 @@ export interface ManaSpend {
   special?: ('unlock' | 'face_up')[];
   /** Cavern of Souls: "…, and that spell can't be countered." */
   uncounterable?: true;
+  /** Powerstone: "This mana can't be spent to cast a nonartifact spell." — costs that are neither spells nor abilities too. */
+  other?: true;
 }
 
 /**
@@ -1223,7 +1232,21 @@ export function keywordSupported(kw: KeywordInstance): boolean {
 
 /** Modes of a face's modal abilities that players resolve by hand, as "• text" lines. */
 export function manualModes(face: FaceDef): string[] {
-  return face.abilities.flatMap((a) => (a.kind === 'static' ? [] : (a.modes?.options ?? []).filter((m) => m.manual).map((m) => `• ${m.text}`)));
+  const modes = face.abilities.flatMap((a) => (a.kind === 'static' ? [] : (a.modes?.options ?? []).filter((m) => m.manual).map((m) => `• ${m.text}`)));
+  // A token the card makes with text that wasn't compiled (CR 111.4): those abilities of the token wouldn't work.
+  const tokens: string[] = [];
+  const walk = (v: unknown): void => {
+    if (!v || typeof v !== 'object') return;
+    if (Array.isArray(v)) return v.forEach(walk);
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      const token = k === 'token' && x && typeof x === 'object' ? (x as { name?: string; unparsed?: string[] }) : null;
+      if (token) for (const u of token.unparsed ?? []) tokens.push(`${token.name ?? 'Token'}: ${u}`);
+      else walk(x);
+    }
+  };
+  walk(face.abilities);
+  walk(face.keywords);
+  return [...modes, ...tokens];
 }
 
 /** A face's abilities, including those its keywords stand for. */

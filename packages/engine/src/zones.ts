@@ -356,6 +356,8 @@ export function moveObject(
     if (opts.tapped) o.tapped = true;
     // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
     for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+    // Opal Palace's mana: the commander enters with its additional counters (CR 122.6).
+    for (const [counter, n] of Object.entries(castInfo?.enterCounters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     // CR 702.145b: if it's night, a daybound double-faced permanent enters transformed.
     const def = g.cards[o.card];
     // CR 709.5d: a Room enters with the door that was cast unlocked (neither, if it wasn't cast).

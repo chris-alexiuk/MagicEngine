@@ -768,6 +768,9 @@ function cast(
   payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
+  // Opal Palace: each of its mana spent on your commander adds a +1/+1 counter for each time it's been cast from the command
+  // zone this game, this time included.
+  const palace = o.commander && o.owner === player ? lastSpentRestricted.filter((r) => r.commanderCounters).length * (g.commanderCasts[id] ?? 0) : 0;
   const castFrom = o.zone;
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
@@ -808,6 +811,7 @@ function cast(
     ...(giftTo ? { giftTo } : {}),
     ...(uncounterableCast ? { uncounterable: true as const } : {}),
     ...(hasteUntil !== undefined ? { hasteUntil } : {}),
+    ...(palace ? { enterCounters: { '+1/+1': palace } } : {}),
     // Addendum: cast during the caster's own main phase.
     ...(g.active === player && (g.step === 'main1' || g.step === 'main2') ? { mainPhase: true as const } : {}),
   };

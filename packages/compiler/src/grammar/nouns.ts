@@ -309,7 +309,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
   // Sapling Nursery: "Treefolk and Forests you control" — a word that's its own plural goes with either.
   const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr'];
-  rest = rest.replace(/\b([A-Z][\w-]*) and (?=([A-Z][\w-]*))/g, (m, a: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a)) ? `${a} or ` : m));
+  // Valley Rotcaller: "Squirrels, Bats, Lizards, and Rats you control" — a list of them.
+  rest = rest.replace(/\b([A-Z][\w-]*)(,?) and (?=([A-Z][\w-]*))/g, (m, a: string, comma: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a)) ? `${a}${comma} or ` : m));
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
   // describe every alternative.
@@ -585,6 +586,13 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Summon: Knights of Round: "Other creatures you control get +2/+2 until end of turn. Put an indestructible counter on
     // each of them." — that group.
     if (/^each of them$/i.test(t) && b.it?.ref === 'all') return { ref: b.it, plural: true, targeted: false };
+    // Scout for Survivors: "Return up to three target creature cards … to the battlefield. Put a +1/+1 counter on each of them."
+    // — those targets.
+    const many = b.it?.ref === 'target' ? b.targets[(b.it as { index: number }).index] : undefined;
+    if (/^each of (?:them|those creatures|those permanents)$/i.test(t) && many && ((many.count ?? 1) > 1 || many.countX)) return { ref: b.it!, plural: true, targeted: false };
+    // Ao, the Dawn Sky: "each permanent you control that's a creature or Vehicle".
+    const thatsA = /^(each|all) permanents? (you control|your opponents control|an opponent controls) that(?:'s| is| are) (?:an? )?(.+)$/i.exec(t);
+    if (thatsA && !/\b(?:that|with|without)\b/.test(thatsA[3]!)) return parseObjectRef(`${thatsA[1]} ${thatsA[3]} ${thatsA[2]}`, b, mode);
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
       // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target), nor is a

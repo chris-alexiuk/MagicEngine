@@ -68,6 +68,8 @@ export interface RestrictedMana {
   onSpent?: TriggeredAbility;
   /** "If any of that mana is spent on a creature spell, it gains haste until end of turn." (Arena of Glory) */
   haste?: { filter: ObjectFilter; eot?: true };
+  /** Opal Palace: spent to cast your commander, it enters with a +1/+1 counter for each time it's been cast from the command zone. */
+  commanderCounters?: true;
 }
 
 export interface PlayerState {
@@ -224,7 +226,7 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number> };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -605,7 +607,7 @@ export type PendingChoice =
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string; x?: { max?: number } }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
   /** sameLandType: the cards found must share a land type (Myriad Landscape). */
-  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true }
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true; totalMV?: { max: number; of: Record<ObjectId, number> } }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
   | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
   /** CR 701.34a: any number of permanents and players that have counters. */
@@ -626,6 +628,8 @@ export type PendingChoice =
       ordered?: true;
       /** Sludge Titan: each chosen card stands for a different kind — the kinds each candidate can stand for. */
       kinds?: Record<ObjectId, number[]>;
+      /** "… with total mana value N or less" (Lively Dirge): the chosen cards' mana values add up to `max` or less. */
+      totalMV?: { max: number; of: Record<ObjectId, number> };
     }
   /**
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped

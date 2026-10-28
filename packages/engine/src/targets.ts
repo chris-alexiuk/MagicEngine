@@ -337,7 +337,7 @@ function defaultTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec
 }
 
 /** Whether a spec's targets must be related to each other (CR 115.3: each instance of "target" is checked as a whole). */
-const related = (spec: TargetSpec) => Boolean(spec.distinctManaValues || spec.differentControllers || spec.shareCreatureType || spec.shareCardType);
+const related = (spec: TargetSpec) => Boolean(spec.distinctManaValues || spec.differentControllers || spec.shareCreatureType || spec.shareCardType || spec.maxTotalMV !== undefined);
 
 /** Run Away Together, Secret Tunnel, Agadeem's Awakening: whether these targets are related as the spec says. */
 export function targetsRelated(g: GameState, spec: TargetSpec, list: Target[]): boolean {
@@ -345,6 +345,7 @@ export function targetsRelated(g: GameState, spec: TargetSpec, list: Target[]): 
   if (objs.some((o) => !o)) return !related(spec);
   const os = objs as GameObject[];
   if (spec.distinctManaValues && new Set(os.map((o) => manaValueOf(g, o))).size !== os.length) return false;
+  if (spec.maxTotalMV !== undefined && os.reduce((n, o) => n + manaValueOf(g, o), 0) > (spec.maxTotalMV === 'X' ? (targetX ?? 0) : spec.maxTotalMV)) return false;
   // "controlled by different players" — off the battlefield, owned by (CR 108.4a).
   if (spec.differentControllers && new Set(os.map((o) => (o.zone === 'battlefield' ? o.controller : o.owner))).size !== os.length) return false;
   if (spec.shareCreatureType && os.length > 1) {
@@ -431,7 +432,7 @@ function chooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
     // Agadeem's Awakening: "that each have a different mana value"; "controlled by different players"; "that share a
     // creature type".
     if (related(spec) && !targetsRelated(g, spec, list)) {
-      const how = spec.distinctManaValues ? 'each have a different mana value' : spec.differentControllers ? 'be controlled by different players' : spec.shareCreatureType ? 'share a creature type' : 'share a card type';
+      const how = spec.distinctManaValues ? 'each have a different mana value' : spec.differentControllers ? 'be controlled by different players' : spec.shareCreatureType ? 'share a creature type' : spec.shareCardType ? 'share a card type' : `have total mana value ${spec.maxTotalMV === 'X' ? (targetX ?? 0) : spec.maxTotalMV} or less`;
       throw new RulesError(`The targets for “${spec.text}” must ${how}.`);
     }
     list.forEach((t, j) => {

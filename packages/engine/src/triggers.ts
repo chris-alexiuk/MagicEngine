@@ -372,7 +372,7 @@ function putOnStackNow(g: GameState, t: PendingTrigger, events: GameEvent[], ans
     // "from a single graveyard": what one graveyard has.
     const available = (s: TargetSpec, c: Target[]) => {
       // Run Away Together, Secret Tunnel: how many of them can be chosen together.
-      if (s.distinctManaValues || s.differentControllers || s.shareCreatureType || s.shareCardType) return relatedPick(g, s, c, c.length).length;
+      if (s.distinctManaValues || s.differentControllers || s.shareCreatureType || s.shareCardType || s.maxTotalMV !== undefined) return relatedPick(g, s, c, c.length).length;
       if (!s.sameOwner) return c.length;
       const by = new Map<string | undefined, number>();
       for (const x of c) {
@@ -386,7 +386,7 @@ function putOnStackNow(g: GameState, t: PendingTrigger, events: GameEvent[], ans
       return;
     }
     // Only one legal choice: made automatically ("from a single graveyard" can still leave a choice).
-    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && !s.sameOwner && !s.differentControllers && !s.shareCreatureType && !s.shareCardType && !s.distinctManaValues && candidates[i]!.length === (s.count ?? 1)));
+    const forced = !modal && specs.every((s, i) => (s.upTo ? candidates[i]!.length === 0 : !s.perPlayer && !s.sameOwner && !s.differentControllers && !s.shareCreatureType && !s.shareCardType && !s.distinctManaValues && s.maxTotalMV === undefined && candidates[i]!.length === (s.count ?? 1)));
     if (!forced) {
       const prompts = targetPrompts(g, t.controller, specs, source);
       // "X damage divided as you choose among any number of targets, where X is …": no more targets than X.

@@ -418,6 +418,8 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
       // Liliana of the Dark Realms: a choice between "+X/+X" and "-X/-X" (choose_one's options).
       else if (k === 'options' && e.type === 'choose_one' && Array.isArray(v)) out[k] = (v as EffectNode[][]).map((o) => bindX(o, expr));
       else if (k === 'filter' && v && typeof v === 'object') out[k] = bindFilterX(v as ObjectFilter);
+      // Klauth: "add X mana in any combination of colors, where X is …".
+      else if (k === 'combination' && v && typeof v === 'object') out[k] = { ...(v as object), amount: sub((v as { amount?: unknown }).amount) };
       else if (v && typeof v === 'object' && (v as { ref?: string }).ref) out[k] = deep(v);
       else out[k] = sub(v);
     }

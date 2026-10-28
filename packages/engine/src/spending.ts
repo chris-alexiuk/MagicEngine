@@ -21,7 +21,7 @@ export function canSpend(g: GameState, player: PlayerId, spend: ManaSpend | unde
   if (purpose.kind === 'spell') return Boolean(spend.spells && ok(purpose.object, spend.spells));
   if (purpose.kind === 'ability') return Boolean(spend.abilities && ok(purpose.source, spend.abilities));
   if (purpose.kind === 'unlock' || purpose.kind === 'face_up') return Boolean(spend.special?.includes(purpose.kind));
-  return false;
+  return Boolean(spend.other);
 }
 
 /** The mana a player could spend on this: their pool plus the restricted mana that may go to it. */

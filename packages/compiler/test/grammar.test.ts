@@ -2133,8 +2133,8 @@ describe('slice 175', () => {
     expect(parse('{T}, Sacrifice two other creatures: Any number of target players each lose 2 life and sacrifice a creature of their choice. You add {B}{B} and draw a card.', 'Creature — Human Cleric', 'Priest of Forgotten Gods').abilities[0]).toMatchObject({ targets: [{ what: 'player', count: 100, upTo: true }], effects: [{ type: 'lose_life' }, { type: 'sacrifice_choice' }, { type: 'add_mana' }, { type: 'draw' }] });
     expect(parse("Draw two cards. If the discarded card wasn't a land card, ~ deals 2 damage to each opponent.", 'Sorcery', 'Grab the Prize').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'if', cond: { type: 'lki_was', what: 'discarded', filter: { types: ['Land'] }, not: true } }] });
     expect(parse("Whenever an opponent casts a noncreature spell with mana value less than this creature's power, draw a card.", 'Creature — Frog Wizard', 'Pollywog Prodigy').abilities[0]).toMatchObject({ trigger: { filter: { manaValue: { op: 'lt', n: { kind: 'stat', stat: 'power' } } } } });
-    // Each of several target players counting their own cards isn't read.
-    expect(parse('Destroy all creatures, then any number of target players each mill half their library, rounded down.', 'Sorcery', 'Singularity Rupture').unparsed.length).toBe(1);
+    // Each of several target players counts their own cards (slice 213).
+    expect(parse('Destroy all creatures, then any number of target players each mill half their library, rounded down.', 'Sorcery', 'Singularity Rupture').abilities[0]).toMatchObject({ effects: [{ type: 'destroy' }, { type: 'mill', amount: { kind: 'cards', player: { ref: 'each_player' }, half: 'down' } }] });
   });
 });
 
