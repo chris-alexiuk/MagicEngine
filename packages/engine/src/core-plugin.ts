@@ -1845,6 +1845,21 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Baleful Mastery: "an opponent draws a card" — the controller chooses one of their opponents as it resolves.
+  choose_opponent(node, ctx) {
+    const g = ctx.g;
+    const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
+    if (!opponents.length || !ctx.resolution) return true;
+    const answer = answerOf(ctx, 'choose_option');
+    if (opponents.length === 1) ctx.resolution.chosenOpponent = opponents[0]!;
+    else if (answer) {
+      const p = opponents.find((x) => g.players[x]!.name === answer.choice || x === answer.choice);
+      if (!p) throw new RulesError('Choose an opponent.');
+      ctx.resolution.chosenOpponent = p;
+    } else return { ask: { kind: 'choose_option', player: ctx.controller, options: opponents.map((p) => g.players[p]!.name), text: 'Choose an opponent.', sourceName: sourceName(ctx) } };
+    return true;
+  },
+
   // CR 702.112a: "it becomes renowned".
   become_renowned(node, ctx) {
     for (const o of refObjects(ctx, { ref: 'self' })) if (o.zone === 'battlefield') o.renowned = true;

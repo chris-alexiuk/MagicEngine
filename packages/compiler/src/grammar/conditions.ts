@@ -84,6 +84,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : lifeN[1] === 'a player' ? 'a_player' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
+  // Proft's Eidetic Memory: "if you've drawn more than one card this turn"; "… two or more cards this turn".
+  const drewN = /^you(?:'ve| have)? drawn (?:(more than one) card|(\w+) or more cards) this turn$/.exec(t);
+  if (drewN) {
+    const n = drewN[1] ? 2 : parseAmount(drewN[2]!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'drawn_this_turn' }, op: 'ge', n };
+  }
   // Lunar Convocation: "if you gained and lost life this turn".
   if (t === 'you gained and lost life this turn') {
     return { type: 'and', all: [{ type: 'amount', amount: { kind: 'life_this_turn', who: 'you' }, op: 'ge', n: 1 }, { type: 'amount', amount: { kind: 'life_this_turn', who: 'you', stat: 'lost' }, op: 'ge', n: 1 }] };
@@ -183,6 +189,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ came under your control since the beginning of your last upkeep$/.test(t)) return { type: 'arrived_since_upkeep' };
   // CR 702.24a (cumulative upkeep): "if this permanent is on the battlefield"
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
+  // Vaultborn Tyrant: "When this creature dies, if it's not a token, …" — a token that died has ceased to exist.
+  if (/^(?:it's not|it isn't|it wasn't|it was not|~ isn't|~ wasn't|~ is not|~ was not) a token$/.test(t)) return { type: 'is', of: b.it ?? { ref: 'self' }, filter: { token: false } };
   // CR 702.194b: "if this spell was cast using teamwork"
   if (/^(?:~|this spell|it) was cast using teamwork$/.test(t)) return { type: 'paid', cost: 'teamwork' };
   // CR 702.174: "if the gift was promised", "if the gift wasn't promised"
@@ -195,6 +203,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
   const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
+  // The Mastery cycle: "You may pay {1}{B} rather than pay this spell's mana cost. … If the {1}{B} cost was paid, …" — the
+  // alternative cost (its option is "alt").
+  if (/^the (?:\{[^}]+\})+ cost was paid$/.test(t)) return { type: 'paid', cost: 'alt' };
   // Spelunking: "If you put a Cave onto the battlefield this way" — what the effect before put there.
   const putThisWay = /^you put an? (.+?) onto the battlefield this way$/.exec(t);
   if (putThisWay) {

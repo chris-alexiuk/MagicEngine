@@ -64,6 +64,14 @@ const CARDS = [
   makeCard({ name: 'Steel Hellkite', type_line: 'Artifact Creature — Dragon', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Flying\n{X}: Destroy each nonland permanent with mana value X whose controller was dealt combat damage by this creature this turn. Activate only once each turn.' }),
   makeCard({ name: 'Combustible Gearhulk', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "First strike\nWhen this creature enters, target opponent may have you draw three cards. If the player doesn't, you mill three cards, then this creature deals damage to that player equal to the total mana value of those cards." }),
   makeCard({ name: 'Finale of Revelation', type_line: 'Sorcery', mana_cost: '{X}{U}{U}', oracle_text: 'Draw X cards. If X is 10 or more, instead shuffle your graveyard into your library, draw X cards, untap up to five lands, and you have no maximum hand size for the rest of the game.\nExile Finale of Revelation.' }),
+  makeCard({ name: 'Relentless Assault', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Untap all creatures that attacked this turn. After this main phase, there is an additional combat phase followed by an additional main phase.' }),
+  makeCard({ name: 'Antiquities Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Artifacts you control become artifact creatures with base power and toughness 5/5 until end of turn.' }),
+  makeCard({ name: 'Sword Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +1/+1.\nEquip {1}' }),
+  makeCard({ name: 'Proft Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "At the beginning of combat on your turn, if you've drawn more than one card this turn, put X +1/+1 counters on target creature you control, where X is the number of cards you've drawn this turn minus one." }),
+  makeCard({ name: 'Draw Three', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Draw three cards.' }),
+  makeCard({ name: 'Baleful Mastery', type_line: 'Instant', mana_cost: '{3}{B}', cmc: 4, oracle_text: "You may pay {1}{B} rather than pay this spell's mana cost.\nIf the {1}{B} cost was paid, an opponent draws a card.\nExile target creature or planeswalker." }),
+  makeCard({ name: 'Vaultborn Tyrant', type_line: 'Creature — Dinosaur', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "Trample\nWhen this creature dies, if it's not a token, create a token that's a copy of it, except it's an artifact in addition to its other types." }),
+  makeCard({ name: 'Behind the Mask', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Kicker {1}\nUntil end of turn, target artifact or creature becomes an artifact creature with base power and toughness 4/3. If this spell was kicked, it has base power and toughness 1/1 until end of turn instead.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -681,5 +689,93 @@ describe('staples (slice 191)', () => {
     g.players.alice!.pool.C = 2;
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Finale of Revelation', 'hand'), x: 2 }));
     expect(g.zones.hand.alice!.length).toBe(hand + 2);
+  });
+});
+
+describe('staples (slice 192)', () => {
+  const combat = (g: GameState, attacks: { attacker: string; target: { kind: 'player'; player: string } }[]) => {
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    return g;
+  };
+
+  it('Relentless Assault: untaps the creatures that attacked this turn — not the others', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [bear, cub] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Cub', 'battlefield')];
+    g = combat(g, [{ attacker: bear, target: { kind: 'player', player: 'bob' } }]);
+    g.objects[cub]!.tapped = true;
+    expect(g.objects[bear]!.tapped).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Relentless Assault', 'hand') }));
+    expect([g.objects[bear]!.tapped, g.objects[cub]!.tapped]).toEqual([false, true]);
+  });
+
+  it('"become artifact creatures with base power and toughness 5/5": an Equipment stays an Equipment (CR 205.1a)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sword = give(g, 'alice', 'Sword Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Antiquities Lite', 'hand') }));
+    const c = chars(g, g.objects[sword]!);
+    expect([c.power, c.toughness, c.types, c.subtypes]).toEqual([5, 5, ['Artifact', 'Creature'], ['Equipment']]);
+  });
+
+  it("Proft's Eidetic Memory: more than one card drawn this turn, X one less than that", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Proft Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Draw Three', 'hand') }));
+    g = toStep(g, 'beginning_of_combat');
+    for (let i = 0; i < 10 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bear }]] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    // Drew one in the draw step too? Alice's first turn skips it (CR 103.8a) — so three this turn.
+    expect(g.objects[bear]!.counters['+1/+1']).toBe(g.turnLog.drawn!.alice! - 1);
+  });
+
+  it('Baleful Mastery: an opponent draws a card only for the alternative cost', () => {
+    let g = toStep(start({ players: 3, extra: CARDS }), 'main1', 'alice');
+    const [b1, b2] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    const hands = () => [g.zones.hand.bob!.length, g.zones.hand.carol!.length];
+    const before = hands();
+    g.players.alice!.pool.B = 1;
+    g.players.alice!.pool.C = 1;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Baleful Mastery', 'hand'), targets: [[{ kind: 'object', object: b1 }]], alt: 'alt' });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'choose_option', player: 'alice' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: (g.pending as { options: string[] }).options.find((o) => /carol/i.test(o))! } }));
+    expect(hands()).toEqual([before[0], before[1]! + 1]);
+    expect(g.objects[b1]!.zone).toBe('exile');
+    g.players.alice!.pool.B = 1;
+    g.players.alice!.pool.C = 3;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Baleful Mastery', 'hand'), targets: [[{ kind: 'object', object: b2 }]] }));
+    expect(hands()).toEqual([before[0], before[1]! + 1]);
+  });
+
+  it("Vaultborn Tyrant: its token copy doesn't make another", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const rex = give(g, 'alice', 'Vaultborn Tyrant', 'battlefield');
+    g.objects[rex]!.damage = 6;
+    g = settle(act(g, { type: 'pass', player: 'alice' }));
+    g = settle(g);
+    const copies = () => g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice');
+    expect(copies().length).toBe(1);
+    expect(chars(g, g.objects[copies()[0]!]!).types).toEqual(expect.arrayContaining(['Artifact', 'Creature']));
+    g.objects[copies()[0]!]!.damage = 6;
+    g = settle(act(g, { type: 'pass', player: g.priority! }));
+    expect(copies().length).toBe(0);
+  });
+
+  it('Behind the Mask: kicked, it still becomes an artifact creature — a 1/1', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const trinket = give(g, 'alice', 'Trinket', 'battlefield');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Behind the Mask', 'hand'), targets: [[{ kind: 'object', object: trinket }]], kicked: true }));
+    const c = chars(g, g.objects[trinket]!);
+    expect([c.types.includes('Creature'), c.power, c.toughness]).toEqual([true, 1, 1]);
   });
 });

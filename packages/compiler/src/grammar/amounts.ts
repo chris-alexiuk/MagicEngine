@@ -64,6 +64,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   // "the number of Plains you control": a word whose plural is the same.
   const same = /^(?:basic )?(?:Plains|Sheep|Fish|Elk)\b/.test(t);
   if (!pf || (pf.plural !== plural && !same) || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
+  // Rowdy Research: "for each creature that attacked this turn" counts ones that have since left too.
+  if (pf.filter.attackedThisTurn) return null;
   return { kind: 'count', filter: pf.filter };
 }
 
@@ -209,6 +211,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
+  // Proft's Eidetic Memory: "the number of cards you've drawn this turn"
+  if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"

@@ -70,6 +70,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
   [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
+  // Relentless Assault: "Untap all creatures that attacked this turn."
+  [/ that attacked this turn$/, (f) => !f.attackedThisTurn && ((f.attackedThisTurn = true), true)],
   // Steel Hellkite: "each nonland permanent with mana value X whose controller was dealt combat damage by this creature
   // this turn"
   [/ whose controller was dealt combat damage by (?:~|this creature) this turn$/, (f) => !f.controllerHitBySource && ((f.controllerHitBySource = true), true)],

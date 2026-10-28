@@ -2384,3 +2384,21 @@ describe('slice 191', () => {
     expect(parse("You may exile a red card with mana value X from your hand rather than pay this spell's mana cost.", 'Instant').unparsed).toHaveLength(1);
   });
 });
+
+describe('slice 192', () => {
+  it('reads attacked-this-turn filters, plural animation and draw counts', () => {
+    expect(parse('Untap all creatures that attacked this turn. After this main phase, there is an additional combat phase followed by an additional main phase.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'untap', what: { filter: { attackedThisTurn: true } } }, { type: 'extra_combat', main: true }] });
+    // Counted, it would need the ones that have left too.
+    expect(parse('This spell costs {1} less to cast for each creature that attacked this turn.', 'Sorcery').unparsed).toHaveLength(1);
+    expect(parse('Artifacts you control become artifact creatures with base power and toughness 5/5 until end of turn.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'modify', what: { ref: 'all' }, types: ['Artifact', 'Creature'], setPower: 5, setToughness: 5, until: 'eot' }] });
+    expect(parse("At the beginning of combat on your turn, if you've drawn more than one card this turn, put X +1/+1 counters on target creature you control, where X is the number of cards you've drawn this turn minus one.", 'Enchantment').abilities[0]).toMatchObject({ condition: { type: 'amount', amount: { kind: 'drawn_this_turn' }, op: 'ge', n: 2 }, effects: [{ amount: { kind: 'drawn_this_turn', plus: -1 } }] });
+    expect(parse('II — You may discard up to two cards. If you do, draw that many cards.', 'Enchantment — Saga').abilities[0]).toMatchObject({ effects: [{ type: 'wheel', mode: 'up_to', upTo: 2 }] });
+  });
+  it('reads the Mastery cycle, "an opponent" and "if it\'s not a token"', () => {
+    const r = parse("You may pay {1}{B} rather than pay this spell's mana cost.\nIf the {1}{B} cost was paid, an opponent draws a card.\nExile target creature or planeswalker.", 'Instant');
+    expect(r.unparsed).toHaveLength(0);
+    expect(r.abilities[1]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'paid', cost: 'alt' }, effects: [{ type: 'choose_opponent' }, { type: 'draw', who: { ref: 'chosen_opponent' } }] }] });
+    expect(parse("When ~ dies, if it's not a token, create a token that's a copy of it.", 'Creature').abilities[0]).toMatchObject({ condition: { type: 'is', filter: { token: false } } });
+    expect(parse('Until end of turn, target artifact becomes an artifact creature with base power and toughness 4/3. If this spell was kicked, it has base power and toughness 1/1 until end of turn instead.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ types: ['Artifact', 'Creature'], setPower: 1 }] }] });
+  });
+});

@@ -46,6 +46,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Fable of the Mirror-Breaker: "You may discard up to two cards. If you do, draw that many cards." — discarding none is
+  // not doing it, so it's "Discard up to two cards, then draw that many cards".
+  text = text.replace(/\bYou may discard up to (\w+) cards\. If you do, draw that many cards\./, 'Discard up to $1 cards, then draw that many cards.');
   // Tempt with Discovery: "Search your library for a land card and put it onto the battlefield. … Then each player who
   // searched a library this way shuffles." — each search, then a shuffle.
   if (/ Then each player who searched a library this way shuffles\.$/.test(text.trim())) {
@@ -710,6 +713,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const tokenCount = moreTokens ? parseAmount(moreTokens[1]!) : null;
         if (!yes && tokenCount !== null && previous.length === 1 && previous[0]!.type === 'create_token') yes = [{ ...structuredClone(previous[0]!), amount: tokenCount }];
         if (!yes) return null;
+        // Behind the Mask: "… becomes an artifact creature with base power and toughness 4/3. If evidence was collected, it
+        // has base power and toughness 1/1 until end of turn instead." — only the numbers are replaced; it still becomes one.
+        if (previous.length === 1 && yes.length === 1 && previous[0]!.type === 'modify' && yes[0]!.type === 'modify' && previous[0]!.types && !yes[0]!.types) {
+          const was = previous[0]!;
+          if (JSON.stringify(was.what) !== JSON.stringify(yes[0]!.what)) return null;
+          yes = [{ ...structuredClone(yes[0]!), types: was.types, subtypes: was.subtypes, ...(was.retainTypes ? { retainTypes: true } : {}) }];
+        }
         const replaced = out.splice(out.length - previous.length, previous.length);
         out.push({ type: 'if', cond: cond!, effects: yes, else: replaced });
         previous = [];
@@ -1380,6 +1390,19 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Baleful Mastery: "an opponent draws a card"; Fateful Handoff: "An opponent gains control of that permanent." — one the
+  // controller chooses as it resolves.
+  const anOpponent = /^An opponent (?!controls\b|chooses\b|separates\b|may\b)(.+)$/.exec(s);
+  if (anOpponent) {
+    const r = attempt(b, (b) => {
+      const who: Ref = { ref: 'chosen_opponent' };
+      const rest = parseSentenceWithSubject(anOpponent[1]!, b, who);
+      if (!rest || !JSON.stringify(rest).includes('"chosen_opponent"')) return null;
+      b.player = who;
+      return [{ type: 'choose_opponent' }, ...rest];
+    });
+    if (r) return r;
+  }
   // Wan Shi Tong: "draw half X cards, rounded down"; Quietus Spike: "that player loses half their life, rounded up";
   // Traumatize: "Target player mills half their library, rounded down."
   const halved = /^(.+), rounded (up|down)$/.exec(s);
@@ -3349,6 +3372,12 @@ function parseLayerChange(c: string, b: Binder): EffectNode[] | null {
  * it's "still a land" or "in addition to its other types" (CR 205.1b).
  */
 function parseBecomes(c: string, b: Binder): EffectNode[] | null {
+  // Tezzeret the Seeker: "Artifacts you control become artifact creatures with base power and toughness 5/5 until end of
+  // turn" — the same as "become 5/5 artifact creatures"; one at a time below.
+  c = c
+    .replace(/^(.+?) (becomes? )an? ((?:[a-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
+    .replace(/^(.+?) become ((?:[a-z]+ )*?)creatures with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 become a $3/$4 $2creature$5')
+    .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5');
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
   const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+)\/(\d+) until end of turn$/.exec(c);
   if (base) {

@@ -111,6 +111,11 @@ interface ActiveEffect {
 }
 
 const CREATURE_TYPES = SUBTYPES.creature;
+/** Which card type each kind of subtype goes with (CR 205.3). */
+const SUBTYPE_OF_TYPE: Record<string, keyof typeof SUBTYPES> = { Creature: 'creature', Land: 'land', Artifact: 'artifact', Enchantment: 'enchantment', Planeswalker: 'planeswalker', Instant: 'spell', Sorcery: 'spell', Kindred: 'creature' };
+function subtypeKind(s: string): keyof typeof SUBTYPES | undefined {
+  return (Object.keys(SUBTYPES) as (keyof typeof SUBTYPES)[]).find((k) => SUBTYPES[k].includes(s));
+}
 const LAND_TYPES: readonly string[] = SUBTYPES.land;
 
 function printed(face: FaceDef): Characteristics {
@@ -544,8 +549,18 @@ function layered(g: GameState, o: GameObject): Characteristics {
       c.types = [...new Set([...c.types, ...e.types.types])];
       c.subtypes = [...new Set([...c.subtypes, ...e.types.subtypes])];
     } else {
-      c.types = [...e.types.types];
-      c.subtypes = [...e.types.subtypes];
+      // CR 205.1a: the new card types replace the old ones; subtypes go with the card types they belong to, and a new
+      // subtype replaces only those of its own kind ("Target artifact becomes a 5/5 artifact creature" — an Equipment
+      // stays an Equipment).
+      const types = e.types.types;
+      const given = e.types.subtypes;
+      const kept = c.subtypes.filter((s) => {
+        const kind = subtypeKind(s);
+        if (!kind || !types.some((t) => SUBTYPE_OF_TYPE[t] === kind)) return false;
+        return !given.some((n) => subtypeKind(n) === kind);
+      });
+      c.types = [...types];
+      c.subtypes = [...new Set([...kept, ...given])];
     }
     if (c.types.includes('Creature')) c.hasPT = true;
   }
@@ -772,6 +787,7 @@ export function matchesFilter(
   if (f.notHistoric && (c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   // "a creature dealt damage by ~ this turn"
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
+  if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
   if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;

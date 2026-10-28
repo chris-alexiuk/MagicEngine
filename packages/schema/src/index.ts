@@ -418,6 +418,8 @@ export interface ObjectFilter {
   notObject?: string;
   /** "a creature dealt damage by ~ this turn" */
   damagedBySource?: true;
+  /** Relentless Assault: it was declared as an attacker this turn (as this object, CR 400.7). */
+  attackedThisTurn?: true;
   /** Steel Hellkite: its controller was dealt combat damage by the source this turn. */
   controllerHitBySource?: true;
   /** Oran-Rief: "each green creature that entered this turn" */
@@ -477,6 +479,8 @@ export type Ref =
   | { ref: 'discarded_this_way' }
   /** CR 614.12: "the chosen player" — the player chosen as the source entered ("As ~ enters, choose a player"). */
   | { ref: 'chosen_player' }
+  // Baleful Mastery: "an opponent draws a card" — the opponent this resolution chose (choose_opponent).
+  | { ref: 'chosen_opponent' }
   /** "Put a +1/+1 counter on a creature you control. It gains …" — the object that effect chose. */
   | { ref: 'chosen_object' };
 
@@ -1078,7 +1082,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
+    'remove_counters', 'choose_opponent', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],

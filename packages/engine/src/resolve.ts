@@ -170,6 +170,10 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       const p = s?.chosen?.player ?? (s ? g.lastKnown?.[s.id]?.chosen?.player : undefined);
       return p && live.includes(p) ? [p] : [];
     }
+    case 'chosen_opponent': {
+      const p = ctx.resolution?.chosenOpponent;
+      return p && live.includes(p) ? [p] : [];
+    }
     case 'enchanted_player': {
       // CR 303.4: the player the source Aura is attached to (as it last existed, if it has left).
       const s = ctx.source;

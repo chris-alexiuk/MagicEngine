@@ -64,6 +64,8 @@ export interface TurnLog {
   damagedBy?: Record<ObjectId, ObjectId[]>;
   /** How many times each creature has been declared as an attacker this turn. */
   attacks?: Record<ObjectId, number>;
+  /** The object each attacking creature was as it attacked (CR 400.7: "that attacked this turn"). */
+  attackedAs?: Record<ObjectId, number>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
   discarded?: { id: ObjectId; zcc: number }[];
   /** Players who activated a loyalty ability this turn (The Chain Veil). */
@@ -126,6 +128,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'attacks_declared':
         if (e.attacks.length && !log.attacked.includes(g.active)) log.attacked.push(g.active);
         for (const a of e.attacks) (log.attacks ??= {})[a.attacker] = ((log.attacks ??= {})[a.attacker] ?? 0) + 1;
+        for (const a of e.attacks) if (g.objects[a.attacker]) (log.attackedAs ??= {})[a.attacker] = g.objects[a.attacker]!.zcc;
         break;
       case 'life':
         if (e.delta > 0 && !log.gainedLife.includes(e.player)) {
