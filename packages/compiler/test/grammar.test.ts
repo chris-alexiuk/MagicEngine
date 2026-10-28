@@ -2279,4 +2279,21 @@ describe('slice 185', () => {
     const discovery = parse('Tempting offer — Search your library for a land card and put it onto the battlefield. Each opponent may search their library for a land card and put it onto the battlefield. For each opponent who searches a library this way, search your library for a land card and put it onto the battlefield. Then each player who searched a library this way shuffles.', 'Sorcery');
     expect(discovery.abilities[0]).toMatchObject({ effects: [{ type: 'search' }, { type: 'tempting_offer', theirs: [{ type: 'search' }], mine: [{ type: 'search' }] }] });
   });
+  it('reads searches for any number of cards, up to X, and "instead" lines', () => {
+    expect(parse('{T}, Sacrifice this land: Search your library for any number of God cards, put them onto the battlefield, then shuffle.', 'Land').abilities[0]).toMatchObject({ effects: [{ type: 'search', amount: 999, upTo: true, to: 'battlefield' }] });
+    expect(parse('Search your library for up to X basic land cards, where X is the greatest power among creatures you control. Put those cards onto the battlefield tapped, then shuffle.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'search', amount: { kind: 'greatest' }, upTo: true, tapped: true }] });
+    const counsel = parse('Search your library for a Demon card, reveal it, put it into your hand, then shuffle.\nDelirium — If there are four or more card types among cards in your graveyard, instead search your library for any card, put it into your hand, then shuffle.', 'Sorcery');
+    expect(counsel.unparsed).toEqual([]);
+    expect(counsel.abilities[0]).toMatchObject({ effects: [{ type: 'if', effects: [{ type: 'search', filter: { zone: 'library' } }], else: [{ type: 'search', filter: { subtypes: ['Demon'] } }] }] });
+    expect(parse('Whenever this creature attacks, you win the game if there are twenty or more counters on it or you have twenty or more cards in hand.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'or', any: [{ type: 'counters', min: 20 }, { type: 'hand', n: 20 }] } }] });
+  });
+  it('reads spending mana as though it were mana of any color', () => {
+    expect(parse('You may spend mana as though it were mana of any color.', 'Artifact').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'spend_any_color' } });
+    expect(parse('You may spend mana as though it were mana of any color to cast planeswalker spells.', 'Enchantment').abilities[0]).toMatchObject({ effect: { rule: 'spend_any_color', filter: { types: ['Planeswalker'] } } });
+    expect(parse('Exile target creature. Until the end of your next turn, you may cast that card and you may spend mana as though it were mana of any color to cast that spell.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'move', to: 'exile' }, { type: 'grant_play', until: 'next_turn', anyColor: true }] });
+    expect(parse('Exile target nonland permanent. You may cast that card for as long as it remains exiled.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'move' }, { type: 'grant_play', until: 'exiled' }] });
+    expect(parse("Whenever this creature attacks, exile the top card of each player's library. You may play those cards this turn, and you may spend mana as though it were mana of any color to cast those spells.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'exile_top', who: { ref: 'players', who: 'each' }, play: { mode: 'play', anyColor: true } }] });
+    // A rider with no permission to ride on doesn't read.
+    expect(parse('Draw a card, and you may spend mana as though it were mana of any color to cast that spell.', 'Sorcery').unparsed).toHaveLength(1);
+  });
 });

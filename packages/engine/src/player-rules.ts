@@ -32,6 +32,25 @@ export function flashPermission(g: GameState, player: PlayerId, card: GameObject
   return false;
 }
 
+/**
+ * CR 609.4b: whether this player may spend mana as though it were mana of any color on this payment — "You may spend
+ * mana as though it were mana of any color" (Chromatic Orrery), or only to cast some spells (Oath of Nissa).
+ */
+export function spendAnyColor(g: GameState, player: PlayerId, spell?: GameObject): boolean {
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'spend_any_color') continue;
+      const applies = e.who === 'each' || (e.who === 'you' ? player === source.controller : player !== source.controller);
+      if (!applies || !staticConditionHolds(g, e, source)) continue;
+      if (!e.filter || (spell && matchesFilter(g, spell, e.filter, { controller: player, source, anyZone: true }))) return true;
+    }
+  }
+  return false;
+}
+
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
   // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.

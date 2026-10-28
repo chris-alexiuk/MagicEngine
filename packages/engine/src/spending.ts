@@ -1,6 +1,8 @@
 import type { ManaSpend, ObjectFilter } from '@mtg/schema';
 import { matchesFilter } from './characteristics.js';
 import { MANA_COLORS, payFromPool, type ManaCost } from './mana.js';
+import { anyColorPermission } from './permissions.js';
+import { spendAnyColor } from './player-rules.js';
 import type { GameObject, GameState, ManaPool, PlayerId, RestrictedMana } from './types.js';
 
 /**
@@ -39,7 +41,26 @@ const sourceOf = (g: GameState, r: RestrictedMana): GameObject | null => (r.sour
 /** Restricted mana a payment used, for its riders ("and that spell can't be countered"). */
 export let lastSpentRestricted: RestrictedMana[] = [];
 
+/**
+ * CR 609.4b: may this payment spend mana as though it were mana of any color? (Chromatic Orrery; a spell cast with a
+ * permission that says so — the card is still where it was cast from as its costs are paid, CR 601.2a–h.)
+ */
+export function asThoughAnyColor(g: GameState, player: PlayerId, purpose: ManaPurpose): boolean {
+  const spell = purpose.kind === 'spell' ? purpose.object : undefined;
+  return spendAnyColor(g, player, spell) || Boolean(spell && anyColorPermission(g, player, spell));
+}
+
+/**
+ * The cost as it can be paid when any mana can be spent as though it were any color: each colored or hybrid symbol
+ * takes one mana of any type; {C} still needs colorless mana (it isn't a color).
+ */
+export function anyColorCost(cost: ManaCost): ManaCost {
+  const colored = MANA_COLORS.filter((c) => c !== 'C').reduce((n, c) => n + (cost.specific[c] ?? 0), 0);
+  return { ...cost, generic: cost.generic + colored + cost.hybrid.length, specific: cost.specific.C ? { C: cost.specific.C } : {}, hybrid: [] };
+}
+
 export function payMana(g: GameState, player: PlayerId, cost: ManaCost, x: number, purpose: ManaPurpose): ManaPool | null {
+  if (asThoughAnyColor(g, player, purpose)) cost = anyColorCost(cost);
   const ps = g.players[player]!;
   const usable = (ps.restricted ?? []).filter((r) => r.amount > 0 && canSpend(g, player, r.spend, purpose, sourceOf(g, r)));
   lastSpentRestricted = [];

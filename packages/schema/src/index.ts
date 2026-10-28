@@ -1029,6 +1029,8 @@ export const PLAYER_RULES = [
   'max_hand_size', 'hand_size_delta',
   /** CR 704.5j: 'The "legend rule" doesn't apply to permanents you control' — for the permanents its `filter` names (all without one). */
   'no_legend_rule',
+  /** CR 609.4b: "You may spend mana as though it were mana of any color" — to cast the spells its `filter` names (any payment without one). */
+  'spend_any_color',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

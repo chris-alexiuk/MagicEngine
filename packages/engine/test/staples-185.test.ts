@@ -20,6 +20,12 @@ const CARDS = [
   makeCard({ name: 'Gift of Words', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Each opponent draws two cards.' }),
   makeCard({ name: 'Bolt', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Bolt deals 3 damage to any target.' }),
   makeCard({ name: 'Cut a Deal', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each opponent draws a card, then you draw a card for each opponent who drew a card this way.' }),
+  makeCard({ name: 'Forest Call', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Search your library for any number of Forest cards, put them onto the battlefield tapped, then shuffle.' }),
+  makeCard({ name: 'Chromatic Orrery', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: 'You may spend mana as though it were mana of any color.' }),
+  makeCard({ name: 'Oath Lite', type_line: 'Legendary Enchantment', mana_cost: '{0}', oracle_text: 'You may spend mana as though it were mana of any color to cast planeswalker spells.' }),
+  makeCard({ name: 'Hurl Through Hell', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exile target creature. Until the end of your next turn, you may cast that card and you may spend mana as though it were mana of any color to cast that spell.' }),
+  makeCard({ name: 'Bear', type_line: 'Creature — Bear', mana_cost: '{1}{G}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Walker', type_line: 'Legendary Planeswalker — Test', mana_cost: '{1}{G}', cmc: 2, loyalty: '3', oracle_text: '+1: You gain 1 life.' }),
 ];
 
 function settle(g: GameState): GameState {
@@ -192,5 +198,55 @@ describe('staples (slice 185): each opponent who …', () => {
     g = toStep(g, 'end', 'alice');
     g = settle(g);
     expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+});
+
+describe('staples (slice 185): search for any number of cards', () => {
+  it('as many as you like, none at all too', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const forests = [give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Forest', 'library')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Forest Call', 'hand') }));
+    expect(g.pending?.kind).toBe('search');
+    const p = g.pending as { candidates: string[]; count: number; mustFind: boolean };
+    expect(p.candidates).toEqual(expect.arrayContaining(forests));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: forests } }));
+    expect(forests.every((id) => g.objects[id]!.zone === 'battlefield' && g.objects[id]!.tapped)).toBe(true);
+  });
+});
+
+describe('staples (slice 185): spending mana as though it were mana of any color (CR 609.4b)', () => {
+  it('Chromatic Orrery: any mana pays colored costs ({C} still needs colorless)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'hand');
+    g.players.alice!.pool.U = 2;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bear })).toMatch(/mana/i);
+    give(g, 'alice', 'Chromatic Orrery', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+    expect(g.players.alice!.pool.U).toBe(0);
+  });
+
+  it('only for the spells it names', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Oath Lite', 'battlefield');
+    const [bear, walker] = [give(g, 'alice', 'Bear', 'hand'), give(g, 'alice', 'Walker', 'hand')];
+    g.players.alice!.pool.U = 2;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bear })).toMatch(/mana/i);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: walker }));
+    expect(g.objects[walker]!.zone).toBe('battlefield');
+  });
+
+  it('Hurl Through Hell: cast the exiled card until the end of your next turn, with mana of any color', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Hurl Through Hell', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.objects[bear]!.zone).toBe('exile');
+    g = toStep(g, 'main1', 'bob');
+    g = toStep(g, 'main1', 'alice');
+    g.players.alice!.pool.R = 2;
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === bear)).toBe(true);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bear }));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+    expect(g.objects[bear]!.controller).toBe('alice');
   });
 });

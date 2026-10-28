@@ -935,7 +935,8 @@ export interface GameState {
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
   /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string }[];
+  /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b). */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; free?: true; cost?: string; anyColor?: true }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

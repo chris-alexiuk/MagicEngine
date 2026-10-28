@@ -3,7 +3,7 @@ import type { AddManaEffect } from '@mtg/schema';
 import { canActivateTapAbilities, manaAbilities, manaMultiplier } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOption, shortfall } from './mana.js';
-import { canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
+import { anyColorCost, asThoughAnyColor, canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
 import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
 
 export interface PlannedActivation {
@@ -74,6 +74,8 @@ const toActivation = (s: Source, m: Mode): PlannedActivation => ({
 /** `exclude`: permanents that can't be tapped for mana here (their own cost taps or sacrifices them). */
 /** `purpose`: what the mana is for, which decides whether restricted mana can help (CR 106.6). */
 export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 0, exclude: readonly ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): PlannedActivation[] | null {
+  // CR 609.4b: "as though it were mana of any color" — any mana pays its colored symbols.
+  if (asThoughAnyColor(g, player, purpose)) cost = anyColorCost(cost);
   const need = shortfall(spendablePool(g, player, purpose), cost, x);
   if (!need) return null;
   const sources = manaSources(g, player, exclude, purpose);

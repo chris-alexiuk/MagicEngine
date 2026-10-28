@@ -113,7 +113,12 @@ export class ParserRegistry {
         const wordless = next !== lines[i];
         // Dispatch: "Metalcraft — If you control three or more artifacts, exile that creature." — the target of the line before.
         const refersBack = /\b(?:that|those) (?:creature|creatures|spell|permanent|player|card|land)\b|\bthe same (?:target|creature)\b/i.test(next);
-        const joins = /^[A-Z][^.]* instead if [^.]+\.$/.test(next) || /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) || (wordless && refersBack && /^(?:If|That|Those)\b[^.]*\.$/.test(next));
+        // Demonic Counsel: "Delirium — If there are four or more card types …, instead search your library for any card, …".
+        const joins =
+          /^[A-Z][^.]* instead if [^.]+\.$/.test(next) ||
+          /^If (?![^,]* would )[^.]+, [^.]+ instead\.$/.test(next) ||
+          /^If (?![^,]* would )[^,]+, instead [^.]+\.$/.test(next) ||
+          (wordless && refersBack && /^(?:If|That|Those)\b[^.]*\.$/.test(next));
         const plain = (l: string | undefined) => Boolean(l) && /\.$/.test(l!) && !/^[•+]/.test(l!) && !/^(?:As an additional cost|This spell|Cast this spell|~ can't be countered)/.test(l!);
         if (joins && plain(lines[i - 1])) {
           // Code of Constraint: "Target creature gets -4/-0 …. / Draw a card. / Addendum — If …, tap that creature …" — back

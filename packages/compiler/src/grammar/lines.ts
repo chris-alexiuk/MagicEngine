@@ -1701,7 +1701,7 @@ export const continuousRule: GrammarRule = {
       if (!found) return null;
     }
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
-      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
+      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
     if (!effect) return null;
     if (fromGraveyard) {
       if (effect.type !== 'continuous') return null;
@@ -1827,6 +1827,21 @@ function parseFlashFor(body: string, b: Binder): PlayerRuleNode | null {
   if (!pf || !pf.plural) return null;
   const { zone: _z, ...filter } = pf.filter;
   return Object.keys(filter).length ? { type: 'player_rule', who: 'you', rule: 'flash', filter } : null;
+}
+
+/**
+ * CR 609.4b: Chromatic Orrery: "You may spend mana as though it were mana of any color."; Oath of Nissa: "… to cast
+ * planeswalker spells." (for those spells only).
+ */
+function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
+  const m = /^(You|Players) may spend mana as though it were mana of any color(?: to cast (.+?) spells)?$/.exec(body);
+  if (!m) return null;
+  const who = m[1] === 'You' ? 'you' : 'each';
+  if (!m[2]) return { type: 'player_rule', who, rule: 'spend_any_color' };
+  const pf = parseFilter(`${m[2].replace(/ and /g, ' or ')} spells`, b);
+  if (!pf || !pf.plural) return null;
+  const { zone: _z, ...filter } = pf.filter;
+  return { type: 'player_rule', who, rule: 'spend_any_color', filter };
 }
 
 function parsePlayerRule(body: string): PlayerRuleNode | null {

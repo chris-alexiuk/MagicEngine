@@ -534,11 +534,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "~ has a +1/+1 counter on it", "~ has three or more +1/+1 counters on it", "~ has a counter on it".
   const has =
     /^(?:~|it) has (a|an|one or more|\w+ or more) (?:(\S+) )?counters? on (?:it|him|her|them)$/.exec(t) ??
-    /^there are (\w+ or more) (\S+) counters on ~$/.exec(t);
+    // Twenty-Toed Toad: "there are twenty or more counters on it" — any kind.
+    /^there are (\w+ or more) (?:(\S+) )?counters on (?:~|it)$/.exec(t);
   if (has) {
     const n = /^(?:a|an|one or more)$/.test(has[1]!) ? 1 : parseAmount(has[1]!.replace(/ or more$/, ''));
     if (typeof n !== 'number') return null;
-    const of: Ref = /^it /.test(t) ? (b.it ?? { ref: 'self' }) : { ref: 'self' };
+    const of: Ref = /^it |^there are .+ on it$/.test(t) ? (b.it ?? { ref: 'self' }) : { ref: 'self' };
     return { type: 'counters', of, ...(has[2] ? { counter: has[2] } : {}), min: n };
   }
   return null;

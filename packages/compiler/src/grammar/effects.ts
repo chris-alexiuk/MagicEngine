@@ -41,7 +41,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
   // Eldritch Evolution: "Search your library for … X or less, where X is …. Put that card onto the battlefield, then
   // shuffle." — the same as one sentence.
-  text = text.replace(/(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (?:that card|it) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./, '$1, put it $3, then shuffle$2.');
+  // Traverse the Outlands: "… up to X basic land cards, where X is …. Put those cards onto the battlefield tapped, then shuffle."
+  text = text.replace(
+    /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
+    (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
+  );
   // Tempt with Discovery: "Search your library for a land card and put it onto the battlefield. … Then each player who
   // searched a library this way shuffles." — each search, then a shuffle.
   if (/ Then each player who searched a library this way shuffles\.$/.test(text.trim())) {
@@ -126,6 +130,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   return attempt(b, (b) => {
     const sentences = splitSentences(text);
     if (!sentences) return null;
+    // "…, and you may spend mana as though it were mana of any color to cast that spell" rides on the play permission it
+    // follows; one left over (with no permission to ride on) doesn't read.
+    const ANY_COLOR = /,? and you may spend mana as though it were mana of any color to cast (?:that spell|those spells|it|them)$/;
+    const anyColorAt = new Set<number>();
+    sentences.forEach((t, k) => {
+      if (!ANY_COLOR.test(t)) return;
+      sentences[k] = t.replace(ANY_COLOR, '');
+      anyColorAt.add(k);
+    });
+    const anyColor = (k: number) => {
+      if (!anyColorAt.has(k)) return {};
+      anyColorAt.delete(k);
+      return { anyColor: true as const };
+    };
     const out: EffectNode[] = [];
     // The plain effects of the last sentence, for a following "… instead".
     let previous: EffectNode[] = [];
@@ -701,7 +719,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Ragavan: "create a Treasure token and exile the top card of that player's library. Until end of turn, you may
       // cast that card." — from another player's library too; the permission is yours.
       // Urza, Lord High Artificer: "Shuffle your library, then exile the top card." — of your library.
-      const topAny = /^(?:(.+?)(?: and|, then) )?[Ee]xile the top (card|(\w+) cards)(?: of (your|that player's|target opponent's|target player's|defending player's|each opponent's) library)?$/.exec(s);
+      const topAny = /^(?:(.+?)(?: and|, then) )?[Ee]xile the top (card|(\w+) cards)(?: of (your|that player's|target opponent's|target player's|defending player's|each opponent's|each player's) library)?$/.exec(s);
       if (topAny && !topAny[4]) topAny[4] = 'your';
       const top = topAny ? [topAny[0], topAny[2], topAny[3]] as const : null;
       let topWho: Ref | null = topAny && topAny[4] !== 'your' ? null : { ref: 'you' };
@@ -709,7 +727,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (topAny && (topAny[1] || topAny[4] !== 'your') && /you may (?:play|cast) /i.test(sentences[i + 1] ?? '')) {
         const r = attempt(b, (b) => {
           const first = topAny[1] ? parseSentence(capitalise(topAny[1]), b) : [];
-          const who = topAny[4] === 'your' ? { ref: 'you' as const } : topAny[4] === "each opponent's" ? { ref: 'players' as const, who: 'opponents' as const } : parsePlayerRef(topAny[4]!.replace(/'s$/, ''), b);
+          const who =
+            topAny[4] === 'your'
+              ? { ref: 'you' as const }
+              : topAny[4] === "each opponent's" || topAny[4] === "each player's"
+                ? { ref: 'players' as const, who: topAny[4] === "each player's" ? ('each' as const) : ('opponents' as const) }
+                : parsePlayerRef(topAny[4]!.replace(/'s$/, ''), b);
           return first && who ? { first, who } : null;
         });
         topWho = r?.who ?? null;
@@ -721,7 +744,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const amount = top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
         if (!topWho) return null;
-        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode: duringNext[1], until: 'during_next_turn' } });
+        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode: duringNext[1], until: 'during_next_turn', ...anyColor(i + 1) } });
         i++;
         continue;
       }
@@ -750,7 +773,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const until = untilPlay ? (untilPlay[1] !== 'end of turn' ? 'next_turn' : 'eot') : thisTurn![2] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         const mode = (untilPlay ? untilPlay[2] : thisTurn![1]) as 'play' | 'cast';
         if (!topWho) return null;
-        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until, ...(free ? { free: true } : {}) } });
+        out.push(...topFirst, { type: 'exile_top', amount, who: topWho, play: { mode, until, ...(free ? { free: true } : {}), ...anyColor(i + 1) } });
         i++;
         continue;
       }
@@ -765,6 +788,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!node) return null;
         out.push({ ...node, copyOf: what!.ref, copyEach: true });
         i++;
+        continue;
+      }
+      // Hurl Through Hell: "Exile target creature. Until the end of your next turn, you may cast that card." — the card just
+      // exiled; "for as long as it remains exiled" (CR 400.7: until it leaves exile).
+      const exiledLast = out[out.length - 1];
+      const castExiled =
+        exiledLast?.type === 'move' && exiledLast.to === 'exile' && (exiledLast.what as Ref | undefined)?.ref === 'target'
+          ? /^(?:Until (end of turn|the end of your next turn), )?[Yy]ou may (cast|play) (?:that card|it|the exiled card)(?: (this turn|for as long as it remains exiled|until the end of your next turn))?$/.exec(s)
+          : null;
+      if (castExiled && (castExiled[1] || castExiled[3])) {
+        const until = castExiled[3] === 'for as long as it remains exiled' ? 'exiled' : castExiled[1] === 'the end of your next turn' || castExiled[3] === 'until the end of your next turn' ? 'next_turn' : 'eot';
+        out.push({ type: 'grant_play', what: exiledLast!.what, mode: castExiled[2], until, ...anyColor(i) });
         continue;
       }
       // Emry, Lurker of the Loch: "Choose target artifact card in your graveyard. You may cast that card this turn."
@@ -1000,6 +1035,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const last = effects[effects.length - 1];
       if (last?.type === 'search' && last.amount === 1 && (!last.who || (last.who as Ref).ref === 'target') && ['battlefield', 'hand', 'exile'].includes(String(last.to))) b.it = { ref: 'created' };
     }
+    if (anyColorAt.size) return null;
     return out.length ? out : null;
   });
 }
@@ -2824,19 +2860,22 @@ const VERBS: Record<string, VerbHandler> = {
       if (m[3]) node.tapped = true;
       return [node];
     }
-    const q = /^(?:(a|an|one)|up to (\w+)|(\w+)) (.+)$/.exec(m[1]!);
+    // Demonic Counsel: "for any card" is "for a card"; The World Tree: "for any number of God cards" — as many as you like.
+    const q = /^(?:(a|an|one|any(?= card\b))|up to (\w+)|(any number of|\w+)) (.+)$/.exec(m[1]!);
     if (!q) return null;
-    const amount = q[1] ? 1 : parseAmount(q[2] ?? q[3]!);
-    if (typeof amount !== 'number') return null;
+    const anyNumber = q[3] === 'any number of';
+    const amount = q[1] ? 1 : anyNumber ? 999 : parseAmount(q[2] ?? q[3]!);
+    // "up to X basic land cards, where X is …" (Traverse the Outlands): the sentence binds X.
+    if (typeof amount !== 'number' && !(amount === 'X' && q[2])) return null;
     // Myriad Landscape: "up to two basic land cards that share a land type"
     const share = / that share a land type$/.test(q[4]!);
     const pf = parseFilter(`${q[4]!.replace(/ that share a land type$/, '')} in your library`, b);
-    if (!pf || pf.plural !== amount > 1 || (share && amount < 2)) return null;
+    if (!pf || pf.plural !== (amount === 'X' || (amount as number) > 1) || (share && (amount === 'X' || (amount as number) < 2))) return null;
     const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
     const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
     if (zones) node.zones = zones;
     if (theirs) node.who = who;
-    if (q[2]) node.upTo = true;
+    if (q[2] || anyNumber) node.upTo = true;
     if (m[3]) node.tapped = true;
     if (share) node.sameLandType = true;
     return [node];

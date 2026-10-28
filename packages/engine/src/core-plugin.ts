@@ -1850,7 +1850,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // "Exile the top card of your library. Until the end of your next turn, you may play that card."
     const g = ctx.g;
     const n = amountOf(ctx, node.amount);
-    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn'; free?: true } | undefined;
+    const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn'; free?: true; anyColor?: true } | undefined;
     const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       for (const id of zoneList(g, 'library', p).slice(0, n)) {
@@ -1865,7 +1865,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (play) {
           // "During your next turn, you may play that card." — that turn only.
           const lastTurn = lastTurnOf(g, ctx.controller, play.until === 'eot' ? 'eot' : 'next_turn');
-          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}) });
+          (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: play.mode, lastTurn, ...(play.until === 'during_next_turn' ? { firstTurn: lastTurn } : {}), ...(play.free ? { free: true as const } : {}), ...(play.anyColor ? { anyColor: true as const } : {}) });
         }
       }
     }
@@ -2833,11 +2833,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // Emry, Lurker of the Loch: "You may cast that card this turn." (CR 601.3: an effect lets it be cast from there.)
+  // Hurl Through Hell: "Until the end of your next turn, you may cast that card"; "for as long as it remains exiled" — until
+  // it leaves (CR 400.7); "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b).
   grant_play(node, ctx) {
     const g = ctx.g;
+    const lastTurn = node.until === 'exiled' ? Number.MAX_SAFE_INTEGER : node.until === 'next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') : g.turn;
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone === 'battlefield' || o.zone === 'stack') continue;
-      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn: g.turn });
+      if (node.until === 'exiled' && o.zone !== 'exile') continue;
+      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn, ...(node.anyColor ? { anyColor: true as const } : {}) });
     }
     return true;
   },
@@ -3615,7 +3619,7 @@ function describeEffects(list: EffectNode[]): string {
 
 function describeSearch(node: EffectNode, count: number): string {
   const to = { hand: 'into your hand', battlefield: 'onto the battlefield', graveyard: 'into your graveyard', library: 'on top', exile: 'into exile' }[String(node.to)];
-  return `search your library for ${node.upTo ? 'up to ' : ''}${count} card(s), put ${to}`;
+  return `search your library for ${count >= 999 ? 'any number of' : `${node.upTo ? 'up to ' : ''}${count}`} card(s), put ${to}`;
 }
 
 // ---------------------------------------------------------------------------
