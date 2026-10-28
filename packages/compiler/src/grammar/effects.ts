@@ -7,6 +7,7 @@ import { parseCombatRule } from './combat.js';
 import { parseCopyExcept } from './copies.js';
 import { parseCondition } from './conditions.js';
 import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
+import { quotedLivePT } from './quoted.js';
 import { addTokenText, parseTokenPhrase } from './tokens.js';
 import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
@@ -51,6 +52,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(
     /([Ee]xile up to one target creature you own), then (search your library for a basic land card)\. Put both cards onto the battlefield under your control, then shuffle\./,
     '$1, then return that card to the battlefield under your control. $2, put it onto the battlefield, then shuffle.',
+  );
+  // Ajani Goldmane: "Create a white Avatar creature token. It has "This token's power and toughness are each equal to your
+  // life total."" — the token "with" that ability (CR 111.4).
+  text = text.replace(
+    /\b([Cc]reates? (?:a|an|one|two|three|four|five|X) [^."]*? creature tokens?)\. (?:It has|They have|Those tokens have) (QUOTED_\d+)\./g,
+    (_m, made: string, q: string) => (/ with /.test(made) ? `${made} and ${q}.` : `${made} with ${q}.`),
   );
   // Braids, Arisen Nightmare: "… each opponent may sacrifice a permanent of their choice that shares a card type with it.
   // For each opponent who doesn't, that player loses 2 life and you draw a card." — one instruction.
@@ -312,13 +319,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     // "…, and you may spend mana as though it were mana of any color to cast that spell" rides on the play permission it
     // follows; one left over (with no permission to ride on) doesn't read.
     // Hostage Taker: "… mana of any type" — colorless costs too.
-    const ANY_COLOR = /,? and you may spend mana as though it were mana of any (color|type) to cast (?:that spell|those spells|it|them)$/;
+    // Newer wording (Hostage Taker, 2025): "…, and mana of any type can be spent to cast that spell" — the same permission.
+    const ANY_COLOR = /,? and (?:you may spend mana as though it were mana of any (color|type)|mana of any (type) can be spent) to cast (?:that spell|those spells|it|them)$/;
     const anyColorAt = new Map<number, 'color' | 'type'>();
     sentences.forEach((t, k) => {
       const m = ANY_COLOR.exec(t);
       if (!m) return;
       sentences[k] = t.replace(ANY_COLOR, '');
-      anyColorAt.set(k, m[1] as 'color' | 'type');
+      anyColorAt.set(k, (m[1] ?? m[2]) as 'color' | 'type');
     });
     const anyColor = (k: number) => {
       const how = anyColorAt.get(k);
@@ -592,6 +600,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const last = out[out.length - 1];
         if (last?.type === 'counter') last.exile = true;
         else if (last?.type === 'cast_free') last.exileOnLeave = true;
+        // Dire Fleet Daredevil: "You may cast it this turn … If that spell would be put into a graveyard, exile it instead."
+        else if (last?.type === 'grant_play' && last.mode === 'cast') last.exileOnLeave = true;
         else return null;
         continue;
       }
@@ -1198,6 +1208,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (castExiled && (castExiled[1] || castExiled[3])) {
         const until = castExiled[3] === 'for as long as it remains exiled' ? 'exiled' : castExiled[1] === 'the end of your next turn' || castExiled[3] === 'until the end of your next turn' ? 'next_turn' : 'eot';
         out.push({ type: 'grant_play', what: exiledLast!.what, mode: castExiled[2], until, ...anyColor(i) });
+        continue;
+      }
+      // Ugin, Eye of the Storms: "Search your library for any number of colorless nonland cards, exile them, then shuffle. Until
+      // end of turn, you may cast those cards without paying their mana costs."; Chandra, Heart of Fire: "You may cast them this
+      // turn." — the cards the search exiled.
+      const searched = out[out.length - 1];
+      const castSearched =
+        searched?.type === 'search' && searched.to === 'exile' && !searched.faceDown
+          ? /^(?:Until end of turn, you may cast (?:those cards|them|that card|it)( without paying (?:their|its) mana costs?)|You may cast (?:those cards|them|that card|it) this turn( without paying (?:their|its) mana costs?)?)$/.exec(s)
+          : null;
+      if (castSearched) {
+        out.push({ type: 'grant_play', what: { ref: 'created' }, mode: 'cast', until: 'eot', ...(castSearched[1] || castSearched[2] ? { free: true } : {}) });
         continue;
       }
       // Zul Ashur, Lich Lord: "You may cast target Zombie creature card from your graveyard this turn."
@@ -1897,6 +1919,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return inner;
     });
     if (r) return r;
+  }
+  // Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — one spell.
+  const yardSpell = /^[Yy]ou may cast (?:a|an) (.+?) spell from your graveyard this turn$/.exec(s);
+  if (yardSpell) {
+    const pf = parseFilter(`${yardSpell[1]} card in your graveyard`, b);
+    if (pf && !pf.plural && pf.filter.zone === 'graveyard') {
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return [{ type: 'grant_graveyard_cast', filter }];
+    }
   }
   // Containment Construct: "If you do, you may play that card this turn." — the card the instruction before moved.
   const playIt = /^[Yy]ou may (play|cast) (that card|it) (this turn|until the end of your next turn)$/.exec(s);
@@ -3922,8 +3953,11 @@ const VERBS: Record<string, VerbHandler> = {
         { type: 'discard', amount: 1, who: { ref: 'you' }, random: true },
       ];
     }
+    // Ugin, Eye of the Storms: "Search your library for any number of colorless nonland cards, exile them, then shuffle."
+    const exiling = /, exile (?:it|them|that card|those cards)( face down)?, then shuffle$/.exec(args);
+    if (exiling) args = `${args.slice(0, exiling.index)}, put them into exile, then shuffle`;
     const m =
-      /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?(?: with an additional (\+1\/\+1) counter on it)?|into your graveyard), then shuffle$/.exec(args) ??
+      /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?(?: with an additional (\+1\/\+1) counter on it)?|into your graveyard|into exile), then shuffle$/.exec(args) ??
       /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
     if (!m) return null;
     // Krosan Verge: "a Forest card and a Plains card" — one of each.
@@ -3932,8 +3966,8 @@ const VERBS: Record<string, VerbHandler> = {
       const fs = [pair[1]!, pair[2]!].map((t) => parseFilter(`${t} in your library`, b));
       if (fs.some((f) => !f || f.plural)) return null;
       const filters = fs.map((f) => (({ zone: _z, owner: _o, ...rest }) => rest)(f!.filter));
-      const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
-      if (to === 'library') return null;
+      const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : m[2] === 'into exile' ? 'exile' : 'graveyard';
+      if (to === 'library' || to === 'exile') return null;
       const node: EffectNode = { type: 'search', filter: { zone: 'library', owner: 'you' }, filters, amount: 2, to };
       if (theirs) node.who = who;
       if (m[3]) node.tapped = true;
@@ -3956,8 +3990,10 @@ const VERBS: Record<string, VerbHandler> = {
     const share = / that share a land type$/.test(q[4]!);
     const pf = parseFilter(`${q[4]!.replace(/ that share a land type$/, '')} in your library`, b);
     if (!pf || pf.plural !== (amount === 'X' || (amount as number) > 1) || (share && (amount === 'X' || (amount as number) < 2))) return null;
-    const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : 'graveyard';
+    const to = m[2]!.startsWith('into your hand') ? 'hand' : m[2]!.startsWith('onto') ? 'battlefield' : m[2] === 'on top' ? 'library' : m[2] === 'into exile' ? 'exile' : 'graveyard';
     const node: EffectNode = { type: 'search', filter: pf.filter, amount, to };
+    if (exiling?.[1]) node.faceDown = true;
+    if (to === 'exile') b.it = { ref: 'created' };
     if (zones) node.zones = zones;
     if (theirs) node.who = who;
     if (q[2] || anyNumber) node.upTo = true;
@@ -4420,6 +4456,10 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
       return what ? [{ type: 'modify', what: what.ref, setPower: Number(base[2]), setToughness: Number(base[3]), until: 'eot' }] : null;
     });
   }
+  // Beorn's Hospitality: "… becomes a Bear creature in addition to its other types and gains "This creature's power and
+  // toughness are each equal to the number of lands you control."" — the same as "with" it.
+  const gainsPT = / in addition to its other types and gains (QUOTED_\d+)( until end of turn)?$/.exec(c);
+  if (gainsPT && quotedLivePT(gainsPT[1]!, b)) c = `${c.slice(0, gainsPT.index)} with ${gainsPT[1]} in addition to its other types${gainsPT[2] ?? ''}`;
   const m = /^(.+?) becomes? an? (?:(\d+|X)\/(\d+|X) )?(.+?)(?: with (.+?))?( that's still an? (?:land|planeswalker|artifact|enchantment))?( in addition to its other types)?( until end of turn)?$/.exec(c);
   if (!m) return null;
   // Without a P/T it keeps its own ("This Vehicle becomes an artifact creature", CR 702.122a).
@@ -4448,9 +4488,21 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     // Mutavault: "becomes a 2/2 creature with all creature types until end of turn"
     if (m[5] === 'all creature types') node.subtypes = [...new Set([...(node.subtypes as string[]), ...SUBTYPES.creature])];
     else if (m[5]) {
-      const kws = parseKeywordList(m[5], b, false, true);
-      if (!kws) return null;
-      node.keywords = kws;
+      // Druid Class: 'with haste and "This creature's power and toughness are each equal to …"' — set as it goes (layer 7b).
+      const items = m[5].split(/, (?:and )?| and /);
+      const live = items.map((item) => quotedLivePT(item, b));
+      const pt = live.find(Boolean);
+      if (pt) {
+        if (m[2] || live.filter(Boolean).length > 1) return null;
+        node.livePower = pt.power as never;
+        node.liveToughness = pt.toughness as never;
+      }
+      const rest = items.filter((_, i) => !live[i]);
+      if (rest.length) {
+        const kws = parseKeywordList(rest.join(' and '), b, false, true);
+        if (!kws) return null;
+        node.keywords = kws;
+      }
     }
     return [node];
   });

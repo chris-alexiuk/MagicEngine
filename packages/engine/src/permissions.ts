@@ -39,11 +39,17 @@ export function graveyardPermission(g: GameState, player: PlayerId, o: GameObjec
       return key;
     }
   }
+  // Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — once.
+  for (const grant of g.graveyardGrants ?? []) {
+    if (grant.player !== player || grant.turn !== g.turn || (g.turnLog.graveyardCasts ?? []).includes(grant.key)) continue;
+    if (matchesFilter(g, o, grant.filter, { controller: player, source: null, anyZone: true })) return grant.key;
+  }
   return null;
 }
 
 /** Whether any permanent a player controls has a graveyard permission (most games: none). */
 function hasGraveyardPermissions(g: GameState, player: PlayerId): boolean {
+  if ((g.graveyardGrants ?? []).some((p) => p.player === player && p.turn === g.turn)) return true;
   return abilitySources(g).some((id) => {
     const src = g.objects[id];
     return src?.zone === 'battlefield' && src.controller === player && objectAbilities(g, src).some((a) => a.kind === 'static' && a.effect.type === 'graveyard_cast');
@@ -89,6 +95,11 @@ export function freePermission(g: GameState, player: PlayerId, o: GameObject): b
 export function anyColorPermission(g: GameState, player: PlayerId, o: GameObject): false | 'color' | 'type' {
   const live = (g.mayPlay ?? []).filter((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
   return live.some((p) => p.anyColor === 'type') ? 'type' : live.length ? 'color' : false;
+}
+
+/** Dire Fleet Daredevil: "If that spell would be put into a graveyard, exile it instead." — on the permission it was cast with. */
+export function exileOnLeavePermission(g: GameState, player: PlayerId, o: GameObject): boolean {
+  return (g.mayPlay ?? []).some((p) => p.exileOnLeave && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
 }
 
 /** Airbend (CR 701.65a): a permission to cast this card by paying another cost rather than its mana cost. */

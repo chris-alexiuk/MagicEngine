@@ -18,7 +18,7 @@ import {
 } from './types.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { playerRule } from './player-rules.js';
-import { lifeLoss, replaceQuantity } from './quantities.js';
+import { lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { removeShield } from './permanents.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
@@ -901,8 +901,8 @@ export function dealDamage(
     if (!ps || ps.lost) return 0;
     events.push({ type: 'damage', source: source.id, to, amount, combat });
     if (infect) {
-      // CR 120.3b: damage from a source with infect gives poison counters instead.
-      ps.poison += amount;
+      // CR 120.3b: damage from a source with infect gives poison counters instead — its controller puts them (Vorinclex).
+      putPlayerCounters(g, source.controller, to.player, 'poison', amount, events);
     } else {
       // CR 120.3a: damage to a player makes them lose that much life (CR 119.8: unless their life total can't change).
       if (!playerRule(g, to.player, 'life_cant_change')) {
@@ -915,7 +915,7 @@ export function dealDamage(
     if (combat) {
       // CR 120.3g / CR 702.164c: toxic adds poison counters on combat damage to a player.
       const toxic = chars(g, source).keywords.filter((k) => k.id === 'toxic').reduce((n, k) => n + (k.n ?? 0), 0);
-      if (toxic > 0) ps.poison += toxic;
+      if (toxic > 0) putPlayerCounters(g, source.controller, to.player, 'poison', toxic, events);
       // CR 903.10a: track combat damage dealt to each player by each commander.
       if (source.commander) {
         const byCommander = (g.commanderDamage[to.player] ??= {});

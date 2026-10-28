@@ -364,6 +364,8 @@ export interface ObjectFilter {
   other?: true;
   tapped?: boolean;
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
+  /** Sting, the Glinting Dagger: "blocking or blocked by a Goblin or Orc" — a creature it blocks or that blocks it matches. */
+  combatPartner?: ObjectFilter;
   /** "creatures attacking you" — the player whose point of view this is (not their planeswalkers). */
   attackingYou?: true;
   /** Oviya: "Each creature that's attacking one of your opponents" — the player attacked is an opponent. */
@@ -1075,8 +1077,9 @@ export interface QuantityReplacementNode extends EffectNode {
   event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate';
   /** Bloodletter of Aclazotz: only during its controller's turn. */
   yourTurn?: true;
-  /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn). */
-  op: 'double' | 'triple' | 'plus' | 'extra';
+  /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn); 'half':
+   * "half that many …, rounded down" (Vorinclex, Monstrous Raider). */
+  op: 'double' | 'triple' | 'plus' | 'extra' | 'half';
   n?: number;
   /** op 'extra': the token made as well — one, or as many as the event made ("plus that many 1/1 Squirrels"). */
   extra?: { token: FaceDef; thatMany?: true };
@@ -1088,6 +1091,11 @@ export interface QuantityReplacementNode extends EffectNode {
   filter?: ObjectFilter;
   /** counters: which kind (any if absent). */
   counter?: string;
+  /** counters: also counters put on players — 'you': on the putter themself (Lae'zel: "or on yourself"); 'any': any player
+   * (Vorinclex, Monstrous Raider: "on a permanent or player"). */
+  players?: 'you' | 'any';
+  /** counters: "If an effect would put one or more counters …" (Doubling Season) — not counters put on as a cost. */
+  effectOnly?: true;
   /** damage: only to opponents and their permanents; only noncombat damage. */
   toOpponents?: true;
   /** Sawhorn Nemesis: "to the chosen player or a permanent they control" (chosen as the source entered). */
@@ -1164,7 +1172,7 @@ export interface TokenSpec {
 export const CORE_NODES = {
   effects: [
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'exile_until', 'tap_choice', 'destroy', 'move', 'counter', 'tap', 'untap',
-    'put_from_milled', 'grant_play', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
+    'put_from_milled', 'grant_play', 'grant_graveyard_cast', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',

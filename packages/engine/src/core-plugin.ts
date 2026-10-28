@@ -7,7 +7,7 @@ import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Colo
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
-import { extraTokens, lifeLoss, replaceQuantity } from './quantities.js';
+import { extraTokens, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
@@ -871,6 +871,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.landTypes) ? { landTypes: (node.landTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.landType ? [chosen.landType] : []) : [t])) } : {}),
       ...(node.loseAbilities ? { loseAbilities: true as const } : {}),
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
+      // Druid Class: 'becomes a creature with … "This creature's power and toughness are each equal to …"' — counted as it goes.
+      ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
       until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' ? 'game' : 'eot',
@@ -2199,18 +2201,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   get_counters(node, ctx) {
     // CR 122.1: counters on a player ("you get {E}{E}").
     const n = amountOf(ctx, node.amount);
-    for (const p of refPlayers(ctx, ref(node, 'who'))) {
-      const ps = ctx.g.players[p]!;
-      // CR 122.1f / 104.3d: poison counters (ten or more and the player loses).
-      if (node.counter === 'poison') {
-        ps.poison += n;
-        ctx.events.push({ type: 'player_counters', player: p, counter: 'poison', delta: n });
-        continue;
-      }
-      const counters = (ps.counters ??= {});
-      counters[String(node.counter)] = (counters[String(node.counter)] ?? 0) + n;
-      ctx.events.push({ type: 'player_counters', player: p, counter: String(node.counter), delta: n });
-    }
+    for (const p of refPlayers(ctx, ref(node, 'who'))) putPlayerCounters(ctx.g, ctx.controller, p, String(node.counter), n, ctx.events);
     return true;
   },
 
@@ -2300,12 +2291,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (ctx.resolution) ctx.resolution.proliferated = [...(ctx.resolution.proliferated ?? []), ...got];
     for (const p of new Set(answer.players)) {
       const ps = g.players[p]!;
-      if (ps.poison > 0) ps.poison++;
-      for (const [counter, n] of Object.entries(ps.counters ?? {})) {
-        if (n <= 0) continue;
-        ps.counters![counter] = n + 1;
-        ctx.events.push({ type: 'player_counters', player: p, counter, delta: 1 });
-      }
+      const kinds = [...(ps.poison > 0 ? ['poison'] : []), ...Object.entries(ps.counters ?? {}).flatMap(([counter, n]) => (n > 0 ? [counter] : []))];
+      for (const counter of kinds) putPlayerCounters(g, ctx.controller, p, counter, 1, ctx.events);
     }
     return true;
   },
@@ -2831,6 +2818,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         else moveObject(g, id, to, ctx.events, to === 'battlefield' ? { controller: player, ...(node.tapped ? { tapped: true } : {}), ...(node.counters ? { counters: node.counters as Record<string, number> } : {}) } : {});
         // Beseech the Mirror: "exile it face down" — only the player who found it may look at it (CR 406.3).
         if (to === 'exile' && node.faceDown && g.objects[id]?.zone === 'exile') g.objects[id]!.hiddenFor = player;
+        // Hoarding Dragon: "When this creature dies, you may put the exiled card into its owner's hand." (CR 607.2a: linked).
+        const src = ctx.source;
+        if (to === 'exile' && src && src.id !== id && src.zone !== 'stack' && g.objects[id]?.zone === 'exile') g.objects[id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
       }
       // Fabled Passage: "… put it onto the battlefield tapped, then shuffle. Then if …, untap that land." — what was found.
       if (ctx.resolution && chosen.length) ctx.resolution.created = chosen.map((id) => ({ id, zcc: g.objects[id]!.zcc }));
@@ -3465,8 +3455,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone === 'battlefield' || o.zone === 'stack') continue;
       if (node.until === 'exiled' && o.zone !== 'exile') continue;
-      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn, ...(node.anyColor ? { anyColor: node.anyColor === 'type' ? ('type' as const) : (true as const) } : {}) });
+      (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: ctx.controller, mode: node.mode === 'play' ? 'play' : 'cast', lastTurn, ...(node.anyColor ? { anyColor: node.anyColor === 'type' ? ('type' as const) : (true as const) } : {}), ...(node.exileOnLeave ? { exileOnLeave: true as const } : {}), ...(node.free ? { free: true as const } : {}) });
     }
+    return true;
+  },
+
+  // Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — one spell (it's used up once
+  // cast, CR 601.3), this turn; earlier grants expire with their turn.
+  grant_graveyard_cast(node, ctx) {
+    const g = ctx.g;
+    const grants = (g.graveyardGrants ?? []).filter((p) => p.turn === g.turn);
+    grants.push({ player: ctx.controller, filter: { ...(node.filter as ObjectFilter), zone: 'graveyard' }, turn: g.turn, key: `grant:${g.turn}:${grants.length}:${ctx.source?.id ?? ''}` });
+    g.graveyardGrants = grants;
     return true;
   },
 
@@ -5232,6 +5232,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player }] : [];
   },
 };
+
+
 
 export const corePlugin: MechanicPlugin = {
   id: 'core',

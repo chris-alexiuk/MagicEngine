@@ -346,6 +346,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const key = itHas[1] === 'mana value' ? 'manaValue' : (itHas[1] as 'power' | 'toughness');
     return { type: 'is', of: b.it, filter: { [key]: { op: itHas[3] === 'less' ? 'le' : 'ge', n: Number(itHas[2]) } } };
   }
+  // Sting, the Glinting Dagger: "as long as it's blocking or blocked by a Goblin or Orc".
+  const partner = /^it(?:'s| is) blocking or blocked by (an? .+)$/.exec(t);
+  if (partner && b.it) {
+    const filter = stateFilter(partner[1]!, b);
+    if (filter && !filter.zone && !filter.controller) return { type: 'is', of: b.it, filter: { combatPartner: { types: ['Creature'], ...filter } } };
+  }
   // "as long as it's attacking" — "it" being what the ability is about.
   const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
   if (itIs && b.it) {

@@ -67,3 +67,20 @@ export function grantableStatic(a: AbilityNode): boolean {
   const keys = Object.keys(e).filter((k) => !['type', 'affected', 'rules', 'keywords', 'combat', 'power', 'toughness'].includes(k));
   return keys.length === 0 && (e.power === undefined || typeof e.power === 'number') && (e.toughness === undefined || typeof e.toughness === 'number');
 }
+
+/**
+ * Druid Class: a granted "This creature's power and toughness are each equal to the number of lands you control." — its
+ * amounts, for the effect that grants it to set power and toughness continuously (granted, it isn't a characteristic-defining
+ * ability, CR 604.3a: it applies in layer 7b, CR 613.4b). Null for any other quote.
+ */
+export function quotedLivePT(item: string, b: Binder): { power: unknown; toughness: unknown } | null {
+  const quoted = quotedText(item, b);
+  if (!quoted || !b.env.parseAbilities || !/^This creature's power and toughness are each equal to [^."]+\.?$/.test(quoted)) return null;
+  const r = b.env.parseAbilities(/\.$/.test(quoted) ? quoted : `${quoted}.`, '\u0001', 'Creature');
+  const a = r.abilities[0];
+  if (r.unparsed.length || r.keywords.length || r.abilities.length !== 1 || a?.kind !== 'static' || a.gate || a.effect.type !== 'continuous') return null;
+  const e = a.effect as ContinuousEffectNode;
+  const keys = Object.keys(e).filter((k) => !['type', 'affected', 'setLayer', 'setPower', 'setToughness', 'text'].includes(k));
+  if (keys.length || e.affected.ref !== 'self' || e.setPower === undefined || e.setToughness === undefined) return null;
+  return { power: e.setPower, toughness: e.setToughness };
+}

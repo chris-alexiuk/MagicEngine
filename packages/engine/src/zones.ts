@@ -196,7 +196,7 @@ export function moveObject(
   const from = o.zone;
   // CR 614.1a: "exile it instead" replaces the move — flashback (CR 702.34a), "if it would die this turn",
   // and "if ~ would be put into a graveyard from anywhere".
-  if (from === 'stack' && o.exileOnLeave) to = 'exile';
+  if (from === 'stack' && (o.exileOnLeave === true || (o.exileOnLeave === 'graveyard' && to === 'graveyard'))) to = 'exile';
   if (from === 'battlefield' && o.exileWhenLeaves) to = 'exile';
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
@@ -357,7 +357,9 @@ export function moveObject(
     // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
     for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     // Opal Palace's mana: the commander enters with its additional counters (CR 122.6).
-    for (const [counter, n] of Object.entries(castInfo?.enterCounters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+    // CR 614.1a: "enters with" counters are counters put on it (Doubling Season, Hardened Scales, Vorinclex).
+    const entering = (counter: string, n: number) => replaceQuantity(g, 'counters', n, { player: o.controller, object: o, counter });
+    for (const [counter, n] of Object.entries(castInfo?.enterCounters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + entering(counter, n);
     // CR 702.145b: if it's night, a daybound double-faced permanent enters transformed.
     const def = g.cards[o.card];
     // CR 709.5d: a Room enters with the door that was cast unlocked (neither, if it wasn't cast).
@@ -372,12 +374,12 @@ export function moveObject(
     // CR 702.44a: sunburst — a +1/+1 counter (a charge counter if it isn't a creature) for each color spent to cast it.
     if (face.keywords.some((k) => k.id === 'sunburst') && o.cast?.colors) {
       const kind = face.types.includes('Creature') ? '+1/+1' : 'charge';
-      o.counters[kind] = (o.counters[kind] ?? 0) + o.cast.colors;
+      o.counters[kind] = (o.counters[kind] ?? 0) + entering(kind, o.cast.colors);
     }
     // CR 306.5b: a planeswalker enters with loyalty counters equal to its printed loyalty.
-    if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = Number(face.loyalty);
+    if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = entering('loyalty', Number(face.loyalty));
     // CR 310.4b: a battle enters with defense counters equal to its printed defense.
-    if (face.defense !== undefined && /^\d+$/.test(face.defense)) o.counters.defense = Number(face.defense);
+    if (face.defense !== undefined && /^\d+$/.test(face.defense)) o.counters.defense = entering('defense', Number(face.defense));
     onEnterBattlefield(g, o, events);
   }
   events.push({

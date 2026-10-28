@@ -1,5 +1,5 @@
 import type { PlayerRule } from '@mtg/schema';
-import type { AbilityNode, AsEntersNode, ManaSpend, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, Amount, AsEntersNode, ManaSpend, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
 
 export type PlayerId = string;
@@ -217,8 +217,9 @@ export interface GameObject {
   monstrous?: true;
   /** CR 701.64b: harnessed (until it leaves the battlefield). */
   harnessed?: true;
-  /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. */
-  exileOnLeave?: true;
+  /** CR 702.34a: cast with flashback — exiled instead of going anywhere else when it leaves the stack. 'graveyard': only
+   * instead of a graveyard ("If that spell would be put into a graveyard, exile it instead"). */
+  exileOnLeave?: true | 'graveyard';
   /** How it was cast, kept as the spell becomes a permanent ("if it was kicked", "if you cast it"). */
   /**
    * How it was cast. `before`: how many spells had been cast this turn before it (storm, CR 702.40a).
@@ -418,6 +419,9 @@ export interface ContinuousEffect {
   /** Layer 7b: power and toughness set to these values. */
   setPower?: number;
   setToughness?: number;
+  /** Layer 7b: a granted "This creature's power and toughness are each equal to …" (Druid Class) — counted continuously
+   * for the object; granted, it isn't a characteristic-defining ability (CR 604.3a), so it applies in 7b (CR 613.4b). */
+  livePT?: { power: Amount; toughness: Amount };
   /** Layer 2 (CR 613.1b): this player controls the objects. */
   control?: PlayerId;
   /** Layer 7d (CR 613.4d): power and toughness switched. */
@@ -1001,7 +1005,10 @@ export interface GameState {
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
   /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
   /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b); 'type': "… of any type". */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; untilEndStep?: true; free?: true; cost?: string; anyColor?: true | 'type' }[];
+  /** exileOnLeave: "If that spell would be put into a graveyard, exile it instead." (Dire Fleet Daredevil; CR 614.1a). */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; untilEndStep?: true; free?: true; cost?: string; anyColor?: true | 'type'; exileOnLeave?: true }[];
+  /** Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — one spell, this turn. */
+  graveyardGrants?: { player: PlayerId; filter: ObjectFilter; turn: number; key: string }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */

@@ -84,7 +84,7 @@ interface ActiveEffect {
   /** `o`: the object it's applied to — for amounts counted per object (Coat of Arms). */
   pt?: (o: GameObject) => [number, number];
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
-  set?: { layer: '7a' | '7b'; pt: () => [number | null, number | null] };
+  set?: { layer: '7a' | '7b'; pt: (o: GameObject) => [number | null, number | null] };
   /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained); `lose`: types it stops having. */
   types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[] };
   /** Layer 5: colors it becomes. */
@@ -474,6 +474,7 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.power !== undefined ? { pt: (): [number, number] => [e.power ?? 0, e.toughness ?? 0] } : {}),
     // CR 701.12g: an exchange with a life total sets just one of them.
     ...(e.setPower !== undefined || e.setToughness !== undefined ? { set: { layer: '7b' as const, pt: (): [number | null, number | null] => [e.setPower ?? null, e.setToughness ?? (e.setPower !== undefined ? 0 : null)] } } : {}),
+    ...(e.livePT ? { set: { layer: '7b' as const, pt: (o: GameObject): [number, number] => [staticAmount(g, e.livePT!.power, o), staticAmount(g, e.livePT!.toughness, o)] } } : {}),
     ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
     ...(e.colors ? { colors: e.colors } : {}),
     ...(e.addColors ? { addColors: e.addColors } : {}),
@@ -637,7 +638,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
   for (const layer of ['7a', '7b'] as const) {
     for (const e of effects) {
       if (e.set?.layer !== layer || !e.applies(o, c)) continue;
-      const [p, t] = e.set.pt();
+      const [p, t] = e.set.pt(o);
       if (p !== null) c.power = p;
       if (t !== null) c.toughness = t;
     }
@@ -798,6 +799,17 @@ function keywordIs(k: { id: string; text?: string }, word: string): boolean {
 }
 
 /** Whether an object matches a filter from the compiled AST. */
+/** The creatures this one blocks, or that block it (CR 509.1g). */
+export function combatPartners(g: GameState, id: string): string[] {
+  const combat = g.combat;
+  if (!combat) return [];
+  const out: string[] = [];
+  const blocking = combat.blockers[id];
+  if (blocking) out.push(blocking.blocking, ...(blocking.alsoBlocking ?? []));
+  for (const [blocker, b] of Object.entries(combat.blockers)) if (b.blocking === id || b.alsoBlocking?.includes(id)) out.push(blocker);
+  return out;
+}
+
 export function matchesFilter(
   g: GameState,
   o: GameObject,
@@ -867,6 +879,8 @@ export function matchesFilter(
       if (t?.kind !== 'player' || t.player === ctx.controller) return false;
     }
   }
+  // Sting, the Glinting Dagger: "blocking or blocked by a Goblin or Orc" (CR 509.1g).
+  if (f.combatPartner && !combatPartners(g, o.id).some((id) => g.objects[id] && matchesFilter(g, g.objects[id]!, f.combatPartner!, { ...ctx, anyZone: false }))) return false;
   if (f.keywords && !f.keywords.some((k) => c.keywords.some((x) => keywordIs(x, k)))) return false;
   if (f.notKeywords?.some((k) => c.keywords.some((x) => keywordIs(x, k)))) return false;
   // Pollywog Prodigy: "a noncreature spell with mana value less than this creature's power" — in a trigger or static

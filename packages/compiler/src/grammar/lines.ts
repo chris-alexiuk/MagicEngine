@@ -2073,6 +2073,8 @@ export const continuousRule: GrammarRule = {
           // "~ has first strike as long as it's attacking": "it" is the subject.
           const it = b.it;
           if (/^~ /.test(trailing[1]!)) b.it = { ref: 'self' };
+          // Sting, the Glinting Dagger: "Equipped creature has first strike as long as it's blocking or blocked by …".
+          else if (/^(?:Equipped|Enchanted) creature /.test(trailing[1]!) && /^it(?:'s| is) /.test(trailing[2]!)) b.it = { ref: 'attached' };
           const c = parseCondition(trailing[2]!, b);
           b.it = it;
           return c;
@@ -2375,7 +2377,11 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Layer 7a (CR 604.3): "~'s power and toughness are each equal to the number of creatures you control."
   const cda = /^~'s (power and toughness are each|power is|toughness is) equal to (.+?)(?: and its toughness is equal to (.+))?$/.exec(body);
   if (cda) {
+    // Chimeric Mass: "… equal to the number of charge counters on it" — on this object.
+    const it = b.it;
+    b.it = { ref: 'self' };
     const first = parseCount(cda[2]!, b);
+    b.it = it;
     if (!first) return null;
     const effect: ContinuousEffectNode = { type: 'continuous', affected: { ref: 'self' }, setLayer: '7a' };
     if (cda[1] !== 'toughness is') effect.setPower = first;
@@ -2840,8 +2846,9 @@ export const costModifierRule: GrammarRule = {
 };
 
 /** "twice that many", "that many plus one", "double that damage", "triple that damage". */
-function quantityOp(text: string): { op: 'double' | 'triple' | 'plus'; n?: number } | null {
+function quantityOp(text: string): { op: 'double' | 'triple' | 'plus' | 'half'; n?: number } | null {
   if (/^(?:twice that (?:many|much)|double that)/.test(text)) return { op: 'double' };
+  if (/^half that many/.test(text)) return { op: 'half' };
   if (/^(?:triple that|three times that (?:many|much))/.test(text)) return { op: 'triple' };
   const plus = /^that (?:many|much)(?: \w+)? plus (\w+)/.exec(text);
   const n = plus ? parseAmount(plus[1]!) : null;
@@ -2912,7 +2919,7 @@ export const quantityReplacementRule: GrammarRule = {
     if (effectPuts) {
       const op = quantityOp(effectPuts[3]!);
       const pf = parseFilter(effectPuts[2]!.replace(/^(?:a|an) /, ''), b);
-      return op && pf && !pf.plural ? make({ event: 'counters', ...(effectPuts[1] ? { counter: effectPuts[1] } : {}), filter: pf.filter, ...op }) : null;
+      return op && pf && !pf.plural ? make({ event: 'counters', ...(effectPuts[1] ? { counter: effectPuts[1] } : {}), filter: pf.filter, ...op, effectOnly: true }) : null;
     }
     // Ojer Taq: "If one or more creature tokens would be created under your control, three times that many of those tokens
     // are created instead."
@@ -2952,12 +2959,21 @@ export const quantityReplacementRule: GrammarRule = {
       const pf = parseFilter(counters[2]!.replace(/^(?:a|an) /, ''), b);
       return op && pf && !pf.plural ? make({ event: 'counters', counter: counters[1]!, filter: pf.filter, ...op }) : null;
     }
-    const put = /^If you would put one or more (?:(\S+) )?counters on (.+?), put (.+?) (?:of each of those kinds of counters|\S+ counters) on (?:that \w+(?: or \w+)?|it) instead\.$/.exec(line);
+    // Vorinclex, Monstrous Raider: "If an opponent would put one or more counters on a permanent or player, they put half that
+    // many of each of those kinds of counters on that permanent or player instead, rounded down."
+    const put =
+      /^If (you) would put one or more (?:(\S+) )?counters on (.+?), put (.+?) (?:of each of those kinds of counters|\S+ counters) on (?:that \w+(?: or \w+)?|it) instead\.$/.exec(line) ??
+      /^If (an opponent) would put one or more (?:(\S+) )?counters on (.+?), they put (half that many) of each of those kinds of counters on that permanent or player instead, rounded down\.$/.exec(line);
     if (put) {
-      const op = quantityOp(put[3]!);
-      const target = put[2]!.replace(/^(?:a|an) /, '');
-      const pf = target === 'permanent or player' ? { filter: {}, plural: false } : parseFilter(target, b);
-      return op && pf && !pf.plural ? make({ event: 'counters', who: 'you', ...(put[1] ? { counter: put[1] } : {}), filter: pf.filter, ...op }) : null;
+      const op = quantityOp(put[4]!);
+      let target = put[3]!.replace(/^(?:a|an) /, '');
+      // Lae'zel, Vlaakith's Champion: "on a creature or planeswalker you control or on yourself".
+      const onYou = / or on yourself$/.test(target);
+      if (onYou) target = target.replace(/ or on yourself$/, '');
+      const anyPlayer = target === 'permanent or player';
+      const pf = anyPlayer ? { filter: {}, plural: false } : parseFilter(target, b);
+      if (!op || !pf || pf.plural || (op.op === 'half' && !anyPlayer)) return null;
+      return make({ event: 'counters', who: put[1] === 'you' ? 'you' : 'opponents', ...(put[2] ? { counter: put[2] } : {}), filter: pf.filter, ...op, ...(anyPlayer ? { players: 'any' as const } : onYou ? { players: 'you' as const } : {}) });
     }
     // The Sound of Drums: "If enchanted creature would deal combat damage to a permanent or player, it deals double that
     // damage instead."; Mjölnir: "Double all damage equipped creature would deal."

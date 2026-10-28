@@ -1,6 +1,6 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities } from './characteristics.js';
-import type { DamageRecipient, GameObject, GameState, PlayerId } from './types.js';
+import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 
 /**
@@ -14,6 +14,10 @@ export interface QuantitySubject {
   player?: PlayerId;
   /** What the counters are put on. */
   object?: GameObject;
+  /** The player the counters are put on (CR 122.1: counters on players). */
+  onPlayer?: PlayerId;
+  /** Counters put on as a cost (CR 606.4: a loyalty cost) — not by an effect (Doubling Season). */
+  cost?: true;
   counter?: string;
   /** The damage source and recipient. */
   source?: GameObject;
@@ -37,8 +41,9 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
   }
   if (!mods.length) return n;
   const plus = mods.filter((m) => m.op === 'plus').reduce((x, m) => x + (m.n ?? 0), 0);
-  const factor = mods.reduce((x, m) => x * (m.op === 'double' ? 2 : m.op === 'triple' ? 3 : 1), 1);
-  return event === 'damage' ? n * factor + plus : (n + plus) * factor;
+  const factor = mods.reduce((x, m) => x * (m.op === 'double' ? 2 : m.op === 'triple' ? 3 : m.op === 'half' ? 0.5 : 1), 1);
+  // Vorinclex: "half that many …, rounded down".
+  return Math.floor(event === 'damage' ? n * factor + plus : (n + plus) * factor);
 }
 
 /**
@@ -90,8 +95,12 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       return !f || Boolean(s.made);
     }
     case 'counters':
-      if (!who(s.player) || !s.object) return false;
+      if (!who(s.player)) return false;
       if (e.counter && e.counter !== s.counter) return false;
+      if (e.effectOnly && s.cost) return false;
+      // Lae'zel: "or on yourself"; Vorinclex: "on a permanent or player".
+      if (s.onPlayer !== undefined) return e.players === 'any' || (e.players === 'you' && s.onPlayer === you);
+      if (!s.object) return false;
       return !e.filter || matchesFilter(g, s.object, e.filter, { controller: you, source });
     case 'damage': {
       if (!s.source || (e.noncombat && s.combat) || (e.combatOnly && !s.combat)) return false;
@@ -111,4 +120,18 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
     default:
       return false;
   }
+}
+
+/**
+ * CR 122.1: counters put on a player by `by` ("you get {E}{E}", proliferate) — CR 614.1a replacements first (Lae'zel,
+ * Vorinclex). CR 122.1f / 104.3d: poison counters (ten or more and the player loses).
+ */
+export function putPlayerCounters(g: GameState, by: PlayerId, p: PlayerId, counter: string, n: number, events: GameEvent[]): void {
+  const ps = g.players[p];
+  if (!ps || n <= 0) return;
+  const amount = replaceQuantity(g, 'counters', n, { player: by, onPlayer: p, counter });
+  if (amount <= 0) return;
+  if (counter === 'poison') ps.poison += amount;
+  else (ps.counters ??= {})[counter] = (ps.counters?.[counter] ?? 0) + amount;
+  events.push({ type: 'player_counters', player: p, counter, delta: amount });
 }

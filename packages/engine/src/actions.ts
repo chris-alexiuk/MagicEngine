@@ -55,7 +55,8 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { freePermission, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { exileOnLeavePermission, freePermission, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { replaceQuantity } from './quantities.js';
 import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -636,6 +637,8 @@ function cast(
   // Airbend (CR 701.65a): "by paying {2} rather than paying its mana cost" (CR 118.9; CR 107.3b: X is 0).
   const airbent = !during && !alt && !freeFromExile && fromExile && o.zone === 'exile' ? permissionCost(g, player, o) : undefined;
   if (lifeInstead || freeFromExile || airbent !== undefined) x = 0;
+  // Dire Fleet Daredevil: "If that spell would be put into a graveyard, exile it instead." (CR 614.1a).
+  const permittedExile = !during && !alt && fromExile && exileOnLeavePermission(g, player, o);
   // CR 601.3: casting from anywhere else needs a rule or effect that allows it.
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
@@ -789,7 +792,9 @@ function cast(
   }
   // CR 702.34a: if the flashback cost was paid, it's exiled instead of going anywhere else as it leaves the stack.
   // CR 702.127a: so is an aftermath half cast from a graveyard; jump-start too (CR 702.133a).
-  if (flashback || aftermath || alt?.exileOnLeave || during?.exileOnLeave) o.exileOnLeave = true;
+  if (flashback || aftermath || alt?.exileOnLeave) o.exileOnLeave = true;
+  // "If that spell would be put into its owner's graveyard, exile it instead." — only a graveyard (CR 614.1a).
+  else if (during?.exileOnLeave || permittedExile) o.exileOnLeave = 'graveyard';
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
@@ -1077,7 +1082,9 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   for (const b of bent) setTapped(g, b, true, events);
   if (cost.loyalty !== undefined) {
     // CR 606.4: the cost is putting on or removing loyalty counters.
-    const delta = cost.loyalty + (cost.loyaltyX ?? 0) * choices.x;
+    // CR 614.1a: a positive cost puts counters on it (Vorinclex, Lae'zel — not "an effect would put", Doubling Season).
+    const paid = cost.loyalty + (cost.loyaltyX ?? 0) * choices.x;
+    const delta = paid > 0 ? replaceQuantity(g, 'counters', paid, { player, object: o, counter: 'loyalty', cost: true }) : paid;
     o.counters.loyalty = (o.counters.loyalty ?? 0) + delta;
     o.loyaltyActivatedTurn = g.turn;
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
@@ -1144,9 +1151,10 @@ function activateManual(
     // CR 606.6: a negative loyalty cost needs at least that many loyalty counters.
     if (current + delta < 0) throw new RulesError(`${face.name} doesn’t have enough loyalty.`);
     // CR 606.4: the cost is adding or removing loyalty counters.
-    o.counters.loyalty = current + delta;
+    const added = delta > 0 ? replaceQuantity(g, 'counters', delta, { player, object: o, counter: 'loyalty', cost: true }) : delta;
+    o.counters.loyalty = current + added;
     o.loyaltyActivatedTurn = g.turn;
-    events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
+    events.push({ type: 'counters', object: id, counter: 'loyalty', delta: added, by: player });
   } else {
     // CR 602.5d: "Activate only as a sorcery" follows sorcery timing.
     if (/Activate only as a sorcery/i.test(effectText) && !sorcerySpeed()) {
