@@ -1837,6 +1837,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 723.1: "End the turn." (Time Stop, Sundial of the Infinite) — the rest of the effect first; then the stack is exiled
+  // and the turn skips to its cleanup step (flow.ts).
+  end_turn(_node, ctx) {
+    ctx.g.endTurn = true;
+    return true;
+  },
+
   // CR 104.2a / 104.3a: a player wins (everyone else loses) or loses the game.
   game_result(node, ctx) {
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
@@ -2526,7 +2533,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const play = node.play as { mode: 'play' | 'cast'; until: 'eot' | 'next_turn' | 'during_next_turn' | 'exiled' | 'next_end_step'; free?: true; anyColor?: true | 'type' } | undefined;
     const exiled: { id: string; zcc: number }[] = [];
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
-      for (const id of zoneList(g, 'library', p).slice(0, n)) {
+      // Jace, the Mind Sculptor: "Exile all cards from target player's library" (compiled as 999: every one of them).
+      for (const id of zoneList(g, 'library', p).slice(0, n >= 999 ? undefined : n)) {
         moveObject(g, id, 'exile', ctx.events);
         const o = g.objects[id]!;
         // "Exile the top card of your library face down." — no one may look at it (CR 406.3a).
@@ -5075,6 +5083,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
     if (!subjectMatches(check, t.subject as Ref, o, { anyZone: true, lastController: e.controller, lookBack: true })) return [];
+    // Enigma Sphinx: "put into your graveyard" — the graveyard of the player who controlled it (CR 603.3a).
+    if (t.ownGraveyard && o.owner !== e.controller) return [];
     // "Whenever one or more other creatures die": once for the creatures that died at the same time.
     if (t.batch) {
       const together = (check.batch ?? [e]).filter((x) => {
@@ -5909,7 +5919,7 @@ export const corePlugin: MechanicPlugin = {
     enters_prepared(_node, o, g) {
       becomePrepared(g, o, []);
     },
-    enters_with_counters(node, o, g) {
+    enters_with_counters(node, o, g, events) {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
       if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       // "This land enters tapped with two charge counters on it."
@@ -5917,7 +5927,9 @@ export const corePlugin: MechanicPlugin = {
       // CR 107.3m: X is the X paid for the spell that became this permanent.
       // Banquet Guests: "with twice X +1/+1 counters".
       const xAmount = node.amount && typeof node.amount === 'object' && (node.amount as { kind?: string }).kind === 'x' ? (node.amount as { times?: number }) : undefined;
-      const per = node.amount === 'X' ? (o.x ?? 0) : xAmount ? (o.x ?? 0) * (xAmount.times ?? 1) : typeof node.amount === 'number' ? node.amount : 0;
+      // Apocalypse Hydra: "If X is 5 or more, it enters with an additional X +1/+1 counters on it."
+      const doubled = typeof node.doubledIfXAtLeast === 'number' && (o.x ?? 0) >= node.doubledIfXAtLeast ? 2 : 1;
+      const per = node.amount === 'X' ? (o.x ?? 0) * doubled : xAmount ? (o.x ?? 0) * (xAmount.times ?? 1) : typeof node.amount === 'number' ? node.amount : 0;
       // Converge: "… for each color of mana spent to cast it"
       if (node.perColor) {
         const n = replaceQuantity(g, 'counters', per * (o.cast?.colors ?? 0), { player: o.controller, object: o, counter: String(node.counter) });
@@ -5930,6 +5942,17 @@ export const corePlugin: MechanicPlugin = {
       const perEach = node.perEach as AmountExpr | undefined;
       const counted = perEach?.kind === 'count' ? { ...perEach, filter: { ...perEach.filter, other: true } } : perEach;
       const each = counted ? Math.max(0, amountOf({ g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }, counted as Amount)) : 1;
+      // Thief of Blood: "remove all counters from all permanents" — those it counted.
+      if (node.removeAllCounters) {
+        for (const id of g.zones.battlefield) {
+          const p = g.objects[id]!;
+          for (const [k, n] of Object.entries(p.counters)) {
+            if (!n) continue;
+            delete p.counters[k];
+            events?.push({ type: 'counters', object: p.id, counter: k, delta: -n });
+          }
+        }
+      }
       const base = (node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per) * each;
       // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.
       const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter: String(node.counter) });

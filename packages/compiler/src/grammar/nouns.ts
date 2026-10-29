@@ -107,6 +107,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   }],
   // Blastfire Bolt: "Destroy all Equipment attached to that creature." — the target, as the effect applies.
   [/ attached to (?:that creature|that permanent|it)$/, (f, _m, b) => b.it?.ref === 'target' && !f.attachedTo && !f.attachedToRef && ((f.attachedToRef = b.it), true)],
+  // Witchbane Orb: "all Curses attached to you"; Curse of Thirst: "the number of Curses attached to them".
+  [/ attached to (you|them|that player|enchanted player)$/, (f, m, b) => {
+    if (f.attachedTo || f.attachedToRef || f.attachedToPlayerRef) return false;
+    const who = m[1] === 'them' ? (b.named['them'] ?? b.player) : parsePlayerRef(m[1]!, b);
+    return Boolean(who && (who.ref === 'you' || who.ref === 'enchanted_player' || who.ref === 'trigger_player' || who.ref === 'target') && ((f.attachedToPlayerRef = who), true));
+  }],
   // "for each Aura attached to it": it is the source, or what the source enchants or equips.
   [/ attached to (it|~|this creature)$/, (f, m, b) => {
     // Bruenor Battlehammer: "Each creature you control gets +2/+0 for each Equipment attached to it" — each one's own.
@@ -957,6 +963,15 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // Papalymo Totolymo: "each opponent who lost life this turn"
   const lost = /^each (opponent|player) who lost life this turn$/.exec(t);
   if (lost) return { ref: 'players', who: lost[1] === 'player' ? 'each' : 'opponents', lostLife: true };
+  // Feed the Infection: "each opponent who has three or more poison counters".
+  const poisoned = /^each (opponent|player) who has (\w+) or more poison counters$/.exec(t);
+  if (poisoned && typeof parseAmount(poisoned[2]!) === 'number') return { ref: 'players', who: poisoned[1] === 'player' ? 'each' : 'opponents', poisonAtLeast: parseAmount(poisoned[2]!) as number };
+  // Depopulate: "each player who controls a multicolored creature".
+  const having = /^each (opponent|player) who controls (?:a|an) (.+)$/i.exec(text.trim());
+  if (having) {
+    const pf = parseFilter(having[2]!, b.clone());
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { ref: 'players', who: having[1]!.toLowerCase() === 'player' ? 'each' : 'opponents', controlsSome: pf.filter };
+  }
   // Thornbow Archer: "each opponent who doesn't control an Elf".
   const lacking = /^each (opponent|player) who doesn't control (?:a|an) (.+)$/i.exec(text.trim());
   if (lacking) {

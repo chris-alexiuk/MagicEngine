@@ -1026,6 +1026,8 @@ export interface GameState {
   opening: { undecided: PlayerId[]; mulligans: PlayerId[]; bottoms: { player: PlayerId; count: number }[]; actions?: PlayerId[] } | null;
   /** A cleanup step in which SBAs happened gets another cleanup step. */
   extraCleanup: boolean;
+  /** CR 723.1: a resolving "End the turn." — done once the spell or ability has finished resolving. */
+  endTurn?: true;
   /** Present during the combat phase. */
   combat: CombatState | null;
   /** Combat damage dealt to each player by each commander (CR 903.10a). */

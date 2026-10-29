@@ -188,6 +188,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^([Ff])or each ([^,.]+), (create [^.]+)\./, (m, _f: string, each: string, make: string) =>
     /\b(?:opponent|player)\b/.test(each) || /\b(?:it|its|that|those|them|they|copy|copies)\b/.test(make) ? m : `C${make.slice(1)} for each ${each}.`,
   );
+  // Once and Future (adamant): "… Put up to one other target card from your graveyard on top of your library. Exile ~. If at
+  // least three green mana was spent to cast this spell, instead return those cards to your hand and exile ~." — the
+  // second card goes to your hand rather than on top of your library.
+  text = text.replace(/^(Return target card from your graveyard to your hand)\. Put (up to one other target card) from your graveyard on top of your library\. Exile ~\. (If at least three green mana was spent to cast (?:this spell|~)), instead return those cards to your hand and exile ~\.$/, '$1. Choose $2 in your graveyard. $3, return that card to your hand. Otherwise, put that card on top of your library. Exile ~.');
+  // Psychic Spiral: "Shuffle all cards from your graveyard into your library. Target player mills that many cards."
+  text = text.replace(/^(Shuffle all cards from your graveyard into your library)\. (Target player|Target opponent|Each opponent) mills that many cards\./, '$1. $2 mills a card for each card shuffled into a library this way.');
+  // Step Between Worlds: "Each player may shuffle their hand and graveyard into their library. Each player who does draws seven
+  // cards." — those who accept do both.
+  text = text.replace(/\b(Each (player|opponent) may [^.]+)\. Each \2 who does (\w+) ([^.]+)\./, (m, may: string, _w: string, verb: string, rest: string) => {
+    const base = /(?:sh|ch|ss|x)es$/.test(verb) ? verb.slice(0, -2) : /s$/.test(verb) ? verb.slice(0, -1) : null;
+    return base && !/\b(?:then|that|this way)\b/.test(may) ? `${may}, then ${base} ${rest}.` : m;
+  });
   // Aclazotz, Deepest Betrayal: "each opponent discards a card. For each opponent who can't, you draw a card."
   text = text.replace(/\b([Ee]ach opponent discards a card)\. For each opponent who can't, ([^.]+)\./, (_m, d: string, then: string) => `${d}. ${then[0]!.toUpperCase()}${then.slice(1)} for each opponent who didn't discard a card this way.`);
   // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
@@ -1752,7 +1764,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // "Create a 1/1 Eldrazi Scion creature token. It has "Sacrifice this token: Add {C}."" — the token's own text.
-      const tokenHas = /^(?:It|They) (?:has|have) (.+)$/.exec(s);
+      // Vile Redeemer: "Those tokens have \"Sacrifice this token: Add {C}.\""
+      const tokenHas = /^(?:It|They|That token|Those tokens) (?:has|have) (.+)$/.exec(s);
       // The token just created — maybe inside "you may create …" or "If you do, create …".
       const lastToken = (list: EffectNode[]): EffectNode | undefined => {
         const x = list[list.length - 1];
@@ -2771,6 +2784,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (nodes.every(Boolean)) return nodes.flat() as EffectNode[];
   }
+  // CR 723.1: Time Stop, Sundial of the Infinite: "End the turn."
+  if (/^[Ee]nd the turn$/.test(s)) return [{ type: 'end_turn' }];
   // Angel's Grace: "You can't lose the game this turn and your opponents can't win the game this turn."; "Until end of turn,
   // damage that would reduce your life total to less than 1 reduces it to 1 instead."
   if (/^You can't lose the game this turn and your opponents can't win the game this turn$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'opponents_cant_win', until: 'eot' }];
@@ -4705,7 +4720,7 @@ const VERBS: Record<string, VerbHandler> = {
       if (r) return r;
     }
     // Approach of the Second Sun: "put ~ into its owner's library seventh from the top" (CR 401.4).
-    const nth = /^(.+?) into (?:its|their|his|her) owner's library (second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) from the top$/.exec(args);
+    const nth = /^(.+?) into (?:(?:its|their|his|her) owner's|your) library (second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) from the top$/.exec(args);
     if (nth && imperative) {
       const what = parseObjectRef(nth[1]!, b);
       const n = ['second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'].indexOf(nth[2]!) + 2;
@@ -4920,7 +4935,7 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
     // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
-    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( attacking)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on (?:it|him|her))?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( attacking)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters?(?: and (a|an|one|two|three) (\S+) counters?)? on (?:it|him|her))?$/.exec(args);
     // (Attacking only as "tapped and attacking", and not with "transformed" too.)
     if (field && (!field[3] || (field[2] && !field[4]))) {
       const what = parseObjectRef(field[1]!, b);
@@ -4933,6 +4948,8 @@ const VERBS: Record<string, VerbHandler> = {
       if (field[5] === ' under your control') node.under = 'you';
       // CR 122.6: "with a -1/-1 counter on it" — it enters with the counter.
       if (field[6]) node.counters = { [field[7]!.replace(/−/g, '-')]: parseAmount(field[6]!) };
+      // Perennation: "with a hexproof counter and an indestructible counter on it".
+      if (field[8]) (node.counters as Record<string, unknown>)[field[9]!.replace(/−/g, '-')] = parseAmount(field[8]!);
       return [node];
     }
     return null;
@@ -5211,6 +5228,19 @@ const VERB_ALT = Object.keys(VERB_FORMS)
   .join('|');
 const IMPERATIVE = new RegExp(`^(${VERB_ALT}) (.+)$`, 'i');
 const WITH_SUBJECT = new RegExp(`^(.+?) (${VERB_ALT}) (.+)$`);
+/** Feed the Infection: "Each opponent who has three or more poison counters loses 3 life." — past the relative clause's own
+ * verbs (and nouns like "counters"), each later verb in turn. */
+function relativeSplits(c: string): RegExpExecArray[] {
+  if (!/^(?:each|every) (?:opponent|player) who /i.test(c)) return [];
+  const out: RegExpExecArray[] = [];
+  const re = new RegExp(` (${VERB_ALT}) `, 'g');
+  for (let m = re.exec(c); m; m = re.exec(c)) {
+    re.lastIndex = m.index + 1;
+    const r = new RegExp(`^(.{${m.index}}) (${VERB_ALT}) (.+)$`).exec(c);
+    if (r) out.push(r);
+  }
+  return out;
+}
 
 /** Replacement and prevention effects created by a resolving spell (CR 614, CR 615). */
 function parseReplacement(c: string, b: Binder): EffectNode[] | null {
@@ -5754,8 +5784,8 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
     if (effects) return { effects, subject: who };
   }
 
-  const sub = WITH_SUBJECT.exec(c);
-  if (sub) {
+  for (const sub of [WITH_SUBJECT.exec(c), ...relativeSplits(c)]) {
+    if (!sub) continue;
     const r = attempt(b, (b) => {
       const who = parsePlayerRef(sub[1]!, b);
       if (!who) return null;

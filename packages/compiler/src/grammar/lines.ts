@@ -892,12 +892,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
     // Rose, Cutthroat Raider: "At end of combat on your turn".
     if (t === 'end of combat on your turn') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'you' }, it: { ref: 'self' }, player: null };
-    if (t === "the beginning of the upkeep of enchanted creature's controller") {
+    // Righteous Authority: "At the beginning of the draw step of enchanted creature's controller, that player draws …".
+    const ofEnchanted = /^the beginning of the (upkeep|draw step|end step) of enchanted creature's controller$/.exec(t);
+    if (ofEnchanted) {
       // Apathy, Unstable Mutation: "… untap that creature", "put a -1/-1 counter on that creature" — the enchanted creature.
       b.named['that creature'] = { ref: 'attached' };
       // Paralyze: "untap the creature".
       b.named['the creature'] = { ref: 'attached' };
-      return { trigger: { type: 'phase', step: 'upkeep', whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+      return { trigger: { type: 'phase', step: STEP_WORDS[ofEnchanted[1]!]!, whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     }
     // Frontier Siege, Carpet of Flowers: "At the beginning of each of your main phases" — precombat and postcombat both (CR 505.1).
     if (t === 'the beginning of each of your main phases') {
@@ -1469,7 +1471,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // CR 506.2: for an attacking creature, "defending player" is the player it's attacking.
     if (type === 'attacks') b.named['defending player'] = { ref: 'trigger_player' };
     return {
-      trigger: { type, subject: { ref: 'self' }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}), ...(self[1] === 'attacks alone' ? { alone: true } : {}) },
+      // Enigma Sphinx: "When this creature is put into your graveyard from the battlefield" — not when someone else controlled
+      // it (its owner's graveyard isn't theirs, CR 603.3a).
+      trigger: { type, subject: { ref: 'self' }, ...(type === 'deals_combat_damage' ? { to: 'player' } : {}), ...(self[1] === 'attacks alone' ? { alone: true } : {}), ...(/your graveyard/.test(self[1]!) ? { ownGraveyard: true } : {}) },
       // After a zone change "it" is the new object in the graveyard or wherever it went (CR 603.10a looks back to find it).
       it: leaves ? { ref: 'trigger_object' } : { ref: 'self' },
       player: type === 'deals_combat_damage' ? { ref: 'trigger_player' } : null,
@@ -2860,7 +2864,7 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
       ? { type: 'player_rule', who: whose, rule: 'hand_size_delta', amount: handSize[2] === 'reduced' ? -n : n }
       : { type: 'player_rule', who: whose, rule: 'max_hand_size', amount: n };
   }
-  const land = /^(You|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
+  const land = /^([Yy]ou|Each player) may play (an|two|three) additional lands? on each of (?:your|their) turns$/.exec(body);
   if (land) return { type: 'player_rule', who: who(land[1]!)!, rule: 'extra_lands', amount: land[2] === 'an' ? 1 : (parseAmount(land[2]!) as number) };
   // "You may play lands from your graveyard." (CR 305.1 allows it when an effect does)
   if (/^You may play lands from your graveyard$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard' };
@@ -3014,7 +3018,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3133,9 +3137,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     }
     // Lignify: "is a Treefolk with base power and toughness 0/4" — its creature types replaced, its card types kept.
     // Eye of Nidhogg: "is a black Dragon with base power and toughness 4/2" — its color too (layer 5).
-    const isKind = /^is an? (?:(white|blue|black|red|green) )?((?:[A-Z][\w’'-]* )+)with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    // Noggle the Mind: "is a colorless Noggle with base power and toughness 1/1".
+    const isKind = /^is an? (?:(white|blue|black|red|green|colorless) )?((?:[A-Z][\w’'-]* )+)with base power and toughness (\d+)\/(\d+)$/.exec(part);
     if (isKind && !effect.creatureTypes && effect.setPower === undefined && !(isKind[1] && effect.colors)) {
-      if (isKind[1]) effect.colors = [COLOR_WORDS[isKind[1]]! as Color];
+      if (isKind[1]) effect.colors = isKind[1] === 'colorless' ? [] : [COLOR_WORDS[isKind[1]]! as Color];
       isKind.splice(1, 1);
       const kinds = isKind[1]!.trim().split(' ');
       if (kinds.some((w) => subtypeOf(w) !== w || !(SUBTYPES.creature as readonly string[]).includes(w))) return null;
@@ -3418,12 +3423,24 @@ export const costModifierRule: GrammarRule = {
     // Drag to the Roots: "This spell costs {2} less to cast as long as there are four or more card types among cards in your
     // graveyard." — the same as "if" (it's checked as the cost is determined, CR 601.2f).
     // Mental Modulation: "This spell costs {1} less to cast during your turn."; Closing Statement: "during your end step".
-    const during = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast during your (turn|end step)$/.exec(body);
+    // Discontinuity: "During your turn, this spell costs {2}{U}{U} less to cast."
+    const duringAfter = /^(?:~|This spell) costs ((?:\{[^}]+\})+) (less|more) to cast during your (turn|end step)$/.exec(body);
+    const duringBefore = /^During your (turn|end step), (?:~|this spell) costs ((?:\{[^}]+\})+) (less|more) to cast$/.exec(body);
+    const during = duringAfter ? { sym: duringAfter[1]!, change: duringAfter[2]!, when: duringAfter[3]! } : duringBefore ? { sym: duringBefore[2]!, change: duringBefore[3]!, when: duringBefore[1]! } : null;
     if (during) {
-      const a = amountOf(during[1]!);
+      const a = amountOf(during.sym);
       if (!a || a.amount === 'X') return null;
-      const condition = during[3] === 'turn' ? { type: 'your_turn', value: true } : { type: 'step', step: 'end', yours: true };
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', self: true, change: during[2] as 'less' | 'more', ...a, condition } as CostModifierNode };
+      const condition = during.when === 'turn' ? { type: 'your_turn', value: true } : { type: 'step', step: 'end', yours: true };
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', self: true, change: during.change as 'less' | 'more', ...a, condition } as CostModifierNode };
+    }
+    // Valiant Changeling: "This spell costs {1} less to cast for each creature type among creatures you control. This effect
+    // can't reduce the amount of mana this spell costs by more than {5}."
+    const capped = /^((?:~|This spell) costs \{\d+\} less to cast for each .+)\. This effect can't reduce the amount of mana (?:~|this spell) costs by more than \{(\d+)\}$/.exec(body);
+    if (capped) {
+      const inner = costModifierRule.parse(`${capped[1]}.`, `${capped[1]}.`, ctx) as StaticAbility | null;
+      const e = inner?.kind === 'static' && inner.effect.type === 'cost_modifier' ? (inner.effect as CostModifierNode) : null;
+      if (!e || typeof e.amount !== 'object') return null;
+      return { kind: 'static', text: original, effect: { ...e, amount: { ...e.amount, atMost: Number(capped[2]) } } as CostModifierNode };
     }
     // Avatar of Woe: "If there are ten or more creature cards total in all graveyards, this spell costs {6} less to cast."
     const leadingIf = /^If ([^,]+), (?:~|this spell) costs (\{[^}]+\}) (less|more) to cast$/.exec(body);
@@ -4224,6 +4241,14 @@ export const entersWithCountersRule: GrammarRule = {
       if (!expr) return null;
       return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: counted[1]!.replace(/−/g, '-'), amount: 1, perEach: expr } } satisfies StaticAbility;
     }
+    // Thief of Blood: "As this creature enters, remove all counters from all permanents. This creature enters with a +1/+1
+    // counter on it for each counter removed this way." — one replacement (CR 614.1c): counted, removed, then put on it.
+    const thief = /^As ~ enters, remove all counters from all permanents\. ~ enters with an? (\S+) counter on it for each counter removed this way\.$/.exec(line);
+    if (thief) return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: thief[1]!, amount: 1, perEach: { kind: 'counters_among', filter: {} }, removeAllCounters: true } } satisfies StaticAbility;
+    // Apocalypse Hydra: "… enters with X +1/+1 counters on it. If X is 5 or more, it enters with an additional X +1/+1
+    // counters on it." — one replacement (CR 614.1c), twice X counters from that X up.
+    const xMore = /^~ enters with X (\S+) counters on it\. If X is (\w+) or more, it enters with an additional X \1 counters on it\.$/.exec(line);
+    if (xMore && typeof parseAmount(xMore[2]!) === 'number') return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: xMore[1]!.replace(/−/g, '-'), amount: 'X', doubledIfXAtLeast: parseAmount(xMore[2]!) as number } } satisfies StaticAbility;
     const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (twice X|\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);
     if (m) m.splice(2, 1);

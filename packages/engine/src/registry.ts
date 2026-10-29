@@ -57,7 +57,7 @@ export type EffectResult = boolean | { ask: PendingChoice } | { expand: EffectNo
 export type EffectHandler = (node: EffectNode, ctx: EffectContext) => EffectResult;
 
 /** A static ability that modifies how its permanent enters the battlefield (CR 614.12). */
-export type EnterReplacement = (node: EffectNode, o: GameObject, g: GameState) => void;
+export type EnterReplacement = (node: EffectNode, o: GameObject, g: GameState, events?: GameEvent[]) => void;
 
 /** Everything a trigger matcher may look at for one event (CR 603.2). */
 export interface TriggerCheck {
@@ -142,14 +142,14 @@ export function canAutomate(ability: { effects: EffectNode[] }): boolean {
 export function onEnterBattlefield(g: GameState, o: GameObject, events: GameEvent[]): void {
   // CR 122.6: counters it enters with are "put on" it too — "Whenever one or more +1/+1 counters are put on …" sees them.
   const before = { ...o.counters };
-  applyEnterReplacements(g, o);
+  applyEnterReplacements(g, o, events);
   for (const [counter, n] of Object.entries(o.counters)) {
     const delta = n - (before[counter] ?? 0);
     if (delta > 0) events.push({ type: 'counters', object: o.id, counter, delta, by: o.controller });
   }
 }
 
-function applyEnterReplacements(g: GameState, o: GameObject): void {
+function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]): void {
   // CR 708.3: a permanent that enters face down has no abilities as it enters.
   if (o.faceDown) return;
   const at = o.copyOf ?? o;
@@ -159,7 +159,7 @@ function applyEnterReplacements(g: GameState, o: GameObject): void {
   for (const ability of abilities) {
     if (ability.kind !== 'static') continue;
     const replacement = enterReplacements.get((ability as StaticAbility).effect.type);
-    if (replacement) replacement((ability as StaticAbility).effect, o, g);
+    if (replacement) replacement((ability as StaticAbility).effect, o, g, events);
   }
   // CR 614.12: a keyword another permanent gives it ("Nontoken creatures you control have riot") applies as it enters.
   const printed = new Set(face?.keywords.map((k) => k.id) ?? []);

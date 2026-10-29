@@ -219,7 +219,9 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
           // Liliana, Waker of the Dead: "Each opponent who can't [discard a card] loses 3 life."
           (!ref.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
           // Thornbow Archer: "each opponent who doesn't control an Elf".
-          (!ref.controlsNone || controlledCount(ctx, p, ref.controlsNone as ObjectFilter) === 0),
+          (!ref.controlsNone || controlledCount(ctx, p, ref.controlsNone as ObjectFilter) === 0) &&
+          (ref.poisonAtLeast === undefined || g.players[p]!.poison >= ref.poisonAtLeast) &&
+          (!ref.controlsSome || controlledCount(ctx, p, ref.controlsSome as ObjectFilter) > 0),
       );
       if (!ref.attacking) return all;
       // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
@@ -312,7 +314,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -362,7 +364,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const owners = e.filter.controlledBy ? refPlayers(ctx, e.filter.controlledBy as Ref) : null;
       const filter = bindFilter(ctx, e.filter);
       const matching = g.zones.battlefield.filter((id) => (!owners || owners.includes(g.objects[id]!.controller)) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source }));
-      if (e.most) return Math.max(0, ...livePlayers(g).filter((p) => p !== ctx.controller).map((p) => matching.filter((id) => g.objects[id]!.controller === p).length));
+      if (e.most) return Math.max(0, ...livePlayers(g).filter((p) => e.anyPlayer || p !== ctx.controller).map((p) => matching.filter((id) => g.objects[id]!.controller === p).length));
       return matching.length;
     }
     case 'counters_among': {
@@ -465,6 +467,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (!e.handMoreThanYou || zoneList(g, 'hand', p).length > zoneList(g, 'hand', ctx.controller).length) &&
           // Heidegger, Shinra Executive: "the number of opponents who control more creatures than you".
           (!e.controlsMore || controlledCount(ctx, p, e.controlsMore as ObjectFilter) > controlledCount(ctx, ctx.controller, e.controlsMore as ObjectFilter)) &&
+          (!e.controlsFewer || controlledCount(ctx, p, e.controlsFewer as ObjectFilter) < controlledCount(ctx, ctx.controller, e.controlsFewer as ObjectFilter)) &&
           // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
           (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)) &&
           // Gnoll War Band: "each opponent who was dealt damage this turn".
@@ -487,6 +490,16 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'colors_among':
       // Faeburrow Elder: "for each color among permanents you control"
       return colorsAmong(g, ctx.controller, e.filter, source).length;
+    case 'creature_types_among': {
+      // Valiant Changeling: "for each creature type among creatures you control" — a changeling has every one (CR 702.73a).
+      const kinds = new Set<string>();
+      const filter = bindFilter(ctx, e.filter as ObjectFilter);
+      for (const id of g.zones.battlefield) {
+        const o = g.objects[id]!;
+        if (matchesFilter(g, o, filter, { controller: ctx.controller, source })) for (const k of creatureTypesOf(chars(g, o))) kinds.add(k);
+      }
+      return kinds.size;
+    }
     case 'spells_cast_this_turn': {
       // Aetherflux Reservoir: including the one that triggered it; Rug of Smothering: that player's.
       const p = e.player ? refPlayers(ctx, e.player)[0] : ctx.controller;
@@ -571,6 +584,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           // Cult Conscript: "a non-Skeleton creature".
           !e.notSubtypes?.some((t) => d.subtypes.includes(t)) &&
           !(e.nontoken && d.token) &&
+          (!e.owner || d.owner === ctx.controller) &&
           (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
       ).length;
     case 'moved_this_way': {
@@ -762,6 +776,11 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const o = refObjects(ctx, attachedToRef as Ref)[0];
     return bindFilter(ctx, { ...rest, attachedToObject: o && o.zone === 'battlefield' ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } });
   }
+  // Witchbane Orb: "all Curses attached to you".
+  if (f.attachedToPlayerRef) {
+    const { attachedToPlayerRef, ...rest } = f;
+    return bindFilter(ctx, { ...rest, attachedToPlayerId: refPlayers(ctx, attachedToPlayerRef as Ref)[0] ?? '\u0000none' });
+  }
   // Within Range: "the number of creatures attacking them" — the player counted for.
   if (f.attackingPlayerRef) {
     const { attackingPlayerRef, ...rest } = f;
@@ -821,7 +840,9 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
                 ? m.to === 'hand' && m.from === 'battlefield'
                 : how === 'discarded'
                   ? m.effect === 'discard' && m.from === 'hand'
-                  : m.effect === 'mill' && m.from === 'library';
+                  : how === 'library'
+                    ? m.to === 'library'
+                    : m.effect === 'mill' && m.from === 'library';
     // Arid Archway: "If another Desert was returned this way" — not the source itself.
     if (e.other && ctx.source && m.id === ctx.source.id) return false;
     if (e.subtypes && !e.subtypes.some((t) => (m.subtypes ?? []).includes(t))) return false;
@@ -838,7 +859,8 @@ export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
     const base = count(ctx, e);
     const d = e.divisor ?? 2;
     const n = e.half ? (e.half === 'up' ? Math.ceil(base / d) : Math.floor(base / d)) : base;
-    return n * (e.times ?? 1) + (e.plus ?? 0);
+    const out = n * (e.times ?? 1) + (e.plus ?? 0);
+    return e.atMost !== undefined ? Math.min(out, e.atMost) : out;
   }
   return 0;
 }

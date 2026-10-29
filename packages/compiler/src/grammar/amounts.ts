@@ -48,7 +48,7 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
   // Animus of Night's Reach: "the number of creature cards in defending player's graveyard".
-  const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player|defending player)'s|their) (hand|graveyard|library)$/.exec(t);
+  const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player|defending player|its controller)'s|their) (hand|graveyard|library)$/.exec(t);
   if (theirs) {
     const head = theirs[1]!;
     let filter: ObjectFilter | undefined;
@@ -59,7 +59,9 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
       filter = rest as ObjectFilter;
     } else if (head.endsWith('s') !== plural) return null;
     // "each opponent … the number of cards in their graveyard": each of them (see perPlayerCount).
-    const player = theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'you' ? b.player : null;
+    // Righteous Authority: "for each card in its controller's hand" — the enchanted creature's controller.
+    if (theirs[2] === 'its controller' && b.it?.ref !== 'attached' && b.it?.ref !== 'affected') return null;
+    const player = theirs[2] === 'its controller' ? ({ ref: 'controller_of', of: b.it! } as Ref) : theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'you' ? b.player : null;
     if (!player) return null;
     return { kind: 'cards', zone: theirs[3] as 'hand' | 'graveyard' | 'library', who: 'each', player, ...(filter ? { filter } : {}) };
   }
@@ -107,11 +109,11 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
     const inner = each ? movedThisWay(`${theirs[1]} ${theirs[2]} this way`, b) : null;
     return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
   }
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned) this way$/.exec(text.trim());
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned|shuffled into a library) this way$/.exec(text.trim());
   if (!m) return null;
   const another = /^another /.test(m[1]!);
   const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned';
+  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
   // Bonehoard Dracosaur: "a nonland card exiled this way" — a bare "nonland" is read as "nonland permanent".
   const pf = parseFilter(noun, b.clone()) ?? (/^non[a-z]+$/.test(noun) ? parseFilter(`${noun} permanent`, b.clone()) : null);
@@ -132,6 +134,12 @@ function diedThisTurn(text: string, b: Binder): AmountExpr | null {
     return { kind: 'left_this_turn', ...(kind !== 'creature' ? { types: kind === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : ['Artifact'] } : {}), ...(left[2] ? { controller: left[2] === 'your' ? 'you' : 'opponent' } : {}) };
   }
   // Body Count: "each creature that died under your control this turn".
+  // Caller of the Claw: "each nontoken creature put into your graveyard from the battlefield this turn" — owned by you.
+  const putInto = /^(.+?) put into your graveyard from the battlefield this turn$/.exec(text.trim());
+  if (putInto) {
+    const a = diedThisTurn(`${putInto[1]} that died this turn`, b);
+    return a && a.kind === 'died_this_turn' && !a.controller ? { ...a, owner: 'you' } : null;
+  }
   const m = /^(.+?) that died (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
   if (!m) return null;
   const pf = parseFilter(m[1]!, b.clone());
@@ -276,10 +284,10 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Aclazotz, Deepest Betrayal: "Each opponent discards a card. For each opponent who can't, you draw a card."
   if (t === "opponent who didn't discard a card this way") return { kind: 'players', who: 'opponents', discardedNone: true };
   // Heidegger, Shinra Executive: "for each opponent who controls more creatures than you".
-  const more = /^opponents? who controls? more (.+?) than you$/.exec(t);
+  const more = /^opponents? who controls? (more|fewer) (.+?) than you$/.exec(t);
   if (more) {
-    const pf = parseFilter(more[1]!, b.clone());
-    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.other) return { kind: 'players', who: 'opponents', controlsMore: pf.filter };
+    const pf = parseFilter(more[2]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.other) return { kind: 'players', who: 'opponents', ...(more[1] === 'more' ? { controlsMore: pf.filter } : { controlsFewer: pf.filter }) };
   }
   const drewN = /^(opponent|player) who drew (two|three|four) or more cards this turn$/.exec(t);
   if (drewN) return { kind: 'players', who: drewN[1] === 'player' ? 'each' : 'opponents', drew: parseAmount(drewN[2]!) as number };
@@ -320,6 +328,12 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Neheb, the Eternal: "for each 1 life your opponents have lost this turn"
   const lifeEach = /^1 life (.+?) this turn$/.exec(t);
   if (lifeEach) return lifeThisTurn(lifeEach[1]!);
+  // Valiant Changeling: "for each creature type among creatures you control".
+  const kindAmong = /^creature type among (other )?(.+)$/.exec(t);
+  if (kindAmong) {
+    const pf = parseFilter(kindAmong[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'creature_types_among', filter: { ...pf.filter, ...(kindAmong[1] ? { other: true } : {}) } } : null;
+  }
   // Faeburrow Elder: "for each color among permanents you control"
   // Sisay, Weatherlight Captain: "for each color among other legendary permanents you control".
   const colorAmong = /^color among (other )?(.+)$/.exec(t);
@@ -398,6 +412,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // Glissa Sunseeker: "the amount of unspent mana you have".
   if (t === 'the amount of unspent mana you have') return { kind: 'unspent_mana' };
+  // Federation (Saavik, Stoic Student): "the number of creature types among non-Borg creatures you control".
+  const kindsAmong = /^the number of creature types among (other )?(.+)$/.exec(t);
+  if (kindsAmong) {
+    const pf = parseFilter(kindsAmong[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'creature_types_among', filter: { ...pf.filter, ...(kindsAmong[1] ? { other: true } : {}) } } : null;
+  }
   // Prismabasher: "the number of colors among permanents you control" (CR 105.2).
   const colorsAmong = /^the number of colors among (other )?(.+)$/.exec(t);
   if (colorsAmong) {
@@ -413,6 +433,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (most) {
     const c = parseCount(`the number of ${most[1]!.replace(/ your opponents control$/, ' an opponent controls')}`, b);
     return c?.kind === 'count' && c.filter.controller === 'opponent' && !c.times && !c.plus ? { ...c, most: true } : null;
+  }
+  // Investigator's Journal: "the greatest number of creatures a player controls" — the most any one player controls.
+  const mostAny = /^the greatest number of (.+) a player controls$/.exec(t);
+  if (mostAny) {
+    const c = parseCount(`the number of ${mostAny[1]}`, b);
+    return c?.kind === 'count' && !c.filter.controller && !c.filter.controlledBy && !c.times && !c.plus ? { ...c, most: true, anyPlayer: true } : null;
   }
   // Archfiend of Despair: "the life that player lost this turn" — each of the players in turn.
   const theirLife = /^the life (?:they|that player) (lost|gained) this turn$/.exec(t);

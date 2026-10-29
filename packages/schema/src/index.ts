@@ -513,6 +513,10 @@ export interface ObjectFilter {
   castFromZone?: 'hand' | 'exile' | 'graveyard';
   /** Blastfire Bolt: "all Equipment attached to that creature" — attached to what the reference names (bound as it applies). */
   attachedToRef?: Ref;
+  /** Witchbane Orb: "all Curses attached to you"; Curse of Thirst: "… attached to them" — attached to that player (bound to
+   * `attachedToPlayerId` as it applies). */
+  attachedToPlayerRef?: Ref;
+  attachedToPlayerId?: string;
   /** Wash Away: "target spell that wasn't cast from its owner's hand" — a copy, or one cast from anywhere else. */
   notCastFromHand?: true;
   /** Within Range: "creatures attacking them" — that player (bound to `attackingPlayer` as it's counted). */
@@ -573,7 +577,7 @@ export type Ref =
   /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
   /** `except`: Kediss's "each other opponent" — not the player the trigger was about. */
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
-  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref; discardedNone?: true }
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref; discardedNone?: true; /** Feed the Infection: "each opponent who has three or more poison counters". */ poisonAtLeast?: number; /** Depopulate: "each player who controls a multicolored creature". */ controlsSome?: ObjectFilter }
   | { ref: 'controller_of'; of: Ref }
   /** Blightning, Bonfire of the Damned: "that player or that planeswalker's controller" — a target player, or the controller of a
    * target permanent. */
@@ -621,7 +625,7 @@ export type Amount = number | 'X' | AmountExpr;
 export type AmountExpr = (
   /** Permanents on the battlefield matching a filter (from the controller's point of view). */
   // Cavern-Hoard Dragon: `most` — the greatest number any one opponent controls.
-  | { kind: 'count'; filter: ObjectFilter; most?: true }
+  | { kind: 'count'; filter: ObjectFilter; most?: true; /** Investigator's Journal: "the greatest number of creatures a player controls" — you too. */ anyPlayer?: true }
   /** Maester Seymour, Lux Artillery: "the number of counters among creatures you control" — every counter on them. */
   | { kind: 'counters_among'; filter: ObjectFilter; /** Toph: only counters of this kind. */ counter?: string }
   // Coalition Relic: "for each charge counter removed this way" — by this resolution's remove-counters effects.
@@ -659,7 +663,7 @@ export type AmountExpr = (
    * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
    */
   /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
-  | { kind: 'players'; who: 'opponents' | 'each'; /** Rampant Frogantua: players who have lost the game. */ lostGame?: true; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; /** Gnoll War Band: "each opponent who was dealt damage this turn". */ damaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter }
+  | { kind: 'players'; who: 'opponents' | 'each'; /** Rampant Frogantua: players who have lost the game. */ lostGame?: true; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; /** Gnoll War Band: "each opponent who was dealt damage this turn". */ damaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter; /** Voice of Many: "each opponent who controls fewer creatures than you". */ controlsFewer?: ObjectFilter }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -693,6 +697,8 @@ export type AmountExpr = (
   | { kind: 'votes'; option: string }
   /** Faeburrow Elder: "for each color among permanents you control". */
   | { kind: 'colors_among'; filter: ObjectFilter }
+  /** Valiant Changeling: "for each creature type among creatures you control" (CR 205.3m; changeling: all of them). */
+  | { kind: 'creature_types_among'; filter: ObjectFilter }
   /** Aetherflux Reservoir: "for each spell you've cast this turn". */
   /** Rug of Smothering: `player` — that player's spells ("each spell they've cast this turn"). */
   /** Hit the Mother Lode: N minus the discovered card's mana value (0 if none, or if it's N or more). */
@@ -723,13 +729,13 @@ export type AmountExpr = (
   | { kind: 'discarded_this_way'; max?: true; filter?: ObjectFilter }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
   // Combustible Gearhulk: `stat` — "the total mana value of those cards" rather than how many.
-  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'discarded'; types?: string[]; notTypes?: string[]; subtypes?: string[]; other?: true; token?: boolean; stat?: 'mana_value'; yours?: true; /** Deadly Tempest: what that player controlled. */ controlledBy?: Ref }
+  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'discarded' | 'library'; types?: string[]; notTypes?: string[]; subtypes?: string[]; other?: true; token?: boolean; stat?: 'mana_value'; yours?: true; /** Deadly Tempest: what that player controlled. */ controlledBy?: Ref }
   /** "You gain life equal to the damage dealt this way": what this resolution's damage effects dealt. */
   | { kind: 'damage_this_way' }
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
   | { kind: 'excess_this_way' }
   /** "for each creature that died this turn", "the number of Zubera that died this turn" (as they last existed). */
-  | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; notSubtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent' }
+  | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; notSubtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent'; /** Caller of the Claw: "put into your graveyard from the battlefield" — owned by you. */ owner?: 'you' }
   | { kind: 'left_this_turn'; types?: string[]; controller?: 'you' | 'opponent' }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
   | { kind: 'greatest'; stat: 'power' | 'toughness' | 'mana_value'; filter: ObjectFilter }
@@ -752,7 +758,7 @@ export type AmountExpr = (
   | { kind: 'commander_colors' }
   | { kind: 'cost_lki'; cost: 'sacrificed' | 'discarded' | 'exiled'; stat: 'power' | 'toughness' | 'mana_value' }
   /** `half`: "half X, rounded down", "half their life, rounded up" — the count is halved, then scaled (times, plus). */
-) & { times?: number; plus?: number; half?: 'up' | 'down'; /** "a third of their life, rounded up" — `half` divides by this instead. */ divisor?: 3 };
+) & { times?: number; plus?: number; half?: 'up' | 'down'; /** "a third of their life, rounded up" — `half` divides by this instead. */ divisor?: 3; /** Valiant Changeling: "This effect can't reduce the amount of mana this spell costs by more than {5}." */ atMost?: number };
 
 /**
  * Rules-meaningful restrictions and requirements carried by continuous effects.
@@ -1455,7 +1461,7 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result',
-    'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
+    'become_prepared', 'become_unprepared', 'end_turn', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
@@ -1476,7 +1482,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

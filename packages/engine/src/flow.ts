@@ -179,6 +179,10 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
 export function continueResolution(g: GameState, events: GameEvent[], answer?: ChoiceAnswer): void {
   const entry = g.resolving!.entry;
   if (!runResolution(g, events, answer)) return;
+  if (g.endTurn) {
+    endTheTurn(g, events);
+    return;
+  }
   if (entry.kind === 'spell') {
     const o = g.objects[entry.object];
     if (o && o.zone === 'stack') toGraveyardAfterResolving(g, o, events);
@@ -329,10 +333,37 @@ function extraPhaseStep(g: GameState, next: Step | null): Step | null {
   return next;
 }
 
-/** Ends the current step and moves on. */
-export function endStep(g: GameState, events: GameEvent[]): void {
-  // CR 500.5: unspent mana empties as each step and phase ends — except mana an effect says isn't lost until later.
-  const combatEnds = g.step === 'end_of_combat';
+/**
+ * CR 723.1: "End the turn." — every object on the stack is exiled (the resolving one too), state-based actions are
+ * checked with no one getting priority and nothing put on the stack, everything is removed from combat, and the game
+ * skips straight to the cleanup step, where whatever triggered meanwhile goes on the stack (CR 723.2, 514.3a).
+ */
+function endTheTurn(g: GameState, events: GameEvent[]): void {
+  delete g.endTurn;
+  for (const e of [...g.stack].reverse()) {
+    if (e.kind !== 'spell') continue;
+    const o = g.objects[e.object];
+    if (!o || o.zone !== 'stack') continue;
+    // CR 707.10a: a copy of a spell ceases to exist.
+    if (o.spellCopy) removeObjectEntirely(g, o.id);
+    else moveObject(g, o.id, 'exile', events);
+  }
+  g.stack = [];
+  g.priority = null;
+  g.passed = [];
+  checkStateBasedActions(g, events);
+  if (g.over) return;
+  g.combat = null;
+  delete g.inExtra;
+  delete g.extraPhases;
+  // CR 500.5: the steps and phases skipped end, and mana empties with them.
+  emptyManaPools(g, true);
+  collectTriggers(g, events);
+  beginStep(g, 'cleanup', events);
+}
+
+/** CR 500.5: unspent mana empties as a step or phase ends — except mana an effect says isn't lost until later. */
+function emptyManaPools(g: GameState, combatEnds: boolean): void {
   for (const p of Object.values(g.players)) {
     // Omnath, Locus of Mana / Electro: "You don't lose unspent green (red) mana as steps and phases end."
     const keep = keptManaColors(g, p.id);
@@ -351,6 +382,11 @@ export function endStep(g: GameState, events: GameEvent[]): void {
     if (kept.length) p.restricted = kept;
     else delete p.restricted;
   }
+}
+
+/** Ends the current step and moves on. */
+export function endStep(g: GameState, events: GameEvent[]): void {
+  emptyManaPools(g, g.step === 'end_of_combat');
   if (g.step === 'cleanup') {
     if (g.extraCleanup) {
       // CR 514.3a: after players act in a cleanup step, another cleanup step follows.

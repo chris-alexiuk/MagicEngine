@@ -688,6 +688,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     for (const m of spentColors[1]!.matchAll(/\{([WUBRG])\}/g)) need[m[1]!] = (need[m[1]!] ?? 0) + 1;
     return { type: 'spent_colors', need };
   }
+  // Adamant (Foreboding Fruit): "If at least three black mana was spent to cast this spell".
+  const adamant = /^at least (\w+) (white|blue|black|red|green) mana was spent to cast (?:it|this spell|~)$/.exec(t);
+  if (adamant && typeof parseAmount(adamant[1]!) === 'number') return { type: 'spent_colors', need: { [COLOR_WORDS[adamant[2]!]!]: parseAmount(adamant[1]!) as number } };
   // Blazing Bomb: "if at least four mana was spent to cast it"; Tellah: "If four or more mana was spent to cast that spell".
   const spentAtLeast = /^(?:at least (\w+)|(\w+) or more) mana was spent to cast (?:that spell|it)$/.exec(t);
   if (spentAtLeast && b.it?.ref === 'trigger_object') {

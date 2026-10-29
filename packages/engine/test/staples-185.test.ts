@@ -1019,6 +1019,36 @@ const CARDS = [
   makeCard({ name: 'Tap Two', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Tap target creature.' }),
   makeCard({ name: 'Tapper Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{0}: Tap target creature.' }),
   makeCard({ name: 'Generic Golem', type_line: 'Artifact Creature — Golem', mana_cost: '{3}', cmc: 3, power: '3', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Aria Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Players can't draw cards or gain life." }),
+  makeCard({ name: 'Thranduil Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'As long as you control another Elf, you may play an additional land on each of your turns.' }),
+  makeCard({ name: 'Infection Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each opponent who has three or more poison counters loses 3 life.' }),
+  makeCard({ name: 'Thirst Lite', type_line: 'Enchantment — Aura Curse', mana_cost: '{0}', oracle_text: "Enchant player\nAt the beginning of enchanted player's upkeep, this Aura deals damage to that player equal to the number of Curses attached to them." }),
+  makeCard({ name: 'Plain Curse Lite', type_line: 'Enchantment — Aura Curse', mana_cost: '{0}', oracle_text: 'Enchant player' }),
+  makeCard({ name: 'Authority Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: "Enchant creature\nEnchanted creature gets +1/+1 for each card in its controller's hand.\nAt the beginning of the draw step of enchanted creature's controller, that player draws an additional card." }),
+  makeCard({ name: 'Apocalypse Lite', type_line: 'Creature — Hydra', mana_cost: '{X}', power: '0', toughness: '0', oracle_text: 'This creature enters with X +1/+1 counters on it. If X is 5 or more, it enters with an additional X +1/+1 counters on it.' }),
+  makeCard({ name: 'Claw Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flash\nWhen this creature enters, create a 2/2 green Bear creature token for each nontoken creature put into your graveyard from the battlefield this turn.' }),
+  makeCard({ name: 'Voice Lite', type_line: 'Creature — Elf Druid', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'When this creature enters, draw a card for each opponent who controls fewer creatures than you.' }),
+  makeCard({ name: 'Witchbane Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'When this artifact enters, destroy all Curses attached to you.\nYou have hexproof.' }),
+  makeCard({ name: 'Fruit Lite', type_line: 'Sorcery', mana_cost: '{2}{B}', cmc: 3, oracle_text: 'Target player draws two cards and loses 2 life.\nAdamant — If at least three black mana was spent to cast this spell, create a Food token.' }),
+  makeCard({ name: 'Enigma Lite', type_line: 'Artifact Creature — Sphinx', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Flying\nWhen this creature is put into your graveyard from the battlefield, put it into your library third from the top.' }),
+  makeCard({ name: 'Step Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player may shuffle their hand and graveyard into their library. Each player who does draws seven cards.' }),
+  makeCard({ name: 'Noggle Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Flash\nEnchant creature\nEnchanted creature loses all abilities and is a colorless Noggle with base power and toughness 1/1.' }),
+  makeCard({ name: 'Red Flyer Lite', type_line: 'Creature — Dragon', mana_cost: '{R}', power: '4', toughness: '4', oracle_text: 'Flying' }),
+  makeCard({ name: 'Valiant Lite', type_line: 'Creature — Shapeshifter', mana_cost: '{6}', cmc: 6, power: '3', toughness: '3', oracle_text: "This spell costs {1} less to cast for each creature type among creatures you control. This effect can't reduce the amount of mana this spell costs by more than {5}.\nChangeling\nDouble strike" }),
+  makeCard({ name: 'Shifter Lite', type_line: 'Creature — Shapeshifter', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Changeling' }),
+  makeCard({ name: 'Time Stop Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'End the turn.' }),
+  makeCard({ name: 'Glorious End Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'End the turn.\nAt the beginning of your next end step, you lose the game.' }),
+  makeCard({ name: 'Sundial Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: End the turn. Activate only during your turn.' }),
+  makeCard({ name: 'Pump Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target creature gets +3/+3 until end of turn.' }),
+  makeCard({ name: 'End Draw Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your end step, draw a card.' }),
+  makeCard({ name: 'Spiral Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Shuffle all cards from your graveyard into your library. Target player mills that many cards.' }),
+  makeCard({ name: 'Perennation Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return target permanent card from your graveyard to the battlefield with a hexproof counter and an indestructible counter on it.' }),
+  makeCard({ name: 'Depopulate Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player who controls a multicolored creature draws a card. Then destroy all creatures.' }),
+  makeCard({ name: 'Gold Bear', type_line: 'Creature — Bear', mana_cost: '{G}{W}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Thief Lite', type_line: 'Creature — Vampire', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'As this creature enters, remove all counters from all permanents. This creature enters with a +1/+1 counter on it for each counter removed this way.' }),
+  makeCard({ name: 'Redeemer Lite', type_line: 'Creature — Eldrazi', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'When you cast this spell, you may pay {C}. If you do, create a 1/1 colorless Eldrazi Scion creature token for each nontoken creature that died under your control this turn. Those tokens have "Sacrifice this token: Add {C}."' }),
+  makeCard({ name: 'Journal Lite', type_line: 'Artifact — Clue', mana_cost: '{0}', oracle_text: 'This artifact enters with a number of suspect counters on it equal to the greatest number of creatures a player controls.' }),
+  makeCard({ name: 'Discontinuity Lite', type_line: 'Instant', mana_cost: '{3}{U}{U}', cmc: 5, oracle_text: 'During your turn, this spell costs {2}{U}{U} less to cast.\nEnd the turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -8719,6 +8749,234 @@ describe('Sieges', () => {
     expect(chars(q, q.objects[cub]!).power).toBe(1);
     q = settle(act(q, { type: 'cast', player: 'alice', object: give(q, 'alice', 'Tap Two', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
     expect(chars(q, q.objects[cub]!).power).toBe(4);
+  });
+
+  it('Mornsong Aria, Thranduil\'s Company, Feed the Infection, Curse of Thirst, Righteous Authority', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Aria Lite', 'battlefield');
+    const life = g.players.alice!.life;
+    const hand = g.zones.hand.bob!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Gift of Words', 'hand') }));
+    expect([g.players.alice!.life, g.zones.hand.bob!.length]).toEqual([life, hand]);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(h, 'alice', 'Thranduil Lite', 'battlefield');
+    h = settle(act(h, { type: 'play_land', player: 'alice', object: give(h, 'alice', 'Forest', 'hand') }));
+    const second = give(h, 'alice', 'Forest', 'hand');
+    const canPlay = () => legalActions(h, 'alice').some((a) => a.type === 'play_land' && a.object === second);
+    expect(canPlay()).toBe(false);
+    give(h, 'alice', 'Elf Lite', 'battlefield');
+    expect(canPlay()).toBe(true);
+
+    for (const poison of [2, 3]) {
+      let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      k.players.bob!.poison = poison;
+      k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Infection Lite', 'hand') }));
+      expect(k.players.bob!.life).toBe(poison === 3 ? 17 : 20);
+    }
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Thirst Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Plain Curse Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Plain Curse Lite', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    m = drive(toStep(m, 'draw', 'bob'), () => null);
+    expect(m.players.bob!.life).toBe(18);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ogre = give(n, 'bob', 'Ogre', 'battlefield');
+    n = settle(act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Authority Lite', 'hand'), targets: [[{ kind: 'object', object: ogre }]] }));
+    expect(chars(n, n.objects[ogre]!).power).toBe(5 + n.zones.hand.bob!.length);
+    const before = n.zones.hand.bob!.length;
+    n = drive(toStep(n, 'main1', 'bob'), () => null);
+    expect(n.zones.hand.bob!.length - before).toBe(2);
+  });
+
+  it('Apocalypse Hydra, Caller of the Claw, Voice of Many, Witchbane Orb, Foreboding Fruit', () => {
+    for (const [x, n] of [[4, 4], [5, 10]] as const) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      g.players.alice!.pool.C = x;
+      const hydra = give(g, 'alice', 'Apocalypse Lite', 'hand');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: hydra, x } as never));
+      expect(g.objects[hydra]!.counters['+1/+1']).toBe(n);
+    }
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = [give(h, 'alice', 'Cub', 'battlefield'), give(h, 'alice', 'Zombie', 'battlefield')];
+    const theirs = give(h, 'bob', 'Cub', 'battlefield');
+    for (const t of [...mine, theirs]) h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: t }]] }));
+    const tokens = () => h.zones.battlefield.filter((id) => h.objects[id]!.token && h.objects[id]!.controller === 'alice').length;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Claw Lite', 'hand') }));
+    expect(tokens()).toBe(2);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(k, 'alice', 'Cub', 'battlefield');
+    give(k, 'bob', 'Cub', 'battlefield');
+    const hand = k.zones.hand.alice!.length;
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Voice Lite', 'hand') }));
+    // Two creatures (with the Voice itself) to Bob's one.
+    expect(k.zones.hand.alice!.length).toBe(hand + 1);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Plain Curse Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    const onMe = give(m, 'bob', 'Plain Curse Lite', 'battlefield');
+    m.objects[onMe]!.attachedToPlayer = 'alice';
+    const onBob = m.zones.battlefield.find((id) => m.objects[id]!.attachedToPlayer === 'bob')!;
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Witchbane Lite', 'hand') }));
+    expect([m.objects[onMe]!.zone, m.objects[onBob]!.zone]).toEqual(['graveyard', 'battlefield']);
+
+    for (const black of [3, 1]) {
+      let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      q.players.alice!.pool.B = black;
+      q.players.alice!.pool.C = 3 - black;
+      q = settle(act(q, { type: 'cast', player: 'alice', object: give(q, 'alice', 'Fruit Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+      expect([q.players.bob!.life, q.zones.battlefield.filter((id) => q.objects[id]!.token).length]).toEqual([18, black === 3 ? 1 : 0]);
+    }
+  });
+
+  it('Enigma Sphinx, Step Between Worlds, Noggle the Mind, Valiant Changeling', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sphinx = give(g, 'alice', 'Enigma Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: sphinx }]] }));
+    g = drive(g, () => null);
+    expect(g.zones.library.alice!.indexOf(sphinx)).toBe(2);
+    // Stolen: its owner's graveyard isn't its controller's, so it stays there.
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const borrowed = give(h, 'bob', 'Enigma Lite', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Sower Lite', 'hand') }));
+    if (h.pending?.kind === 'trigger_targets') h = settle(act(h, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: borrowed }]] } }));
+    expect(h.objects[borrowed]!.controller).toBe('alice');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: borrowed }]] }));
+    h = drive(h, () => null);
+    expect(h.objects[borrowed]!.zone).toBe('graveyard');
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bobHand = k.zones.hand.bob!.length;
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Step Lite', 'hand') }));
+    k = drive(k, (x) => (x.pending?.kind === 'may' ? act(x, { type: 'choose', player: x.pending.player, answer: { kind: 'may', yes: x.pending.player === 'alice' } }) : null));
+    expect([k.zones.hand.alice!.length, k.zones.hand.bob!.length]).toEqual([7, bobHand]);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const flyer = give(m, 'bob', 'Red Flyer Lite', 'battlefield');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Noggle Lite', 'hand'), targets: [[{ kind: 'object', object: flyer }]] }));
+    const c = chars(m, m.objects[flyer]!);
+    expect([c.power, c.toughness, c.colors, c.subtypes, c.types, c.keywords.length]).toEqual([1, 1, [], ['Noggle'], ['Creature'], 0]);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(n, 'alice', 'Cub', 'battlefield');
+    give(n, 'alice', 'Zombie', 'battlefield');
+    const valiant = give(n, 'alice', 'Valiant Lite', 'hand');
+    const castable = () => legalActions(n, 'alice').some((a) => a.type === 'cast' && a.object === valiant);
+    n.players.alice!.pool.C = 3;
+    expect(castable()).toBe(false);
+    n.players.alice!.pool.C = 4;
+    expect(castable()).toBe(true);
+    give(n, 'alice', 'Shifter Lite', 'battlefield');
+    n.players.alice!.pool.C = 1;
+    expect(castable()).toBe(true);
+    n.players.alice!.pool.C = 0;
+    expect(castable()).toBe(false);
+  });
+
+  it('End the turn (CR 723.1): the stack is exiled, combat ends, the turn goes straight to cleanup', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    give(g, 'alice', 'End Draw Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Pump Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(chars(g, g.objects[cub]!).power).toBe(4);
+    g.objects[cub]!.damage = 1;
+    const bolt = give(g, 'alice', 'Bolt', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: bolt, targets: [[{ kind: 'player', player: 'bob' }]] });
+    const stop = give(g, 'alice', 'Time Stop Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: stop });
+    const hand = g.zones.hand.alice!.length;
+    g = settle(g);
+    expect([g.objects[bolt]!.zone, g.objects[stop]!.zone, g.players.bob!.life, g.stack.length]).toEqual(['exile', 'exile', 20, 0]);
+    // No end step: nothing drew; the pump and the damage are gone; it's Bob's turn.
+    expect([g.active, g.zones.hand.alice!.length, chars(g, g.objects[cub]!).power, g.objects[cub]!.damage]).toEqual(['bob', hand, 1, 0]);
+
+    // Sundial: during combat — the attack never deals damage.
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dial = give(h, 'alice', 'Sundial Lite', 'battlefield');
+    const ogre = give(h, 'alice', 'Ogre', 'battlefield');
+    h = attackWith(h, [ogre]);
+    expect(h.combat?.attackers[ogre]).toBeTruthy();
+    h = settle(act(h, { type: 'activate', player: 'alice', object: dial, ability: 0 }));
+    expect([h.active, h.players.bob!.life, h.combat]).toEqual(['bob', 20, null]);
+    expect(legalActions(h, 'alice').some((a) => a.type === 'activate' && a.object === dial)).toBe(false);
+
+    // Glorious End: this turn's end step is skipped, so it's the next one.
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Glorious End Lite', 'hand') }));
+    expect([k.active, k.players.alice!.lost ?? false]).toEqual(['bob', false]);
+    k = drive(toStep(k, 'main2', 'alice'), () => null);
+    expect(k.players.alice!.lost ?? false).toBe(false);
+    k = drive(toStep(k, 'end', 'alice'), () => null);
+    expect(k.players.alice!.lost).toBeTruthy();
+
+    // The cleanup step still has its player discard to hand size.
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    while (m.zones.hand.alice!.length < 9) give(m, 'alice', 'Forest', 'hand');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Time Stop Lite', 'hand') }));
+    expect(m.pending).toMatchObject({ kind: 'discard_to_hand_size', player: 'alice', count: 2 });
+  });
+
+  it('Psychic Spiral, Perennation, Depopulate, Thief of Blood, Vile Redeemer, Investigator\'s Journal, Discontinuity', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (let i = 0; i < 3; i++) give(g, 'alice', 'Cub', 'graveyard');
+    const lib = g.zones.library.bob!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Spiral Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([g.zones.graveyard.alice!.length, g.zones.library.bob!.length]).toEqual([1, lib - 3]);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(h, 'alice', 'Cub', 'graveyard');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Perennation Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect([h.objects[cub]!.zone, h.objects[cub]!.counters]).toEqual(['battlefield', { hexproof: 1, indestructible: 1 }]);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const gold = give(k, 'bob', 'Gold Bear', 'battlefield');
+    const mine = give(k, 'alice', 'Cub', 'battlefield');
+    const [a, b] = [k.zones.hand.alice!.length, k.zones.hand.bob!.length];
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Depopulate Lite', 'hand') }));
+    expect([k.zones.hand.alice!.length - a, k.zones.hand.bob!.length - b, k.objects[gold]!.zone, k.objects[mine]!.zone]).toEqual([0, 1, 'graveyard', 'graveyard']);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const c1 = give(m, 'alice', 'Cub', 'battlefield');
+    const c2 = give(m, 'bob', 'Ogre', 'battlefield');
+    m.objects[c1]!.counters['+1/+1'] = 2;
+    m.objects[c2]!.counters['-1/-1'] = 1;
+    const thief = give(m, 'alice', 'Thief Lite', 'hand');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: thief }));
+    expect([m.objects[thief]!.counters['+1/+1'], m.objects[c1]!.counters, m.objects[c2]!.counters]).toEqual([3, {}, {}]);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dead = [give(n, 'alice', 'Cub', 'battlefield'), give(n, 'alice', 'Zombie', 'battlefield')];
+    for (const t of dead) n = settle(act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: t }]] }));
+    n.players.alice!.pool.C = 1;
+    n = act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Redeemer Lite', 'hand') });
+    n = drive(n, (x) => (x.pending?.kind === 'pay' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } }) : null));
+    n = settle(n);
+    const scions = n.zones.battlefield.filter((id) => n.objects[id]!.token);
+    expect(scions.length).toBe(2);
+    expect(legalActions(n, 'alice').some((x) => (x.type === 'activate' || x.type === 'activate_mana') && (x as { object: string }).object === scions[0])).toBe(true);
+
+    let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(q, 'alice', 'Cub', 'battlefield');
+    for (let i = 0; i < 3; i++) give(q, 'bob', 'Cub', 'battlefield');
+    const journal = give(q, 'alice', 'Journal Lite', 'hand');
+    q = settle(act(q, { type: 'cast', player: 'alice', object: journal }));
+    expect(q.objects[journal]!.counters.suspect).toBe(3);
+
+    let r = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const disc = give(r, 'alice', 'Discontinuity Lite', 'hand');
+    r.players.alice!.pool.C = 1;
+    expect(legalActions(r, 'alice').some((x) => x.type === 'cast' && x.object === disc)).toBe(true);
+    r = act(toStep(r, 'main1', 'bob'), { type: 'pass', player: 'bob' });
+    r.players.alice!.pool.C = 1;
+    expect(legalActions(r, 'alice').some((x) => x.type === 'cast' && x.object === disc)).toBe(false);
+    r.players.alice!.pool.C = 3;
+    r.players.alice!.pool.U = 2;
+    expect(legalActions(r, 'alice').some((x) => x.type === 'cast' && x.object === disc)).toBe(true);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

@@ -39,7 +39,7 @@ export interface TurnLog {
   /** Cards the active player has actually drawn in this turn's draw step (Orcish Bowmasters). */
   drawStepCards?: number;
   /** What died this turn, as it last existed ("for each creature that died this turn"). */
-  died?: { controller: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
+  died?: { controller: PlayerId; owner?: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
   /** Kutzil's Flanker: the permanents that left the battlefield this turn, as they last existed. */
   leftList?: { controller: PlayerId; types: string[] }[];
   /** CR 700.11: how many times each player descended this turn. */
@@ -150,7 +150,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           const lk = g.lastKnown?.[e.object];
           const was = lk?.types ?? types;
           if (was.includes('Creature') || types.includes('Creature')) log.creatureDied = true;
-          (log.died ??= []).push({ controller: e.controller, types: [...was], subtypes: [...(lk?.subtypes ?? [])], token: Boolean(g.objects[e.object]?.token) });
+          (log.died ??= []).push({ controller: e.controller, owner: g.objects[e.object]?.owner, types: [...was], subtypes: [...(lk?.subtypes ?? [])], token: Boolean(g.objects[e.object]?.token) });
         }
         if (e.from === 'graveyard' && g.objects[e.object]) (log.leftGraveyard ??= []).push({ owner: g.objects[e.object]!.owner, types: [...types] });
         if (e.to === 'exile' && !e.token) log.cardExiled = true;
