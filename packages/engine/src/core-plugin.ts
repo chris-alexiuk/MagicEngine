@@ -3377,10 +3377,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     let rest: string[] = [];
     if (node.dread) {
       const memo = ctx.memo as { looked?: string[] };
-      const looked = (memo.looked ??= zoneList(g, 'library', ctx.controller).slice(0, 2)).filter((id) => g.objects[id]?.zone === 'library');
+      // Unwanted Remake: "Its controller manifests dread" — their library, their choice.
+      const looked = (memo.looked ??= zoneList(g, 'library', manifester).slice(0, 2)).filter((id) => g.objects[id]?.zone === 'library');
       const answer = answerOf(ctx, 'choose_objects');
       if (looked.length < 2) chosen = looked;
-      else if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: looked, min: 1, max: 1, text: 'Choose a card to manifest (the other goes into your graveyard).', seen: looked } };
+      else if (!answer) return { ask: { kind: 'choose_objects', player: manifester, candidates: looked, min: 1, max: 1, text: 'Choose a card to manifest (the other goes into your graveyard).', seen: looked } };
       else {
         if (answer.objects.length !== 1 || !looked.includes(answer.objects[0]!)) throw new RulesError('Choose one of those two cards.');
         chosen = answer.objects;
@@ -3517,7 +3518,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const memo = ctx.memo as { looked?: string[]; slot?: number; done?: string[] };
     const looked = (memo.looked ??= zoneList(g, 'library', ctx.controller).slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
-    const slots = node.slots as ('hand' | 'bottom' | 'exile_play')[];
+    // Telling Time: "one on top of your library"; Moment of Truth: "one into your graveyard".
+    const slots = node.slots as ('hand' | 'bottom' | 'exile_play' | 'top' | 'graveyard')[];
     let answer = answerOf(ctx, 'choose_objects');
     for (let i = memo.slot ?? 0; i < slots.length; i++) {
       const left = looked.filter((id) => g.objects[id]!.zone === 'library' && !(memo.done ?? []).includes(id));
@@ -3526,7 +3528,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (left.length > 1) {
         if (!answer) {
           memo.slot = i;
-          const where = slots[i] === 'hand' ? 'into your hand' : slots[i] === 'bottom' ? 'on the bottom of your library' : 'into exile (you may play it this turn)';
+          const where = slots[i] === 'hand' ? 'into your hand' : slots[i] === 'bottom' ? 'on the bottom of your library' : slots[i] === 'top' ? 'on top of your library' : slots[i] === 'graveyard' ? 'into your graveyard' : 'into exile (you may play it this turn)';
           return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: left, min: 1, max: 1, text: `Choose a card to put ${where}.`, seen: left } };
         }
         if (answer.objects.length !== 1 || !left.includes(answer.objects[0]!)) throw new RulesError('Choose one of those cards.');
@@ -3536,7 +3538,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       (memo.done ??= []).push(id);
       if (slots[i] === 'hand') moveObject(g, id, 'hand', ctx.events);
       else if (slots[i] === 'bottom') moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
-      else {
+      else if (slots[i] === 'graveyard') moveObject(g, id, 'graveyard', ctx.events);
+      else if (slots[i] === 'top') {
+        // It stays in the library — on top (the others are put elsewhere).
+        const lib = g.zones.library[ctx.controller]!;
+        lib.splice(lib.indexOf(id), 1);
+        lib.unshift(id);
+      } else {
         moveObject(g, id, 'exile', ctx.events);
         const o = g.objects[id]!;
         (g.mayPlay ??= []).push({ object: { id, zcc: o.zcc }, player: ctx.controller, mode: 'play', lastTurn: g.turn });
@@ -3820,6 +3828,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // Dark Confidant: "reveal the top card of your library and put that card into your hand. You lose life equal to its
   // mana value." (CR 701.20a)
+  // Counterbalance: "reveal the top card of your library" — it stays there; "the revealed card" afterwards.
+  reveal_top_card(node, ctx) {
+    const g = ctx.g;
+    const top = zoneList(g, 'library', ctx.controller)[0];
+    if (!top) return true;
+    ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [top] });
+    if (ctx.resolution) ctx.resolution.chosenObject = { id: top, zcc: g.objects[top]!.zcc };
+    return true;
+  },
+
   reveal_top(node, ctx) {
     const g = ctx.g;
     const top = zoneList(g, 'library', ctx.controller)[0];
@@ -4072,6 +4090,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       text: `${describeEffects(node.effects as EffectNode[])} (delayed)`,
       step: node.step === 'upkeep' || node.step === 'end_of_combat' || node.step === 'main' || node.step === 'main1' || node.step === 'beginning_of_combat' || node.step === 'cleanup' ? node.step : 'end',
       ...(node.whose === 'you' ? { whose: 'you' as const } : {}),
+      // Phytotitan: "at the beginning of their next upkeep" — its owner's.
+      ...(node.whose && typeof node.whose === 'object' ? { whosePlayer: refPlayers(ctx, node.whose as Ref)[0] ?? '\u0000' } : {}),
       ...(node.laterTurn ? { laterTurn: true as const } : {}),
       createdTurn: g.turn,
       createdStep: g.step,
@@ -4545,6 +4565,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
   }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // Counterbalance: "you may reveal the top card of your library. If you do, …" — only with a card there.
+  if (e.type === 'reveal_top_card') return zoneList(g, 'library', chooser).length > 0;
   // Raff, Weatherlight Stalwart: "you may tap two untapped creatures you control. If you do, …"
   if (e.type === 'tap_choice' && e.amount !== undefined) {
     const filter = bindFilter(ctx, (e.filter ?? {}) as ObjectFilter);
@@ -5573,7 +5595,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
     // Grandmother Goby: "counter that spell. Create … equal to the amount of mana spent to cast that spell" — remembered.
-    return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player, ...(e.manaSpent !== undefined ? { manaSpent: e.manaSpent } : {}) }] : [];
+    return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player, ...(e.manaSpent !== undefined ? { manaSpent: e.manaSpent } : {}), mv: manaValueOf(check.g, spell) }] : [];
   },
 };
 

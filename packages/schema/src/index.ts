@@ -432,6 +432,8 @@ export interface ObjectFilter {
   controllerPlayer?: string;
   /** Edgewall Innkeeper: "a creature spell that has an Adventure" (CR 715). */
   hasAdventure?: true;
+  /** Cut Down: "with total power and toughness 5 or less". */
+  totalPT?: { op: 'le' | 'ge'; n: number };
   /** "creatures that aren't of the chosen type" (Kindred Dominance). */
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
@@ -441,7 +443,7 @@ export interface ObjectFilter {
   /** Sage's Reverie: "each Aura you control that's attached to a creature". */
   attachedToType?: string;
   /** CR 903.3: a commander. */
-  commander?: true;
+  commander?: boolean;
   /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
   counter?: string;
   /** Wave Goodbye: "without a +1/+1 counter on it" ('any': "without counters on it"). */
@@ -651,7 +653,7 @@ export type AmountExpr = (
   /** Hit the Mother Lode: N minus the discovered card's mana value (0 if none, or if it's N or more). */
   | { kind: 'discover_shortfall'; n: number }
   | { kind: 'source_damage_this_turn' }
-  | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true }
+  | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
@@ -1313,7 +1315,7 @@ export const CORE_NODES = {
   effects: [
     'add_mana', 'deal_damage', 'draw', 'gain_life', 'lose_life', 'set_life', 'exile_until', 'tap_choice', 'destroy', 'move', 'counter', 'tap', 'untap',
     'put_from_milled', 'grant_play', 'grant_graveyard_cast', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
-    'sacrifice', 'may', 'transform', 'incubate', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
+    'sacrifice', 'may', 'transform', 'incubate', 'reveal_top_card', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
@@ -1324,7 +1326,7 @@ export const CORE_NODES = {
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',

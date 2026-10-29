@@ -307,6 +307,8 @@ function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'man
   const [r] = refRefs(ctx, ref);
   if (!r) return 0;
   const o = g.objects[r.id];
+  // Dovescape: "counter that spell. That player creates X … where X is the spell's mana value" — as it was on the stack.
+  if (stat === 'mana_value' && ref.ref === 'trigger_object' && ctx.trigger?.mv !== undefined && (!o || o.zcc !== r.zcc)) return ctx.trigger.mv;
   if (stat === 'mana_value') return o ? manaValueOf(g, o) : 0;
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
   if (stat === 'colors') return o ? chars(g, o).colors.length : 0;
@@ -455,6 +457,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       if (p === undefined) return 0;
       // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
       if (e.totalMv) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id && (s.zcc === undefined || s.zcc === ctx.source.zcc))).reduce((n, s) => n + (s.mv ?? 0), 0);
+      // Magebane Lizard: "the number of noncreature spells they've cast this turn".
+      if (e.filter) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && g.objects[s.id] && matchesFilter(g, g.objects[s.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
       return g.turnLog.spellsCast[p] ?? 0;
     }
     case 'drawn_this_turn':

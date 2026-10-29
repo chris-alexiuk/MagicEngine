@@ -269,7 +269,18 @@ function lifeThisTurn(who: string): AmountExpr | null {
 
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
-  const t = text.trim();
+  // Dovescape: "where X is the spell's mana value" — the spell a cast trigger is about.
+  const t = b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim();
+  // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.
+  const kindCast = /^the number of (.+?) spells (they've|that player has|you've) cast this turn$/.exec(t);
+  if (kindCast) {
+    const who = kindCast[2] === "you've" ? null : b.player && b.player.ref !== 'players' && b.player.ref !== 'you' ? b.player : undefined;
+    const pf = who !== undefined ? parseFilter(`${kindCast[1]} spell`, b.clone()) : null;
+    if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
+      const { zone: _z, ...filter } = pf.filter;
+      return { kind: 'spells_cast_this_turn', filter, ...(who ? { player: who } : {}) };
+    }
+  }
   // Knight-Errant of Eos: "the number of creatures that convoked it" (CR 702.51c).
   if (/^the number of creatures that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Cavern-Hoard Dragon: "the greatest number of artifacts an opponent controls" — the most any one opponent controls.
@@ -320,7 +331,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const oneLife = /^the (?:amount of )?life (?:they|that player) (lost|gained) this turn$/.exec(t);
   if (oneLife && b.player && b.player.ref !== 'players' && b.player.ref !== 'you') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(oneLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // "the amount of life you gained this turn", "the total amount of life your opponents have lost this turn"
-  const lifeAmount = /^the (?:total )?amount of life (.+?) this turn$/.exec(t);
+  // Children of Korlis: "the life you've lost this turn".
+  const lifeAmount = /^the (?:total )?(?:amount of )?life (.+?) this turn$/.exec(t);
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };

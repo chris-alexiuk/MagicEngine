@@ -903,6 +903,8 @@ export function matchesFilter(
   if (f.tapped !== undefined && o.tapped !== f.tapped) return false;
   if (f.token !== undefined && Boolean(o.token) !== f.token) return false;
   if (f.commander && !o.commander) return false;
+  // Slash the Ranks: "except for commanders" (CR 903.3).
+  if (f.commander === false && o.commander) return false;
   if (f.anyOf && !f.anyOf.some((alt) => matchesFilter(g, o, altZones ? { zone: 'battlefield', ...alt } : alt, { ...ctx, anyZone: altZones ? ctx.anyZone : true }, c))) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
@@ -982,6 +984,8 @@ export function matchesFilter(
   if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
   // Bedrock Tortoise: "with toughness greater than its power".
   if (f.toughnessAbovePower && !(c.toughness > c.power)) return false;
+  // Cut Down: "with total power and toughness 5 or less".
+  if (f.totalPT && !(f.totalPT.op === 'le' ? c.power + c.toughness <= f.totalPT.n : c.power + c.toughness >= f.totalPT.n)) return false;
   // CR 107.3: "with {X} in its mana cost".
   if (f.xInCost !== undefined && faceOf(g, o).manaCost.includes('{X}') !== f.xInCost) return false;
   // CR 605.1a: "with a mana ability" — the abilities it has where it is (printed ones off the battlefield).

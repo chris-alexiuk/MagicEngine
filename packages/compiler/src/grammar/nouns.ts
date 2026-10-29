@@ -94,6 +94,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
   // Bedrock Tortoise: "Each creature you control with toughness greater than its power".
   [/ with toughness greater than its power$/, (f) => !f.toughnessAbovePower && ((f.toughnessAbovePower = true), true)],
+  // Cut Down: "target creature with total power and toughness 5 or less".
+  [/ with total power and toughness (\d+) or (less|greater)$/, (f, m) => !f.totalPT && ((f.totalPT = { op: m[2] === 'less' ? 'le' : 'ge', n: Number(m[1]) }), true)],
   // Edgewall Innkeeper: "a creature spell that has an Adventure" (CR 715).
   [/ that has an Adventure$/, (f) => !f.hasAdventure && ((f.hasAdventure = true), true)],
   // Frontline Medic, Zaxara: "a spell with {X} in its mana cost" (CR 107.3); Titans' Nest: "without {X} in its mana cost".
@@ -139,9 +141,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:from|in) (?:an opponent's|each opponent's|your opponents') graveyards?$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
   [/ (?:from|in) (?:a|any|each) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   // "Exile all cards from target player's graveyard": that player's cards only.
-  [/ (?:from|in) (target player|target opponent|that player)'s graveyard$/, (f, m, b) => {
+  // Rakshasa Debaser: "target creature card from defending player's graveyard" — the player it attacks.
+  [/ (?:from|in) (target player|target opponent|that player|defending player)'s graveyard$/, (f, m, b) => {
     if (f.zone) return false;
-    const who = parsePlayerRef(m[1]!, b);
+    const who = m[1] === 'defending player' ? (b.named['defending player'] ?? null) : parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.zone = 'graveyard'), (f.ownedBy = who), true));
   }],
   // Kozilek's Command: "up to X target cards from graveyards".
@@ -189,6 +192,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:that's|that are) attached to an? (creature|land|artifact|permanent)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1] === 'permanent' ? '' : m[1]!.replace(/^\w/, (c) => c.toUpperCase())), m[1] !== 'permanent')],
   // Urza's Ruinous Blast: "all nonland permanents that aren't legendary"
   [/ (?:that aren't|that isn't|that's not) legendary$/, (f) => !f.notSupertypes && ((f.notSupertypes = ['Legendary']), true)],
+  // Summon: Leviathan: "each creature that isn't a Kraken, Leviathan, Merfolk, Octopus, or Serpent"; "creatures that aren't
+  // Zombies" — none of those creature types.
+  [/ (?:that isn't|that aren't) (?:an? )?([A-Z][a-z]+(?:(?:,| or|, or) (?:an? )?[A-Z][a-z]+)*)$/, (f, m) => {
+    if (f.notSubtypes) return false;
+    const subs = m[1]!.split(/,? or |, /).map((w) => subtypeOf(w.replace(/^an? /, '')));
+    return subs.every(Boolean) && ((f.notSubtypes = subs as string[]), true);
+  }],
   // Winds of Rath: "all creatures that aren't enchanted"
   [/ (?:that aren't|that isn't|that's not) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = false), true)],
   [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
@@ -499,6 +509,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
       if (TYPE_NOUNS[xl]) (f.notTypes ??= []).push(TYPE_NOUNS[xl]!);
       else if (COLOR_WORDS[xl]) (f.notColors ??= []).push(COLOR_WORDS[xl]!);
       else if (xl === 'token') f.token = false;
+      // Shield Broker: "target noncommander creature you don't control" (CR 903.3).
+      else if (xl === 'commander') f.commander = false;
       // Shoot the Sheriff: "target non-outlaw creature" (CR 700.12).
       else if (xl === 'outlaw') (f.notSubtypes ??= []).push(...OUTLAW_TYPES);
       else if (SUPERTYPE_WORDS[xl]) (f.notSupertypes ??= []).push(SUPERTYPE_WORDS[xl]!);

@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -543,6 +543,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const n = (g.turnLog.sacrificedBy?.[controller] ?? []).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
       return cmp(n, cond);
     }
+    // Boomerang Basics: "If you controlled that permanent" — its controller as the spell began to resolve.
+    case 'controlled_it':
+      return refPlayers(ctx, { ref: 'controller_of', of: cond.of as Ref }).includes(controller);
     // Gau, Feral Youth: "if a card left your graveyard this turn"; Bonecache Overseer: "three or more cards".
     case 'left_graveyard': {
       const types = ((cond.filter ?? {}) as ObjectFilter).types;

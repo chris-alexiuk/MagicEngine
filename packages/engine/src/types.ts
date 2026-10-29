@@ -358,6 +358,8 @@ export interface TriggerInfo {
   amount?: number;
   /** A cast trigger: the mana spent to cast the spell (CR 601.2h), as it was cast — if it's countered, still known. */
   manaSpent?: number;
+  /** A cast trigger: the spell's mana value on the stack (X included, CR 202.3e) — if it's countered, still known. */
+  mv?: number;
   /** CR 400.7f: a trigger on the enchanted permanent leaving — the Aura can be found in its owner's graveyard. */
   auraFind?: true;
   /** The Skullspore Nexus: the total power of the creatures that died together (as they last existed, CR 603.10a). */
@@ -470,6 +472,8 @@ export interface DelayedTrigger {
   info?: TriggerInfo;
   /** "at the beginning of your next upkeep" (rebound): only on its controller's turn. */
   whose?: 'you';
+  /** Phytotitan: "at the beginning of their next upkeep" — only on that player's turn. */
+  whosePlayer?: PlayerId;
   /** Final Fortune: "At the beginning of that turn's end step" — the extra turn's, not this one's. */
   laterTurn?: true;
   /** "When you next cast an instant or sorcery spell this turn": fires on that event instead of a step. */

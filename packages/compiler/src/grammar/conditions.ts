@@ -179,6 +179,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const of = b.named[hasMV[1]!] ?? (hasMV[1] === 'it' ? b.it : null);
     if (of) return { type: 'is', of, filter: { manaValue: { op: hasMV[3] === 'less' ? 'le' : 'ge', n: Number(hasMV[2]) } } };
   }
+  // Boomerang Basics: "If you controlled that permanent, draw a card." — as the spell began to resolve (CR 608.2h).
+  if (/^you controlled (?:that permanent|that creature|that artifact|it)$/.test(t)) {
+    const of = b.named[t.replace(/^you controlled /, '')] ?? (b.it && b.it.ref === 'target' ? b.it : null);
+    if (of && of.ref === 'target') return { type: 'controlled_it', of };
+  }
+  // Reject Imperfection: "If that spell's mana value was 3 or less"; Serum Snare: "If that permanent had mana value 3 or
+  // less" — the target, wherever it is now.
+  const targetMV = /^(?:that (?:spell|permanent|creature|card)'s mana value was|that (?:spell|permanent|creature|card) had mana value|it had mana value) (\d+) or (less|greater)$/.exec(t);
+  if (targetMV && b.it?.ref === 'target') return { type: 'amount', amount: { kind: 'stat', stat: 'mana_value', of: b.it }, op: targetMV[2] === 'less' ? 'le' : 'ge', n: Number(targetMV[1]) };
+  // Glorious Gale: "Counter target creature spell. If it was a legendary spell, the Ring tempts you."
+  if (/^(?:it|that spell) was a legendary spell$/.test(t) && b.it?.ref === 'target') return { type: 'is', of: b.it, filter: { supertypes: ['Legendary'] } };
   // Ringwraiths: "If that creature is legendary, its controller loses 3 life." — the target, now.
   if (/^(?:that creature|it) is legendary$/.test(t)) {
     const of = b.named['that creature'] ?? (b.it && b.it.ref !== 'self' ? b.it : null);

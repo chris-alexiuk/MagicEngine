@@ -682,6 +682,7 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
       const isMain = e.step === 'main1' || e.step === 'main2';
       if (d.on || d.leaves || !(d.step === e.step || (d.step === 'main' && isMain))) continue;
       if (d.whose === 'you' && g.active !== d.controller) continue;
+      if (d.whosePlayer !== undefined && g.active !== d.whosePlayer) continue;
       // "the next end step" isn't the one it was created in; "the next turn's upkeep" is a later turn's.
       if (d.step === 'upkeep' ? g.turn <= d.createdTurn : g.turn === d.createdTurn && d.createdStep === e.step) continue;
       if (d.laterTurn && g.turn <= d.createdTurn) continue;

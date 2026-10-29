@@ -110,6 +110,17 @@ export function abilitySources(g: GameState): ObjectId[] {
 /** CR 202.3: mana value, from the mana cost it has (a copy's is the original's, CR 707.2). */
 export function manaValueOf(g: GameState, o: GameObject): number {
   if (o.faceDown && (o.zone === 'battlefield' || o.zone === 'stack')) return 0; // CR 708.2: no mana cost
+  const base = printedManaValue(g, o);
+  // CR 202.3e: on the stack, X is the number chosen for it.
+  if (o.zone === 'stack') {
+    const entry = g.stack.find((s) => s.kind === 'spell' && s.object === o.id);
+    const xs = entry?.x ? (faceOf(g, o).manaCost.match(/\{X\}/g) ?? []).length : 0;
+    if (xs) return base + xs * entry!.x!;
+  }
+  return base;
+}
+
+function printedManaValue(g: GameState, o: GameObject): number {
   // CR 718.3b: a prototyped spell or permanent; CR 709.5c: a Room's unlocked doors.
   if ((o.prototyped || o.unlocked) && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return costManaValue(faceOf(g, o).manaCost);
   const def = g.cards[(o.copyOf ?? o).card];
