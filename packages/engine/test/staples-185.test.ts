@@ -793,6 +793,15 @@ const CARDS = [
   makeCard({ name: 'Time Twist Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Exile target permanent you control. Return that card to the battlefield under its owner's control at the beginning of the next end step. If it enters as a creature, it enters with an additional +1/+1 counter on it." }),
   makeCard({ name: 'Kruphix Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If you would lose unspent mana, that mana becomes colorless instead.' }),
   makeCard({ name: 'Omnath Mana Lite', type_line: 'Creature — Elemental', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Omnath Mana Lite gets +1/+1 for each unspent green mana you have.' }),
+  makeCard({ name: 'Wingcrafter Lite', type_line: 'Creature — Human Wizard', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Soulbond (You may pair this creature with another unpaired creature when either enters. They remain paired for as long as you control both of them.)\nAs long as this creature is paired with another creature, both creatures have flying.' }),
+  makeCard({ name: 'Witness Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nEnchanted creature loses all abilities and is a green and white Citizen creature with base power and toughness 1/1 named Legitimate Businessperson.' }),
+  makeCard({ name: 'Zero Instant', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Draw a card.' }),
+  makeCard({ name: 'Stormwing Lite', type_line: 'Creature — Elemental', mana_cost: '{3}{U}{U}', cmc: 5, power: '3', toughness: '3', oracle_text: "This spell costs {2}{U} less to cast if you've cast an instant or sorcery spell this turn." }),
+  makeCard({ name: 'Balrog Lite', type_line: 'Creature — Demon', mana_cost: '{7}', cmc: 7, power: '7', toughness: '7', oracle_text: 'This spell costs {1} less to cast for each permanent sacrificed this turn.' }),
+  makeCard({ name: 'Perfect Lite', type_line: 'Creature — Elf Warrior', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "As an additional cost to cast this spell, behold an Elf and exile it. (Exile an Elf you control or an Elf card from your hand.)\nWhen this creature leaves the battlefield, return the exiled card to its owner's hand." }),
+  makeCard({ name: 'Elf Card Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Massacre Lite', type_line: 'Sorcery', mana_cost: '{2}{B}{B}', cmc: 4, oracle_text: 'If an opponent controls a Plains and you control a Swamp, you may cast this spell without paying its mana cost.\nAll creatures get -2/-2 until end of turn.' }),
+  makeCard({ name: 'Slick Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Slick Lite deals 2 damage to any target. If you've cast another spell this turn, draw a card." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -6758,6 +6767,76 @@ describe('Sieges', () => {
     g.players.alice!.pool.R = 2;
     expect(chars(g, g.objects[o]!).power).toBe(4);
   });
+  it('Soulbond: paired as either enters, both have the ability, unpaired when one leaves (CR 702.95)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const z = give(g, 'alice', 'Zombie', 'battlefield');
+    const w = give(g, 'alice', 'Wingcrafter Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: w });
+    g = drive(g, (g) => (g.pending?.kind === 'choose_objects' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [z] } }) : null));
+    const flies = (id: string) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'flying');
+    expect([flies(w), flies(z)]).toEqual([true, true]);
+    moveObject(g, z, 'graveyard', []);
+    expect(flies(w)).toBe(false);
+    // "Whenever another creature you control enters" — it pairs with the new one.
+    const z2 = give(g, 'alice', 'Zombie', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: z2 });
+    g = drive(g, (g) => (g.pending?.kind === 'choose_objects' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [z2] } }) : null));
+    expect([flies(w), flies(z2)]).toEqual([true, true]);
+  });
+  it('Witness Protection: a new name, types, colors and base P/T', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const z = give(g, 'bob', 'Four Drop', 'battlefield');
+    const wp = give(g, 'alice', 'Witness Lite', 'battlefield');
+    g.objects[wp]!.attachedTo = { id: z, zcc: g.objects[z]!.zcc };
+    const c = chars(g, g.objects[z]!);
+    expect([c.name, c.subtypes, c.colors, c.power, c.toughness]).toEqual(['Legitimate Businessperson', ['Citizen'], ['G', 'W'], 1, 1]);
+  });
+  it('Stormwing Entity: "{2}{U} less" takes off the blue symbol and two generic', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sw = give(g, 'alice', 'Stormwing Lite', 'hand');
+    g.players.alice!.pool.U = 2;
+    expect(illegal(g, { type: 'cast', player: 'alice', object: sw })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Zero Instant', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: sw }));
+    expect([g.objects[sw]!.zone, g.players.alice!.pool.U]).toEqual(['battlefield', 0]);
+  });
+  it("The Balrog, Durin's Bane: {1} less for each permanent sacrificed this turn", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.turnLog.sacrificedBy = { bob: [0, 1, 2].map(() => ({ types: ['Creature'], subtypes: [] })) };
+    g.players.alice!.pool.C = 4;
+    const b = give(g, 'alice', 'Balrog Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: b }));
+    expect(g.objects[b]!.zone).toBe('battlefield');
+  });
+  it('Champions of the Perfect: "behold an Elf and exile it" — returned when it leaves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const elf = give(g, 'alice', 'Elf Card Lite', 'hand');
+    const champ = give(g, 'alice', 'Perfect Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: champ, costs: { reveal: [elf] } } as never));
+    expect([g.objects[champ]!.zone, g.objects[elf]!.zone]).toEqual(['battlefield', 'exile']);
+    g.players.alice!.pool.C = 6;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Glare Lite', 'hand'), x: 6, autoTap: true, targets: [[{ kind: 'object', object: champ }]] } as never));
+    expect([g.objects[champ]!.zone, g.objects[elf]!.zone]).toEqual(['graveyard', 'hand']);
+  });
+  it('Massacre: "If an opponent controls a Plains and you control a Swamp, you may cast this spell without paying its mana cost" (CR 118.9)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const m = give(g, 'alice', 'Massacre Lite', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: m, alt: 'alt' })).toBeTruthy();
+    give(g, 'bob', 'Plains', 'battlefield');
+    give(g, 'alice', 'Swamp', 'battlefield');
+    const z = give(g, 'bob', 'Zombie', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: m, alt: 'alt' }));
+    expect(g.objects[z]!.zone).toBe('graveyard');
+  });
+  for (const before of [false, true]) {
+    it(`Slick Sequence: "if you've cast another spell this turn" ${before ? 'draws after another spell' : "doesn't count itself"}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      if (before) g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Zero Instant', 'hand') }));
+      const hand = g.zones.hand.alice!.length;
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Slick Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+      expect(g.zones.hand.alice!.length - hand).toBe(before ? 1 : 0);
+    });
+  }
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const bomb = give(g, 'alice', 'Blazing Bomb Lite', 'battlefield');

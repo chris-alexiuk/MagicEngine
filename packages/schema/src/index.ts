@@ -541,6 +541,8 @@ export type Ref =
   | { ref: 'trigger_player' }
   /** What the source Aura or Equipment is attached to. */
   | { ref: 'attached' }
+  /** CR 702.95: soulbond's "each of those creatures" — the source and the creature it's paired with (none if unpaired). */
+  | { ref: 'pair' }
   /** Coat of Arms: "… that shares at least one creature type with it" — each object a static effect applies to, in turn. */
   | { ref: 'affected' }
   /** Archfiend of Despair: "each opponent loses life equal to the life that player lost this turn" — each of them in turn. */
@@ -630,7 +632,7 @@ export type AmountExpr = (
    * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
    */
   /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
-  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter }
+  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; /** Gnoll War Band: "each opponent who was dealt damage this turn". */ damaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -671,7 +673,13 @@ export type AmountExpr = (
   | { kind: 'source_damage_this_turn' }
   /** Change of Fortune: "for each card you've discarded this turn". */
   | { kind: 'discarded_this_turn' }
-  | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter }
+  | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter; /** Thrasta: "each other spell cast this turn" — by anyone. */ anyone?: true; /** Delightful Discovery: "each spell your opponents have cast this turn". */ opponents?: true }
+  /** Rowdy Research: "for each creature that attacked this turn" — anyone's (`mine`: "you attacked with"). */
+  | { kind: 'attackers_this_turn'; mine?: true }
+  /** The Balrog, Durin's Bane: "for each permanent sacrificed this turn" — by anyone. */
+  | { kind: 'sacrificed_this_turn'; types?: string[] }
+  /** Eris, Roar of the Storm: "for each different mana value among instant and sorcery cards in your graveyard". */
+  | { kind: 'distinct_mana_values'; filter: ObjectFilter }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
@@ -1009,6 +1017,8 @@ export interface ContinuousEffectNode extends EffectNode {
   alsoPlayer?: 'hexproof' | 'shroud';
   /** Wonder, Anger: "As long as this card is in your graveyard …" — it works only from its owner's graveyard. */
   fromGraveyard?: true;
+  /** Witness Protection: "… named Legitimate Businessperson" — its name. */
+  setName?: string;
   /** Layer 7c: "gets +1/+1", "gets +1/+1 for each other Zombie you control". */
   power?: Amount;
   toughness?: Amount;
@@ -1154,6 +1164,8 @@ export interface CostModifierNode extends EffectNode {
   /** Generic mana (or one colored symbol, `color`) per unit. */
   amount: Amount;
   color?: Color;
+  /** Brush Off: "{1}{U} less" — generic mana changed along with the colored symbols (`colors`). */
+  generic?: number;
   change: 'less' | 'more';
   condition?: ConditionNode;
   /** "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first). */
@@ -1347,13 +1359,13 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'game_result',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
     'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
   ],
   statics: [
@@ -1369,7 +1381,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

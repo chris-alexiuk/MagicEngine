@@ -19,7 +19,7 @@ import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
 import type { ChoiceAnswer, GameEvent, GameObject, GameState, ManaColor, PlayerId, RestrictedMana, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
-import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, setTapped, zoneList } from './zones.js';
+import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, pairedPartner, setTapped, zoneList } from './zones.js';
 
 // ---------------------------------------------------------------------------
 // Priority and settling
@@ -675,6 +675,17 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     const vanish: string[] = [];
     let changed = false;
 
+    // CR 702.95e: a paired creature that leaves, changes controller, or stops being a creature becomes unpaired.
+    for (const id of g.zones.battlefield) {
+      const o = g.objects[id]!;
+      if (!o.pairedWith) continue;
+      const partner = pairedPartner(g, o);
+      if (!partner || !chars(g, o).types.includes('Creature') || !chars(g, partner).types.includes('Creature')) {
+        delete o.pairedWith;
+        if (partner) delete partner.pairedWith;
+        changed = true;
+      }
+    }
     // CR 704.5t: a venture marker on a dungeon's bottommost room, with that room's ability gone, completes it.
     for (const p of livePlayers(g)) if (checkDungeonDone(g, p, events)) changed = true;
     // Checking doesn't change anything that characteristics depend on, so lookups share one cache.
@@ -802,7 +813,8 @@ function findLegendRuleGroup(
     // Legendary as printed (or copied), or made legendary — your Ring-bearer (CR 701.54c).
     const legendary = faceOf(g, o).supertypes.includes('Legendary') || (o.ringBearer !== undefined && chars(g, o).supertypes.includes('Legendary'));
     if (!legendary || legendRuleExempt(g, o)) continue;
-    const key = `${o.controller}\u0000${nameOf(g, o)}`;
+    // Witness Protection: by the name it has now.
+    const key = `${o.controller}\u0000${chars(g, o).name}`;
     groups.set(key, [...(groups.get(key) ?? []), id]);
   }
   for (const [key, ids] of groups) {

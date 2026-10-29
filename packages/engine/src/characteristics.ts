@@ -20,7 +20,7 @@ import type {
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
-import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf } from './zones.js';
+import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf, pairedPartner } from './zones.js';
 
 /**
  * CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of
@@ -103,6 +103,8 @@ interface ActiveEffect {
   set?: { layer: '7a' | '7b'; pt: (o: GameObject) => [number | null, number | null] };
   /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained); `lose`: types it stops having. */
   types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[] };
+  /** Witness Protection: the name it has instead. */
+  name?: string;
   /** Layer 5: colors it becomes. */
   colors?: Color[];
   /** Layer 5: colors it gets in addition to its own. */
@@ -436,6 +438,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
           ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && (source.chosen?.creatureType ?? source.chosen?.landType) ? [(source.chosen.creatureType ?? source.chosen.landType)!] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
           : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
+        ...(e.setName ? { name: e.setName } : {}),
         // Theros Gods: "As long as your devotion to red is less than five, Purphoros isn't a creature."
         ...(e.loseTypes ? { types: { types: [], subtypes: [], retain: true, lose: e.loseTypes } } : {}),
         ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
@@ -481,6 +484,11 @@ function affectedBy(g: GameState, ref: Ref, source: GameObject, o: GameObject, c
       return o.id === source.id;
     case 'attached':
       return source.attachedTo?.id === o.id && source.attachedTo.zcc === o.zcc;
+    case 'pair': {
+      // CR 702.95: soulbond's "each of those creatures" — while it's paired.
+      const partner = pairedPartner(g, source);
+      return Boolean(partner) && (o.id === source.id || o.id === partner!.id);
+    }
     case 'all':
       return matchesFilter(g, o, ref.filter, { controller: source.controller, source }, c);
     default:
@@ -615,6 +623,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
     }
     if (c.types.includes('Creature')) c.hasPT = true;
   }
+  // Witness Protection: "… named Legitimate Businessperson".
+  for (const e of effects) if (e.name && e.applies(o, c)) c.name = e.name;
   for (const e of effects) {
     if (!(e.creatureTypes || e.landTypes) || !e.applies(o, c)) continue;
     // CR 205.1b: "becomes a Bird" replaces its creature types; CR 305.7: "is an Island" replaces its land types,
@@ -987,7 +997,9 @@ export function matchesFilter(
   // "that was dealt damage this turn"
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
   // "a card named …" (CR 201.2)
-  if (f.name && !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name)) return false;
+  // Witness Protection: a name an effect gave it is its only name.
+  const renamed = c.name !== faceOf(g, o).name;
+  if (f.name && (renamed ? c.name !== f.name : !(g.cards[o.card]?.faces.some((x) => x.name === f.name) || g.cards[o.card]?.name === f.name))) return false;
   if (f.notName && (g.cards[o.card]?.faces.some((x) => x.name === f.notName) || g.cards[o.card]?.name === f.notName)) return false;
   if (f.manaCostIs && !f.manaCostIs.includes(faceOf(g, o).manaCost)) return false;
   // "with a +1/+1 counter on it" (CR 122.1); looking back, the counters it had on the battlefield (CR 603.10a).

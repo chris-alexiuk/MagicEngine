@@ -39,6 +39,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
     if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, player, spell)) continue;
     for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
+    if (e.generic) changes.push({ n: e.generic, change: e.change });
   }
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
@@ -66,6 +67,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       const targetsYou = Boolean(e.ifTargetsYou && (targets ?? []).flat().some((t) => t.kind === 'player' && t.player === source.controller));
       if (e.ifTargets && !targetsYou && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
       for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
+      if (e.generic) changes.push({ n: e.generic, change: e.change });
     }
   }
 

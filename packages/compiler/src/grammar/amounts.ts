@@ -1,7 +1,7 @@
 import type { Amount, AmountExpr, Color, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
-import { COLOR_WORDS, parseAmount } from './words.js';
+import { capitalise, COLOR_WORDS, parseAmount } from './words.js';
 
 /**
  * Numbers the game counts (CR 107.3, CR 608.2h): "the number of creatures you control",
@@ -129,6 +129,34 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (enteredEach) {
     const pf = parseFilter(enteredEach[1]!, b.clone());
     if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.other) return { kind: 'entered_this_turn', filter: pf.filter };
+  }
+  // Rowdy Research: "for each creature that attacked this turn" — anyone's.
+  if (t === 'creature that attacked this turn') return { kind: 'attackers_this_turn' };
+  // Search Party Captain: "for each creature you attacked with this turn".
+  if (t === 'creature you attacked with this turn') return { kind: 'attackers_this_turn', mine: true };
+  // Delightful Discovery: "for each spell your opponents have cast this turn".
+  if (t === 'spell your opponents have cast this turn') return { kind: 'spells_cast_this_turn', opponents: true };
+  // Gnoll War Band: "for each opponent who was dealt damage this turn".
+  if (t === 'opponent who was dealt damage this turn') return { kind: 'players', who: 'opponents', damaged: true };
+  // Demilich: "for each instant and sorcery spell you've cast this turn".
+  const castKind = /^(.+?) spells? you've cast this turn$/.exec(t);
+  if (castKind) {
+    const pf = parseFilter(`${castKind[1]!.replace(/ and /g, ' or ')} spell`, b.clone());
+    if (pf && !pf.plural && pf.filter.zone === 'stack' && !pf.filter.controller) {
+      const { zone: _z, ...filter } = pf.filter;
+      return { kind: 'spells_cast_this_turn', filter };
+    }
+  }
+  // Thrasta, Tempest's Roar: "for each other spell cast this turn" — by anyone.
+  if (t === 'other spell cast this turn') return { kind: 'spells_cast_this_turn', anyone: true, other: true };
+  // The Balrog, Durin's Bane: "for each permanent sacrificed this turn".
+  const sacrificed = /^(permanent|creature|artifact) sacrificed this turn$/.exec(t);
+  if (sacrificed) return { kind: 'sacrificed_this_turn', ...(sacrificed[1] !== 'permanent' ? { types: [capitalise(sacrificed[1]!)] } : {}) };
+  // Eris, Roar of the Storm: "for each different mana value among instant and sorcery cards in your graveyard".
+  const distinctMv = /^different mana value among (.+)$/.exec(t);
+  if (distinctMv) {
+    const pf = parseFilter(distinctMv[1]!, b.clone());
+    if (pf && pf.plural && pf.filter.zone) return { kind: 'distinct_mana_values', filter: pf.filter };
   }
   // Kefka, Court Mage: "for each card type among cards discarded this way".
   if (t === 'card type among cards discarded this way') return { kind: 'card_types', discardedThisWay: true };

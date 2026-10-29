@@ -3,13 +3,13 @@ import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
-import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
+import { faceOf, livePlayers, manaValueOf, nameOf, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
 ];
 
@@ -56,6 +56,8 @@ export interface TurnLog {
   left?: PlayerId[];
   /** A nonland permanent left the battlefield this turn (void). */
   nonlandLeft?: boolean;
+  /** Tale of Momo: players who controlled a creature that left the battlefield this turn. */
+  creatureLeft?: PlayerId[];
   /** Gau, Feral Youth: "if a card left your graveyard this turn" — each card, by owner, with its card types. */
   leftGraveyard?: { owner: PlayerId; types: string[] }[];
   /** Ennis: "if one or more cards were put into exile this turn" (tokens aren't cards). */
@@ -145,6 +147,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.from === 'battlefield') {
           if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
           if (!types.includes('Land')) log.nonlandLeft = true;
+          // As it last existed on the battlefield (CR 603.10a).
+          const lk = g.lastKnown?.[e.object];
+          if ((lk?.types ?? types).includes('Creature') && !(log.creatureLeft ??= []).includes(e.controller)) log.creatureLeft.push(e.controller);
         }
         if (e.to === 'battlefield') {
           const o = g.objects[e.object];
@@ -378,7 +383,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'to_graveyard_this_turn': {
       // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
-      const n = (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
+      const n = (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && (!cond.yours || r.owner === controller) && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
       return n >= Number(cond.n ?? 1);
     }
     case 'opponent_has_more': {
@@ -430,6 +435,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'day_night':
       // CR 731: "if it's night"
       return cond.is === 'neither' ? !g.dayNight : g.dayNight === cond.is;
+    case 'paired':
+      // CR 702.95b: soulbond — whether this creature is paired with another.
+      return Boolean(source && pairedPartner(g, source)) !== Boolean(cond.not);
     case 'solved':
       // CR 719.3b: a Case is solved (or not) until it leaves the battlefield.
       return Boolean(source && source.zone === 'battlefield' && source.solved) !== Boolean(cond.not);
@@ -502,6 +510,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // Preacher of the Schism: "you have the most life or are tied for most life".
       if (cond.most) return livePlayers(g).every((p) => g.players[controller]!.life >= g.players[p]!.life);
       // Righteous Valkyrie: "if you have at least 7 life more than your starting life total" (`plus`).
+      // Game Over: "if a player's life total is less than or equal to half their starting life total" (`halfStarting`).
+      if (cond.halfStarting) return livePlayers(g).some((p) => (cond.halfStarting === 'any' || (cond.halfStarting === 'you') === (p === controller)) && g.players[p]!.life <= g.config.startingLife / 2);
       if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife + Number(cond.plus ?? 0) });
       return cmp(g.players[controller]!.life, cond);
     case 'hand': {
@@ -667,7 +677,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         // Lyse Hext: "if you've cast two or more noncreature spells this turn"
         // Canyon Crab: "if you haven't cast a spell from your hand this turn" (`from`).
         case 'you_cast':
-          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.from || c.from === cond.from) && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+          // Dream Thief: "if you've cast another blue spell this turn" (`other`) — not the spell this source was.
+          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.other || c.id !== source?.id) && (!cond.from || c.from === cond.from) && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
         case 'you_lost_life':
           return log.lostLife.includes(controller);
         case 'you_played_land':
@@ -686,6 +697,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (log.left ?? []).includes(controller);
         case 'nonland_left':
           return Boolean(log.nonlandLeft);
+        case 'your_creature_left':
+          // Tale of Momo: "if a creature left the battlefield under your control this turn".
+          return (log.creatureLeft ?? []).includes(controller);
         case 'warped':
           return Boolean(log.warped);
         case 'card_exiled':

@@ -2853,6 +2853,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(free[1]!.replace(/ from (?:your|a|an opponent's|that player's) graveyard$/, (m) => m), b);
       if (!what || what.plural) return null;
+      // Fierce Guardianship: "If you control a commander, you may cast this spell without paying its mana cost." is an
+      // alternative cost (CR 118.9), never something the spell does as it resolves.
+      if (what.ref.ref === 'self' && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
       return [{ type: 'cast_free', what: what.ref }];
     });
     if (r) return r;

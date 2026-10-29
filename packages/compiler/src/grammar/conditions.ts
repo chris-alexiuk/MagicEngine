@@ -126,6 +126,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Game Over: "if a player's life total is less than or equal to half their starting life total".
+  const halfStart = /^(a player's|an opponent's|your) life total is less than or equal to half (?:their|your) starting life total$/.exec(t);
+  if (halfStart) return { type: 'life', halfStarting: halfStart[1] === "a player's" ? 'any' : halfStart[1] === 'your' ? 'you' : 'opponent' };
   // Elderscale Wurm: "if your life total is less than 7".
   const vsN = /^your life total is (greater|less) than (\d+)$/.exec(t);
   if (vsN) return { type: 'life', op: vsN[1] === 'greater' ? 'gt' : 'lt', n: Number(vsN[2]) };
@@ -292,7 +295,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
   if (/^an opponent was dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
   // Surge (CR 702.117a): "if you or one of your teammates has cast another spell this turn"
-  if (/^(?:you or one of your teammates has|you've) cast another spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
+  // (Not the spell this source is or was: an enters trigger checks after it was cast.)
+  if (/^(?:you or one of your teammates has|you've) cast another spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast', min: 1, other: true };
   // CR 702.112b (renown): "if it isn't renowned", "as long as ~ is renowned"
   const renowned = /^(?:it|~) (is|isn't) renowned$/.exec(t);
   if (renowned) return { type: 'renowned', ...(renowned[1] === "isn't" ? { not: true } : {}) };
@@ -766,6 +770,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'a permanent you controlled left the battlefield this turn': 'your_permanent_left',
     'a permanent left the battlefield under your control this turn': 'your_permanent_left',
     'a nonland permanent left the battlefield this turn': 'nonland_left',
+    'a creature left the battlefield under your control this turn': 'your_creature_left',
+    'a creature you controlled left the battlefield this turn': 'your_creature_left',
     'a spell was warped this turn': 'warped',
     // CR 700.13
     "you've committed a crime this turn": 'you_committed_crime',
@@ -818,12 +824,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Luminarch Ascension: "if you didn't lose life this turn".
   if (/^you didn't lose life this turn$|^you haven't lost life this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_lost_life' } };
   // Stormwing Entity: "if you've cast an instant or sorcery spell this turn".
-  const castOne = /^you(?:'ve)? cast an? (.+?) spell this turn$/.exec(t);
+  // Mage Duel: "if you've cast another instant or sorcery spell this turn" — as its cost is worked out, it isn't cast yet.
+  const castOne = /^you(?:'ve)? cast (an?|another) (.+?) spell this turn$/.exec(t);
   if (castOne) {
-    const pf = parseFilter(`${castOne[1]} spell`, b.clone());
+    const pf = parseFilter(`${castOne[2]} spell`, b.clone());
     if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
       const { zone: _z, ...filter } = pf.filter;
-      return { type: 'this_turn', event: 'you_cast', filter, min: 1 };
+      return { type: 'this_turn', event: 'you_cast', filter, min: 1, ...(castOne[1] === 'another' ? { other: true } : {}) };
     }
   }
   // Heroic Return: "if a creature is attacking you".
@@ -918,11 +925,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return typeof n === 'number' ? { type: 'attacked_with', n, anyone: true } : null;
   }
   // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
-  const toYards = /^(\w+) or more (creature |artifact |land )?cards were put into graveyards from anywhere this turn$/.exec(t);
+  // Macabre Reconstruction: "if a creature card was put into your graveyard from anywhere this turn".
+  const toYards = /^(?:(a|an)|(\w+) or more) (creature |artifact |land )?cards? (?:was|were) put into (graveyards|your graveyard) from anywhere this turn$/.exec(t);
   if (toYards) {
-    const n = parseAmount(toYards[1]!);
-    return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[2] ? { cardType: capitalise(toYards[2].trim()) } : {}) } : null;
+    const n = toYards[1] ? 1 : parseAmount(toYards[2]!);
+    return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[3] ? { cardType: capitalise(toYards[3].trim()) } : {}), ...(toYards[4] === 'your graveyard' ? { yours: true } : {}) } : null;
   }
+  // The End: "if your life total is 5 or less".
+  const lifeAtMost = /^your life total is (\d+) or (less|greater)$/.exec(t);
+  if (lifeAtMost) return { type: 'life', op: lifeAtMost[2] === 'less' ? 'le' : 'ge', n: Number(lifeAtMost[1]) };
   // Ozai, the Phoenix King: "as long as you have six or more unspent mana".
   const unspent = /^you have (\w+) or more unspent mana$/.exec(t);
   if (unspent) {

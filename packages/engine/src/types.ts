@@ -181,6 +181,8 @@ export interface GameObject {
   renowned?: true;
   /** CR 719.3b: a Case that became solved. */
   solved?: true;
+  /** CR 702.95b: the creature it's paired with (soulbond), as that object. */
+  pairedWith?: { id: ObjectId; zcc: number };
   /** CR 701.60a: suspected (the timestamp it became so: its menace and "can't block" are layer 6 abilities, CR 701.60c). */
   suspected?: number;
   /** CR 702.177a: abilities activated "only once" (by index). */

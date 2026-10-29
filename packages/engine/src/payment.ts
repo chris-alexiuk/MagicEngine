@@ -435,6 +435,14 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       // CR 701.20a / 701.4a: the cards from the hand are revealed; a beheld permanent is only chosen.
       const shown = (choices.reveal ?? []).filter((id) => g.objects[id]?.zone === 'hand');
       if (shown.length) events.push({ type: 'revealed', player, objects: shown });
+      // Champions of the Perfect: "behold an Elf and exile it" — exiled with the permanent this spell becomes (CR 607.2a).
+      if (c.exile) {
+        for (const id of choices.reveal ?? []) {
+          moveObject(g, id, 'exile', events);
+          const x = g.objects[id];
+          if (x?.zone === 'exile') x.exiledBy = { id: o.id, zcc: o.zone === 'battlefield' ? o.zcc : o.zone === 'stack' ? o.zcc + 1 : o.zcc + 2 };
+        }
+      }
     } else if (c.type === 'discard_self') {
       // CR 701.9a: discarding moves it from its owner's hand to their graveyard.
       discardCard(g, o.id, events);

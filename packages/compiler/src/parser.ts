@@ -149,6 +149,11 @@ export class ParserRegistry {
         // for each artifact you control (Pearl-Ear: "affinity for Auras").
         const affinity = /^((?:[A-Z][a-z]+(?: and [a-z]+| [a-z]+)* )?[Ss]pells you cast) have affinity for (artifacts|Auras|Equipment|enchantments|creatures)\.$/.exec(l);
         if (affinity) return [`${affinity[1]} cost {1} less to cast for each ${affinity[2] === 'Equipment' ? 'Equipment' : affinity[2]!.replace(/s$/, '')} you control.`];
+        // Assassin's Ink: "This spell costs {1} less to cast if you control an artifact and {1} less to cast if you control an
+        // enchantment."; Geistlight Snare: "… if you control a Spirit. It also costs {1} less to cast if you control an
+        // enchantment." — two reductions, each with its own condition.
+        const twoIfs = /^This spell costs (\{\d+\}) less to cast if (.+?)(?: and|\. It also costs) (\{\d+\}) less to cast if (.+)\.$/.exec(l);
+        if (twoIfs) return [`This spell costs ${twoIfs[1]} less to cast if ${twoIfs[2]}.`, `This spell costs ${twoIfs[3]} less to cast if ${twoIfs[4]}.`];
         // Thryx, the Sudden Storm: "Spells you cast with mana value 5 or greater cost {1} less to cast and can't be countered."
         const costAndUncounterable = /^(.*\b[Ss]pells you cast\b.*?) cost (\{\d+\}) less to cast and can't be countered\.$/.exec(l);
         if (costAndUncounterable) return [`${costAndUncounterable[1]} cost ${costAndUncounterable[2]} less to cast.`, `${costAndUncounterable[1]} can't be countered.`];
@@ -863,6 +868,22 @@ export class ParserRegistry {
     // The CR names some keywords with their connecting word ("Affinity for [text]", CR 702.41a).
     // Awaken's second sentence is conditional as a whole; it's compiled with the spell instead (see parse()).
     if (kw.id === 'awaken') return null;
+    // CR 702.95a: soulbond — "When this creature enters, if you control both this creature and another creature and both
+    // are unpaired, you may pair this creature with another unpaired creature you control …" and "Whenever another creature
+    // you control enters, if you control both it and this creature and both are unpaired, you may pair this creature with
+    // it …".
+    if (kw.id === 'soulbond') {
+      return [
+        { kind: 'triggered', text: 'Soulbond', trigger: { type: 'enters', subject: { ref: 'self' } }, condition: { type: 'paired', not: true }, effects: [{ type: 'soulbond_pair' }] },
+        {
+          kind: 'triggered',
+          text: 'Soulbond',
+          trigger: { type: 'enters', subject: { ref: 'all', filter: { types: ['Creature'], controller: 'you', other: true } } },
+          condition: { type: 'paired', not: true },
+          effects: [{ type: 'soulbond_pair', with: { ref: 'trigger_object' } }],
+        },
+      ] as AbilityNode[];
+    }
     const def = EXTRA_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
     if (!def) return null;
     const printed = keywordText(def.pattern, kw);

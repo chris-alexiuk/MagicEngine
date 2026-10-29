@@ -341,11 +341,12 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     return { type: 'reveal_from_hand', amount: 1, filter };
   }
-  const behold = /^[Bb]ehold (a|an) (.+)$/.exec(item);
+  // Champions of the Perfect: "behold an Elf and exile it".
+  const behold = /^[Bb]ehold (a|an) (.+?)( and exile it)?$/.exec(item);
   if (behold && b) {
     const pf = parseFilter(behold[2]!, b);
     if (!pf || pf.plural || pf.filter.zone || pf.filter.controller) return null;
-    return { type: 'behold', amount: 1, filter: pf.filter };
+    return { type: 'behold', amount: 1, filter: pf.filter, ...(behold[3] ? { exile: true } : {}) };
   }
   // O'aka: "Remove a counter from a nonland permanent you control"; Hopeful Initiate: "Remove two +1/+1 counters from among
   // creatures you control"; Tekuthal: "Remove three counters from among other artifacts, creatures, and planeswalkers you
@@ -2298,6 +2299,10 @@ export const continuousRule: GrammarRule = {
       conds.push({ type: 'not', cond: unlessCond });
       rest = unless[1]!;
     }
+    // CR 702.95: soulbond — "As long as ~ is paired with another creature, each of those creatures has …" ("both
+    // creatures have …"): the creature and its partner, while they're paired.
+    const paired = /^As long as (?:~|this creature) is paired with another creature, (?:each of those creatures|both creatures) (.+)$/.exec(rest);
+    if (paired) rest = `~ ${paired[1]!.replace(/^have /, 'has ').replace(/^get /, 'gets ')}`;
     // Wonder: "As long as this card is in your graveyard and you control an Island, creatures you control have flying."
     const inYard = /^As long as (?:this card|~) is in your graveyard(?: and (.+?))?, (.+)$/.exec(rest);
     let fromGraveyard = false;
@@ -2366,6 +2371,10 @@ export const continuousRule: GrammarRule = {
     if (fromGraveyard) {
       if (effect.type !== 'continuous') return null;
       effect.fromGraveyard = true;
+    }
+    if (paired) {
+      if (effect.type !== 'continuous' || (effect as ContinuousEffectNode).affected.ref !== 'self') return null;
+      (effect as ContinuousEffectNode).affected = { ref: 'pair' };
     }
     if (conds.length) effect.condition = conds.length === 1 ? conds[0]! : { type: 'and', all: conds };
     const node: StaticAbility = { kind: 'static', text: original, effect };
@@ -2846,8 +2855,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     }
     // Layers 4, 5, 7b: "is a blue Frog creature with base power and toughness 1/1"
     // Darksteel Mutation: "is an Insect artifact creature with base power and toughness 0/1"; "a green and white Elk creature".
-    const isA = /^(?:is|are) (?:an? )?((?:(?:white|blue|black|red|green|colorless)(?: and | ))*)((?:[A-Z][\w’'-]* )*)((?:artifact |enchantment )*)creature with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    // Witness Protection: "… with base power and toughness 1/1 named Legitimate Businessperson".
+    const isA = /^(?:is|are) (?:an? )?((?:(?:white|blue|black|red|green|colorless)(?: and | ))*)((?:[A-Z][\w’'-]* )*)((?:artifact |enchantment )*)creature with base power and toughness (\d+)\/(\d+)(?: named ([A-Z][\w’' -]+))?$/.exec(part);
     if (isA && !effect.setTypes) {
+      if (isA[6]) effect.setName = isA[6];
       const colors = isA[1]!.trim() ? isA[1]!.trim().split(/ and | /).filter((w) => w !== 'colorless').map((w) => COLOR_WORDS[w]!) : null;
       const subtypes = isA[2]!.trim() ? isA[2]!.trim().split(' ') : [];
       if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
@@ -3073,7 +3084,16 @@ export const costModifierRule: GrammarRule = {
     if (!env || !line.endsWith('.')) return null;
     const b = new Binder(env);
     const body = line.slice(0, -1);
-    const amountOf = (sym: string): { amount: Amount; color?: Color } | null => {
+    const amountOf = (sym: string): { amount: Amount; color?: Color; colors?: Color[]; generic?: number } | null => {
+      // Brush Off: "{1}{U} less"; Even the Score: "{U}{U}{U} less" — several symbols, each taken off once.
+      const several = /^((?:\{(?:\d+|[WUBRG])\}){2,})$/.exec(sym);
+      if (several) {
+        const parts = [...sym.matchAll(/\{(\d+|[WUBRG])\}/g)].map((x) => x[1]!);
+        const colors = parts.filter((p) => !/^\d+$/.test(p)) as Color[];
+        const generic = parts.filter((p) => /^\d+$/.test(p)).reduce((n, p) => n + Number(p), 0);
+        if (!colors.length || parts.filter((p) => /^\d+$/.test(p)).length > 1) return null;
+        return { amount: 1, colors, ...(generic ? { generic } : {}) };
+      }
       const m = /^\{(\d+|X|[WUBRG])\}$/.exec(sym);
       if (!m) return null;
       if (/^\d+$/.test(m[1]!)) return { amount: Number(m[1]) };
@@ -3109,7 +3129,7 @@ export const costModifierRule: GrammarRule = {
     // Avatar of Woe: "If there are ten or more creature cards total in all graveyards, this spell costs {6} less to cast."
     const leadingIf = /^If ([^,]+), (?:~|this spell) costs (\{[^}]+\}) (less|more) to cast$/.exec(body);
     if (leadingIf) return costModifierRule.parse(`This spell costs ${leadingIf[2]} ${leadingIf[3]} to cast if ${leadingIf[1]}.`, original, ctx);
-    const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| (?:if|as long as) (.+?)|, where X is (.+?))?$/.exec(body);
+    const own = /^(?:~|This spell) costs ((?:\{[^}]+\})+) (less|more) to cast(?: for each (.+?)| (?:if|as long as) (.+?)|, where X is (.+?))?$/.exec(body);
     if (own) {
       const a = amountOf(own[1]!);
       if (!a) return null;
@@ -3124,7 +3144,7 @@ export const costModifierRule: GrammarRule = {
       }
       if (own[3]) {
         const each = parseForEach(own[3], b);
-        if (!each || a.amount === 'X') return null;
+        if (!each || a.amount === 'X' || a.generic) return null;
         node.amount = { ...each, times: (each.times ?? 1) * (a.amount as number) };
       } else if (own[4]) {
         const cond = parseCondition(own[4], b);
@@ -3961,6 +3981,13 @@ export const castOptionRule: GrammarRule = {
       const condition = byPaying[1] ? parseCondition(byPaying[1], b) : undefined;
       if (byPaying[1] && !condition) return null;
       return make('alternative', byPaying[4]!, { ...(byPaying[3] === ' from your graveyard' ? { zone: 'graveyard' } : {}), ...(byPaying[2] ? { transformed: true } : {}), ...(condition ? { condition } : {}) });
+    }
+    // CR 118.9: Patrician's Scorn: "If you've cast another white spell this turn, you may cast this spell without paying its
+    // mana cost." — an alternative cost of nothing.
+    const freeIf = /^If (.+?), you may cast ~ without paying its mana cost$/.exec(t);
+    if (freeIf) {
+      const condition = parseCondition(freeIf[1]!, b);
+      return condition ? { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost: {}, condition } as CastOptionNode } : null;
     }
     const ratherThan = /^(?:If (.+?), )?[Yy]ou may (?:choose to )?pay (.+?) rather than pay ~'s mana cost(?: as you cast ~)?(?: if (.+))?$/.exec(t);
     if (ratherThan) {

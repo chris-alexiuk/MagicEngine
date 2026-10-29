@@ -27,7 +27,7 @@ import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEnt
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { cantLose, playerLoses } from './flow.js';
-import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources } from './zones.js';
+import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
 /**
@@ -1731,6 +1731,26 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // nothing was goaded ("whenever you goad" doesn't trigger).
       if (!node.quiet) ctx.events.push({ type: 'goaded', object: o.id, by: ctx.controller });
     }
+    return true;
+  },
+
+  // CR 702.95a: soulbond — you may pair this creature with another unpaired creature you control (`with`: the one that
+  // entered). Both must still be unpaired creatures you control (the intervening "if", checked again as it resolves).
+  soulbond_pair(node, ctx) {
+    const g = ctx.g;
+    const self = ctx.source;
+    const ok = (o: GameObject | undefined) => Boolean(o && o.zone === 'battlefield' && o.controller === ctx.controller && chars(g, o).types.includes('Creature') && !pairedPartner(g, o));
+    if (!self || !ok(self) || !ctx.resolution) return true;
+    const pool = node.with ? refObjects(ctx, ref(node, 'with')) : g.zones.battlefield.map((id) => g.objects[id]!);
+    const candidates = pool.filter((o) => o.id !== self.id && ok(o)).map((o) => o.id);
+    if (!candidates.length) return true;
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: 1, text: 'You may pair it with another unpaired creature you control (soulbond).', sourceName: sourceName(ctx) } };
+    if (answer.objects.length > 1 || answer.objects.some((id) => !candidates.includes(id))) throw new RulesError('Choose one of them, or none.');
+    const other = answer.objects[0] ? g.objects[answer.objects[0]]! : undefined;
+    if (!other) return true;
+    self.pairedWith = { id: other.id, zcc: other.zcc };
+    other.pairedWith = { id: self.id, zcc: self.zcc };
     return true;
   },
 

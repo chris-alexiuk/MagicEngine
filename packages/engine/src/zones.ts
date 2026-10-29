@@ -311,6 +311,7 @@ export function moveObject(
   delete o.goadedBy;
   delete o.suspected;
   delete o.solved;
+  delete o.pairedWith;
   delete o.prepared;
   delete o.ringBearer;
   if (o.phasedOut) {
@@ -434,6 +435,19 @@ export function moveObject(
 }
 
 /** The zone-change count an object had (or has) on the battlefield: now if it's there, else as it left. */
+/**
+ * CR 702.95b: the creature this one is paired with (soulbond), if they're still paired — both on the battlefield, as the
+ * objects they were, under one controller (CR 702.95e; whether both are still creatures is checked with the state-based
+ * actions).
+ */
+export function pairedPartner(g: GameState, o: GameObject): GameObject | undefined {
+  const r = o.pairedWith;
+  if (!r || o.zone !== 'battlefield') return undefined;
+  const p = g.objects[r.id];
+  if (!p || p.zcc !== r.zcc || p.zone !== 'battlefield' || p.controller !== o.controller) return undefined;
+  return p.pairedWith?.id === o.id && p.pairedWith.zcc === o.zcc ? p : undefined;
+}
+
 export function battlefieldZcc(g: GameState, o: GameObject): number {
   if (o.zone === 'battlefield') return o.zcc;
   const last = g.lastKnown?.[o.id];
