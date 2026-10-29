@@ -157,6 +157,7 @@ function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: numb
   if (!o.counters[counter] && isKeywordCounter(counter)) o.counterStamps = { ...o.counterStamps, [counter]: ++ctx.g.clock };
   o.counters[counter] = (o.counters[counter] ?? 0) + n;
   ctx.events.push({ type: 'counters', object: o.id, counter, delta: n, by: ctx.controller });
+  if (ctx.resolution) (ctx.resolution.countersPut ??= []).push({ id: o.id, zcc: o.zcc, counter });
 }
 
 const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectResult> = {
@@ -497,12 +498,49 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const to = node.to as 'hand' | 'library' | 'battlefield' | 'exile' | 'graveyard';
     // "Target creature's owner puts it on their choice of the top or bottom of their library."
     if (to === 'library' && node.position === 'choice') {
-      const [o] = refObjects(ctx, ref(node, 'what'));
-      if (!o || o.zone === 'stack') return true;
-      const answer = answerOf(ctx, 'choose_option');
-      if (!answer) return { ask: { kind: 'choose_option', player: o.owner, options: ['top', 'bottom'], text: `Put ${nameOf(ctx.g, o)} on the top or the bottom of your library?`, sourceName: sourceName(ctx) } };
-      if (answer.choice !== 'top' && answer.choice !== 'bottom') throw new RulesError('Choose top or bottom.');
-      moveObject(ctx.g, o.id, 'library', ctx.events, { position: answer.choice });
+      // Aetherspouts: "For each attacking creature, its owner puts it on their choice of the top or bottom of their library." —
+      // each owner chooses for each of theirs, then orders each pile (CR 401.4); they all move at once.
+      const memo = ctx.memo as { ids?: ObjectRef[]; where?: Record<string, 'top' | 'bottom'>; order?: Record<string, string[]>; piles?: [PlayerId, 'top' | 'bottom'][] };
+      const g = ctx.g;
+      memo.ids ??= refObjects(ctx, ref(node, 'what')).filter((o) => o.zone !== 'stack').map((o) => ({ id: o.id, zcc: o.zcc }));
+      memo.where ??= {};
+      const live = () => memo.ids!.filter((r) => g.objects[r.id]?.zcc === r.zcc);
+      let answer: ChoiceAnswer | null = ctx.answer ?? null;
+      for (const r of live()) {
+        if (memo.where[r.id]) continue;
+        const o = g.objects[r.id]!;
+        if (answer?.kind === 'choose_option' && !memo.piles) {
+          if (answer.choice !== 'top' && answer.choice !== 'bottom') throw new RulesError('Choose top or bottom.');
+          memo.where[r.id] = answer.choice;
+          answer = null;
+          continue;
+        }
+        return { ask: { kind: 'choose_option', player: o.owner, options: ['top', 'bottom'], text: `Put ${nameOf(g, o)} on the top or the bottom of your library?`, sourceName: sourceName(ctx) } };
+      }
+      // Each pile of two or more: its owner orders it (first chosen goes on top).
+      memo.order ??= {};
+      memo.piles ??= [...new Set(live().map((r) => `${g.objects[r.id]!.owner}|${memo.where![r.id]}`))].map((k) => k.split('|') as [PlayerId, 'top' | 'bottom']);
+      for (const [owner, pos] of memo.piles) {
+        const key = `${owner}|${pos}`;
+        if (memo.order[key]) continue;
+        const pile = live().filter((r) => g.objects[r.id]!.owner === owner && memo.where![r.id] === pos).map((r) => r.id);
+        if (pile.length < 2) {
+          memo.order[key] = pile;
+          continue;
+        }
+        if (answer?.kind === 'choose_objects') {
+          if (answer.objects.length !== pile.length || new Set(answer.objects).size !== pile.length || !answer.objects.every((id) => pile.includes(id))) throw new RulesError('Order all of those cards.');
+          memo.order[key] = answer.objects;
+          answer = null;
+          continue;
+        }
+        return { ask: { kind: 'choose_objects', player: owner, candidates: pile, min: pile.length, max: pile.length, ordered: true, text: `Order the cards going on the ${pos} of your library (first chosen goes on top of the others).`, sourceName: sourceName(ctx) } };
+      }
+      for (const [key, ids] of Object.entries(memo.order)) {
+        const pos = key.split('|')[1] as 'top' | 'bottom';
+        // To the top, the last one put there ends up on top.
+        for (const id of pos === 'top' ? [...ids].reverse() : ids) if (g.objects[id]?.zone !== 'library') moveObject(g, id, 'library', ctx.events, { position: pos });
+      }
       return true;
     }
     // "Shuffle ~ into its owner's library" (CR 701.24a): put there, then the library is shuffled.
@@ -4052,6 +4090,52 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { pay: true });
     // Conduit of Worlds: "If you do, you can't cast additional spells this turn."
     return node.then ? { expand: node.then as EffectNode[] } : true;
+  },
+
+  // CR 702.60a: ripple N — "you may reveal the top N cards of your library … you may cast any of those cards with the same
+  // name as this spell without paying their mana costs, then put all revealed cards not cast this way on the bottom of
+  // your library in any order."
+  ripple(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { revealed?: string[]; name?: string; i?: number; ordered?: true };
+    if (!memo.revealed) {
+      const answer = answerOf(ctx, 'may');
+      if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: `Reveal the top ${Number(node.n)} cards of your library (ripple)?`, sourceName: sourceName(ctx) } };
+      if (!answer.yes) return true;
+      memo.revealed = zoneList(g, 'library', ctx.controller).slice(0, Number(node.n));
+      memo.name = sourceName(ctx);
+      memo.i = 0;
+      if (memo.revealed.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...memo.revealed] });
+    }
+    const inLibrary = (id: string) => g.objects[id]?.zone === 'library';
+    const same = memo.revealed.filter((id) => nameOf(g, g.objects[id]!) === memo.name && castableCard(g, g.objects[id]!));
+    let cast = answerOf(ctx, 'cast_free');
+    for (let i = memo.i ?? 0; i < same.length; i++) {
+      const id = same[i]!;
+      if (!inLibrary(id)) continue;
+      if (!cast) {
+        memo.i = i;
+        return { ask: { kind: 'cast_free', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, g.objects[id]!)} without paying its mana cost (ripple)?` } };
+      }
+      if (cast.cast) castDuringResolution(g, ctx.controller, id, cast.targets, cast.modes, ctx.events, {});
+      cast = null;
+      memo.i = i + 1;
+    }
+    memo.i = same.length;
+    // The rest on the bottom, in the order their owner chooses.
+    const rest = memo.revealed.filter(inLibrary);
+    if (rest.length < 2) {
+      for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+      return true;
+    }
+    const order = memo.ordered ? answerOf(ctx, 'choose_objects') : null;
+    if (!order) {
+      memo.ordered = true;
+      return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: rest, min: rest.length, max: rest.length, ordered: true, text: 'Order these cards for the bottom of your library (first chosen goes on top of the others).' } };
+    }
+    if (order.objects.length !== rest.length || new Set(order.objects).size !== rest.length || !order.objects.every((id) => rest.includes(id))) throw new RulesError('Order all of those cards.');
+    for (const id of order.objects) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+    return true;
   },
 
   // CR 702.85a: cascade.

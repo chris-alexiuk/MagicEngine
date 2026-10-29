@@ -40,6 +40,9 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // CR 702.60a: ripple N.
+  const ripple = /^You may reveal the top (\w+) cards of your library, or, if there are fewer than \1 cards in your library, you may reveal all the cards in your library\. If you reveal cards from your library this way, you may cast any of those cards with the same name as (?:this spell|~) without paying their mana costs, then put all revealed cards not cast this way on the bottom of your library in any order\.$/i.exec(text.trim());
+  if (ripple && typeof parseAmount(ripple[1]!) === 'number') return [{ type: 'ripple', n: parseAmount(ripple[1]!) as number }];
   // Expel the Interlopers: "Choose a number between 0 and 10. Destroy all creatures with power greater than or equal to
   // the chosen number."; By Invitation Only: "Choose a number between 0 and 13. Each player sacrifices that many
   // creatures of their choice." — the number chosen as it resolves, read as X.
@@ -3494,6 +3497,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(prep[1]!, b);
       return what ? [{ type: prep[2] === 'prepared' ? 'become_prepared' : 'become_unprepared', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
+  // Aetherspouts: "For each attacking creature, its owner puts it on their choice of the top or bottom of their library."
+  const eachTopOrBottom = /^For each (.+?), its owner puts it on their choice of the top or bottom of their library$/.exec(s);
+  if (eachTopOrBottom) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(`each ${eachTopOrBottom[1]!}`, b);
+      return what && what.plural && !what.targeted ? [{ type: 'move', what: what.ref, to: 'library', position: 'choice' }] : null;
     });
     if (r) return r;
   }

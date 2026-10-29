@@ -50,6 +50,8 @@ export interface ParseResult {
   unparsed: string[];
   /** Keyword lines with a keyword the engine doesn't apply yet (schema keywordSupported). */
   manualKeywords: string[];
+  /** CR 604.3: Planar Nexus: "This land is every nonbasic land type." — subtypes it has in every zone. */
+  extraSubtypes?: string[];
 }
 
 export class ParserRegistry {
@@ -360,7 +362,8 @@ export class ParserRegistry {
       // The First Sliver: "Sliver spells you cast have cascade." — a card type or a subtype.
       const kind = /^([A-Z][a-z]+) spells you cast (?:have|with)/.exec(fromHand)?.[1];
       const kindFilter = kind ? parseFilter(`${['Enchantment', 'Artifact', 'Creature', 'Instant', 'Sorcery', 'Planeswalker'].includes(kind) ? kind.toLowerCase() : kind} spells`, new Binder(env as GrammarEnv)) : null;
-      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
+      // Thrumming Stone: "Spells you cast have ripple 4."
+      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm|ripple \d+)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
       if (spellGrant) {
         const kws = this.keywords.parseLine(spellGrant[4]!);
         if (kws?.length === 1) {
@@ -392,6 +395,12 @@ export class ParserRegistry {
       const everyType = /^(.+?) is every creature type\.$/.exec(line);
       if (everyType && selfName(everyType[1]!)) {
         result.keywords.push({ id: 'changeling' });
+        continue;
+      }
+      // CR 604.3, 205.3i: Planar Nexus: "This land is every nonbasic land type." — a characteristic-defining ability (it has
+      // those subtypes in every zone).
+      if (/^(?:This land|~) is every nonbasic land type\.$/.test(line) && /\bLand\b/.test(ctx.typeLine)) {
+        result.extraSubtypes = SUBTYPES.land.filter((t) => !['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'].includes(t));
         continue;
       }
       if (annihilatorX && selfName(annihilatorX[1]!)) {

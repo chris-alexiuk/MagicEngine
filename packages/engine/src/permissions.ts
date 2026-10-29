@@ -41,6 +41,14 @@ export function graveyardPermissionCosts(g: GameState, key: string | null): Effe
   return [];
 }
 
+/** Kess, Dissident Mage: "If a spell cast this way would be put into your graveyard, exile it instead." */
+export function graveyardPermissionExiles(g: GameState, key: string | null): boolean {
+  const [id, zcc] = (key ?? '').split(':');
+  const src = id ? g.objects[id] : undefined;
+  if (!src || String(src.zcc) !== zcc) return false;
+  return objectAbilities(g, src).some((a) => a.kind === 'static' && a.effect.type === 'graveyard_cast' && Boolean(a.effect.exileOnLeave));
+}
+
 function graveyardPermissionPass(g: GameState, player: PlayerId, o: GameObject, withCost: boolean): string | null {
   for (const id of abilitySources(g)) {
     const src = g.objects[id];

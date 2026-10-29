@@ -233,10 +233,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   }],
   // Hollowhenge Overlord: "each creature you control that's a Wolf or a Werewolf"; "… that are Wolves or Werewolves".
   // Skeleton Crew: "Each other creature you control that's a Skeleton or Pirate".
-  [/ (?:that's an? ([A-Z][\w-]*) or (?:an? )?([A-Z][\w-]*)|that are ([A-Z][\w-]*) or ([A-Z][\w-]*))$/, (f, m) => {
-    const one = subtypeOf((m[1] ?? m[3])!);
-    const two = subtypeOf((m[2] ?? m[4])!);
-    return Boolean(one && two && !f.subtypes && ((f.subtypes = [one, two]), true));
+  // Swarmyard Massacre: "each creature you control that's an Insect, Rat, Spider, or Squirrel".
+  [/ (?:that's an? ([A-Z][\w-]*(?:, (?:an? )?[A-Z][\w-]*)*),? or (?:an? )?([A-Z][\w-]*)|that are ([A-Z][\w-]*(?:, [A-Z][\w-]*)*),? or ([A-Z][\w-]*))$/, (f, m) => {
+    const subs = [...(m[1] ?? m[3])!.split(', '), (m[2] ?? m[4])!].map((w) => subtypeOf(w.replace(/^an? /, '')));
+    return Boolean(subs.every(Boolean) && !f.subtypes && ((f.subtypes = subs as string[]), true));
   }],
   // Finneas, Ace Archer: "each other creature you control that's a token or a Rabbit".
   [/ that's a token or an? ([A-Z][\w-]*)$/, (f, m) => {
@@ -387,10 +387,18 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
   // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
+  const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];
+  // Great Divide Guide: "Each land and Ally you control"; "creatures and Vehicles you control"; "each artifact and creature
+  // you control" — each permanent that's either.
+  if (f.controller) rest = rest.replace(/^(artifacts?|creatures?|enchantments?|lands?|planeswalkers?|battles?|[A-Z][\w-]*) and (artifacts?|creatures?|enchantments?|lands?|planeswalkers?|battles?|[A-Z][\w-]*)$/, (m, a: string, z: string) => {
+    const kind = (w: string) => (/^[a-z]/.test(w) ? (/s$/.test(w) ? 'plural' : 'one') : subtypeOf(w) ? (subtypeOf(w) === w && !SAME_PLURAL.includes(w) ? 'one' : SAME_PLURAL.includes(w) ? 'either' : 'plural') : null);
+    const ka = kind(a);
+    const kz = kind(z);
+    return ka && kz && (ka === kz || ka === 'either' || kz === 'either') ? `${a} or ${z}` : m;
+  });
   // "each Fungus and Saproling you control": either subtype.
   // Gisa, the Hellraiser: "Skeletons and Zombies you control" — plurals too.
   // Sapling Nursery: "Treefolk and Forests you control" — a word that's its own plural goes with either.
-  const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];
   // Valley Rotcaller: "Squirrels, Bats, Lizards, and Rats you control" — a list of them.
   rest = rest.replace(/\b([A-Z][\w-]*)(,?) and (?=([A-Z][\w-]*))/g, (m, a: string, comma: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a) || SAME_PLURAL.includes(z)) ? `${a}${comma} or ` : m));
   // Valley Questcaller: "other Rabbits, Bats, Birds, and/or Mice you control" — "other" goes with every one of them.
@@ -708,6 +716,10 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Chandra, Fire of Kaladesh: "Chandra deals 1 damage to target player or planeswalker. If …, exile her" — a character
     // card calls itself "him" or "her"; anything else it mentions is "it" or "that player".
     if (/^(?:him|her)$/i.test(t)) return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
+    // Agitator Ant: "each creature that had counters put on it this way"; Fangs of Kalonia: "… that had a +1/+1 counter put on
+    // it this way" — what this resolution put counters on.
+    const countered = /^each (?:creature|permanent) that had (?:an? )?(?:(double strike|first strike|\S+) )?counters? put on it this way$/i.exec(t);
+    if (countered) return set(b, { ref: { ref: 'countered_this_way', ...(countered[1] ? { counter: countered[1].replace(/ /g, '_') } : {}) }, plural: true, targeted: false });
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
       // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target), nor is a

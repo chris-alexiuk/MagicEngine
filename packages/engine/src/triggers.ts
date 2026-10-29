@@ -101,6 +101,13 @@ function collect(g: GameState, events: GameEvent[]): void {
       if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'graveyard')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
     }
   }
+  // Eminence (Edgar Markov): cards in the command zone whose abilities work from there as well as the battlefield.
+  for (const id of g.zones.command) {
+    const o = g.objects[id];
+    if (!o || o.emblem) continue;
+    const face = g.cards[o.card]?.faces[o.face];
+    if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'command')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
+  }
   // CR 702.40a etc.: "When you cast this spell" — abilities that work while the spell is on the stack.
   const onStack: Candidate[] = g.stack.flatMap((s) => {
     const o = s.kind === 'spell' ? g.objects[s.object] : undefined;
@@ -140,7 +147,8 @@ function collect(g: GameState, events: GameEvent[]): void {
         // creature attacks" — from the stack too.
         const here = c.left || c.o.emblem ? 'battlefield' : c.o.zone;
         const castSelf = here === 'stack' && ability.trigger.type === 'either' && (ability.trigger.of as TriggerNode[]).some((t) => t.type === 'cast' && t.self);
-        if ((ability.zone ?? 'battlefield') !== here && !castSelf) return;
+        const eminence = ability.zone === 'command' && here === 'battlefield';
+        if ((ability.zone ?? 'battlefield') !== here && !castSelf && !eminence) return;
         if (c.left && !looksBack(ability.trigger)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;

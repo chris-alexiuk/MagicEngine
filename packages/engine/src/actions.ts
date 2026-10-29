@@ -51,12 +51,12 @@ import {
   type Target,
   type TargetRef,
 } from './types.js';
-import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
+import { flashPermission, landsAllowed, onceFreeCastKey, playerRule, ruleAllows } from './player-rules.js';
 import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
 import { lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
@@ -497,6 +497,9 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
   if (o.zone === 'hand' && !face.types.includes('Land') && playerRule(g, player, 'free_from_hand')) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
   // Dracogenesis, Rooftop Storm: "You may cast Dragon spells without paying their mana costs." — wherever they're cast from.
   if (!face.types.includes('Land') && ruleAllows(g, player, 'free_cast', o)) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
+  // Darksteel Monolith: "Once each turn, you may pay {0} rather than pay the mana cost for a colorless spell you cast from
+  // your hand." (CR 118.9)
+  if (!face.types.includes('Land') && onceFreeCastKey(g, player, o)) return [...base, { type: 'cast_option', id: 'free_once', kind: 'alternative', cost: {} }];
   return base;
 }
 
@@ -655,6 +658,7 @@ function cast(
   const permitted = o.zone === 'graveyard' && !escape && mayPlayFrom(g, player, o, 'spell');
   // Lurrus: a "once during each of your turns" permission is used up by this cast.
   const graveyardKey = permitted ? graveyardPermissionUsed(g, player, o) : null;
+  const freeOnceKey = alt?.id === 'free_once' ? onceFreeCastKey(g, player, o) : null;
   const flashback = o.zone === 'graveyard' && o.owner === player && !escape && !permitted ? flashbackCostOf(g, o, face) : null;
   // CR 702.127a: "You may cast this half of this split card from your graveyard."
   const aftermath = face.keywords.some((k) => k.id === 'aftermath');
@@ -861,6 +865,7 @@ function cast(
   // CR 601.2a: the card moves to the stack and its caster becomes its controller.
   moveObject(g, id, 'stack', events, { controller: player, face: faceIndex, ...(faceDown ? { faceDown } : {}) });
   if (graveyardKey) (g.turnLog.graveyardCasts ??= []).push(graveyardKey);
+  if (freeOnceKey) (g.turnLog.freeOnce ??= []).push(freeOnceKey);
   if (faceDown) ensureFaceDownDefs(g);
   // CR 702.103b: it becomes an Aura spell as it's put on the stack.
   if (alt?.id === 'bestow') o.bestowed = true;
@@ -877,7 +882,7 @@ function cast(
   // CR 702.127a: so is an aftermath half cast from a graveyard; jump-start too (CR 702.133a).
   if (flashback || aftermath || alt?.exileOnLeave) o.exileOnLeave = true;
   // "If that spell would be put into its owner's graveyard, exile it instead." — only a graveyard (CR 614.1a).
-  else if (during?.exileOnLeave || permittedExile) o.exileOnLeave = 'graveyard';
+  else if (during?.exileOnLeave || permittedExile || (graveyardKey && graveyardPermissionExiles(g, graveyardKey))) o.exileOnLeave = 'graveyard';
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];

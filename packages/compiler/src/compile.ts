@@ -128,6 +128,7 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
     abilities: parsed.abilities,
     unparsed: parsed.unparsed,
   };
+  if (parsed.extraSubtypes) out.subtypes = [...new Set([...out.subtypes, ...parsed.extraSubtypes])];
   if (parsed.manualKeywords.length) out.manualKeywords = parsed.manualKeywords;
   for (const key of ['power', 'toughness', 'loyalty', 'defense'] as const) {
     const v = face[key];
@@ -148,7 +149,8 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
     const faces = card.faces.map((f) => {
       const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine, manaCost: f.manaCost });
       const { manualKeywords: _old, ...rest } = f;
-      return { ...rest, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed, ...(p.manualKeywords.length ? { manualKeywords: p.manualKeywords } : {}) };
+      const subtypes = p.extraSubtypes ? [...new Set([...parseTypeLine(f.typeLine).subtypes, ...p.extraSubtypes])] : parseTypeLine(f.typeLine).subtypes;
+      return { ...rest, subtypes, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed, ...(p.manualKeywords.length ? { manualKeywords: p.manualKeywords } : {}) };
     });
     return { ...card, faces, automation: automationOf(faces) };
   };

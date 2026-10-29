@@ -4,6 +4,7 @@ import { replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
 import { abilitySources, createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
+import { playerProtectedFrom } from './player-rules.js';
 
 /**
  * CR 701.8a: destroying moves a permanent to its owner's graveyard.
@@ -123,6 +124,8 @@ export function canEnchantPlayer(g: GameState, aura: GameObject, player: PlayerI
   if (!livePlayers(g).includes(player)) return false;
   const enchant = chars(g, aura).keywords.find((k) => k.id === 'enchant');
   if (!enchant?.player) return false;
+  // CR 702.16c: not by an Aura with a quality they have protection from.
+  if (playerProtectedFrom(g, player, aura)) return false;
   return enchant.player === 'any' || player !== aura.controller;
 }
 

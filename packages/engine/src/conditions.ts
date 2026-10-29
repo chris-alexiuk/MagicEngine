@@ -90,6 +90,8 @@ export interface TurnLog {
   attackedAs?: Record<ObjectId, number>;
   /** Lurrus: the "once during each of your turns" graveyard permissions used this turn (source id:zcc). */
   graveyardCasts?: string[];
+  /** Darksteel Monolith: the once-each-turn free-cast permissions used this turn (source id:zcc). */
+  freeOnce?: string[];
   /** Alliance-style "if this is the second time this ability has resolved this turn": resolutions so far, by ability (source id:zcc:text). */
   abilityResolutions?: Record<string, number>;
   /** Rose, Cutthroat Raider: the players each player attacked with creatures this turn. */

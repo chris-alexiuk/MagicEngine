@@ -31,7 +31,7 @@ import type {
   TriggerNode,
   TriggeredAbility,
 } from '@mtg/schema';
-import { SUBTYPES } from '@mtg/schema';
+import { qualitiesRead, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import type { GrammarRule } from '../parser.js';
 import { combinationColors, parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
@@ -2035,9 +2035,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
-  const cast = /^(you|an opponent|a player|enchanted player|the chosen player) (casts?|cast or copy|casts or copies) (?:a|an) (.+)$/.exec(t);
+  // Edgar Markov (eminence): "Whenever you cast another Vampire spell" — not this card, cast from the command zone.
+  const cast = /^(you|an opponent|a player|enchanted player|the chosen player) (casts?|cast or copy|casts or copies) (a|an|another) (.+)$/.exec(t);
   if (cast) {
-    let what = cast[3]!;
+    let what = cast[4]!;
     const extra: Record<string, unknown> = {};
     // Where it was cast from, and when.
     // Ghostly Pilferer: "Whenever an opponent casts a spell from anywhere other than their hand"
@@ -2075,6 +2076,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (who !== 'you') b.named['them'] = { ref: 'trigger_player' };
     // Manaform Hellkite: "the amount of mana spent to cast that spell".
     b.named['that spell'] ??= { ref: 'trigger_object' };
+    if (cast[3] === 'another') spell.filter.other = true;
     return { trigger: { type: 'cast', who, filter: spell.filter, ...extra }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   return null;
@@ -2119,6 +2121,10 @@ export const triggeredRule: GrammarRule = {
         // Dragon Tempest: "Whenever a Dragon you control enters, it deals X damage to any target" — that Dragon deals it.
         // Saskia: "Whenever a creature you control deals combat damage to a player, it deals that much damage to …"
         if (['enters', 'attacks', 'blocks', 'deals_combat_damage'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
+        // Inalla: "Whenever another nontoken Wizard you control enters, … create a token that's a copy of that Wizard." — the
+        // permanent the trigger is about, by its creature type.
+        const subjectTypes = ((trig.trigger.subject as { filter?: ObjectFilter } | undefined)?.filter?.subtypes ?? []);
+        if (trig.it?.ref === 'trigger_object' && subjectTypes.length === 1) b.named[`that ${subjectTypes[0]!.toLowerCase()}`] ??= trig.it;
         // CR 113.6m: "When ~ dies, return ~ from your graveyard…" — the trigger put it there; it's the card that died.
         const selfLeaves = (trig.trigger.type === 'dies' || trig.trigger.type === 'leaves') && (trig.trigger.subject as Ref).ref === 'self';
         if (selfLeaves) {
@@ -2131,6 +2137,7 @@ export const triggeredRule: GrammarRule = {
         let effectText = body.slice(comma.index! + 2);
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
+        let eminence = false;
         const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
         // Boromir: "Whenever an opponent casts a spell, if no mana was spent to cast it, counter that spell." — the mana
         // spent can't change, so it's checked with the cast (CR 603.4).
@@ -2149,6 +2156,13 @@ export const triggeredRule: GrammarRule = {
           // Kazuul: "Whenever a creature an opponent controls attacks, if you're the defending player" — it attacks you or a
           // planeswalker you control (CR 506.2); that can't change before it resolves.
           trig.trigger = { ...trig.trigger, defender: 'you' };
+          effectText = iff[2]!;
+        } else if (iff && /^~ is in the command zone or on the battlefield$/.test(iff[1]!)) {
+          // Eminence (Edgar Markov): it triggers from the command zone as well as the battlefield, and does nothing once it's
+          // elsewhere (CR 603.4).
+          const at = (zone: 'command' | 'battlefield'): ConditionNode => ({ type: 'is', of: { ref: 'self' }, filter: { zone } }) as ConditionNode;
+          condition = { type: 'or', any: [at('command'), at('battlefield')] } as ConditionNode;
+          eminence = true;
           effectText = iff[2]!;
         } else if (iff) {
           condition = parseCondition(iff[1]!, b);
@@ -2191,7 +2205,8 @@ export const triggeredRule: GrammarRule = {
           if (program.effects?.length !== 1 || first?.type !== 'may') return null;
           first.doOnce = true;
         }
-        return program ? { trig, program, oncePerTurn, doOnce, condition, zone: b.selfZone as 'graveyard' | null } : null;
+        if (eminence && b.selfZone) return null;
+        return program ? { trig, program, oncePerTurn, doOnce, condition, zone: eminence ? ('command' as const) : (b.selfZone as 'graveyard' | null) } : null;
       });
       if (r) {
         // A triggered ability has no X announced for "X target …" (CR 601.2b).
@@ -2582,6 +2597,26 @@ function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
   }
   // Dracogenesis: "You may cast Dragon spells without paying their mana costs."; Rooftop Storm: "You may pay {0} rather than pay
   // the mana cost for Zombie creature spells you cast." (CR 118.9: an alternative cost, wherever they're cast from).
+  // Darksteel Monolith: "Once each turn, you may pay {0} rather than pay the mana cost for a colorless spell you cast from your
+  // hand."; As Foretold: "… for a spell you cast with mana value X or less, where X is the number of time counters on this
+  // enchantment."
+  const onceFree = /^Once each turn, you may pay \{0\} rather than pay the mana cost for (?:a|an) (.*?)spell you cast( from your hand| from exile)?(?: with mana value X or less, where X is (.+))?$/.exec(body);
+  if (onceFree) {
+    const words = onceFree[1]!.trim();
+    let filter: ObjectFilter = {};
+    if (words) {
+      const pf = parseFilter(`${words} spell`, b);
+      if (!pf || pf.plural) return null;
+      const { zone: _z, ...rest } = pf.filter;
+      filter = rest;
+    }
+    if (onceFree[3]) {
+      const n = parseCount(onceFree[3], b);
+      if (!n) return null;
+      filter.manaValue = { op: 'le', n } as ObjectFilter['manaValue'];
+    }
+    return { type: 'player_rule', who: 'you', rule: 'free_cast', filter, oncePerTurn: true, ...(onceFree[2] ? { fromZone: onceFree[2] === ' from exile' ? ('exile' as const) : ('hand' as const) } : {}) };
+  }
   const free = /^You may cast (.+?) spells without paying their mana costs$/.exec(body) ?? /^You may pay \{0\} rather than pay the mana cost for (.+?) spells you cast$/.exec(body);
   if (free) {
     const first = free[1]!.split(' ')[0]!;
@@ -2616,6 +2651,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
     'may cast spells from your hand without paying their mana costs': 'free_from_hand',
   };
   if (subject && simple[subject[2]!] && who(subject[1]!)) return { type: 'player_rule', who: who(subject[1]!)!, rule: simple[subject[2]!]! };
+  // CR 702.16b–e: Absolute Virtue: "You have protection from each of your opponents."
+  const protection = /^(You|Each player|Players) ha(?:s|ve) protection from (.+)$/.exec(body);
+  if (protection && qualitiesRead(protection[2]!) && readQuality(protection[2]!.toLowerCase())?.kind !== 'choice' && readQuality(protection[2]!.toLowerCase())?.kind !== 'type_choice') return { type: 'player_rule', who: who(protection[1]!)!, rule: 'protection', quality: protection[2]! };
   // CR 500.5: Omnath, Locus of Mana: "You don't lose unspent green mana as steps and phases end."; Upwelling: "Players
   // don't lose unspent mana as steps and phases end."
   const keepMana = /^(You|Players) don't lose unspent (?:(white|blue|black|red|green) )?mana as steps and phases end$/.exec(body);
@@ -2680,10 +2718,14 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Jetmir, Nexus of Revels: "Creatures you control also get +1/+0 and have trample as long as …" — "also" adds nothing.
   body = body.replace(/^(.+?) also (?=(?:gets?|ha(?:s|ve)) )/, '$1 ');
   // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — the player too.
-  const youToo = /^You, (.+), and (.+?) have (hexproof|shroud)$/.exec(body) ?? /^You and (.+?)() have (hexproof|shroud)$/.exec(body);
+  // Serra's Emissary: "You and creatures you control have protection from the chosen card type." (CR 702.16b–e)
+  const youToo = /^You, (.+), and (.+?) have (hexproof|shroud|protection from .+)$/.exec(body) ?? /^You and (.+?)() have (hexproof|shroud|protection from .+)$/.exec(body);
   if (youToo) {
     const inner = parseContinuous(`${youToo[1]}${youToo[2] ? ` and ${youToo[2]}` : ''} have ${youToo[3]}`, b);
-    return inner && !inner.condition ? { ...inner, alsoPlayer: youToo[3] as 'hexproof' | 'shroud' } : null;
+    const rule = /^protection /.test(youToo[3]!) ? 'protection' : (youToo[3] as 'hexproof' | 'shroud');
+    // A quality chosen as the effect resolves has no static meaning here.
+    if (rule === 'protection' && (inner?.keywords ?? []).some((k) => k.id !== 'protection' || !k.text || splitQualities(k.text).some((q) => ['choice', 'type_choice'].includes(readQuality(q)?.kind ?? 'choice')))) return null;
+    return inner && !inner.condition ? { ...inner, alsoPlayer: rule } : null;
   }
   // Shorikai's Pilot token: "This token crews Vehicles as though its power were 2 greater." (and saddles Mounts).
   if (/^~ (?:saddles Mounts and )?crews Vehicles as though its power were 2 greater$/.test(body)) return { type: 'continuous', affected: { ref: 'self' }, rules: ['crews_plus_2'] };
@@ -3092,6 +3134,16 @@ export const costModifierRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     if (!env || !line.endsWith('.')) return null;
+    // Eminence (The Ur-Dragon): "As long as ~ is in the command zone or on the battlefield, other Dragon spells you cast cost {1}
+    // less to cast." — it works from the command zone as well as the battlefield.
+    const eminence = /^As long as ~ is in the command zone or on the battlefield, (.+)$/.exec(line);
+    if (eminence) {
+      const rest = eminence[1]!.replace(/^\w/, (c) => c.toUpperCase());
+      const inner = costModifierRule.parse(rest, rest, ctx) as StaticAbility | null;
+      const e = inner?.kind === 'static' && inner.effect.type === 'cost_modifier' ? (inner.effect as CostModifierNode) : null;
+      if (!e || e.self || e.condition) return null;
+      return { kind: 'static', text: original, effect: { ...e, eminence: true } as CostModifierNode };
+    }
     const b = new Binder(env);
     const body = line.slice(0, -1);
     const amountOf = (sym: string): { amount: Amount; color?: Color; colors?: Color[]; generic?: number } | null => {
@@ -3260,7 +3312,9 @@ export const costModifierRule: GrammarRule = {
       const chosenType = false;
       const a = amountOf(others[3]!);
       if (!a || a.amount === 'X') return null;
-      const adjectives = others[1]!.trim().replace(/ and /g, ' or ');
+      // The Ur-Dragon: "other Dragon spells you cast" — not this card (cast from the command zone).
+      const otherSpells = /^Other /i.test(others[1]!.trim());
+      const adjectives = others[1]!.trim().replace(/^Other /i, '').replace(/ and /g, ' or ');
       let filter: ObjectFilter = {};
       if ((adjectives && !/^Spells?$/i.test(adjectives)) || suffix) {
         // "Aura and Equipment spells": a subtype keeps its capital.
@@ -3272,6 +3326,7 @@ export const costModifierRule: GrammarRule = {
         filter = rest;
       }
       if (chosenType) filter.chosenType = true;
+      if (otherSpells) filter.other = true;
       const who = !others[2] ? 'each' : others[2] === 'you' ? 'you' : 'opponents';
       const node: CostModifierNode = { type: 'cost_modifier', who, filter, change: others[4]!.toLowerCase() as 'less' | 'more', ...a };
       if (perEach) {
@@ -4349,6 +4404,9 @@ export const graveyardCastRule: GrammarRule = {
       return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter: {}, eachType: true, lands: true } } as StaticAbility;
     }
     // Exploration Broodship: "… from your graveyard by sacrificing a land in addition to paying its other costs."
+    // Kess, Dissident Mage: "… If a spell cast this way would be put into your graveyard, exile it instead."
+    const exiles = / If a spell cast this way would be put into your graveyard, exile it instead\.$/.test(line);
+    if (exiles) line = line.replace(/ If a spell cast this way would be put into your graveyard, exile it instead\.$/, '');
     const m = /^Once during each of your turns, you may cast (?:a|an) (.+? spell(?: with [^,]+)?) from your graveyard(?: by (sacrificing (?:a|an) [a-z]+) in addition to paying its other costs)?\.$/.exec(line);
     if (!env || !m) return null;
     const words = m[1]!.split(' ');
@@ -4359,7 +4417,7 @@ export const graveyardCastRule: GrammarRule = {
     const { zone: _z, ...filter } = pf.filter;
     const extra = m[2] ? choiceCost(m[2].replace(/^sacrificing/, 'Sacrifice'), b) : undefined;
     if (extra === null) return null;
-    return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter, oncePerTurn: true, ...(extra ? { cost: { other: [extra] } } : {}) } } as StaticAbility;
+    return { kind: 'static', text: original, effect: { type: 'graveyard_cast', filter, oncePerTurn: true, ...(extra ? { cost: { other: [extra] } } : {}), ...(exiles ? { exileOnLeave: true } : {}) } } as StaticAbility;
   },
 };
 

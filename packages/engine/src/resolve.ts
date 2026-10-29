@@ -136,6 +136,17 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         return o && o.zcc === r.zcc ? [o] : [];
       });
     }
+    case 'countered_this_way': {
+      // Spectacular Showdown: "goad each creature that had a double strike counter put on it this way".
+      const kind = (ref as { counter?: string }).counter;
+      const seen = new Set<string>();
+      return (ctx.resolution?.countersPut ?? []).flatMap((r) => {
+        const o = g.objects[r.id];
+        if (!o || o.zcc !== r.zcc || (kind && r.counter !== kind) || seen.has(o.id)) return [];
+        seen.add(o.id);
+        return [o];
+      });
+    }
     case 'created': {
       // "the token", "sacrifice it at the beginning of the next end step"
       const made = ctx.resolution?.created ?? ctx.trigger?.created ?? [];

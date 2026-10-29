@@ -1,6 +1,7 @@
 import type { ConditionNode, ContinuousEffectNode, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
+import { splitQualities } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
-import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
+import { bindQualityKeywords, matchesFilter, objectAbilities, sourceHasQuality, staticConditionHolds } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 
@@ -132,11 +133,31 @@ export function ruleAllows(g: GameState, player: PlayerId, rule: PlayerRule, car
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
       const e = (a as StaticAbility).effect as PlayerRuleNode;
-      if (e.rule !== rule || !e.filter || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      if (e.rule !== rule || !e.filter || e.oncePerTurn || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
       if (matchesFilter(g, card, e.filter, { controller: player, source, anyZone: true })) return true;
     }
   }
   return false;
+}
+
+/**
+ * Darksteel Monolith, As Foretold: "Once each turn, you may pay {0} rather than pay the mana cost for a … spell you cast" —
+ * the permission this card could use now (its source's id and zone-change count), if one hasn't been used this turn.
+ */
+export function onceFreeCastKey(g: GameState, player: PlayerId, card: GameObject): string | null {
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'free_cast' || !e.oncePerTurn || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      const key = `${source.id}:${source.zcc}`;
+      if ((g.turnLog.freeOnce ?? []).includes(key)) continue;
+      if (e.fromZone && card.zone !== e.fromZone) continue;
+      if (!e.filter || matchesFilter(g, card, e.filter, { controller: player, source, anyZone: true })) return key;
+    }
+  }
+  return null;
 }
 
 /**
@@ -185,4 +206,33 @@ export function legendRuleExempt(g: GameState, o: GameObject): boolean {
 export function landsAllowed(g: GameState, player: PlayerId): number {
   const extra = g.players[player]?.extraLands;
   return 1 + playerRule(g, player, 'extra_lands') + (extra?.turn === g.turn ? extra.n : 0);
+}
+
+/**
+ * CR 702.16b–e: whether a player has protection from `source` — protection from everything (Teferi's Protection), or
+ * from a quality: Serra's Emissary's "You and creatures you control have protection from the chosen card type",
+ * Absolute Virtue's "You have protection from each of your opponents".
+ */
+export function playerProtectedFrom(g: GameState, player: PlayerId, source: GameObject): boolean {
+  if (playerRule(g, player, 'protection_everything')) return true;
+  for (const id of abilitySources(g)) {
+    const holder = g.objects[id]!;
+    for (const a of objectAbilities(g, holder)) {
+      if (a.kind !== 'static') continue;
+      const e = (a as StaticAbility).effect;
+      let text: string | undefined;
+      if (e.type === 'continuous') {
+        const c = e as ContinuousEffectNode;
+        if (c.alsoPlayer !== 'protection' || player !== holder.controller || !staticConditionHolds(g, c, holder)) continue;
+        const bound = bindQualityKeywords((c.keywords ?? []).filter((k) => k.id === 'protection'), { you: holder.controller, grantedBy: holder.id, ...(holder.chosen?.color ? { color: holder.chosen.color } : {}), ...(holder.chosen?.creatureType ? { creatureType: holder.chosen.creatureType } : {}), ...(holder.chosen?.cardType ? { chosenCardType: holder.chosen.cardType } : {}) });
+        text = bound.map((k) => k.text).filter(Boolean).join(' and from ');
+      } else if (e.type === 'player_rule') {
+        const r = e as PlayerRuleNode;
+        if (r.rule !== 'protection' || !r.quality || !rulesFor(r.who, holder, player) || !staticConditionHolds(g, r, holder)) continue;
+        text = r.quality;
+      }
+      if (text && splitQualities(text).some((q) => sourceHasQuality(g, holder, source, q, player))) return true;
+    }
+  }
+  return false;
 }

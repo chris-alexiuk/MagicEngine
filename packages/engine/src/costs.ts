@@ -41,12 +41,18 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
     if (e.generic) changes.push({ n: e.generic, change: e.change });
   }
-  for (const id of abilitySources(g)) {
+  // Eminence (The Ur-Dragon): a card in the command zone whose cost reduction works from there too.
+  const eminent = g.zones.command.filter((id) => {
+    const o = g.objects[id];
+    return o && !o.emblem && printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && (a.effect as CostModifierNode).eminence);
+  });
+  for (const id of eminent.length ? [...abilitySources(g), ...eminent] : abilitySources(g)) {
     const source = g.objects[id]!;
-    for (const a of objectAbilities(g, source)) {
+    const inCommand = source.zone === 'command' && !source.emblem;
+    for (const a of inCommand ? printedAbilities(faceOf(g, source)) : objectAbilities(g, source)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cost_modifier') continue;
       const e = (a as StaticAbility).effect as CostModifierNode;
-      if (e.self) continue;
+      if (e.self || (inCommand && !e.eminence)) continue;
       const whose = e.who ?? 'each';
       if (whose === 'you' ? player !== source.controller : whose === 'opponents' ? player === source.controller : false) continue;
       const ctx = ctxFor(source.controller, source);

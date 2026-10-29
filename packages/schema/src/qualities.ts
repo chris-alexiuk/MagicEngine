@@ -31,6 +31,10 @@ export type Quality =
   | { kind: 'opponents' }
   /** True-Name Nemesis: "the chosen player" — chosen as it entered. */
   | { kind: 'chosen_player' }
+  /** Serra's Emissary: "the chosen card type" — chosen as its source entered (bound when granted). */
+  | { kind: 'chosen_card_type' }
+  /** Runed Halo: "the chosen card name" — what its source's controller named as it entered. */
+  | { kind: 'chosen_name' }
   /** Earnest Fellowship: "each of its colors". */
   | { kind: 'its_colors' }
   /** Pledge of Loyalty: "each color among permanents you control". */
@@ -92,6 +96,11 @@ function subtypeWord(word: string): string | null {
 /** The card types a "card type of your choice" can be (CR 205.2a), as their plural nouns. */
 export const CARD_TYPE_PLURALS: readonly string[] = ['artifacts', 'battles', 'creatures', 'enchantments', 'instants', 'lands', 'planeswalkers', 'sorceries'];
 
+/** "Artifact" → "artifacts" (a quality's words). */
+export function cardTypePlural(type: string): string | undefined {
+  return Object.keys(TYPE_PLURALS).find((k) => TYPE_PLURALS[k] === type);
+}
+
 export function splitQualities(text: string): string[] {
   return text
     .toLowerCase()
@@ -145,6 +154,8 @@ export function readQuality(q: string): Quality | null {
   if (mv) return { kind: 'mana_value', n: Number(mv[1]), cmp: mv[2] === 'less' ? 'lte' : mv[2] === 'greater' ? 'gte' : 'eq' };
   if (q === 'each of your opponents') return { kind: 'opponents' };
   if (q === 'the chosen player') return { kind: 'chosen_player' };
+  if (q === 'the chosen card type') return { kind: 'chosen_card_type' };
+  if (q === 'the chosen card name' || q === 'the chosen name') return { kind: 'chosen_name' };
   if (q === 'each of its colors') return { kind: 'its_colors' };
   if (q === 'each color among permanents you control') return { kind: 'colors_among_yours' };
   const among = /^each mana value among (artifacts|creatures|permanents) you control$/.exec(q);

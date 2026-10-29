@@ -3,7 +3,7 @@ import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TriggerInfo } from './types.js';
-import { playerRule } from './player-rules.js';
+import { playerProtectedFrom, playerRule } from './player-rules.js';
 import { livePlayers, manaValueOf, nameOf } from './zones.js';
 
 /**
@@ -190,6 +190,8 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   if (playerRule(g, player, 'shroud')) return false;
   // CR 702.16j: a player with protection from everything can't be the target of spells or abilities.
   if (playerRule(g, player, 'protection_everything')) return false;
+  // CR 702.16b: nor of spells or abilities from a source with a quality they have protection from.
+  if (source && playerProtectedFrom(g, player, source)) return false;
   if (player !== controller && playerRule(g, player, 'hexproof')) return false;
   // Veil of Summer: "hexproof from blue and from black" — not by sources of those colors their opponents control.
   if (player !== controller && source && (g.playerEffects ?? []).some((e) => e.player === player && e.rule === 'hexproof_from' && e.lastTurn >= g.turn && e.filter && matchesFilter(g, source, e.filter, { controller: player, anyZone: true }))) return false;

@@ -19,7 +19,7 @@ import {
   type PreventionFollowUp,
 } from './types.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { playerRule } from './player-rules.js';
+import { playerProtectedFrom, playerRule } from './player-rules.js';
 import { lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { removeShield } from './permanents.js';
@@ -947,8 +947,8 @@ export function dealDamage(
   if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
   // CR 615.5: what a prevention effect does with the damage it prevented happens right after.
   if (preventedFollowUps.length) runPreventedFollowUps(g, source, to, events);
-  // CR 702.16j: damage to a player with protection from everything is prevented.
-  if (!unpreventable && amount > 0 && to.kind === 'player' && playerRule(g, to.player, 'protection_everything')) {
+  // CR 702.16e, 702.16j: damage to a player with protection from it (or from everything) is prevented.
+  if (!unpreventable && amount > 0 && to.kind === 'player' && playerProtectedFrom(g, to.player, source)) {
     events.push({ type: 'prevented', source: source.id, amount, to });
     return 0;
   }

@@ -1,4 +1,4 @@
-import { readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
+import { cardTypePlural, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { isRingBearer } from './ring.js';
 import type {
   AbilityNode,
@@ -430,7 +430,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         timestamp: source.timestamp,
         ...ptParts(g, e, source),
         // CR 702.16a: "protection from the chosen color" — what was chosen for this source; "you" is its controller.
-        ...(e.keywords ? { keywords: bindQualityKeywords(e.keywords, { you: source.controller, grantedBy: source.id, ...(source.chosen?.color ? { color: source.chosen.color } : {}), ...(source.chosen?.creatureType ? { creatureType: source.chosen.creatureType } : {}) }) } : {}),
+        ...(e.keywords ? { keywords: bindQualityKeywords(e.keywords, { you: source.controller, grantedBy: source.id, ...(source.chosen?.color ? { color: source.chosen.color } : {}), ...(source.chosen?.creatureType ? { creatureType: source.chosen.creatureType } : {}), ...(source.chosen?.cardType ? { chosenCardType: source.chosen.cardType } : {}) }) } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
         ...(e.combat ? { combat: { ...e.combat, from: source.id, ...(e.combat.cantAttackYou ? { cantAttackPlayer: source.controller } : {}) } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
@@ -1242,7 +1242,7 @@ export function protectionQualities(g: GameState, o: GameObject): string[] {
  */
 export function bindQualityKeywords(
   keywords: KeywordInstance[],
-  bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string },
+  bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string; chosenCardType?: string },
 ): KeywordInstance[] {
   if (!keywords.some((k) => (k.id === 'protection' || k.id === 'hexproof_from') && k.text)) return keywords;
   return keywords.flatMap((k) => {
@@ -1258,6 +1258,12 @@ export function bindQualityKeywords(
         if (!bind.cardType) ok = false;
         return bind.cardType ?? q;
       }
+      // Serra's Emissary: "the chosen card type" — what was chosen as the granting permanent entered.
+      if (r?.kind === 'chosen_card_type') {
+        const plural = bind.chosenCardType ? cardTypePlural(bind.chosenCardType) : undefined;
+        if (!plural) ok = false;
+        return plural ?? q;
+      }
       if (r?.kind === 'objects' && r.match.chosenType) {
         if (!bind.creatureType) ok = false;
         return `${bind.creatureType ?? ''} creatures`.toLowerCase();
@@ -1269,7 +1275,7 @@ export function bindQualityKeywords(
 }
 
 /** CR 702.16a: whether `source` has the quality — `holder` has the keyword, `you` is who "you" means in it. */
-function sourceHasQuality(g: GameState, holder: GameObject, source: GameObject, q: string, you: PlayerId): boolean {
+export function sourceHasQuality(g: GameState, holder: GameObject, source: GameObject, q: string, you: PlayerId): boolean {
   const r = readQuality(q);
   if (!r) return false;
   const c = chars(g, source);
@@ -1302,6 +1308,16 @@ function sourceHasQuality(g: GameState, holder: GameObject, source: GameObject, 
     // CR 702.16k: protection from a player — what they control (and, off the battlefield, own).
     case 'chosen_player':
       return Boolean(holder.chosen?.player) && source.controller === holder.chosen!.player;
+    // Not bound when granted: its own choice ("This creature has protection from the chosen card type").
+    case 'chosen_card_type':
+      return Boolean(holder.chosen?.cardType) && c.types.includes(holder.chosen!.cardType!);
+    // Runed Halo: the name its controller chose (a face-down source has none, CR 708.2).
+    case 'chosen_name':
+    {
+      const n = holder.chosen?.cardName;
+      if (!n || (source.faceDown && (source.zone === 'battlefield' || source.zone === 'stack'))) return false;
+      return c.name !== faceOf(g, source).name ? c.name === n : Boolean(g.cards[source.card]?.faces.some((x) => x.name === n) || g.cards[source.card]?.name === n);
+    }
     case 'its_colors':
       return colorIn(chars(g, holder).colors);
     case 'colors_among_yours':

@@ -601,6 +601,9 @@ export interface Resolution {
   /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
   /** `controller`: who controlled it as it moved ("its controller creates a 2/2 green Boar creature token"). */
   moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; subtypes?: string[]; controller: PlayerId; token?: true }[];
+  /** Fangs of Kalonia, Spectacular Showdown: the permanents this resolution put counters on ("each creature that had a +1/+1
+   * counter put on it this way"). */
+  countersPut?: { id: ObjectId; zcc: number; counter: string }[];
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
   /** CR 701.30d: "If you win" after "Clash with an opponent". */

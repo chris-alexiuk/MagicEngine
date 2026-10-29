@@ -216,9 +216,10 @@ export interface TriggeredAbility extends AbilityBase, Program {
   condition?: ConditionNode;
   /**
    * CR 113.6m: it triggers from this zone, not the battlefield ("return ~ from your graveyard to the battlefield");
-   * "When you cast this spell" works on the stack (storm, CR 702.40a).
+   * "When you cast this spell" works on the stack (storm, CR 702.40a). 'command': eminence — from the command zone and the
+   * battlefield both ("if Edgar is in the command zone or on the battlefield").
    */
-  zone?: 'graveyard' | 'stack';
+  zone?: 'graveyard' | 'stack' | 'command';
   /** The compiler couldn't read its effect (a dungeon's room ability, CR 309.4c): it triggers, then is resolved by hand. */
   manual?: true;
 }
@@ -571,6 +572,8 @@ export type Ref =
   | { ref: 'enchanted_player' }
   /** "the token", "those tokens": what the effect just created. */
   | { ref: 'created' }
+  /** Spectacular Showdown: "each creature that had a double strike counter put on it this way" (`counter`: of that kind). */
+  | { ref: 'countered_this_way'; counter?: string }
   /** "Return all creature cards from your graveyard to the battlefield. They gain haste …" — the permanents they became. */
   | { ref: 'moved_onto' }
   /** CR 701.38: "each permanent with the most votes or tied for most votes". */
@@ -1018,7 +1021,8 @@ export interface ContinuousEffectNode extends EffectNode {
   type: 'continuous';
   affected: Ref;
   /** Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — its controller too. */
-  alsoPlayer?: 'hexproof' | 'shroud';
+  /** 'protection': Serra's Emissary's "You and creatures you control have protection from …" (its protection keyword). */
+  alsoPlayer?: 'hexproof' | 'shroud' | 'protection';
   /** Wonder, Anger: "As long as this card is in your graveyard …" — it works only from its owner's graveyard. */
   fromGraveyard?: true;
   /** Witness Protection: "… named Legitimate Businessperson" — its name. */
@@ -1193,6 +1197,8 @@ export interface CostModifierNode extends EffectNode {
   perSacrificed?: true;
   /** March of Swirling Mist: "for each card exiled this way" — the cards exiled for its "any number" additional cost. */
   perExiled?: true;
+  /** Eminence (The Ur-Dragon): it works from the command zone as well as the battlefield. */
+  eminence?: true;
 }
 
 /**
@@ -1284,6 +1290,8 @@ export const PLAYER_RULES = [
   'no_lose_for_life', 'cant_lose', 'opponents_cant_win', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
   /** Omniscience: "You may cast spells from your hand without paying their mana costs." */
   'free_from_hand',
+  /** Absolute Virtue: "You have protection from each of your opponents." (CR 702.16b–e, with `quality`) */
+  'protection',
   /** Dracogenesis: "You may cast Dragon spells without paying their mana costs." (with a filter; from any zone). */
   'free_cast',
   /** Worship, Angel's Grace: "damage that would reduce your life total to less than 1 reduces it to 1 instead." (CR 614.1a) */
@@ -1344,6 +1352,12 @@ export interface PlayerRuleNode extends EffectNode {
   condition?: ConditionNode;
   /** flash: only for these spells ("You may cast Aura and Equipment spells as though they had flash"). */
   filter?: ObjectFilter;
+  /** protection: what from (CR 702.16a's quality words: "each of your opponents"). */
+  quality?: string;
+  /** free_cast: Darksteel Monolith, As Foretold — "Once each turn, you may pay {0} rather than pay the mana cost …";
+   * `fromZone`: "… for a colorless spell you cast from your hand" (Charred Foyer: "… from exile"). */
+  oncePerTurn?: true;
+  fromZone?: 'hand' | 'exile';
 }
 
 /** A token as created: a face definition plus a name (CR 111.4). */
@@ -1362,7 +1376,7 @@ export const CORE_NODES = {
     'sacrifice', 'may', 'transform', 'incubate', 'reveal_top_card', 'spell_enter_counters', 'choose_number', 'skip_next', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
-    'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
+    'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
