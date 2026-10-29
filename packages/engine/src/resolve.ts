@@ -1,6 +1,6 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
-import { loggedUpTo } from './conditions.js';
+import { enteredThisTurn, loggedUpTo } from './conditions.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -144,6 +144,9 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
         return o && o.zcc === r.zcc ? [o] : [];
       });
     }
+    case 'milled_this_way':
+      // Tablet of Discovery: "You may play that card this turn." — milled by this resolution, still in a graveyard.
+      return movedThisWay(ctx, { how: 'milled' }).flatMap((m) => (g.objects[m.id]?.zone === 'graveyard' ? [g.objects[m.id]!] : []));
     case 'sacrificed_this_way':
       // What this resolution sacrificed, where it is now ("… sacrifices a creature. Return it to the battlefield").
       return movedThisWay(ctx, { how: 'sacrificed' }).flatMap((m) => (g.objects[m.id] ? [g.objects[m.id]!] : []));
@@ -263,7 +266,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -383,6 +386,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0) &&
           // Aclazotz: "For each opponent who can't [discard a card]".
           (!e.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
+          // Bandit's Talent: "for each opponent who has one or fewer cards in hand".
+          (e.handAtMost === undefined || zoneList(g, 'hand', p).length <= e.handAtMost) &&
           // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
           (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)),
       ).length;
@@ -494,7 +499,13 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const blocking = o && g.combat ? Object.entries(g.combat.blockers).filter(([id, bl]) => g.objects[id]?.zcc === bl.zcc && (bl.blocking === o.id || bl.alsoBlocking?.includes(o.id))).length : 0;
       return Math.max(0, blocking - (e.beyond ?? 0));
     }
+    case 'entered_this_turn': {
+      // Hobgoblin Bandit Lord: "the number of Goblins that entered the battlefield under your control this turn".
+      return enteredThisTurn(g, ctx.controller, e.filter as ObjectFilter);
+    }
     case 'card_types': {
+      // Kefka, Court Mage: "for each card type among cards discarded this way".
+      if (e.discardedThisWay) return new Set((ctx.resolution?.moves ?? []).filter((m) => m.effect === 'discard' && m.from === 'hand').flatMap((m) => m.types)).size;
       // "the number of card types among cards in your graveyard" / "in all graveyards" / "in your opponents' graveyards"
       const whose = e.whose === 'all' ? g.order : e.whose === 'opponents' ? g.order.filter((p) => p !== ctx.controller) : [ctx.controller];
       return new Set(whose.flatMap((p) => zoneList(g, 'graveyard', p)).flatMap((id) => faceOf(g, g.objects[id]!).types)).size;

@@ -2,7 +2,7 @@ import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects, refPlayers } from './resolve.js';
-import type { GameEvent, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
+import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -58,6 +58,10 @@ export interface TurnLog {
   nonlandLeft?: boolean;
   /** Permanents that entered the battlefield this turn, by controller (celebration). */
   entered?: Record<PlayerId, ObjectId[]>;
+  /** Elanor Gardner: what each player sacrificed this turn, as it last existed. */
+  sacrificedBy?: Record<PlayerId, { types: string[]; subtypes: string[] }[]>;
+  /** What each of them was as it entered — for a token that has since left and ceased to exist (CR 704.5d). */
+  enteredAs?: Record<ObjectId, { types: string[]; subtypes: string[]; supertypes: string[]; token?: true }>;
   /** CR 702.185c: a spell was warped this turn. */
   warped?: boolean;
   /** Who has targeted each object this turn (valiant: "for the first time each turn"). */
@@ -89,7 +93,7 @@ export interface TurnLog {
   /** Players who activated a loyalty ability this turn (The Chain Veil). */
   loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
-  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; source?: ObjectId; zcc?: number }[];
+  combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; legendary?: boolean; source?: ObjectId; zcc?: number }[];
 }
 
 export function newTurnLog(): TurnLog {
@@ -104,6 +108,13 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
   for (const e of events) {
     switch (e.type) {
+      case 'sacrificed': {
+        const lk = g.lastKnown?.[e.object];
+        const o = g.objects[e.object];
+        const face = o ? g.cards[o.card]?.faces[o.face ?? 0] : undefined;
+        ((log.sacrificedBy ??= {})[e.player] ??= []).push({ types: [...(lk?.types ?? face?.types ?? [])], subtypes: [...(lk?.subtypes ?? face?.subtypes ?? [])] });
+        break;
+      }
       case 'ability_activated':
         if (e.loyalty && !(log.loyaltyActivated ??= []).includes(e.player)) log.loyaltyActivated.push(e.player);
         break;
@@ -130,12 +141,14 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to === 'battlefield') {
           const o = g.objects[e.object];
           if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
+          if (o) recordEnteredAs(g, log, o);
         }
         break;
       }
       case 'created': {
         const o = g.objects[e.object];
         if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
+        if (o) recordEnteredAs(g, log, o);
         // "if you created a token this turn" (Idol of Oblivion)
         if (!(log.createdToken ??= []).includes(e.controller)) log.createdToken.push(e.controller);
         (log.tokensCreated ??= {})[e.controller] = (log.tokensCreated[e.controller] ?? 0) + 1;
@@ -186,7 +199,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
           const s = g.objects[e.source]!;
           const c = chars(g, s);
-          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander), source: s.id, zcc: s.zcc });
+          (log.combatDamagers ??= []).push({ player: e.to.player, controller: s.controller, types: [...c.types], subtypes: [...c.subtypes], commander: Boolean(s.commander), ...(c.supertypes.includes('Legendary') ? { legendary: true } : {}), source: s.id, zcc: s.zcc });
         }
         if (e.to.kind === 'permanent') {
           const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
@@ -317,6 +330,20 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const name = source ? nameOf(g, source) : '';
       return (g.castNames?.[controller] ?? []).filter((n) => n === name).length >= 2;
     }
+    case 'had_keyword': {
+      // Wilhelt, the Rotcleaver: "Whenever another Zombie you control dies, if it didn't have decayed" — as it last existed.
+      const r = ctx.trigger?.object;
+      const last = r ? g.lastKnown?.[r.id] : undefined;
+      return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && last.keywords?.includes(String(cond.keyword)));
+    }
+    case 'was_attacking': {
+      // Zurgo Stormrender: "if it was attacking" — the creature that left, as it last existed on the battlefield.
+      const r = ctx.trigger?.object;
+      const a = r ? g.combat?.attackers[r.id] : undefined;
+      const last = r ? g.lastKnown?.[r.id] : undefined;
+      const zcc = r && last && (last.zcc === r.zcc || last.zcc === r.zcc - 1) ? last.zcc : r?.zcc;
+      return Boolean(a && a.zcc === zcc);
+    }
     case 'was_type': {
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;
@@ -360,6 +387,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'combat_damage_by': {
       // CR 702.76a (prowl): "a source you controlled that had any of this spell's creature types";
       // CR 702.173a (freerunning): "an Assassin creature or a commander under your control".
+      // Blitzball: "if an opponent was dealt combat damage by a legendary creature this turn" — anyone's creature.
+      if (cond.toOpponent) return (g.turnLog.combatDamagers ?? []).some((d) => d.player !== controller && d.types.includes('Creature') && (!cond.legendary || d.legendary));
       const mine = (g.turnLog.combatDamagers ?? []).filter((d) => d.controller === controller);
       if (cond.sharesType) {
         const f = source ? faceOf(g, source) : null;
@@ -499,12 +528,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const total = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).reduce((n, o) => n + Math.max(0, stat(g, o)), 0);
       return cmp(total, cond);
     }
-    case 'entered_this_turn': {
-      // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
-      const ids = g.turnLog.entered?.[controller] ?? [];
-      const n = ids.filter((id) => g.objects[id] && matchesFilter(g, g.objects[id]!, (cond.filter ?? {}) as ObjectFilter, { controller, anyZone: true })).length;
+    case 'sacrificed_this_turn': {
+      // Elanor Gardner: "if you sacrificed a Food this turn"; Havengul Laboratory: "three or more Clues".
+      const f = (cond.filter ?? {}) as ObjectFilter;
+      const n = (g.turnLog.sacrificedBy?.[controller] ?? []).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
       return cmp(n, cond);
     }
+    case 'entered_this_turn':
+      // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
+      return cmp(enteredThisTurn(g, controller, (cond.filter ?? {}) as ObjectFilter), cond);
     case 'or':
       return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
     // Field of the Dead: "you control seven or more lands with different names" (CR 201.2)
@@ -683,4 +715,31 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     default:
       return false;
   }
+}
+
+function recordEnteredAs(g: GameState, log: TurnLog, o: GameObject): void {
+  const c = chars(g, o);
+  (log.enteredAs ??= {})[o.id] = { types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], ...(o.token ? { token: true as const } : {}) };
+}
+
+/**
+ * How many permanents matching a filter entered the battlefield under a player's control this turn (celebration, Hobgoblin
+ * Bandit Lord) — counting a token that has since left the battlefield as it was when it entered.
+ */
+export function enteredThisTurn(g: GameState, controller: PlayerId, f: ObjectFilter): number {
+  const ids = g.turnLog.entered?.[controller] ?? [];
+  return ids.filter((id) => {
+    const o = g.objects[id];
+    if (o) return matchesFilter(g, o, f, { controller, anyZone: true });
+    const was = g.turnLog.enteredAs?.[id];
+    const simple = Object.keys(f).every((k) => ['types', 'subtypes', 'supertypes', 'token', 'notTypes'].includes(k));
+    if (!was || !simple) return false;
+    return (
+      (!f.types || f.types.some((t) => was.types.includes(t))) &&
+      (!f.subtypes || f.subtypes.some((t) => was.subtypes.includes(t))) &&
+      (!f.supertypes || f.supertypes.every((t) => was.supertypes.includes(t))) &&
+      (!f.notTypes || !f.notTypes.some((t) => was.types.includes(t))) &&
+      (f.token === undefined || Boolean(was.token) === Boolean(f.token))
+    );
+  }).length;
 }

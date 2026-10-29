@@ -4,6 +4,7 @@ import type {
   AbilityNode,
   ActivatedAbility,
   Amount,
+  AmountExpr,
   Color,
   CombatRules,
   ConditionNode,
@@ -25,14 +26,28 @@ import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf } from './z
  * CR 106.12b: Mana Reflection, Nyxbloom Ancient — "If you tap a permanent for mana, it produces three times as much of
  * that mana instead." How many times as much a player's permanents produce when tapped for mana (they multiply).
  */
-export function manaMultiplier(g: GameState, player: PlayerId): number {
-  let f = 1;
+export function manaMultiplier(g: GameState, player: PlayerId, tapped: GameObject): number {
+  const m = manaMultipliers(g, player);
+  return m.basicLand === 1 ? m.any : m.any * (isBasicLand(g, tapped) ? m.basicLand : 1);
+}
+
+/** Virtue of Strength: "If you tap a basic land for mana, …" — that factor, and the one for any permanent. */
+export function manaMultipliers(g: GameState, player: PlayerId): { any: number; basicLand: number } {
+  const out = { any: 1, basicLand: 1 };
   for (const id of abilitySources(g)) {
     const s = g.objects[id];
     if (!s || s.zone !== 'battlefield' || s.controller !== player) continue;
-    for (const a of objectAbilities(g, s)) if (a.kind === 'static' && a.effect.type === 'mana_multiplier') f *= Math.max(1, Number(a.effect.factor ?? 1));
+    for (const a of objectAbilities(g, s)) {
+      if (a.kind !== 'static' || a.effect.type !== 'mana_multiplier') continue;
+      out[a.effect.basicLand ? 'basicLand' : 'any'] *= Math.max(1, Number(a.effect.factor ?? 1));
+    }
   }
-  return f;
+  return out;
+}
+
+export function isBasicLand(g: GameState, o: GameObject): boolean {
+  const c = chars(g, o);
+  return c.supertypes.includes('Basic') && c.types.includes('Land');
 }
 
 /** CR 700.9: it has a counter on it, is equipped, or is enchanted by an Aura its controller controls. */
@@ -353,14 +368,17 @@ function staticAmount(g: GameState, a: Amount | undefined, source: GameObject, a
   } finally {
     counting.pop();
   }
-  // Counts of objects, cards and players don't depend on power and toughness, so they can be reused.
-  if (amountMemo && typeof a === 'object' && a.kind !== 'stat' && a.kind !== 'sum') {
+  // Counts of objects, cards and players don't depend on power and toughness, so they can be reused (Eidolon of Countless
+  // Battles: a sum of two such counts too).
+  if (amountMemo && typeof a === 'object' && reusableCount(a as AmountExpr)) {
     let m = amountMemo.get(a);
     if (!m) amountMemo.set(a, (m = new Map()));
     m.set(key, n);
   }
   return n;
 }
+
+const reusableCount = (a: AmountExpr): boolean => a.kind !== 'stat' && (a.kind !== 'sum' || ((a as { parts?: AmountExpr[] }).parts ?? []).every(reusableCount));
 
 /** The P/T parts of a static ability's effect. */
 function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pick<ActiveEffect, 'pt' | 'set'> {

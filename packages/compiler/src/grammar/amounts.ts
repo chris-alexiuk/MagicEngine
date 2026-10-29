@@ -118,6 +118,14 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
   if (moved) return moved;
+  // Bioengineered Future: "for each land that entered the battlefield under your control this turn".
+  const enteredEach = /^(?!other )(.+?) that entered the battlefield under your control this turn$/.exec(t);
+  if (enteredEach) {
+    const pf = parseFilter(enteredEach[1]!, b.clone());
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.other) return { kind: 'entered_this_turn', filter: pf.filter };
+  }
+  // Kefka, Court Mage: "for each card type among cards discarded this way".
+  if (t === 'card type among cards discarded this way') return { kind: 'card_types', discardedThisWay: true };
   // Discordant Spirit: "for each 1 damage dealt to you this turn".
   if (t === '1 damage dealt to you this turn') return { kind: 'life_this_turn', who: 'you', stat: 'damage' };
   // Mobilized District: "for each legendary creature and planeswalker you control" — each permanent that's either.
@@ -160,6 +168,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Smuggler's Share: "for each opponent who drew two or more cards this turn", "… who had two or more lands enter the
   // battlefield under their control this turn".
   if (/^opponent who drew a card this way$/.test(t)) return { kind: 'players', who: 'opponents', drewThisWay: true };
+  // Bandit's Talent: "for each opponent who has one or fewer cards in hand".
+  const fewHand = /^opponent who has (no|one or fewer|two or fewer) cards in hand$/.exec(t);
+  if (fewHand) return { kind: 'players', who: 'opponents', handAtMost: { no: 0, 'one or fewer': 1, 'two or fewer': 2 }[fewHand[1] as 'no'] };
   // Aclazotz, Deepest Betrayal: "Each opponent discards a card. For each opponent who can't, you draw a card."
   if (t === "opponent who didn't discard a card this way") return { kind: 'players', who: 'opponents', discardedNone: true };
   const drewN = /^(opponent|player) who drew (two|three|four) or more cards this turn$/.exec(t);
@@ -252,6 +263,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // Volcanic Torrent: "the number of spells you've cast this turn".
   if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Hobgoblin Bandit Lord: "the number of Goblins that entered the battlefield under your control this turn".
+  const enteredThisTurn = /^the number of (.+?) that entered the battlefield under your control this turn$/.exec(t);
+  if (enteredThisTurn) {
+    const pf = parseFilter(enteredThisTurn[1]!, b);
+    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { kind: 'entered_this_turn', filter: pf.filter };
+  }
   // Chandra's Incinerator: "the total amount of noncombat damage dealt to your opponents this turn".
   // Notorious Throng: "the damage dealt to your opponents this turn"; Simulacrum: "the damage dealt to you this turn".
   const dealtTo = /^the (?:total )?(?:amount of )?(noncombat )?damage dealt to (your opponents|you) this turn$/.exec(t);

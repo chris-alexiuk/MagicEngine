@@ -134,6 +134,8 @@ export interface CostLKI {
 }
 
 export interface GameObject {
+  /** Ojer Pakpatiq: "it gains rebound" — this incarnation of the spell (CR 702.88a). */
+  reboundGranted?: number;
   id: ObjectId;
   /** Key into GameState.cards. */
   card: string;
@@ -1015,7 +1017,7 @@ export interface GameState {
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */

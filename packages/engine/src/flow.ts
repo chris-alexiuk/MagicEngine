@@ -255,7 +255,8 @@ function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEven
     (a) => a.kind === 'static' && a.effect.type === 'resolve_to_hand' && evalCondition(a.effect.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }),
   );
   // CR 702.88a (rebound): cast from your hand, it's exiled instead, to be cast again at your next upkeep.
-  const rebound = !toHand && o.cast?.from === 'hand' && printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'rebound');
+  // Ojer Pakpatiq: a spell that gained rebound.
+  const rebound = !toHand && o.cast?.from === 'hand' && (o.reboundGranted === o.zcc || printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'rebound'));
   if (rebound) {
     const controller = o.controller;
     moveObject(g, o.id, 'exile', events);

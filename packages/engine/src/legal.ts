@@ -9,7 +9,7 @@ import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
-import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
+import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets, targetCandidates } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -297,7 +297,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const from = out.length;
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color"); with "If …, add … instead" (Urza's
       // Tower, Incubation Druid), the ways the usual mana can be made.
-      const first = ab.effects[0];
+      // Empowered Autogenerator: "Put a charge counter on this artifact. Add X mana …" — the mana, after what comes first.
+      const first = ab.effects.find((e) => e.type === 'add_mana' || e.type === 'if') ?? ab.effects[0];
       const effect = (first?.type === 'if' ? ((first.else as AddManaEffect[] | undefined)?.[0] ?? (first.effects as AddManaEffect[] | undefined)?.[0]) : first) as AddManaEffect | undefined;
       if (effect?.combination) {
         // "X mana in any combination of colors": every mix while there are few; otherwise one of each color (any other
@@ -588,12 +589,12 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       crew.push(best);
     } else if (c.type === 'crew') {
       // The strongest creatures first, until there's enough power.
-      const options = crewCandidates(g, player, source).sort((a, b) => power(g, g.objects[b]!) - power(g, g.objects[a]!));
+      const options = crewCandidates(g, player, source).sort((a, b) => crewPower(g, g.objects[b]!) - crewPower(g, g.objects[a]!));
       let total = 0;
       for (const id of options) {
         if (total >= Number(c.power)) break;
         crew.push(id);
-        total += power(g, g.objects[id]!);
+        total += crewPower(g, g.objects[id]!);
       }
       if (total < Number(c.power)) return null;
     }

@@ -1,6 +1,6 @@
 import { activationProhibited } from './cast-bans.js';
 import type { AddManaEffect } from '@mtg/schema';
-import { canActivateTapAbilities, manaAbilities, manaMultiplier, matchesFilter, objectAbilities } from './characteristics.js';
+import { canActivateTapAbilities, manaAbilities, manaMultipliers, isBasicLand, matchesFilter, objectAbilities } from './characteristics.js';
 import { abilitySources } from './zones.js';
 import type { ObjectFilter } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
@@ -32,10 +32,12 @@ interface Source {
 function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose): Source[] {
   const out: Source[] = [];
   // CR 106.12b: Nyxbloom Ancient's "three times as much".
-  const times = manaMultiplier(g, player);
-  const many = (mana: ManaColor[]) => (times === 1 ? mana : Array.from({ length: times }, () => mana).flat());
+  const mult = manaMultipliers(g, player);
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
+    // Virtue of Strength: "If you tap a basic land for mana" — only for those.
+    const times = mult.basicLand === 1 || o.controller !== player ? mult.any : mult.any * (isBasicLand(g, o) ? mult.basicLand : 1);
+    const many = (mana: ManaColor[]) => (times === 1 ? mana : Array.from({ length: times }, () => mana).flat());
     if (o.controller !== player || o.tapped || !canActivateTapAbilities(g, o) || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {

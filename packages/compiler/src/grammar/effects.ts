@@ -88,6 +88,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/\b([Dd])estroy ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
     list.split(/,? and |, /).map((one, i) => `${i === 0 ? `${d}estroy` : 'Destroy'} ${one}.`).join(' '),
   );
+  // Zurgo Stormrender: "draw a card if it was attacking. Otherwise, each opponent loses 1 life."
+  text = text.replace(/^([Dd]raw a card|[^.]+?) if (it was attacking)\. Otherwise, ([^.]+)\./, (_m, a: string, c: string, o: string) => `If ${c}, ${a[0]!.toLowerCase()}${a.slice(1)}. Otherwise, ${o}.`);
+  // Eumidian Hatchery: "for each hatchling counter on it, create a 1/1 black Insect creature token with flying".
+  // (Only a plain count: "For each opponent, create … attacking that player" and "… a copy of it" are each one in turn.)
+  text = text.replace(/^([Ff])or each ([^,.]+), (create [^.]+)\./, (m, _f: string, each: string, make: string) =>
+    /\b(?:opponent|player)\b/.test(each) || /\b(?:it|its|that|those|them|they|copy|copies)\b/.test(make) ? m : `C${make.slice(1)} for each ${each}.`,
+  );
   // Aclazotz, Deepest Betrayal: "each opponent discards a card. For each opponent who can't, you draw a card."
   text = text.replace(/\b([Ee]ach opponent discards a card)\. For each opponent who can't, ([^.]+)\./, (_m, d: string, then: string) => `${d}. ${then[0]!.toUpperCase()}${then.slice(1)} for each opponent who didn't discard a card this way.`);
   // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
@@ -2062,12 +2069,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return [{ type: 'grant_graveyard_cast', filter }];
     }
   }
+  // Ojer Pakpatiq: "Whenever you cast an instant spell from your hand, it gains rebound." (Taigam: "that spell gains
+  // rebound") — the spell cast.
+  if (/^(?:[Ii]t|[Tt]hat spell) gains rebound$/.test(s) && b.it?.ref === 'trigger_object') return [{ type: 'grant_rebound', what: b.it }];
   // Containment Construct: "If you do, you may play that card this turn." — the card the instruction before moved.
   const playIt = /^[Yy]ou may (play|cast) (that card|it) (this turn|until the end of your next turn)$/.exec(s);
   if (playIt) {
     const what = attempt(b, (b) => {
       const r = parseObjectRef(playIt[2]!, b);
-      return r && !r.plural && ['trigger_object', 'target', 'chosen_object'].includes(r.ref.ref) ? r : null;
+      return r && !r.plural && ['trigger_object', 'target', 'chosen_object', 'milled_this_way'].includes(r.ref.ref) ? r : null;
     });
     if (what) return [{ type: 'grant_play', what: what.ref, mode: playIt[1], ...(playIt[3] === 'this turn' ? {} : { until: 'next_turn' }) }];
   }
@@ -3677,6 +3687,11 @@ const VERBS: Record<string, VerbHandler> = {
       b.milled = true;
       return [{ type: 'mill', amount: { kind: 'cards', zone: 'library', who: 'each', player, half: half[1] as 'up' | 'down' }, who }];
     }
+    // Riverchurn Monument: "Any number of target players each mill cards equal to the number of cards in their graveyard."
+    if (args === 'cards equal to the number of cards in their graveyard' && (who.ref === 'players' || who.ref === 'target')) {
+      b.milled = true;
+      return [{ type: 'mill', amount: { kind: 'cards', zone: 'graveyard', who: 'each', player: { ref: 'each_player' } }, who }];
+    }
     // Drown in Dreams: "Target player mills twice X cards."; Jace, the Perfected Mind: "… mills three times X cards."
     const timesX = /^(twice|three times|four times) X cards$/.exec(args);
     if (timesX) {
@@ -3687,6 +3702,8 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = m && parseAmount(m[1]!);
     if (amount === null || amount === undefined) return null;
     b.milled = true;
+    // Tablet of Discovery: "mill a card. You may play that card this turn." — the card milled.
+    if (amount === 1 && who.ref === 'you') b.named = { ...b.named, 'that card': { ref: 'milled_this_way' } };
     return [{ type: 'mill', amount, who }];
   },
   // CR 701.68a: "blight 2", "target opponent blights 2"
@@ -4041,6 +4058,17 @@ const VERBS: Record<string, VerbHandler> = {
     // Lively Dirge: "up to two creature cards with total mana value 4 or less"; Technomancer: "any number of artifact creature
     // cards with total mana value 6 or less".
     // Eerie Ultimatum: "any number of permanent cards with different names".
+    // Exalted Flamer of Tzeentch: "return an instant or sorcery card at random from your graveyard to your hand"; Moldgraf
+    // Monstrosity: "two creature cards at random" — chosen at random, not by the player.
+    const atRandom = /^(a|an|two|three) ((?!.*\btarget\b).+? cards?) at random from your graveyard to (your hand|the battlefield)$/.exec(args);
+    if (atRandom && who.ref === 'you') {
+      const n = /^an?$/.test(atRandom[1]!) ? 1 : parseAmount(atRandom[1]!);
+      const pf = parseFilter(`${atRandom[2]} in your graveyard`, b);
+      if (typeof n !== 'number' || !pf || pf.plural !== n > 1) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      b.it = { ref: 'created' };
+      return [{ type: 'return_chosen', filter, amount: n, to: atRandom[3] === 'your hand' ? 'hand' : 'battlefield', random: true }];
+    }
     const differentNames = / with different names(?= from your graveyard)/.test(args);
     if (differentNames) args = args.replace(/ with different names(?= from your graveyard)/, '');
     if (differentNames && !/^(?:up to (?:two|three)|any number of) /.test(args)) return null;

@@ -229,6 +229,8 @@ export function moveObject(
       ...(isModified(g, o) ? { modified: true } : {}),
       types: [...c.types],
       subtypes: [...c.subtypes],
+      // Wilhelt, the Rotcleaver: "if it didn't have decayed".
+      ...(c.keywords.length ? { keywords: [...new Set(c.keywords.map((k) => k.id))] } : {}),
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
       ...(o.attachedTo ? { attachedTo: { ...o.attachedTo } } : {}),
       ...(o.copyOf ? { copyOf: o.copyOf } : {}),

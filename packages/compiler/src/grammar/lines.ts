@@ -487,7 +487,10 @@ const NO_CHOICE = new Set(['gain_life', 'lose_life', 'deal_damage', 'draw', 'mil
 const noChoices = (e: EffectNode): boolean =>
   e.type === 'if'
     ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices)
-    : NO_CHOICE.has(e.type) || (e.type === 'sacrifice' && (e.what as Ref | undefined)?.ref === 'self');
+    : NO_CHOICE.has(e.type) ||
+      (e.type === 'sacrifice' && (e.what as Ref | undefined)?.ref === 'self') ||
+      // Temple of Cyclical Time: "Remove a time counter from this land." — one named kind (no choice of kind).
+      (e.type === 'remove_counters' && e.counter !== undefined && !e.upTo && !e.ifCant);
 
 const andIf = (a: ActivatedAbility, c: ConditionNode) => (a.activateIf = a.activateIf ? { type: 'and', all: [a.activateIf, c] } : c);
 const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
@@ -626,6 +629,18 @@ export const activatedRule: GrammarRule = {
       return { ...node, effects: [{ type: 'add_mana', anyColor: 1, times }], mana: true };
     }
     if (cost.loyalty === undefined) {
+      // Empowered Autogenerator: "{T}: Put a charge counter on this artifact. Add X mana of any one color, where X is the
+      // number of charge counters on this artifact." — the counter first, then the mana.
+      const before = /^(Put an? \S+ counter on (?:this \w+|~)\.) (Add [^.]+\.)$/.exec(effectText);
+      let first: EffectNode[] = [];
+      if (before) {
+        const fb = new Binder(env);
+        fb.it = { ref: 'self' };
+        const done = parseEffectText(before[1]!, fb);
+        if (!done || fb.targets.length || !done.every(noChoices)) return null;
+        first = done;
+        effectText = before[2]!;
+      }
       const mana = /^Add (.+?)\.(?: (.+))?$/.exec(effectText);
       // "Add {G} for each Elf you control", "Add an amount of {G} equal to ~'s power"; storage lands' "for each storage
       // counter removed this way" (X, the number removed).
@@ -720,7 +735,7 @@ export const activatedRule: GrammarRule = {
         const rest = mana[2] ? parseEffectText(mana[2], b) : [];
         // A mana ability resolves at once (CR 605.3b), so its other effects can't stop to ask anything.
         if (!rest || b.targets.length || !rest.every(noChoices)) return null;
-        return { ...node, effects: [effect, ...rest], mana: true };
+        return { ...node, effects: [...first, effect, ...rest], mana: true };
       }
     }
     // "Remove any number of … counters" is X only for mana abilities so far; "Sacrifice X Squirrels" is announced (CR 107.3a).
@@ -783,6 +798,20 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Ruby, Daring Tracker: "Whenever Ruby attacks while you control a creature with power 4 or greater" — the condition is
   // part of the trigger event, checked as it attacks (not again as the ability resolves).
   // ("while saddled" is the attack trigger's own `saddled`, below.)
+  // Jenova, Ancient Calamity: "Whenever a Mutant you control dies during your turn" — only as it happens on your turn.
+  const yourTurn = word === 'Whenever' ? /^(.+) during your turn$/.exec(t) : null;
+  if (yourTurn) {
+    const base = parseTrigger(word, yourTurn[1]!, b);
+    if (base && base.trigger.type !== 'phase' && !base.trigger.while) return { ...base, trigger: { ...base.trigger, while: { type: 'your_turn', value: true } } };
+  }
+  // Emberwilde Captain: "Whenever an opponent attacks you while you're the monarch".
+  const oppWhile = /^(an opponent attacks you) while (.+)$/.exec(t);
+  if (oppWhile) {
+    const base = parseTrigger(word, oppWhile[1]!, b);
+    const cond = base ? parseCondition(oppWhile[2]!, b.clone()) : null;
+    if (!base || !cond || base.trigger.while) return null;
+    return { ...base, trigger: { ...base.trigger, while: cond } };
+  }
   const whileCond = /^(~|this creature) attacks while (?!saddled$)(.+)$/.exec(t);
   if (whileCond) {
     const base = parseTrigger(word, '~ attacks', b);
@@ -1241,6 +1270,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Manabarbs: "… deals 1 damage to that player" — who tapped it.
     return { trigger: { type: 'tapped_for_mana', subject: { ref: 'all', filter: { ...pf.filter, ...controller } }, its: true }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
+  // Oscorp Industries: "When this land enters from a graveyard"; River Kelpie: "Whenever this creature or another permanent
+  // enters from a graveyard" — any permanent (this one too).
+  const fromYard = /^(.+?) enters from a graveyard$/.exec(t);
+  if (fromYard) {
+    const who = fromYard[1] === '~ or another permanent' ? 'a permanent' : fromYard[1]!;
+    const inner = parseTrigger(word, `${who} enters`, b);
+    if (!inner || inner.trigger.type !== 'enters' || inner.trigger.batch) return null;
+    return { ...inner, trigger: { ...inner.trigger, fromZone: 'graveyard' } };
+  }
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
   // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34)
@@ -1350,6 +1388,22 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const parsed = three.slice(1).map((e) => parseTrigger(word, `~ ${e}`, b));
     if (!parsed.every(Boolean)) return null;
     return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: { ref: 'self' }, player: null };
+  }
+  // Minsc & Boo: "When Minsc & Boo enters and at the beginning of your upkeep" (CR 603.2).
+  const entersAt = /^~ enters and at (the beginning of .+)$/.exec(t);
+  if (entersAt) {
+    const one = parseTrigger(word, '~ enters', b);
+    const two = one ? parseTrigger('At', entersAt[1]!, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'self' }, player: one.player ?? two.player };
+  }
+  // Heaped Harvest: "When this artifact enters and when you sacrifice it" (CR 603.2).
+  const entersSac = /^~ enters and when you sacrifice (?:it|~)$/.exec(t);
+  if (entersSac) {
+    const one = parseTrigger(word, '~ enters', b);
+    const two = one ? parseTrigger(word, 'you sacrifice ~', b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'self' }, player: one.player ?? two.player };
   }
   // Cityscape Leveler: "When you cast this spell and whenever this creature attacks" (CR 603.2) — from the stack, then from
   // the battlefield.
@@ -2469,7 +2523,7 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // CR 701.38d: "While voting, you get an additional vote." / "While voting, you may vote an additional time."
   if (/^While voting, you get an additional vote$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'extra_vote' };
   // Seedborn Muse (CR 502.3 lets an effect untap permanents in another player's untap step).
-  if (/^Untap all permanents you control during each other player's untap step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'untap_during_others' };
+  if (/^[Uu]ntap all permanents you control during each other player's untap step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'untap_during_others' };
   if (/^While voting, you may vote an additional time$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'may_extra_vote' };
   return null;
 }
@@ -2484,9 +2538,12 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const inner = parseContinuous(`${youToo[1]}${youToo[2] ? ` and ${youToo[2]}` : ''} have ${youToo[3]}`, b);
     return inner && !inner.condition ? { ...inner, alsoPlayer: youToo[3] as 'hexproof' | 'shroud' } : null;
   }
+  // Shorikai's Pilot token: "This token crews Vehicles as though its power were 2 greater." (and saddles Mounts).
+  if (/^~ (?:saddles Mounts and )?crews Vehicles as though its power were 2 greater$/.test(body)) return { type: 'continuous', affected: { ref: 'self' }, rules: ['crews_plus_2'] };
   // Bender's Waterskin, Unwinding Clock: "Untap this artifact / all artifacts you control during each other player's untap step."
   // Dazzling Theater: "Untap each creature you control during each other player's untap step."
-  const untapOthers = /^Untap (~|all (.+?)|each (.+?)) during each other player's untap step$/.exec(body);
+  // Quest for Renewal: "As long as …, untap all creatures you control during each other player's untap step."
+  const untapOthers = /^[Uu]ntap (~|all (.+?)|each (.+?)) during each other player's untap step$/.exec(body);
   // (Seedborn Muse's "all permanents you control" is a rule for the player.)
   if (untapOthers && untapOthers[2] !== 'permanents you control' && untapOthers[3] !== 'permanent you control') {
     if (untapOthers[1] === '~') return { type: 'continuous', affected: { ref: 'self' }, rules: ['untap_during_others'] };
@@ -3184,7 +3241,9 @@ export const quantityReplacementRule: GrammarRule = {
     const counters = /^If one or more (\S+) counters would be put on (.+), ((?:that many|twice that many|three times that many)[^,]*?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (counters) {
       const op = quantityOp(counters[3]!);
-      const pf = parseFilter(counters[2]!.replace(/^(?:a|an) /, ''), b);
+      // Benevolent Hydra: "on another creature you control".
+      const pf = parseFilter(counters[2]!.replace(/^(?:a|an|another) /, ''), b);
+      if (pf && /^another /.test(counters[2]!)) pf.filter.other = true;
       return op && pf && !pf.plural ? make({ event: 'counters', counter: counters[1]!, filter: pf.filter, ...op }) : null;
     }
     // Vorinclex, Monstrous Raider: "If an opponent would put one or more counters on a permanent or player, they put half that
@@ -3223,9 +3282,11 @@ export const quantityReplacementRule: GrammarRule = {
       const filter: ObjectFilter = creature ? { types: ['Creature'] } : {};
       const adjective = damage[2]!.trim();
       if (adjective) {
-        const color = COLOR_WORDS[adjective];
-        if (!color) return null;
-        filter.colors = [color];
+        // Mechanized Warfare: "a red or artifact source you control" — either.
+        const each = adjective.split(' or ').map((w): ObjectFilter | null => (COLOR_WORDS[w] ? { colors: [COLOR_WORDS[w]!] } : w === 'artifact' ? { types: ['Artifact'] } : null));
+        if (each.some((f) => !f)) return null;
+        if (each.length === 1) Object.assign(filter, each[0]);
+        else filter.anyOf = each as ObjectFilter[];
       }
       if (damage[1] === 'another') filter.other = true;
       if (damage[3]) filter.controller = 'you';
@@ -3240,6 +3301,16 @@ export const quantityReplacementRule: GrammarRule = {
         // Sawhorn Nemesis: "… to the chosen player or a permanent they control"
         ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });
+    }
+    // Uncivil Unrest: "If a creature you control with a +1/+1 counter on it would deal damage to a permanent or player, it
+    // deals double that damage instead." — any description of the source.
+    const described = /^If (a|an|another) (.+?) would deal (noncombat )?damage to (a permanent or player|any target), it deals (double|triple) that damage instead\.$/.exec(line);
+    if (described) {
+      const op = quantityOp(`${described[5]} that damage`);
+      const pf = parseFilter(described[2]!, b);
+      if (!op || !pf || pf.plural || pf.filter.zone) return null;
+      if (described[1] === 'another') pf.filter.other = true;
+      return make({ event: 'damage', filter: pf.filter, ...op, ...(described[3] ? { noncombat: true as const } : {}) });
     }
     return null;
   },
@@ -3954,8 +4025,9 @@ export const combatLimitRule: GrammarRule = {
 export const manaMultiplierRule: GrammarRule = {
   id: 'mana_multiplier',
   parse(line, original) {
-    const m = /^If you tap a permanent for mana, it produces (twice|three times) as much of that mana instead\.$/.exec(line);
-    return m ? ({ kind: 'static', text: original, effect: { type: 'mana_multiplier', factor: m[1] === 'twice' ? 2 : 3 } } as StaticAbility) : null;
+    // Virtue of Strength: "If you tap a basic land for mana, …".
+    const m = /^If you tap a (permanent|basic land) for mana, it produces (twice|three times) as much of that mana instead\.$/.exec(line);
+    return m ? ({ kind: 'static', text: original, effect: { type: 'mana_multiplier', factor: m[2] === 'twice' ? 2 : 3, ...(m[1] === 'basic land' ? { basicLand: true } : {}) } } as StaticAbility) : null;
   },
 };
 

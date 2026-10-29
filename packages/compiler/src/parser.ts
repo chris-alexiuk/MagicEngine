@@ -123,7 +123,12 @@ export class ParserRegistry {
         if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
         // Nighthowler, Eidolon of Countless Battles (bestow): "This creature and enchanted creature each get +X/+X, where X is …"
         const andEnchanted = /^(?:This creature|~) and enchanted creature each get (.+)\.$/.exec(l);
-        if (andEnchanted) return [`This creature gets ${andEnchanted[1]}.`, `Enchanted creature gets ${andEnchanted[1]}.`];
+        if (andEnchanted) {
+          // Eidolon of Countless Battles: "+1/+1 for each creature you control and +1/+1 for each Aura you control" — the two
+          // counts added.
+          const each = andEnchanted[1]!.replace(/^(\+\d+\/\+\d+) for each (.+?) and \1 for each (.+)$/, '$1 for each $2 and each $3');
+          return [`This creature gets ${each}.`, `Enchanted creature gets ${each}.`];
+        }
         // Tidal Barracuda: "Any player may cast spells as though they had flash."
         if (l === 'Any player may cast spells as though they had flash.') return ['Players may cast spells as though they had flash.'];
         // Vizier of the Menagerie: "You can spend mana of any type to cast creature spells." — as though any color.
@@ -143,6 +148,9 @@ export class ParserRegistry {
         // Thryx, the Sudden Storm: "Spells you cast with mana value 5 or greater cost {1} less to cast and can't be countered."
         const costAndUncounterable = /^(.*\b[Ss]pells you cast\b.*?) cost (\{\d+\}) less to cast and can't be countered\.$/.exec(l);
         if (costAndUncounterable) return [`${costAndUncounterable[1]} cost ${costAndUncounterable[2]} less to cast.`, `${costAndUncounterable[1]} can't be countered.`];
+        // "gets +1/+1 for each creature you control and +1/+1 for each Aura you control" — the two counts added.
+        const twoEach = /^(.+? gets? )(\+\d+\/\+\d+) for each (.+?) and (\+\d+\/\+\d+) for each (.+?)\.$/.exec(l);
+        if (twoEach && twoEach[2] === twoEach[4]) return [`${twoEach[1]}${twoEach[2]} for each ${twoEach[3]} and each ${twoEach[5]}.`];
         // Khalni Heart Expedition: "Remove three quest counters from this enchantment and sacrifice it: …" — both costs.
         const removeAndSac = /^(Remove (?:a|an|\w+) \S+ counters? from (?:this \w+|~)) and sacrifice it: (.+)$/.exec(l);
         if (removeAndSac) return [`${removeAndSac[1]}, Sacrifice ~: ${removeAndSac[2]}`];

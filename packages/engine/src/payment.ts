@@ -4,7 +4,7 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planManaOnly } from './autotap.js';
-import { canActivateTapAbilities, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { canActivateTapAbilities, hasRule, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { anyColorChoices, parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
@@ -43,6 +43,11 @@ export function tapCostCandidates(g: GameState, player: PlayerId, source: GameOb
     const o = g.objects[id]!;
     return id !== source.id && o.controller === player && !o.tapped && matchesFilter(g, o, (c.filter ?? {}) as ObjectFilter, { controller: player, source });
   });
+}
+
+/** The power a creature crews or saddles with: Pilot tokens "as though its power were 2 greater". */
+export function crewPower(g: GameState, o: GameObject): number {
+  return power(g, o) + (hasRule(g, o, 'crews_plus_2') ? 2 : 0);
 }
 
 export function crewCandidates(g: GameState, player: PlayerId, vehicle: GameObject): ObjectId[] {
@@ -284,7 +289,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const chosen = choices.crew ?? [];
       const ok = crewCandidates(g, player, o);
       if (new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError('Choose untapped creatures you control to crew it.');
-      const total = chosen.reduce((n, id) => n + power(g, g.objects[id]!), 0);
+      const total = chosen.reduce((n, id) => n + crewPower(g, g.objects[id]!), 0);
       if (total < Number(c.power)) throw new RulesError(`Crewing needs total power ${c.power} or greater.`);
     } else if (c.type === 'return_unblocked') {
       const chosen = choices.returned ?? [];
@@ -493,7 +498,7 @@ export function runManaAbility(
   const before = events.length;
   const queue = [...ability.effects];
   // CR 106.12b: "it produces three times as much of that mana instead" — for an ability tapping the permanent.
-  const times = ability.cost.tap && o.zone === 'battlefield' ? manaMultiplier(g, player) : 1;
+  const times = ability.cost.tap && o.zone === 'battlefield' ? manaMultiplier(g, player, o) : 1;
   while (queue.length) {
     const e = queue.shift()!;
     const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}) });

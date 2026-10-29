@@ -487,6 +487,7 @@ interface Failure {
 }
 
 let dumped = false;
+const TRACE = process.env.FUZZ_TRACE ? { file: process.env.FUZZ_TRACE.split(':')[0]!, game: Number(process.env.FUZZ_TRACE.split(':')[1]) } : null;
 const failures: Failure[] = [];
 let actions = 0;
 let turns = 0;
@@ -556,6 +557,8 @@ for (let game = 0; game < GAMES; game++) {
     }
     const objectId = (action as { object?: string }).object;
     const label = JSON.stringify(action).slice(0, 300) + (objectId && g.objects[objectId] ? ` [${g.objects[objectId]!.card}]` : '');
+    // FUZZ_TRACE=file:N — before each action of game N, the state and action (to replay one that never returns).
+    if (TRACE && game === TRACE.game) writeFileSync(TRACE.file, JSON.stringify({ state: g, action }));
     let r;
     try {
       r = apply(g, action);

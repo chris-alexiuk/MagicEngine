@@ -3556,7 +3556,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const where = node.to === 'hand' ? 'to your hand' : node.to === 'exile' ? 'into exile' : 'to the battlefield';
     let chosen: string[];
     if (candidates.length === max && min === max && !total) chosen = candidates;
-    else {
+    else if (node.random) {
+      // Exalted Flamer of Tzeentch: "… at random from your graveyard".
+      const pool = [...candidates];
+      shuffleInPlace(g, pool);
+      chosen = pool.slice(0, max);
+    } else {
       const answer = answerOf(ctx, 'choose_objects');
       if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard${node.distinctNames ? ' with different names' : ''}${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
@@ -3579,6 +3584,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // Emry, Lurker of the Loch: "You may cast that card this turn." (CR 601.3: an effect lets it be cast from there.)
   // Hurl Through Hell: "Until the end of your next turn, you may cast that card"; "for as long as it remains exiled" — until
   // it leaves (CR 400.7); "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b).
+  // Ojer Pakpatiq: "Whenever you cast an instant spell from your hand, it gains rebound." (CR 702.88a)
+  grant_rebound(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'stack') o.reboundGranted = o.zcc;
+    return true;
+  },
+
   grant_play(node, ctx) {
     const g = ctx.g;
     const lastTurn = node.until === 'exiled' ? Number.MAX_SAFE_INTEGER : node.until === 'next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') : g.turn;
@@ -4662,6 +4673,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // "When ~ enters untapped"; Amulet of Vigor: "Whenever a permanent you control enters tapped"
     if (t.untapped && o.tapped) return [];
     if (t.tapped && !o.tapped) return [];
+    // River Kelpie: "enters from a graveyard".
+    if (t.fromZone && !(e.type === 'moved' && e.from === t.fromZone)) return [];
     // Kodama of the East Tree: "if it wasn't put onto the battlefield with this ability".
     if (t.notBySource && e.type === 'moved' && e.by?.id === check.source.id && e.by.zcc === check.source.zcc) return [];
     // "Whenever one or more tokens you control enter": once for the batch.

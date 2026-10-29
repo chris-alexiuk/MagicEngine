@@ -145,6 +145,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "you didn't activate a loyalty ability of a planeswalker this turn") return { type: 'not', cond: { type: 'this_turn', event: 'you_activated_loyalty' } };
   // Ghirapur Orrery: "if that player has no cards in hand" — the player the trigger is about.
   if (t === 'that player has no cards in hand' && b.player) return { type: 'hand', op: 'le', n: 0, who: b.player };
+  // Bandit's Talent: "if that player has one or fewer cards in hand".
+  const thatHand = /^that player has (\w+ or (?:fewer|more)) cards in hand$/.exec(t);
+  if (thatHand && b.player && b.player.ref !== 'players') {
+    const c = compare(thatHand[1]!);
+    return c ? { type: 'hand', ...c, who: b.player } : null;
+  }
   if (t === "it's the first combat phase of the turn") return { type: 'first_combat' };
   // Firemane Commando: "if none of those creatures attacked you" — the attackers just declared.
   if (t === 'none of those creatures attacked you' && b.named['those creatures']) return { type: 'attacking_you', max: 0 };
@@ -505,6 +511,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^a player was dealt combat damage this turn by a source that, at the time it dealt that damage, was under your control and had any of ~'s creature types$/.test(t)) {
     return { type: 'combat_damage_by', sharesType: true };
   }
+  // Blitzball: "an opponent was dealt combat damage by a legendary creature this turn".
+  const byLegend = /^an opponent was dealt combat damage by an? (legendary )?creature this turn$/.exec(t);
+  if (byLegend) return { type: 'combat_damage_by', toOpponent: true, ...(byLegend[1] ? { legendary: true } : {}) };
   const freerun = /^a player was dealt combat damage this turn by a creature that, at the time it dealt that damage, was an? (\w+) creature or a commander under your control$/.exec(t);
   if (freerun) return { type: 'combat_damage_by', subtype: freerun[1]!, orCommander: true };
   // Meren: "that card's mana value is less than or equal to the number of experience counters you have"; "its power is 3
@@ -558,7 +567,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'graveyard', ...c, filter };
   }
   // Threshold and friends: "there are seven or more cards in your graveyard", "seven or more cards are in your graveyard".
-  const gy = /^there are (\w+ or more) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) cards are in your graveyard$/.exec(t);
+  // Search for Azcanta: "if you have seven or more cards in your graveyard".
+  const gy = /^there are (\w+ or more) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) cards are in your graveyard$/.exec(t) ?? /^you have (\w+ or more) cards in your graveyard$/.exec(t);
   if (gy) {
     const c = compare(gy[1]!);
     return c ? { type: 'graveyard', ...c } : null;
@@ -668,6 +678,25 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Kaya, Intangible Slayer: "Exile target creature or enchantment. If it wasn't an Aura, …" — the card, now in exile.
   const wasntSub = /^it wasn't an? (Aura|Equipment|Vehicle|Saga)$/.exec(t);
   if (wasntSub && b.it && b.it.ref === 'target') return { type: 'is', of: b.it, filter: { notSubtypes: [wasntSub[1]!] } };
+  // Elanor Gardner: "if you sacrificed a Food this turn"; Havengul Laboratory: "three or more Clues"; Goblin Blast-Runner:
+  // "a permanent".
+  const sacThisTurn = /^you(?:'ve)? sacrificed (a|an|one or more|two or more|three or more) (.+?) this turn$/.exec(t);
+  if (sacThisTurn) {
+    const min = { a: 1, an: 1, 'one or more': 1, 'two or more': 2, 'three or more': 3 }[sacThisTurn[1] as 'a'];
+    const word = sacThisTurn[2]!.replace(/s$/, '');
+    const pf = word === 'permanent' ? { filter: {} as ObjectFilter } : parseFilter(word, b);
+    const keys = pf ? Object.keys(pf.filter).filter((k) => k !== 'types' && k !== 'subtypes') : ['x'];
+    if (pf && !keys.length) return { type: 'sacrificed_this_turn', filter: pf.filter, min };
+  }
+  // Zurgo Stormrender: "Whenever a creature token you control leaves the battlefield, draw a card if it was attacking." —
+  // as it last existed (CR 506.4: only during combat).
+  // Wilhelt, the Rotcleaver: "if it didn't have decayed" — the creature that died, as it last existed.
+  const hadKw = /^it (had|didn't have) (decayed|flying|haste|deathtouch|lifelink|trample|vigilance|menace|reach|defender|indestructible|first strike|double strike)$/.exec(t);
+  if (hadKw && b.it?.ref === 'trigger_object') {
+    const c: ConditionNode = { type: 'had_keyword', keyword: hadKw[2]!.replace(/ /g, '_') };
+    return hadKw[1] === 'had' ? c : { type: 'not', cond: c };
+  }
+  if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking' } } : { type: 'was_attacking' };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
@@ -754,14 +783,18 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // "if it had no -1/-1 counters on it" (persist, CR 702.79a) — about the object as it last existed.
   const counters = /^it had no (\S+) counters on it$/.exec(t);
   if (counters && b.it) return { type: 'counters', of: b.it, counter: counters[1]!, max: 0 };
+  // Blowfly Infestation: "Whenever a creature dies, if it had a -1/-1 counter on it" — as it last existed.
+  const hadOne = /^it had (?:an?|one or more) (\S+) counters? on it$/.exec(t);
+  if (hadOne && b.it) return { type: 'counters', of: b.it, counter: hadOne[1]!, min: 1 };
   // The Ozolith: "if it had counters on it" (as it last existed), "if ~ has counters on it".
   if (t === 'it had counters on it' && b.it) return { type: 'counters', of: b.it, min: 1 };
   // Unstoppable Slasher: "if it had no counters on it" — any kind.
   if (t === 'it had no counters on it' && b.it) return { type: 'counters', of: b.it, max: 0 };
   if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
-  const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);
-  if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] ?? none[2]!, max: 0 };
+  // Temple of Cyclical Time: "Activate only if it has no time counters on it" — this land.
+  const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t) ?? (!b.it || b.it.ref === 'self' ? /^it has no ()(\S+) counters on it$/.exec(t) : null);
+  if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] || none[2]!, max: 0 };
   // Garruk Relentless: "When Garruk has two or fewer loyalty counters on him, transform him."
   const orFewer = /^~ has (\w+) or fewer (\S+) counters on (?:it|him|her)$/.exec(t);
   if (orFewer) {

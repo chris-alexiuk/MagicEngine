@@ -66,7 +66,11 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // Overlord of the Hauntwoods: "a tapped colorless land token named Everywhere that is every basic land type".
   const everyBasic = / named [A-Z]\w* that is every basic land type$/.test(text.trim());
   if (everyBasic) text = text.trim().replace(/ that is every basic land type$/, '');
+  // Murmuration: "a 1/2 blue Bird creature token with flying named Storm Crow" — the name after the abilities.
+  text = text.trim().replace(/^(.+? tokens?) with ([a-z][a-z ,]*?) named ([A-Z][\w' -]*)$/, '$1 named $3 with $2');
   const m = /^(\w+) (tapped )?(?:(\d+|X)\/(\d+|X) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
+  // "… named Storm Crow for each spell you've cast this turn": the count isn't part of the name.
+  if (m?.[6] && / for each | equal to /.test(m[6])) return null;
   if (m?.[6]?.startsWith('~')) m[6] = m[6].replace(/^~/, b.env.faceName.split(',')[0]!);
   if (!m) return null;
   const amount = parseAmount(m[1]!);

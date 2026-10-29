@@ -808,7 +808,11 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     // Not "that player" / "their" later: each of them would need counting for themselves.
     const count = anyPlayers[1] === 'two' ? { count: 2 } : anyPlayers[1] === 'three' ? { count: 3 } : { count: 100, upTo: true as const };
     const spec: TargetSpec = { what: 'player', text: t, ...count, ...(anyPlayers[2] === 'opponents' ? { player: 'opponent' as const } : {}) };
-    return b.addTarget(spec);
+    const ref = b.addTarget(spec);
+    // Court of Cunning: "any number of target players each mill two cards. If you're the monarch, each of those players
+    // mills ten cards instead."
+    b.named = { ...b.named, 'each of those players': ref, 'each of those opponents': ref };
+    return ref;
   }
   // The Lord of Pain: "Whenever a player casts their first spell each turn, choose another target player." — other than
   // the player the trigger is about.
