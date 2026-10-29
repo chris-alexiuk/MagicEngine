@@ -36,6 +36,8 @@ function stateFilter(text: string, b: Binder): ObjectFilter | null {
   const t = text.trim();
   if (t === 'attacking' || t === 'blocking') return { combat: t };
   if (t === 'attacking or blocking') return { combat: 'attacking_or_blocking' };
+  // Security Bypass: "As long as enchanted creature is attacking alone" (CR 506.5).
+  if (t === 'attacking alone') return { combat: 'attacking', attackingAlone: true };
   if (t === 'tapped' || t === 'untapped') return { tapped: t === 'tapped' };
   const color = COLOR_WORDS[t];
   if (color) return { colors: [color] };
@@ -366,6 +368,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (manyAttached && (b.it?.ref === 'attached' || (!b.it && /\b(?:Equipment|Aura)\b/.test(b.env.typeLine)))) {
     return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [manyAttached[2] === 'Auras' ? 'Aura' : 'Equipment'], attachedTo: 'attached' } }, op: 'ge', n: parseAmount(manyAttached[1]!) as number };
   }
+  // Balan, Wandering Knight: "~ has double strike as long as two or more Equipment are attached to it."
+  if (manyAttached && b.it?.ref === 'self') {
+    return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [manyAttached[2] === 'Auras' ? 'Aura' : 'Equipment'], attachedTo: 'self' } }, op: 'ge', n: parseAmount(manyAttached[1]!) as number };
+  }
   // Merry, Esquire of Rohan: "~ has first strike as long as it's equipped" — "it" being this creature.
   const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
@@ -459,8 +465,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const filter = stateFilter(partner[1]!, b);
     if (filter && !filter.zone && !filter.controller) return { type: 'is', of: b.it, filter: { combatPartner: { types: ['Creature'], ...filter } } };
   }
+  // Lord Windgrace: "If a land card is discarded this way" — the one card just discarded.
+  const discardedIs = /^an? (.+?) card (?:is|was) discarded this way$/.exec(t);
+  if (discardedIs && b.other?.ref === 'discarded_this_way') {
+    const pf = parseFilter(`${discardedIs[1]} card in your graveyard`, b.clone());
+    if (pf && !pf.plural) {
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      if (Object.keys(filter).length) return { type: 'is', of: { ref: 'discarded_this_way' }, filter };
+    }
+  }
   // "as long as it's attacking" — "it" being what the ability is about.
-  const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking)$/.exec(t);
+  const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking|attacking alone)$/.exec(t);
   if (itIs && b.it) {
     const filter = stateFilter(itIs[1]!, b);
     if (filter) return { type: 'is', of: b.it, filter };
@@ -786,6 +801,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     "you've descended this turn": 'you_descended',
     'a creature died under your control this turn': 'your_creature_died',
     'a creature you controlled died this turn': 'your_creature_died',
+    // Archive Trap: "If an opponent searched their library this turn" (CR 701.23).
+    'an opponent searched their library this turn': 'opponent_searched',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
   // CR 700.8: "if you have a full party" — four creatures, one each of Cleric, Rogue, Warrior and Wizard.

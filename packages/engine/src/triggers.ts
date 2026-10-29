@@ -560,6 +560,8 @@ function entersX(ability: TriggeredAbility, source: GameObject | null, info: Tri
     const entry = g.stack.find((e) => e.kind === 'spell' && e.object === source.id);
     return entry?.x ?? 0;
   }
+  // Zaxara: "Whenever you cast a spell with {X} in its mana cost, … put X +1/+1 counters on it" — that spell's X.
+  if (ability.trigger.type === 'cast' && info.x !== undefined) return info.x;
   // Shark Typhoon: "When you cycle this card" — the X paid for that cycling ability.
   if (g && ability.trigger.type === 'activate' && (ability.trigger as { self?: boolean }).self && info.entry) {
     const entry = g.stack.find((e) => e.kind === 'ability' && e.id === info.entry);

@@ -20,7 +20,7 @@ import {
 } from './types.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { playerProtectedFrom, playerRule } from './player-rules.js';
-import { lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
+import { applyLifeGain, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { removeShield } from './permanents.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
@@ -892,13 +892,7 @@ function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent
   } finally {
     combatFollowUps = undefined;
   }
-  for (const [player, dealt] of lifeGain) {
-    const ps = g.players[player]!;
-    if (playerRule(g, player, 'cant_gain_life') || playerRule(g, player, 'life_cant_change')) continue;
-    const amount = replaceQuantity(g, 'gain_life', dealt, { player });
-    ps.life += amount;
-    events.push({ type: 'life', player, delta: amount, life: ps.life });
-  }
+  for (const [player, dealt] of lifeGain) applyLifeGain(g, player, dealt, events);
 }
 
 /** CR 120.3: what damage does, depending on the recipient and the source's abilities. Returns the damage dealt. */
@@ -1173,7 +1167,7 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
   for (const p of g.prevention) {
     if (amount <= 0) break;
     const before = amount;
-    if (p.turn !== g.turn || (p.combat && !combat)) continue;
+    if ((p.turn !== g.turn && p.untilTurnOf === undefined) || (p.combat && !combat)) continue;
     if (p.to) {
       const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : p.to.kind === 'object' && to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
       if (!hit) continue;

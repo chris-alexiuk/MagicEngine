@@ -216,6 +216,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (handAtLeast) return { kind: 'players', who: 'opponents', handAtLeast: parseAmount(handAtLeast[1]!) as number };
   // Coalition Relic: "for each charge counter removed this way".
   if (/^(?:\S+ )?counter removed this way$/.test(t)) return { kind: 'counters_removed' };
+  // CR 705.2: Ral Zarek: "for each coin that comes up heads"; Crazed Firecat: "for each flip you won".
+  if (/^(?:coin that comes up heads|flip you (?:won|win))$/.test(t)) return { kind: 'flips_won' };
+  if (/^flip you (?:lost|lose)$/.test(t)) return { kind: 'flips_won', lost: true };
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
   const colorsOf = /^of (that spell|that card|~)'s colors$/.exec(t) ?? (t === 'of its colors' ? [t, 'it'] : null);
   if (colorsOf) {
@@ -340,6 +343,8 @@ function lifeThisTurn(who: string): AmountExpr | null {
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Dovescape: "where X is the spell's mana value" — the spell a cast trigger is about.
   const t = b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim();
+  // CR 702.179a: The Speed Demon: "where X is your speed".
+  if (t === 'your speed') return { kind: 'speed' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.
   const kindCast = /^the number of (.+?) spells (they've|that player has|you've) cast this turn$/.exec(t);
   if (kindCast) {

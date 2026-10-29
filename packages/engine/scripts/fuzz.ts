@@ -235,6 +235,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
     }
     case 'dredge':
       return { player: me, answer: { kind: 'dredge', object: rnd() < 0.5 && p.candidates.length ? pick(p.candidates) : null } };
+    case 'untap_limit':
+      return { player: me, answer: { kind: 'untap_limit', objects: [...p.candidates].sort(() => rnd() - 0.5).slice(0, p.n) } };
     case 'keep_tapped':
       return { player: me, answer: { kind: 'keep_tapped', objects: p.candidates.filter(() => rnd() < 0.5) } };
     case 'discard_to_hand_size':

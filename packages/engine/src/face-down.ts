@@ -53,6 +53,11 @@ const DEFS: Record<string, CardDef> = Object.fromEntries(
   ]),
 );
 
+/** Which face-down kind a face-down face stands for (its ward), or undefined for any other face. */
+export function faceDownKindOf(f: FaceDef): 'morph' | 'disguise' | undefined {
+  return f === DEFS[FACE_DOWN]!.faces[0] ? 'morph' : f === DEFS[FACE_DOWN_WARD]!.faces[0] ? 'disguise' : undefined;
+}
+
 /** The card definition standing for a face-down object's characteristics. */
 export function faceDownKey(o: GameObject): string {
   return o.faceDown === 'disguise' || o.faceDown === 'cloak' ? FACE_DOWN_WARD : FACE_DOWN;

@@ -74,6 +74,8 @@ export interface TurnLog {
   targeted?: Record<ObjectId, PlayerId[]>;
   /** CR 700.13: players who committed a crime this turn. */
   crimes?: PlayerId[];
+  /** CR 701.23: players who searched their own library this turn (Archive Trap). */
+  searchedOwn?: PlayerId[];
   /** CR 700.14: mana each player has spent to cast spells this turn. */
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
@@ -236,6 +238,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         break;
       case 'crime':
         if (!(log.crimes ??= []).includes(e.player)) log.crimes.push(e.player);
+        break;
+      case 'searched':
+        if (e.owner === e.player && !(log.searchedOwn ??= []).includes(e.player)) log.searchedOwn.push(e.player);
         break;
       case 'discarded': {
         const o = g.objects[e.object];
@@ -715,6 +720,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(log.cardExiled);
         case 'you_committed_crime':
           return (log.crimes ?? []).includes(controller);
+        case 'opponent_searched':
+          return (log.searchedOwn ?? []).some((p) => p !== controller);
         // CR 700.11
         case 'you_descended':
           return (log.descended?.[controller] ?? 0) > 0;

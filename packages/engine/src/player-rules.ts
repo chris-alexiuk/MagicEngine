@@ -1,4 +1,4 @@
-import type { ConditionNode, ContinuousEffectNode, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
+import type { ConditionNode, ContinuousEffectNode, ObjectFilter, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
 import { splitQualities } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { bindQualityKeywords, matchesFilter, objectAbilities, sourceHasQuality, staticConditionHolds } from './characteristics.js';
@@ -28,6 +28,10 @@ export function flashPermission(g: GameState, player: PlayerId, card: GameObject
     if (a.kind !== 'static' || a.effect.type !== 'flash_if') continue;
     const e = a.effect as unknown as { condition?: ConditionNode; ifTargets?: unknown };
     if (!e.ifTargets && e.condition && evalCondition(e.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} })) return true;
+  }
+  // Quicken: "The next sorcery spell you cast this turn can be cast as though it had flash."
+  for (const n of g.nextSpell ?? []) {
+    if (n.flash && n.player === player && n.turn === g.turn && matchesFilter(g, card, n.filter, { controller: player, anyZone: true })) return true;
   }
   for (const e of g.playerEffects ?? []) {
     if (e.player !== player || e.rule !== 'flash' || e.lastTurn < g.turn) continue;
@@ -120,6 +124,24 @@ export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): nu
     }
   }
   return n;
+}
+
+/**
+ * CR 502.3: Winter Orb: "Players can't untap more than one land during their untap steps." — the limits on this player's
+ * untap step, the ones for some permanents first (so a narrower limit is chosen for before a broader one).
+ */
+export function untapLimits(g: GameState, player: PlayerId): { n: number; filter?: ObjectFilter; source: GameObject }[] {
+  const out: { n: number; filter?: ObjectFilter; source: GameObject }[] = [];
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'untap_limit' || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      out.push({ n: e.amount ?? 1, ...(e.filter ? { filter: e.filter } : {}), source });
+    }
+  }
+  return out.sort((a, b) => (a.filter ? 0 : 1) - (b.filter ? 0 : 1) || a.n - b.n);
 }
 
 /**

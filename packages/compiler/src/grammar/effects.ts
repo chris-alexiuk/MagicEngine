@@ -40,6 +40,25 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Elven Farsight: "Scry 3, then you may reveal the top card of your library. If a creature card is revealed this way, draw a
+  // card."; Isolated Watchtower: "… If a basic land card is revealed this way, put it onto the battlefield tapped."
+  const mayRevealTop = /^(?:(.+?), then y|Y)ou may reveal the top card of your library\. If an? (.+?) card is revealed this way, ([^.]+)\.$/.exec(text.trim());
+  if (mayRevealTop) {
+    const r = attempt(b, (b) => {
+      const before = mayRevealTop[1] ? parseEffectText(`${mayRevealTop[1]}.`, b) : [];
+      const pf = before ? parseFilter(`${mayRevealTop[2]} card in your library`, b) : null;
+      if (!before || !pf || pf.plural || pf.filter.controller) return null;
+      delete pf.filter.zone;
+      delete pf.filter.owner;
+      const it = b.it;
+      b.it = { ref: 'chosen_object' };
+      const then = parseEffectText(`${mayRevealTop[3]}.`, b);
+      b.it = it;
+      if (!then) return null;
+      return [...before, { type: 'may_do', effects: [{ type: 'reveal_top_card' }], then: [{ type: 'if', cond: { type: 'is', of: { ref: 'chosen_object' }, filter: pf.filter }, effects: then }] } as EffectNode];
+    });
+    if (r) return r;
+  }
   // Stonehewer Giant: "Search your library for an Equipment card, put it onto the battlefield, attach it to a creature you
   // control, then shuffle." — the creature chosen as it resolves.
   const searchAttach = /^(Search your library for an? [^.]+?), put it onto the battlefield, attach it to (a creature you control), then shuffle\.$/.exec(text.trim());
@@ -189,6 +208,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   }
   // Liliana's Triumph: "If you control a Liliana planeswalker, each opponent also discards a card." — "also" adds nothing.
   text = text.replace(/(\bIf [^,.]+, (?:each opponent|each player|you|that player|target opponent|target player)) also (?=[a-z])/g, '$1 ');
+  // Wheel and Deal: "Any number of target opponents each discard their hands, then draw seven cards."
+  text = text.replace(/\b(each|players|opponents) discard their hands\b/g, '$1 discard their hand');
   // Primal Amulet, Treasure Map: "Then if there are four or more charge counters on it, remove those counters and transform
   // it."; Replicating Ring: "if it has eight or more night counters on it, remove all of them and …" — that kind of counter.
   text = text.replace(
@@ -1552,6 +1573,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Solidarity of Heroes: "Choose any number of target creatures. Double the number of +1/+1 counters on each of them." —
+      // "them" being those targets.
+      if (chooseMany && /\b(?:each of them|them)\b/.test(next)) {
+        const r = attempt(b, (b) => {
+          const what = parseObjectRef(chooseMany[1]!, b);
+          if (!what?.plural || !what.targeted) return null;
+          b.named['each of them'] = what.ref;
+          b.named['them'] = what.ref;
+          const made = parseSentence(next, b);
+          return made && JSON.stringify(made).includes(JSON.stringify(what.ref)) ? made : null;
+        });
+        if (r) {
+          out.push(...r);
+          i++;
+          continue;
+        }
+      }
       // Hurl Through Hell: "Exile target creature. Until the end of your next turn, you may cast that card." — the card just
       // exiled; "for as long as it remains exiled" (CR 400.7: until it leaves exile).
       const exiledLast = out[out.length - 1];
@@ -2551,7 +2589,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (eachMay) {
     const r = attempt(b, (b) => {
       const asThem = capitalise(eachMay[2]!.replace(/ of their choice\b/g, '').replace(/\btheir\b/g, 'your').replace(/\bthey (control|own)\b/g, 'you $1'));
-      if (/\b(?:they|them|their|that player)\b/.test(asThem)) return null;
+      // Veteran Explorer: "… search their library for up to two basic land cards, put them onto the battlefield" — the cards.
+      if (/\b(?:they|them|their|that player)\b/.test(asThem.replace(/^(Search your library for [^,]+), put them /, '$1, '))) return null;
       const before = b.targets.length;
       const theirs = parseSentence(asThem, b);
       if (!theirs || b.targets.length !== before || JSON.stringify(theirs).includes('"ref":"target"')) return null;
@@ -3071,12 +3110,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 500.7: "Take an extra turn after this one." / "Target player takes an extra turn after this one."
   // Time Stretch: "Target player takes two extra turns after this one."
-  const extraTurn = /^(?:(.+?) takes?|[Tt]ake) (an|two|three) extra turns? after this one$/.exec(s);
+  // Ral Zarek: "Take an extra turn after this one for each coin that comes up heads."
+  const extraTurn = /^(?:(.+?) takes?|[Tt]ake) (an|two|three) extra turns? after this one(?: for each (.+))?$/.exec(s);
   if (extraTurn && (extraTurn[2] === 'an') === !/turns after/.test(s)) {
     const r = attempt(b, (b) => {
       const who = extraTurn[1] ? parsePlayerRef(extraTurn[1], b) : { ref: 'you' as const };
       const n = extraTurn[2] === 'an' ? 1 : (parseAmount(extraTurn[2]!) as number);
-      return who ? [{ type: 'extra_turn', who, ...(n > 1 ? { count: n } : {}) }] : null;
+      const each = extraTurn[3] ? parseForEach(extraTurn[3], b) : null;
+      if (extraTurn[3] && (!each || n !== 1)) return null;
+      return who ? [{ type: 'extra_turn', who, ...(each ? { count: each } : n > 1 ? { count: n } : {}) }] : null;
     });
     if (r) return r;
   }
@@ -3117,6 +3159,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^[Pp]opulate$/.test(s)) return [{ type: 'populate' }];
   // CR 705.1: "Flip a coin."
   if (/^[Ff]lip a coin$/.test(s)) return [{ type: 'flip_coin' }];
+  // Ral Zarek: "Flip five coins."
+  const flips = /^[Ff]lip (two|three|four|five|six|seven|eight|nine|ten) coins$/.exec(s);
+  if (flips) return [{ type: 'flip_coin', times: parseAmount(flips[1]!) as number }];
   if (/^[Ff]lip a coin until you lose a flip$/.test(s)) return [{ type: 'flip_coin', untilLose: true }];
   // Planar Chaos: "that player flips a coin" — they flip, and win or lose it (CR 705.2).
   const theyFlip = /^(that player|target player|target opponent) flips a coin$/i.exec(s);
@@ -3819,9 +3864,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Brass's Bounty: "For each land you control, create a Treasure token." — the same as "Create … for each …".
-  const eachCreate = /^For each (.+?), create (a|an|one|two) (.+? tokens?)$/.exec(s);
+  // Goblin Traprunner: "For each flip you win, create a 1/1 red Goblin creature token that's tapped and attacking."
+  const eachCreate = /^For each (.+?), create (a|an|one|two) (.+? tokens?(?: that(?:'s| are) tapped and attacking)?)$/.exec(s);
   if (eachCreate && !/ copy | that player| it\b|them\b|this way/.test(s)) {
     const r = attempt(b, (b) => parseSentence(`Create ${eachCreate[2]} ${eachCreate[3]} for each ${eachCreate[1]}`, b));
+    if (r) return r;
+  }
+  // Hex Parasite: "For each counter removed this way, ~ gets +1/+0 until end of turn." — "… gets +1/+0 … for each …".
+  const eachGets = /^For each ([^,]+), (~|target creature|it) gets? ([+-]\d+\/[+-]\d+) until end of turn$/.exec(s);
+  if (eachGets && !/ it\b|them\b/.test(eachGets[1]!)) {
+    const r = attempt(b, (b) => parseSentence(`${eachGets[2]} gets ${eachGets[3]} until end of turn for each ${eachGets[1]}`, b));
     if (r) return r;
   }
   // Second Harvest: "For each token you control, create a token that's a copy of that permanent." (CR 707.2)
@@ -3957,7 +4009,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Mistrise Village: "The next spell you cast this turn can't be countered."; "The next instant or sorcery spell you cast
   // this turn costs {2} less to cast", "… costs {X} less to cast, where X is the number of Wizards you control".
   // Archway of Innovation: "The next spell you cast this turn has improvise."
-  const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|has (?:improvise|convoke|delve)|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
+  // Quicken: "The next sorcery spell you cast this turn can be cast as though it had flash."
+  const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|can be cast as though it had flash|has (?:improvise|convoke|delve)|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
   if (next) {
     let filter: ObjectFilter = {};
     if (next[1]) {
@@ -3967,6 +4020,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       filter = rest;
     }
     if (next[2] === "can't be countered") return [{ type: 'next_spell', filter, uncounterable: true }];
+    if (next[2] === 'can be cast as though it had flash') return [{ type: 'next_spell', filter, flash: true }];
     if (/^has /.test(next[2]!)) return [{ type: 'next_spell', filter, keyword: next[2]!.slice(4) }];
     if (next[3] === 'X') {
       // ", where X is …" in the same sentence is bound by the sentence (bindX).
@@ -4762,17 +4816,20 @@ const VERBS: Record<string, VerbHandler> = {
       if (r) return r;
     }
     // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
-    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on (?:it|him|her))?$/.exec(args);
-    if (field) {
+    // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( attacking)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on (?:it|him|her))?$/.exec(args);
+    // (Attacking only as "tapped and attacking", and not with "transformed" too.)
+    if (field && (!field[3] || (field[2] && !field[4]))) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
       const node: EffectNode = { type: 'move', what: what.ref, to: 'battlefield' };
       if (field[2]) node.tapped = true;
+      if (field[3]) node.attacking = true;
       // CR 712.14a
-      if (field[3]) node.transformed = true;
-      if (field[4] === ' under your control') node.under = 'you';
+      if (field[4]) node.transformed = true;
+      if (field[5] === ' under your control') node.under = 'you';
       // CR 122.6: "with a -1/-1 counter on it" — it enters with the counter.
-      if (field[5]) node.counters = { [field[6]!.replace(/−/g, '-')]: parseAmount(field[5]!) };
+      if (field[6]) node.counters = { [field[7]!.replace(/−/g, '-')]: parseAmount(field[6]!) };
       return [node];
     }
     return null;
@@ -4997,6 +5054,13 @@ const VERBS: Record<string, VerbHandler> = {
       const to = what && !what.plural ? (it ? { ref: it, plural: false } : parseObjectRef(both[2]!, b)) : null;
       return what && to && !to.plural ? [{ type: 'attach', what: what.ref, to: to.ref }] : null;
     }
+    // Balan, Wandering Knight: "Attach all Equipment you control to Balan."
+    const all = imperative ? /^(all (?:Equipment|Auras) you control) to (~|target creature you control)$/.exec(args) : null;
+    if (all) {
+      const what = parseObjectRef(all[1]!, b);
+      const to = what?.plural ? parseObjectRef(all[2]!, b) : null;
+      return what && to && !to.plural ? [{ type: 'attach', what: what.ref, to: to.ref, all: true }] : null;
+    }
     const m = /^(~|it|that Equipment) to (.+)$/.exec(args);
     if (!m || !imperative) return null;
     // Sigarda's Aid: "Whenever an Equipment you control enters, you may attach it to target creature you control."
@@ -5090,6 +5154,12 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     const by = to ? parseRecipients(toBy[3]!, b) : null;
     if (!to?.length || by?.length !== 1 || by[0]!.ref !== 'all') return null;
     return to.map((t) => ({ type: 'prevent', amount: 'all', ...(toBy[1] ? { combat: true } : {}), to: t, by: by[0]! }));
+  }
+  // Morningtide's Light: "Until your next turn, prevent all damage that would be dealt to you." — the shield lasts until then.
+  const untilNext = /^Until your next turn, prevent all damage that would be dealt to (you|you and permanents you control|you and creatures you control)$/.exec(c);
+  if (untilNext) {
+    const to = parseRecipients(untilNext[1]!, b);
+    return to?.length ? to.map((t) => ({ type: 'prevent', amount: 'all', to: t, until: 'your_next_turn' })) : null;
   }
   // Obscuring Haze: "Prevent all damage that would be dealt this turn by creatures your opponents control."
   // Safe Passage: "Prevent all damage that would be dealt to you and creatures you control this turn." — a shield for each.
@@ -5385,11 +5455,12 @@ function parseLayerChange(c: string, b: Binder): EffectNode[] | null {
     });
   }
   // "becomes blue", "becomes black and red", "becomes colorless"
-  const color = /^(.+?) becomes? ((?:white|blue|black|red|green)(?: and (?:white|blue|black|red|green))?|colorless)$/.exec(body);
+  // Tam, Mindful First-Year: "becomes all colors" (CR 105.2).
+  const color = /^(.+?) becomes? ((?:white|blue|black|red|green)(?: and (?:white|blue|black|red|green))?|colorless|all colors)$/.exec(body);
   if (color) {
     return attempt(b, (b) => {
       const what = parseObjectRef(color[1]!, b);
-      const colors = color[2] === 'colorless' ? [] : color[2]!.split(' and ').map((w) => COLOR_WORDS[w]!);
+      const colors = color[2] === 'colorless' ? [] : color[2] === 'all colors' ? ['W', 'U', 'B', 'R', 'G'] : color[2]!.split(' and ').map((w) => COLOR_WORDS[w]!);
       return what ? [{ type: 'modify', what: what.ref, colors, until }] : null;
     });
   }

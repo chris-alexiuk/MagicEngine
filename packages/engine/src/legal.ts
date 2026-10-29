@@ -1,4 +1,4 @@
-import { activationProhibited, loyaltyProhibited } from './cast-bans.js';
+import { activationProhibited, castProhibition, loyaltyProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
@@ -13,7 +13,7 @@ import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCa
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets, targetCandidates } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
-import { applyCostModifiers } from './costs.js';
+import { applyCostModifiers, targetCostModifiersInPlay } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
@@ -49,6 +49,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   if (g.over || g.pending || g.priority !== player) return [];
   const out: Action[] = [{ type: 'pass', player }];
   const mainPhaseEmptyStack = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
+  // Icefall Regent: "Spells your opponents cast that target Icefall Regent cost {2} more to cast." — then a cast's targets count.
+  const targetTaxed = targetCostModifiersInPlay(g);
 
   // "You may play lands from your graveyard."
   // Titania, Nature's Force: "You may play Forests from your graveyard."
@@ -129,7 +131,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (!choice) return;
       // Strive: the chosen targets add to the cost; spree and tiered: the chosen modes do; "costs {3} more to cast
       // if it targets a creature" looks at the targets (CR 601.2f).
-      const lookAtTargets = face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as { ifTargets?: unknown }).ifTargets));
+      const lookAtTargets = targetTaxed || face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as { ifTargets?: unknown }).ifTargets));
       if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face) || lookAtTargets) {
         const total = parseManaCost(face.manaCost);
         for (const e of extraMana) addCost(total, parseManaCost(e.mana));
@@ -227,7 +229,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const costs = defaultCostChoices(g, player, o, additionalCosts(face));
     if (!choice || !costs) continue;
     // Strive, spree: the chosen targets and modes add to the flashback cost too (CR 601.2f).
-    if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face)) {
+    if (targetTaxed || face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face)) {
       const total = parseManaCost(fb);
       const refs = (choice.targets ?? []).map((list) => list.map((t): TargetRef => (t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : (t as TargetRef))));
       applyCostModifiers(g, player, o, face, total, refs);
@@ -425,7 +427,10 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       if (fromGraveyard || !sorcerySpeed) continue;
       // Cost changes apply to the face-down spell too ("Creature spells you cast cost {1} more").
       const downCost = parseManaCost('{3}');
-      applyCostModifiers(g, player, o, faceDownFace({ ...o, faceDown: opt.id === 'disguise' ? 'disguise' : 'morph' }), downCost);
+      const downFace = faceDownFace({ ...o, faceDown: opt.id === 'disguise' ? 'disguise' : 'morph' });
+      // "Your opponents can't cast spells during your turn" applies to it too (CR 708.4).
+      if (castProhibition(g, player, downFace, o)) continue;
+      applyCostModifiers(g, player, o, downFace, downCost);
       // Powerstone mana can't pay for it (a face-down spell isn't an artifact).
       if (!downCost.unsupported.length && planAutoTap(g, player, downCost, 0, [], { kind: 'spell', object: o })) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
       continue;

@@ -2,14 +2,14 @@ import { dredgeOptions } from './dredge.js';
 import { phasingStep } from './phasing.js';
 import { checkDungeonDone } from './dungeons.js';
 import type { ConditionNode } from '@mtg/schema';
-import { chars, hasRule, hasType, isPermanentCard, hasKeyword, printedAbilities, toughness, withCharsCache } from './characteristics.js';
+import { chars, hasRule, hasType, isPermanentCard, hasKeyword, matchesFilter, printedAbilities, toughness, withCharsCache } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule } from './player-rules.js';
+import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule, untapLimits } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
@@ -430,6 +430,7 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   prunePermissions(g);
   // "until your next turn" effects end as that turn begins.
   if (g.effects.some((e) => e.untilTurnOf === player)) g.effects = g.effects.filter((e) => e.untilTurnOf !== player);
+  if (g.prevention.some((p) => p.untilTurnOf === player)) g.prevention = g.prevention.filter((p) => p.untilTurnOf !== player);
   // CR 701.15a: goad lasts until the goading player's next turn.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
@@ -532,9 +533,37 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
 }
 
 /** CR 502.3: the active player untaps their permanents (all but those they chose to keep tapped); then the upkeep. */
-export function untapStep(g: GameState, events: GameEvent[], keep: readonly string[]): void {
+export function untapStep(g: GameState, events: GameEvent[], keep: readonly string[], chosen: readonly string[][] = []): void {
   // CR 502.3: they untap at once — "Creatures with power 3 or greater don't untap …" (Meekstone) is checked first.
   const held = new Set(g.zones.battlefield.filter((id) => g.objects[id]!.controller === g.active && hasRule(g, g.objects[id]!, 'doesnt_untap')));
+  // CR 502.3: Winter Orb, Static Orb — at most so many of those that would untap; the active player chooses which.
+  let allowed: Set<string> | null = null;
+  const limits = untapLimits(g, g.active);
+  if (limits.length) {
+    const locked = (o: GameObject) =>
+      (o.untapLocks ?? []).some((l) => {
+        const s = g.objects[l.id];
+        const there = Boolean(s && s.zone === 'battlefield' && s.zcc === l.zcc);
+        return there && (l.while === 'present' || (l.while === 'controlled' ? s!.controller === l.controller : s!.tapped));
+      });
+    allowed = new Set(
+      g.zones.battlefield.filter((id) => {
+        const o = g.objects[id]!;
+        return o.controller === g.active && o.tapped && !o.skipUntap && !o.exerted && !locked(o) && !keep.includes(id) && !held.has(id);
+      }),
+    );
+    let j = 0;
+    for (const l of limits) {
+      const matching = [...allowed].filter((id) => !l.filter || matchesFilter(g, g.objects[id]!, l.filter, { controller: l.source.controller, source: l.source }));
+      if (matching.length <= l.n) continue;
+      const pick = chosen[j++];
+      if (!pick) {
+        g.pending = { kind: 'untap_limit', player: g.active, candidates: matching, n: l.n, keep: [...keep], chosen: chosen.map((c) => [...c]) };
+        return;
+      }
+      for (const id of matching) if (!pick.includes(id)) allowed.delete(id);
+    }
+  }
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     if (o.controller !== g.active) continue;
@@ -563,7 +592,7 @@ export function untapStep(g: GameState, events: GameEvent[], keep: readonly stri
     }
     // CR 502.3: one its controller chose not to untap.
     if (keep.includes(id)) continue;
-    if (!held.has(id)) setTapped(g, id, false, events);
+    if (!held.has(id) && (!allowed || !o.tapped || allowed.has(id))) setTapped(g, id, false, events);
   }
   // Seedborn Muse: "Untap all permanents you control during each other player's untap step."
   for (const p of g.order) {
@@ -612,7 +641,8 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
     }
   }
   g.effects = g.effects.filter((e) => e.until !== 'eot' && !(e.throughTurn !== undefined && e.throughTurn <= g.turn) && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
-  g.prevention = [];
+  // CR 514.2: "this turn" prevention ends; "until your next turn" lasts on.
+  g.prevention = g.prevention.filter((p) => p.untilTurnOf !== undefined);
   applyControlEffects(g, events);
   // CR 514.3a: if state-based actions happen now, or abilities trigger (Necromancy: "at the beginning of the next cleanup
   // step"), players get priority and another cleanup step follows.
@@ -695,8 +725,8 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       const winner = livePlayers(g).find((p) => g.players[p]!.wonByEffect);
       if (winner) {
         delete g.players[winner]!.wonByEffect;
-        // Platinum Angel: "your opponents can't win the game".
-        if (!livePlayers(g).some((q) => q !== winner && playerRule(g, q, 'opponents_cant_win'))) {
+        // Platinum Angel: "your opponents can't win the game"; Abyssal Persecutor: "You can't win the game".
+        if (!cantWin(g, winner)) {
           for (const q of livePlayers(g)) if (q !== winner && !cantLose(g, q)) losers.push({ player: q, reason: `${g.players[winner]!.name} won the game` });
         }
       }
@@ -815,8 +845,8 @@ function findLegendRuleGroup(
   for (const id of g.zones.battlefield) {
     if (leaving.has(id)) continue;
     const o = g.objects[id]!;
-    // Legendary as printed (or copied), or made legendary — your Ring-bearer (CR 701.54c).
-    const legendary = faceOf(g, o).supertypes.includes('Legendary') || (o.ringBearer !== undefined && chars(g, o).supertypes.includes('Legendary'));
+    // Legendary as printed (or copied), or made legendary — your Ring-bearer (CR 701.54c), On Serra's Wings.
+    const legendary = chars(g, o).supertypes.includes('Legendary');
     if (!legendary || legendRuleExempt(g, o)) continue;
     // Witness Protection: by the name it has now.
     const key = `${o.controller}\u0000${chars(g, o).name}`;
@@ -851,7 +881,14 @@ function removeObjectEntirely(g: GameState, id: string): void {
 
 /** "You can't lose the game" (Angel's Grace; Platinum Angel's too). */
 export function cantLose(g: GameState, p: PlayerId): boolean {
-  return Boolean(playerRule(g, p, 'cant_lose') || playerRule(g, p, 'opponents_cant_win'));
+  if (playerRule(g, p, 'cant_lose') || playerRule(g, p, 'opponents_cant_win')) return true;
+  // Abyssal Persecutor: "… your opponents can't lose the game."
+  return livePlayers(g).some((q) => q !== p && playerRule(g, q, 'cant_win_opponents_cant_lose') > 0);
+}
+
+/** Whether this player can't win the game: an opponent's Platinum Angel, or their own Abyssal Persecutor (CR 104.3a). */
+export function cantWin(g: GameState, p: PlayerId): boolean {
+  return playerRule(g, p, 'cant_win_opponents_cant_lose') > 0 || livePlayers(g).some((q) => q !== p && playerRule(g, q, 'opponents_cant_win') > 0);
 }
 
 /** A player loses and leaves the game (CR 104.3a / CR 800.4a). */

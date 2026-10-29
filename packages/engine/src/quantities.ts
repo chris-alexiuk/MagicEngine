@@ -2,6 +2,7 @@ import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities } from './characteristics.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
+import { playerRule } from './player-rules.js';
 
 /**
  * Replacement effects that change an amount (CR 614.1a): life gained, tokens created, counters
@@ -54,6 +55,26 @@ export function lifeLoss(g: GameState, player: PlayerId, n: number): number {
   // Everybody Lives!: "Players can't lose life this turn." (CR 119.7)
   if (cantLoseLife(g, player)) return 0;
   return replaceQuantity(g, 'lose_life', n, { player });
+}
+
+/**
+ * CR 119.3: a player gains life — unless they can't (CR 119.7) or their life total can't change (CR 119.8); Tainted Remedy,
+ * Plague Drone: "If an opponent would gain life, that player loses that much life instead." (CR 614.1a, applied before a
+ * doubling, the affected player's choice of order, CR 616.1); Boon Reflection: twice that much. Returns the change.
+ */
+export function applyLifeGain(g: GameState, p: PlayerId, n: number, events: GameEvent[]): number {
+  const ps = g.players[p];
+  if (!ps || n <= 0 || playerRule(g, p, 'cant_gain_life') || playerRule(g, p, 'life_cant_change')) return 0;
+  if (playerRule(g, p, 'gain_becomes_loss')) {
+    const lost = lifeLoss(g, p, n);
+    ps.life -= lost;
+    events.push({ type: 'life', player: p, delta: -lost, life: ps.life });
+    return -lost;
+  }
+  const amount = replaceQuantity(g, 'gain_life', n, { player: p });
+  ps.life += amount;
+  events.push({ type: 'life', player: p, delta: amount, life: ps.life });
+  return amount;
 }
 
 /** CR 119.7: "can't lose life" (an effect this turn); CR 119.8: such a player can't pay life either. */

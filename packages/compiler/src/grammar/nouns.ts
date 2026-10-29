@@ -72,6 +72,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
+  // Viper, Cruel Conspirator: "Target creature that's attacking alone" (CR 506.5).
+  [/ that's attacking alone$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingAlone = true), true)],
   // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
   [/ (?:that's|that are) attacking (?:one of your opponents|an opponent)$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingOpponent = true), true)],
   // Spear of Heliod: "target creature that dealt damage to you this turn"; Witch-king: "… that dealt combat damage to you this turn".
@@ -394,6 +396,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
   // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
+  // Elspeth, Knight-Errant: "Artifacts, creatures, enchantments, and lands you control" — likewise.
+  rest = rest.replace(/\b((?:(?:artifacts|creatures|enchantments|lands|planeswalkers), )+)and (?=(?:artifacts|creatures|enchantments|lands|planeswalkers)\b)/g, '$1or ');
   const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];
   // Great Divide Guide: "Each land and Ally you control"; "creatures and Vehicles you control"; "each artifact and creature
   // you control" — each permanent that's either.
@@ -446,7 +450,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
         // Firespitter Whelp: "a noncreature or Dragon spell" — the bare adjective takes the last part's noun.
         const noun = last.split(' ').pop()!;
         // (Only for two parts: "a white or blue instant or sorcery spell" is colors and types both.)
-        if (parts.length === 2 && part !== last && !part.includes(' ') && /^(?:spells?|cards?|permanents?)$/.test(noun) && !parseHeadPhrase(part, { ...alt }) && parseHeadPhrase(`${part} ${noun}`, alt)) {
+        // Soldevi Adnate: "a black or artifact creature" — a creature that's black or an artifact.
+        if (parts.length === 2 && part !== last && !part.includes(' ') && /^(?:spells?|cards?|permanents?|creatures?)$/.test(noun) && !parseHeadPhrase(part, { ...alt }) && parseHeadPhrase(`${part} ${noun}`, alt)) {
           anyOf.push(alt);
           continue;
         }
@@ -581,6 +586,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
     else if (w === 'modified') f.modified = true;
     else if (w === 'tapped') f.tapped = true;
     else if (w === 'untapped') f.tapped = false;
+    // CR 708.2: Kadena: "Whenever a face-down creature you control enters".
+    else if (w === 'face-down') f.faceDown = true;
     else if (w === 'attacking') f.combat = 'attacking';
     // Vengeful Ancestor: "Whenever a goaded creature attacks" (CR 701.15)
     else if (w === 'goaded') f.goaded = true;

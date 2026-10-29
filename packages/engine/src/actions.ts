@@ -170,6 +170,15 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       untapStep(g, events, answer.objects);
       return;
     }
+    case 'untap_limit': {
+      const q = p as Extract<typeof p, { kind: 'untap_limit' }>;
+      if (new Set(answer.objects).size !== answer.objects.length || answer.objects.length !== q.n || !answer.objects.every((id) => q.candidates.includes(id))) {
+        throw new RulesError(`Choose ${q.n} of these permanents to untap.`);
+      }
+      g.pending = null;
+      untapStep(g, events, q.keep, [...q.chosen, answer.objects]);
+      return;
+    }
     case 'legend_rule': {
       const objects = (p as Extract<typeof p, { kind: 'legend_rule' }>).objects;
       if (!objects.includes(answer.keep)) throw new RulesError('Choose one of the legendary permanents to keep.');

@@ -7,6 +7,14 @@ import { amountOf } from './resolve.js';
 import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import type { TargetRef } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
+import { faceDownKindOf } from './face-down.js';
+
+/** Whether a permanent's cost change looks at a spell's targets (Icefall Regent, Killian) — then legal casts check them. */
+export function targetCostModifiersInPlay(g: GameState): boolean {
+  return abilitySources(g).some((id) =>
+    objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as CostModifierNode).ifTargets || (a.effect as CostModifierNode).ifTargetsYou)),
+  );
+}
 
 /** "… if it targets a tapped creature": one of the chosen targets is like that. */
 function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: ObjectFilter, controller: PlayerId, source: GameObject): boolean {
@@ -27,6 +35,10 @@ function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: 
 /** `targets`: the spell's chosen targets, for "costs {2} less to cast if it targets a tapped creature". */
 export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameObject, face: FaceDef, cost: ManaCost, targets?: TargetRef[][]): void {
   const changes: { n: number; color?: Color; change: 'less' | 'more'; coloredOnly?: true }[] = [];
+  // CR 708.4: cast face down, it's a 2/2 creature spell with no name, color or mana cost — what the filters see (Dream Chisel:
+  // "Face-down creature spells you cast cost {1} less to cast").
+  const down = faceDownKindOf(face);
+  const asCast: GameObject = down && !spell.faceDown ? { ...spell, zone: 'stack', faceDown: down } : spell;
   const ctxFor = (controller: PlayerId, source: GameObject): EffectContext => ({ g, controller, source, events: [], targets: [], x: 0, memo: {} });
 
   // CR 113.6e: the spell's own ability works wherever it's cast from (including keywords like affinity, CR 702.41a).
@@ -56,7 +68,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       const whose = e.who ?? 'each';
       if (whose === 'you' ? player !== source.controller : whose === 'opponents' ? player === source.controller : false) continue;
       const ctx = ctxFor(source.controller, source);
-      if (e.filter && !matchesFilter(g, spell, e.filter, { controller: source.controller, source, anyZone: true })) continue;
+      if (e.filter && !matchesFilter(g, asCast, e.filter, { controller: source.controller, source, anyZone: true })) continue;
       // As its cost is worked out, the spell is still where it's cast from (it moves to the stack after, CR 601.2a's order here).
       if (e.castFrom && !e.castFrom.includes(spell.zone as 'graveyard' | 'exile')) continue;
       if (e.notFromHand && spell.zone === 'hand') continue;

@@ -102,7 +102,7 @@ interface ActiveEffect {
   /** Layer 7a / 7b: what it sets power and toughness to (null: leaves that one alone). */
   set?: { layer: '7a' | '7b'; pt: (o: GameObject) => [number | null, number | null] };
   /** Layer 4: types it becomes (CR 205.1b: replacing the old ones unless retained); `lose`: types it stops having. */
-  types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[] };
+  types?: { types: string[]; subtypes: string[]; retain: boolean; lose?: string[]; supertypes?: string[] };
   /** Witness Protection: the name it has instead. */
   name?: string;
   /** Layer 5: colors it becomes. */
@@ -435,7 +435,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.combat ? { combat: { ...e.combat, from: source.id, ...(e.combat.cantAttackYou ? { cantAttackPlayer: source.controller } : {}) } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes
-          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && (source.chosen?.creatureType ?? source.chosen?.landType) ? [(source.chosen.creatureType ?? source.chosen.landType)!] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
+          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && (source.chosen?.creatureType ?? source.chosen?.landType) ? [(source.chosen.creatureType ?? source.chosen.landType)!] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true, ...(e.addTypes.supertypes ? { supertypes: e.addTypes.supertypes } : {}) } }
           : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
         ...(e.setName ? { name: e.setName } : {}),
@@ -627,6 +627,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     if (e.types.retain) {
       c.types = [...new Set([...c.types, ...e.types.types])];
       c.subtypes = [...new Set([...c.subtypes, ...e.types.subtypes])];
+      if (e.types.supertypes) c.supertypes = [...new Set([...c.supertypes, ...e.types.supertypes])];
     } else {
       // CR 205.1a: the new card types replace the old ones; subtypes go with the card types they belong to, and a new
       // subtype replaces only those of its own kind ("Target artifact becomes a 5/5 artifact creature" — an Equipment
@@ -968,6 +969,8 @@ export function matchesFilter(
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);
     if (f.combat === 'attacking' && !attacking) return false;
+    // CR 506.5: "attacking alone" — no other creature is attacking.
+    if (f.attackingAlone && Object.keys(g.combat?.attackers ?? {}).length !== 1) return false;
     if (f.combat === 'blocking' && !blocking) return false;
     if (f.combat === 'attacking_or_blocking' && !attacking && !blocking) return false;
     if (f.attackingYou) {
@@ -1048,6 +1051,8 @@ export function matchesFilter(
   if (f.toughnessAbovePower && !(c.toughness > c.power)) return false;
   // Cut Down: "with total power and toughness 5 or less".
   if (f.totalPT && !(f.totalPT.op === 'le' ? c.power + c.toughness <= f.totalPT.n : c.power + c.toughness >= f.totalPT.n)) return false;
+  // CR 708.2: "a face-down creature" — as it last existed on the battlefield, looking back.
+  if (f.faceDown !== undefined && Boolean(then ? then.faceDown : o.faceDown) !== f.faceDown) return false;
   // CR 107.3: "with {X} in its mana cost".
   if (f.xInCost !== undefined && faceOf(g, o).manaCost.includes('{X}') !== f.xInCost) return false;
   // CR 605.1a: "with a mana ability" — the abilities it has where it is (printed ones off the battlefield).

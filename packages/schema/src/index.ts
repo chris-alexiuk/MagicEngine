@@ -389,6 +389,8 @@ export interface ObjectFilter {
   other?: true;
   tapped?: boolean;
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
+  /** CR 506.5: "attacking alone" — the only attacking creature. */
+  attackingAlone?: true;
   /** Sting, the Glinting Dagger: "blocking or blocked by a Goblin or Orc" — a creature it blocks or that blocks it matches. */
   combatPartner?: ObjectFilter;
   /** "creatures attacking you" — the player whose point of view this is (not their planeswalkers). */
@@ -408,6 +410,8 @@ export interface ObjectFilter {
   /** Bedrock Tortoise: "with toughness greater than its power". */
   toughnessAbovePower?: true;
   /** Zaxara: "a spell with {X} in its mana cost" (false: "without {X} …"). */
+  /** CR 708.2: "a face-down creature you control" (as it last existed, looking back). */
+  faceDown?: boolean;
   xInCost?: boolean;
   /** Charix: "Spells your opponents cast that target Charix" — the source itself. */
   isSource?: true;
@@ -615,6 +619,10 @@ export type AmountExpr = (
   | { kind: 'counters_among'; filter: ObjectFilter; /** Toph: only counters of this kind. */ counter?: string }
   // Coalition Relic: "for each charge counter removed this way" — by this resolution's remove-counters effects.
   | { kind: 'counters_removed' }
+  /** CR 702.179a: "your speed" (0 before you have any). */
+  | { kind: 'speed' }
+  /** CR 705.2: the coin flips won (`lost`: lost) as this resolves — Ral Zarek's "for each coin that comes up heads". */
+  | { kind: 'flips_won'; lost?: true }
   /** Moraug: "for each time it has attacked this turn" (CR 508.1: each time it's declared as an attacker). */
   | { kind: 'attacks_this_turn'; of: Ref }
   /** Cards in hands, graveyards or libraries. */
@@ -1069,7 +1077,8 @@ export interface ContinuousEffectNode extends EffectNode {
   /** Roaming Throne: "is the chosen type in addition to its other types" (`chosenType`). */
   /** Maskwood Nexus: `allCreatureTypes` — every creature type; `elsewhere` — creature spells you control and creature cards
    * you own that aren't on the battlefield too. */
-  addTypes?: { types: string[]; subtypes: string[]; chosenType?: true; allCreatureTypes?: true; elsewhere?: true };
+  /** `supertypes`: On Serra's Wings: "Enchanted creature is legendary" (CR 205.4). */
+  addTypes?: { types: string[]; subtypes: string[]; supertypes?: string[]; chosenType?: true; allCreatureTypes?: true; elsewhere?: true };
   /** Layer 4: "is a Frog creature" — types and subtypes it becomes, replacing its own (CR 205.1b). */
   setTypes?: { types: string[]; subtypes: string[] };
   /** Layer 4: "is a Bird" — its creature types become these (CR 205.1b). */
@@ -1142,7 +1151,8 @@ export interface CastProhibitionNode extends EffectNode {
   who: 'you' | 'opponents' | 'each' | 'enchanted_player' | 'enchanted_controller';
   /** Only spells like this ("noncreature spells", "spells with mana value 3 or less"). */
   filter?: ObjectFilter;
-  during?: 'your_turn' | 'combat';
+  /** `others_turns`: Dosan the Falling Leaf — during turns other than the caster's own. */
+  during?: 'your_turn' | 'combat' | 'others_turns';
   /** Only spells cast from these zones. */
   fromZones?: ('graveyard' | 'library' | 'exile' | 'command')[];
   /** "can't cast more than one spell each turn" */
@@ -1373,6 +1383,12 @@ export const PLAYER_RULES = [
   'loyalty_twice',
   /** Ashiok, Dream Render: "Spells and abilities your opponents control can't cause their controller to search their library." */
   'cant_search_own_library',
+  /** CR 502.3: Winter Orb: "Players can't untap more than one land during their untap steps." — at most `amount` of the permanents its `filter` names (any without one). */
+  'untap_limit',
+  /** Abyssal Persecutor: "You can't win the game and your opponents can't lose the game." (CR 104.3a) */
+  'cant_win_opponents_cant_lose',
+  /** Tainted Remedy, Plague Drone: "If an opponent would gain life, that player loses that much life instead." (CR 614.1a) */
+  'gain_becomes_loss',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -1433,7 +1449,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

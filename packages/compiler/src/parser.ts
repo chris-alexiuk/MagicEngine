@@ -918,6 +918,9 @@ export class ParserRegistry {
       .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
       // Elenda, Saint of Dusk: "~ gets an additional +5/+5 as long as …" — more of the same, added on.
       .map((l) => l.replace(/\b(gets?) an additional ([+-]\d+\/[+-]\d+)/g, '$1 $2'))
+      // Fallaji Wayfarer: "~ is all colors. This ability doesn't affect its color identity." — color identity is the deck's
+      // business (CR 903.4), already set from the card.
+      .map((l) => l.replace(/\. This ability doesn't affect its color identity\.$/, '.'))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {
@@ -1065,7 +1068,8 @@ export { stripReminder };
 /** "Landfall — Whenever…" → "Whenever…". Ability words have no rules meaning (CR 207.2c). */
 export function stripAbilityWord(line: string): string {
   // Flavor words too: "10,000 Needles —", "Brand-new Sky —", "Exterminate! —".
-  const m = /^((?:\d[\d,]* )?[A-Z][A-Za-z'’\-! ]{0,40}?(?: \d+)?) — (.+)$/.exec(line);
+  // "Do You Like Squirrels? —", "In You, All Things Are Possible —", "Nitro-9 —", "Pavitr's Sevā —".
+  const m = /^((?:\d[\d,]* )?\p{Lu}[\p{L}'’\-!?.,\d ]{0,40}?(?: \d+)?) — (.+)$/u.exec(line);
   if (!m) return line;
   // "Choose one —" is a modal spell, not an ability word; "II —" is a Saga's chapter symbol (CR 714.2); exhaust and
   // power-up are keywords (CR 702.177a, 702.193a).

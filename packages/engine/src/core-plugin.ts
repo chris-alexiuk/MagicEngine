@@ -7,7 +7,7 @@ import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Colo
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
-import { extraTokens, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
+import { applyLifeGain, extraTokens, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong, isKeywordCounter } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
@@ -26,7 +26,7 @@ import { installPlugin, matchTrigger, runEffect, type EffectContext, type Effect
 import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
-import { cantLose, playerLoses } from './flow.js';
+import { cantLose, cantWin, playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
@@ -599,6 +599,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const now = ctx.g.objects[o.id]!;
         if (now.zone === 'battlefield') movedOnto.push({ id: now.id, zcc: now.zcc });
         if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
+        // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
+        if (node.attacking && now.zone === 'battlefield') enterAttacking(ctx.g, now, ctx.source ?? undefined);
       } else if (node.until === 'opponent_monarch') {
         // Palace Jailer: back to the battlefield when an opponent of this ability's controller becomes the monarch.
         if (o.zone !== 'battlefield') continue;
@@ -1248,6 +1250,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     const to = refObjects(ctx, ref(node, 'to'))[0];
+    // Balan, Wandering Knight: "Attach all Equipment you control to Balan." — each of them (CR 701.3a).
+    if (node.all) {
+      for (const o of refObjects(ctx, ref(node, 'what'))) if (to && o.zone === 'battlefield' && to.zone === 'battlefield' && o.id !== to.id) attach(ctx.g, o, to, ctx.events);
+      return true;
+    }
     if (what && to) attach(ctx.g, what, to, ctx.events);
     return true;
   },
@@ -1678,7 +1685,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     (g.nextSpell ??= []).push({
       id: `n${g.nextId++}`, player: ctx.controller, turn: g.turn, filter: (node.filter ?? {}) as ObjectFilter, source,
       ...(node.uncounterable ? { uncounterable: true as const } : {}), ...(reduce !== undefined ? { reduce } : {}),
-      ...(node.keyword ? { keyword: String(node.keyword) } : {}),
+      ...(node.keyword ? { keyword: String(node.keyword) } : {}), ...(node.flash ? { flash: true as const } : {}),
     });
     return true;
   },
@@ -1834,7 +1841,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // "You can't lose the game" / "your opponents can't win the game" (Platinum Angel).
       if (node.result === 'lose') {
         if (!cantLose(ctx.g, p)) playerLoses(ctx.g, p, 'an effect says so', ctx.events);
-      } else if (!livePlayers(ctx.g).some((q) => q !== p && playerRule(ctx.g, q, 'opponents_cant_win'))) {
+      } else if (!cantWin(ctx.g, p)) {
         for (const q of livePlayers(ctx.g)) if (q !== p && !cantLose(ctx.g, q)) playerLoses(ctx.g, q, `${p} won the game`, ctx.events);
       }
     }
@@ -1844,7 +1851,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // CR 500.7: "Take an extra turn after this one."
   extra_turn(node, ctx) {
     // CR 500.7: the most recently created extra turn is taken first (two at once: one after the other).
-    const n = Number(node.count ?? 1);
+    // Ral Zarek: "… for each coin that comes up heads".
+    const n = typeof node.count === 'object' ? amountOf(ctx, node.count as Amount) : Number(node.count ?? 1);
     for (const p of refPlayers(ctx, ref(node, 'who'))) for (let i = 0; i < n; i++) (ctx.g.extraTurns ??= []).unshift(p);
     return true;
   },
@@ -2193,11 +2201,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const player = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
     if (!player) return true;
     // Okaun, Eye of Chaos: "flip a coin until you lose a flip" — each flip its own (CR 705.2).
-    for (let guard = 0; guard < 200; guard++) {
+    // Ral Zarek: "Flip five coins." — each its own flip.
+    const times = node.times === undefined ? 1 : Math.max(0, amountOf(ctx, node.times));
+    for (let guard = 0, flipped = 0; guard < 200 && flipped < times; guard++) {
       const won = nextRandom(ctx.g) < 0.5;
-      if (ctx.resolution) ctx.resolution.flipWon = won;
+      if (ctx.resolution) {
+        ctx.resolution.flipWon = won;
+        if (won) ctx.resolution.flipsWon = (ctx.resolution.flipsWon ?? 0) + 1;
+        else ctx.resolution.flipsLost = (ctx.resolution.flipsLost ?? 0) + 1;
+      }
       ctx.events.push({ type: 'coin_flip', player, won });
-      if (!node.untilLose || !won) break;
+      if (!node.untilLose || !won) flipped++;
     }
     return true;
   },
@@ -4545,6 +4559,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             ...(byRef?.ref === 'all' ? { byFilter: byRef.filter } : {}),
             ...(toRef?.ref === 'all' ? { toFilter: toRef.filter } : {}),
             ...(node.combat ? { combat: true as const } : {}),
+            ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
             ...then,
           });
         }
@@ -4560,6 +4575,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ...(to ? { to } : {}),
           ...(by ? { by } : {}),
           ...(node.combat ? { combat: true as const } : {}),
+          ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
           ...then,
         });
       }
@@ -4832,13 +4848,8 @@ function uncounterable(g: GameState, spell: GameObject): boolean {
 }
 
 function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
-  // "Players can't gain life."
-  if (n <= 0 || playerRule(ctx.g, p, 'cant_gain_life') || playerRule(ctx.g, p, 'life_cant_change')) return;
-  // CR 614.1a: "If you would gain life, you gain twice that much life instead."
-  n = replaceQuantity(ctx.g, 'gain_life', n, { player: p });
-  const ps = ctx.g.players[p]!;
-  ps.life += n;
-  ctx.events.push({ type: 'life', player: p, delta: n, life: ps.life });
+  // "Players can't gain life."; CR 614.1a: "If you would gain life, you gain twice that much life instead."
+  applyLifeGain(ctx.g, p, n, ctx.events);
 }
 
 /**
@@ -5285,7 +5296,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const amount = hits.reduce((n, x) => n + x.amount, 0);
       // Dragonborn Champion: "deals 5 or more damage to a player".
       if (typeof t.atLeast === 'number' && amount < t.atLeast) return [];
-      return src && subjectMatches(check, t.subject as Ref, src, { anyZone: true }) ? [{ object: refTo(src), player: to, amount }] : [];
+      // Michiko Konda: "Whenever a source an opponent controls deals damage to you, that player …" — its controller.
+      return src && subjectMatches(check, t.subject as Ref, src, { anyZone: true }) ? [{ object: refTo(src), player: t.to === 'you' ? src.controller : to, amount }] : [];
     }
     const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat);
     if (together[0] !== e) return [];
@@ -5819,7 +5831,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
     // Grandmother Goby: "counter that spell. Create … equal to the amount of mana spent to cast that spell" — remembered.
-    return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player, ...(e.manaSpent !== undefined ? { manaSpent: e.manaSpent } : {}), mv: manaValueOf(check.g, spell) }] : [];
+    if (!matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source })) return [];
+    const x = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object)?.x;
+    return [{ object: refTo(spell), player: e.player, ...(e.manaSpent !== undefined ? { manaSpent: e.manaSpent } : {}), mv: manaValueOf(check.g, spell), ...(x ? { x } : {}) }];
   },
 };
 

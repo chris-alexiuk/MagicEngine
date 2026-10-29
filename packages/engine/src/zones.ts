@@ -6,7 +6,7 @@ import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
-import { replaceQuantity } from './quantities.js';
+import { applyLifeGain, replaceQuantity } from './quantities.js';
 import { playerRule } from './player-rules.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
@@ -357,15 +357,7 @@ export function moveObject(
   if (instead && o.zone === 'exile') {
     // The Darkness Crystal: "… instead exile it and you gain 2 life." — exiled with it (CR 607.2a).
     o.exiledBy = { id: instead.source.id, zcc: battlefieldZcc(g, instead.source) };
-    if (instead.node.gainLife) {
-      const p = instead.source.controller;
-      const n = replaceQuantity(g, 'gain_life', instead.node.gainLife, { player: p });
-      const ps = g.players[p]!;
-      if (n > 0 && !playerRule(g, p, 'cant_gain_life') && !playerRule(g, p, 'life_cant_change')) {
-        ps.life += n;
-        events.push({ type: 'life', player: p, delta: n, life: ps.life });
-      }
-    }
+    if (instead.node.gainLife) applyLifeGain(g, instead.source.controller, instead.node.gainLife, events);
   }
 
   // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.

@@ -48,6 +48,7 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
       if (!bans(g, e, source, player) || !staticConditionHolds(g, e, source)) continue;
       if (e.during === 'your_turn' && g.active !== source.controller) continue;
       if (e.during === 'combat' && !COMBAT_STEPS.includes(g.step)) continue;
+      if (e.during === 'others_turns' && g.active === player) continue;
       if (e.fromZones && !(e.fromZones as string[]).includes(spell.zone)) continue;
       if (!matches(e.filter, source.controller, source)) continue;
       if (e.maxPerTurn !== undefined) {

@@ -370,6 +370,8 @@ export interface TriggerInfo {
   manaSpent?: number;
   /** A cast trigger: the spell's mana value on the stack (X included, CR 202.3e) — if it's countered, still known. */
   mv?: number;
+  /** Zaxara: a cast trigger's "X" — the value of X chosen for that spell (CR 107.3), still known if it's countered. */
+  x?: number;
   /** CR 400.7f: a trigger on the enchanted permanent leaving — the Aura can be found in its owner's graveyard. */
   auraFind?: true;
   /** The Skullspore Nexus: the total power of the creatures that died together (as they last existed, CR 603.10a). */
@@ -513,6 +515,8 @@ export interface PreventionShield {
   toFilter?: ObjectFilter;
   /** Who "you" is for those filters. */
   controller?: PlayerId;
+  /** Morningtide's Light: "Until your next turn, prevent all damage …" — it lasts until that player's next turn begins. */
+  untilTurnOf?: PlayerId;
   /**
    * CR 615.5: "For each 1 damage prevented this way, …" (Inkshield), "If damage is prevented this way, ~ deals that much
    * damage to that source's controller" (Deflecting Palm) — done right after, with the amount prevented.
@@ -606,6 +610,9 @@ export interface Resolution {
   countersPut?: { id: ObjectId; zcc: number; counter: string }[];
   /** CR 705: the result of this resolution's coin flip. */
   flipWon?: boolean;
+  /** Ral Zarek: "for each coin that comes up heads" — the flips won (and lost) as this resolves (CR 705.2). */
+  flipsWon?: number;
+  flipsLost?: number;
   /** CR 701.30d: "If you win" after "Clash with an opponent". */
   clashWon?: boolean;
 }
@@ -637,6 +644,8 @@ export type PendingChoice =
   | { kind: 'discard_to_hand_size'; player: PlayerId; count: number }
   /** CR 502.3: permanents its controller may choose not to untap ("You may choose not to untap ~ during your untap step"). */
   | { kind: 'keep_tapped'; player: PlayerId; candidates: ObjectId[] }
+  /** CR 502.3: Winter Orb — which `n` of these the active player untaps (`keep`, `chosen`: what's been chosen so far this step). */
+  | { kind: 'untap_limit'; player: PlayerId; candidates: ObjectId[]; n: number; keep: ObjectId[]; chosen: ObjectId[][] }
   /** CR 702.52a: the active player may dredge instead of drawing in their draw step. */
   | { kind: 'dredge'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
@@ -725,6 +734,7 @@ export type ChoiceAnswer =
   | { kind: 'opening_battlefield'; objects: ObjectId[]; exile?: ObjectId[] }
   | { kind: 'discard_to_hand_size'; objects: ObjectId[] }
   | { kind: 'keep_tapped'; objects: ObjectId[] }
+  | { kind: 'untap_limit'; objects: ObjectId[] }
   | { kind: 'dredge'; object: ObjectId | null }
   | { kind: 'legend_rule'; keep: ObjectId }
   | { kind: 'manual_resolution'; done: true }
@@ -1035,7 +1045,7 @@ export interface GameState {
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
   /** "The next spell you cast this turn can't be countered" / "costs {1} less to cast" — used up by that spell. */
-  nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number; keyword?: string }[];
+  nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number; keyword?: string; flash?: true }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
   /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
   playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter; amount?: number; timestamp?: number }[];
