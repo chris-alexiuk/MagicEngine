@@ -29,6 +29,8 @@ export interface TurnLog {
   spellsCast: Record<PlayerId, number>;
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
   castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
+  /** Forge Anew: the players who activated an equip ability this turn. */
+  equipped?: PlayerId[];
   noncreatureCast: PlayerId[];
   /** Active players who have drawn in this turn's draw step ("except the first one you draw in each of your draw steps"). */
   drawStepDrew?: PlayerId[];

@@ -359,6 +359,8 @@ export interface ObjectFilter {
    * (Wild-Magic Sorcerer: `fromZone` 'exile', the first they cast from exile).
    */
   firstCastThisTurn?: { fromZone?: 'exile' | 'hand' | 'graveyard' };
+  /** Patriarch's Bidding: "creature cards of a type chosen this way" (the types chosen as this resolves). */
+  subtypesChosenThisWay?: true;
   /** Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number" (the source's). */
   statIsChosenNumber?: true;
   /** Drown in the Loch: "with mana value less than or equal to the number of cards in its controller's graveyard" — each object's own. */
@@ -423,7 +425,9 @@ export interface ObjectFilter {
   /** "creatures that aren't of the chosen type" (Kindred Dominance). */
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
-  attachedTo?: 'self' | 'attached';
+  attachedTo?: 'self' | 'attached' | 'affected';
+  /** The object `attachedTo: 'affected'` stands for, bound as a static ability's amount is counted for it. */
+  attachedToObject?: { id: string; zcc: number };
   /** Sage's Reverie: "each Aura you control that's attached to a creature". */
   attachedToType?: string;
   /** CR 903.3: a commander. */
@@ -1220,6 +1224,12 @@ export const PLAYER_RULES = [
   'keep_mana',
   /** Birgi, God of Storytelling: "Creatures you control can boast twice during each of your turns rather than once." */
   'boast_twice',
+  /** Leonin Shikari: "You may activate equip abilities any time you could cast an instant." (Forge Anew: during your turn, a condition.) */
+  'equip_instant',
+  /** Forge Anew: "You may pay {0} rather than pay the equip cost of the first equip ability you activate during each of your turns." */
+  'first_equip_free',
+  /** Bruenor Battlehammer: "… the first equip ability you activate each turn." */
+  'first_equip_free_each_turn',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -1252,7 +1262,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'game_result',
     'become_prepared', 'become_unprepared', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],

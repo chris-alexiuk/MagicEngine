@@ -77,7 +77,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   }],
   // "for each Aura attached to it": it is the source, or what the source enchants or equips.
   [/ attached to (it|~|this creature)$/, (f, m, b) => {
-    const to = m[1] !== 'it' ? 'self' : b.it?.ref === 'attached' ? 'attached' : !b.it || b.it.ref === 'self' ? 'self' : null;
+    // Bruenor Battlehammer: "Each creature you control gets +2/+0 for each Equipment attached to it" — each one's own.
+    const to = m[1] !== 'it' ? 'self' : b.it?.ref === 'attached' ? 'attached' : b.it?.ref === 'affected' ? 'affected' : !b.it || b.it.ref === 'self' ? 'self' : null;
     return !f.attachedTo && to !== null && ((f.attachedTo = to), true);
   }],
   // CR 702.134a (mentor)

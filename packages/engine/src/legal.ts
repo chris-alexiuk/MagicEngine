@@ -17,7 +17,7 @@ import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
-import { activationsThisTurn, perTurnLimit, targetLifeTax } from './actions.js';
+import { activationsThisTurn, equipAtInstantSpeed, freeEquipAvailable, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { enteringBanned, faceOf, zoneList } from './zones.js';
 
@@ -310,20 +310,23 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (limit && activationsThisTurn(g, o, ability) >= limit) return;
       const { cost } = ab;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
-      if ((ab.timing === 'sorcery' || (cost.loyalty !== undefined && !hasRule(g, o, 'loyalty_instant'))) && !sorcerySpeed) return;
+      if (((ab.timing === 'sorcery' && !equipAtInstantSpeed(g, player, ab)) || (cost.loyalty !== undefined && !hasRule(g, o, 'loyalty_instant'))) && !sorcerySpeed) return;
       if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
       if (cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
       if (cost.untap && !o.tapped) return;
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;
-      const mana = parseManaCost(cost.mana ?? '');
+      // Forge Anew: the first equip ability this turn for {0}.
+      const freeEquip = freeEquipAvailable(g, player, ab);
+      const mana = parseManaCost(freeEquip ? '' : (cost.mana ?? ''));
       if (mana.unsupported.length || mana.x > 0) return;
       applyPowerUp(g, o, ab, mana, player);
       let costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
+      if (freeEquip) costs = { ...costs, freeEquip: true };
       const busy = [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])];
-      if (cost.mana && !planAutoTap(g, player, mana, 0, busy, { kind: 'ability', source: o })) {
+      if (cost.mana && !freeEquip && !planAutoTap(g, player, mana, 0, busy, { kind: 'ability', source: o })) {
         // CR 701.67a: waterbend — tap untapped artifacts and creatures for as much of the generic mana as it takes.
         if (!cost.waterbend) return;
         const tappable = g.zones.battlefield.filter((x) => {
@@ -569,7 +572,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}), ...(removed.length ? { removed } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.removed || costs.counters !== undefined ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.removed || costs.counters !== undefined || costs.freeEquip ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {

@@ -1178,19 +1178,52 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 701.14a: each creature deals damage equal to its power to the other.
   fight(node, ctx) {
-    const g = ctx.g;
     const [a] = refObjects(ctx, ref(node, 'a'));
     const [d] = refObjects(ctx, ref(node, 'b'));
-    // CR 701.14b: if either isn't a creature on the battlefield (or is an illegal target), neither fights.
-    const ok = (o: GameObject | undefined): o is GameObject => Boolean(o && o.zone === 'battlefield' && chars(g, o).types.includes('Creature'));
-    if (!ok(a) || !ok(d)) return true;
-    const pa = Math.max(0, power(g, a));
-    const pd = Math.max(0, power(g, d));
-    // CR 701.14d: not combat damage. CR 701.14c: a creature that fights itself deals twice its power to itself.
-    for (const [from, to, n] of [[a, d, pa], [d, a, pd]] as const) {
-      const dealt = dealDamage(g, from, { kind: 'permanent', object: to.id }, n, false, ctx.events);
-      if (dealt > 0 && hasKeyword(g, from, 'lifelink')) gainLife(ctx, from.controller, dealt);
+    fightPair(ctx, a, d);
+    return true;
+  },
+
+  // Scroll Rack: exile any number of cards from your hand face down, put that many from the top of your library into your
+  // hand, then put the exiled cards on top in any order.
+  scroll_rack(_node, ctx) {
+    const g = ctx.g;
+    const me = ctx.controller;
+    const memo = ctx.memo as { exiled?: string[] };
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!memo.exiled) {
+      const hand = [...zoneList(g, 'hand', me)];
+      if (!answer) {
+        if (!hand.length) return true;
+        return { ask: { kind: 'choose_objects', player: me, candidates: hand, min: 0, max: hand.length, text: 'Exile any number of cards from your hand face down.' } };
+      }
+      if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => hand.includes(id))) throw new RulesError('Choose cards from your hand.');
+      for (const id of answer.objects) {
+        moveObject(g, id, 'exile', ctx.events);
+        if (g.objects[id]?.zone === 'exile') g.objects[id]!.hiddenFor = me;
+      }
+      memo.exiled = answer.objects.filter((id) => g.objects[id]?.zone === 'exile');
+      // "Put that many cards from the top of your library into your hand" — not drawing.
+      for (const id of zoneList(g, 'library', me).slice(0, answer.objects.length)) moveObject(g, id, 'hand', ctx.events);
+      if (memo.exiled.length > 1) {
+        return { ask: { kind: 'choose_objects', player: me, candidates: [...memo.exiled], min: memo.exiled.length, max: memo.exiled.length, ordered: true, text: 'Put the exiled cards on top of your library in any order (the first one chosen on top).' } };
+      }
+      for (const id of memo.exiled) moveObject(g, id, 'library', ctx.events, { position: 'top' });
+      return true;
     }
+    const left = memo.exiled.filter((id) => g.objects[id]?.zone === 'exile');
+    if (!answer || answer.objects.length !== left.length || !left.every((id) => answer.objects.includes(id))) throw new RulesError('Put each of the exiled cards in order.');
+    for (const id of [...answer.objects].reverse()) moveObject(g, id, 'library', ctx.events, { position: 'top' });
+    return true;
+  },
+
+  // Ezuri's Predation: "Each of those tokens fights a different one of those creatures." — paired off one to one (CR 701.14).
+  fight_distinct(node, ctx) {
+    const g = ctx.g;
+    const ok = (o: GameObject) => o.zone === 'battlefield' && chars(g, o).types.includes('Creature');
+    const mine = refObjects(ctx, ref(node, 'a')).filter(ok);
+    const theirs = refObjects(ctx, ref(node, 'b')).filter(ok);
+    for (let i = 0; i < Math.min(mine.length, theirs.length); i++) fightPair(ctx, mine[i], theirs[i]);
     return true;
   },
 
@@ -1618,11 +1651,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // "Choose a creature type." / "Choose a color." — remembered for "the chosen type" (on the spell or permanent).
   choose_value(node, ctx) {
+    // Patriarch's Bidding: "Each player chooses a creature type." — in turn order (CR 101.4), each choice kept for this resolution.
+    if (node.each) {
+      const { each: _e, ...one } = node;
+      return { expand: apnap(ctx.g).map((p) => ({ ...one, scope: 'resolution_list', asPlayer: p })) };
+    }
     const answer = answerOf(ctx, 'choose_option');
     const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : [...SUBTYPES.creature];
     const text = node.choice === 'color' ? 'Choose a color.' : node.choice === 'land_type' ? 'Choose a basic land type.' : 'Choose a creature type.';
     if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text, sourceName: sourceName(ctx) } };
     if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+    if (node.scope === 'resolution_list') {
+      if (ctx.resolution) (ctx.resolution.chosenTypes ??= []).push(answer.choice);
+      return true;
+    }
     // "… of your choice": remembered for this resolution only.
     if (node.scope === 'resolution') {
       if (ctx.resolution) {
@@ -4464,6 +4506,21 @@ function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefi
   if (!target) return;
   // CR 508.4d: during or after the declare blockers step, it's unblocked.
   c.attackers[o.id] = { zcc: o.zcc, target, blocked: false, blockers: [] };
+}
+
+/** CR 701.14: two creatures fight — each deals damage equal to its power to the other. */
+function fightPair(ctx: EffectContext, a: GameObject | undefined, d: GameObject | undefined): void {
+  const g = ctx.g;
+  // CR 701.14b: if either isn't a creature on the battlefield (or is an illegal target), neither fights.
+  const ok = (o: GameObject | undefined): o is GameObject => Boolean(o && o.zone === 'battlefield' && chars(g, o).types.includes('Creature'));
+  if (!ok(a) || !ok(d)) return;
+  const pa = Math.max(0, power(g, a));
+  const pd = Math.max(0, power(g, d));
+  // CR 701.14d: not combat damage. CR 701.14c: a creature that fights itself deals twice its power to itself.
+  for (const [from, to, n] of [[a, d, pa], [d, a, pd]] as const) {
+    const dealt = dealDamage(g, from, { kind: 'permanent', object: to.id }, n, false, ctx.events);
+    if (dealt > 0 && hasKeyword(g, from, 'lifelink')) gainLife(ctx, from.controller, dealt);
+  }
 }
 
 /** Twinning Staff: whether its controller may choose new targets for the additional copies a replacement made. */

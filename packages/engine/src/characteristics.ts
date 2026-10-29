@@ -366,7 +366,8 @@ function staticAmount(g: GameState, a: Amount | undefined, source: GameObject, a
 function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pick<ActiveEffect, 'pt' | 'set'> {
   const out: Pick<ActiveEffect, 'pt' | 'set'> = {};
   // Coat of Arms: counted for each creature it applies to.
-  const perObject = JSON.stringify([e.power, e.toughness]).includes('"ref":"affected"');
+  // Bruenor Battlehammer: "for each Equipment attached to it".
+  const perObject = /"ref":"affected"|"attachedTo":"affected"/.test(JSON.stringify([e.power, e.toughness]));
   if (e.power !== undefined || e.toughness !== undefined) {
     out.pt = (o) => [staticAmount(g, e.power, source, perObject ? o : undefined), staticAmount(g, e.toughness, source, perObject ? o : undefined)];
   }
@@ -961,6 +962,8 @@ export function matchesFilter(
     const a = g.objects[id]!;
     return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && chars(g, a).subtypes.includes('Equipment');
   })) return false;
+  if (f.attachedToObject && (o.attachedTo?.id !== f.attachedToObject.id || o.attachedTo.zcc !== f.attachedToObject.zcc)) return false;
+  if (f.attachedTo === 'affected') return false;
   if (f.attachedTo) {
     const host = f.attachedTo === 'self' ? ctx.source : ctx.source?.attachedTo ? g.objects[ctx.source.attachedTo.id] : undefined;
     if (!host || o.attachedTo?.id !== host.id || o.attachedTo.zcc !== host.zcc) return false;

@@ -466,6 +466,11 @@ const CARDS = [
   makeCard({ name: 'Spores Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create two 1/1 green Saproling creature tokens and a Treasure token.' }),
   makeCard({ name: 'Tempest Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Tempest Lite deals damage to each creature your opponents control equal to the total mana value of other spells you've cast this turn." }),
   makeCard({ name: 'Mother Lode Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Discover 10. If the discovered card's mana value is less than 10, create a number of tapped Treasure tokens equal to the difference." }),
+  makeCard({ name: 'Predation Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'For each creature your opponents control, create a 4/4 green Phyrexian Beast creature token. Each of those tokens fights a different one of those creatures.' }),
+  makeCard({ name: 'Bidding Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player chooses a creature type. Each player returns all creature cards of a type chosen this way from their graveyard to the battlefield.' }),
+  makeCard({ name: 'Scroll Rack Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Exile any number of cards from your hand face down. Put that many cards from the top of your library into your hand. Then look at the exiled cards and put them on top of your library in any order.' }),
+  makeCard({ name: 'Forge Anew Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'During your turn, you may activate equip abilities any time you could cast an instant.\nYou may pay {0} rather than pay the equip cost of the first equip ability you activate during each of your turns.' }),
+  makeCard({ name: 'Bruenor Lite', type_line: 'Legendary Creature — Dwarf Warrior', mana_cost: '{0}', power: '5', toughness: '4', oracle_text: 'Each creature you control gets +2/+0 for each Equipment attached to it.\nYou may pay {0} rather than pay the equip cost of the first equip ability you activate each turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5278,6 +5283,65 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it('Bruenor Battlehammer: +2/+0 for each Equipment on each creature; a free equip on any turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Bruenor Lite', 'battlefield');
+    const [s1, s2] = [give(g, 'alice', 'Sword Lite', 'battlefield'), give(g, 'alice', 'Sword Lite', 'battlefield')];
+    const [b1, b2] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    g = settle(act(g, { type: 'activate', player: 'alice', object: s1, ability: 0, targets: [[{ kind: 'object', object: b1 }]], costs: { freeEquip: true } }));
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: s2, ability: 0, targets: [[{ kind: 'object', object: b1 }]] }));
+    expect([chars(g, g.objects[b1]!).power, chars(g, g.objects[b1]!).toughness, chars(g, g.objects[b2]!).power]).toEqual([8, 4, 2]);
+  });
+  it('Forge Anew: equip at instant speed on your turn; the first equip each turn for {0}', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Forge Anew Lite', 'battlefield');
+    const sword = give(g, 'alice', 'Sword Lite', 'battlefield');
+    const [b1, b2] = [give(g, 'alice', 'Bear', 'battlefield'), give(g, 'alice', 'Bear', 'battlefield')];
+    for (const o of Object.values(g.objects)) if (o.controller === 'alice' && chars(g, o).types.includes('Land')) o.tapped = true;
+    const free = legalActions(g, 'alice').find((a) => a.type === 'activate' && a.object === sword);
+    expect(free).toMatchObject({ costs: { freeEquip: true } });
+    g = settle(act(g, { type: 'activate', player: 'alice', object: sword, ability: 0, targets: [[{ kind: 'object', object: b1 }]], costs: { freeEquip: true } }));
+    expect(g.objects[sword]!.attachedTo?.id).toBe(b1);
+    expect(illegal(g, { type: 'activate', player: 'alice', object: sword, ability: 0, targets: [[{ kind: 'object', object: b2 }]], costs: { freeEquip: true } })).toBeTruthy();
+    g = toStep(g, 'beginning_of_combat', 'alice');
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: sword, ability: 0, targets: [[{ kind: 'object', object: b2 }]] }));
+    expect(g.objects[sword]!.attachedTo?.id).toBe(b2);
+  });
+  it('Scroll Rack: swap cards in hand for the top of the library, then stack them in any order', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const rack = give(g, 'alice', 'Scroll Rack Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Bolt', 'hand'), give(g, 'alice', 'Bear', 'hand')];
+    const lib = g.zones.library.alice!;
+    const [t1, t2] = [lib[0]!, lib[1]!];
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: rack, ability: 0 }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [a, b] } }));
+    expect([g.zones.hand.alice!.includes(t1), g.zones.hand.alice!.includes(t2), g.zones.hand.alice!.length]).toEqual([true, true, hand]);
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [b, a] } }));
+    expect(g.zones.library.alice!.slice(0, 2)).toEqual([b, a]);
+  });
+  it("Patriarch's Bidding: each player chooses a type; all creature cards of any chosen type return", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Bear', 'graveyard');
+    const theirs = give(g, 'bob', 'Bear', 'graveyard');
+    const elf = give(g, 'bob', 'Patron Lite', 'graveyard');
+    const goblin = give(g, 'alice', 'Goblin Pair', 'graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bidding Lite', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'choose_option', player: 'alice' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'Bear' } }));
+    expect(g.pending).toMatchObject({ kind: 'choose_option', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_option', choice: 'Goblin' } }));
+    expect([g.objects[mine]!.zone, g.objects[theirs]!.zone, g.objects[theirs]!.controller, g.objects[elf]!.zone, g.objects[goblin]!.zone]).toEqual(['battlefield', 'battlefield', 'bob', 'graveyard', 'battlefield']);
+  });
+  it("Ezuri's Predation: a 4/4 for each of their creatures, each fighting a different one", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bears = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Predation Lite', 'hand') }));
+    const beasts = Object.values(g.objects).filter((o) => o.token && o.zone === 'battlefield');
+    expect([bears.map((b) => g.objects[b]!.zone), beasts.length, beasts.map((b) => b.damage)]).toEqual([['graveyard', 'graveyard'], 2, [2, 2]]);
+  });
   it('Hit the Mother Lode: tapped Treasures for the difference', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const bear = give(g, 'alice', 'Bear', 'library');

@@ -2292,6 +2292,12 @@ function parseLoyaltyAnyTime(body: string): ContinuousEffectNode | null {
 }
 
 function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
+  // Forge Anew, Bruenor Battlehammer: equip at instant speed during your turn; the first equip ability each turn for {0}.
+  // (Leonin Shikari: any time; Forge Anew: "During your turn, …" — a condition, here or already taken off by the caller.)
+  const equipInstant = /^(During your turn, )?[Yy]ou may activate equip abilities any time you could cast an instant$/.exec(body);
+  if (equipInstant) return { type: 'player_rule', who: 'you', rule: 'equip_instant', ...(equipInstant[1] ? { condition: { type: 'your_turn', value: true } } : {}) } as PlayerRuleNode;
+  const firstEquip = /^You may pay \{0\} rather than pay the equip cost of the first equip ability you activate (during each of your turns|each turn)$/.exec(body);
+  if (firstEquip) return { type: 'player_rule', who: 'you', rule: firstEquip[1] === 'each turn' ? 'first_equip_free_each_turn' : 'first_equip_free' } as PlayerRuleNode;
   // Worship: "If you control a creature, damage that would reduce your life total to less than 1 reduces it to 1 instead."
   const floor = /^(?:If (.+?), )?[Dd]amage that would reduce your life total to less than 1 reduces it to 1 instead$/.exec(body);
   if (floor) {

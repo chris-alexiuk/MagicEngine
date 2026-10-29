@@ -591,6 +591,17 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     for (const k of counted) out[k] = { ...f[k]!, n: f[k]!.n === 'X' ? ctx.x : amountOf(ctx, f[k]!.n) };
     return bindFilter(ctx, out);
   }
+  // Bruenor Battlehammer: "for each Equipment attached to it" — the object the static ability is counting for.
+  if (f.attachedTo === 'affected') {
+    const { attachedTo: _a, ...rest } = f;
+    const o = ctx.affected;
+    return bindFilter(ctx, { ...rest, attachedToObject: o ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } });
+  }
+  // Patriarch's Bidding: "creature cards of a type chosen this way".
+  if (f.subtypesChosenThisWay) {
+    const { subtypesChosenThisWay: _c, ...rest } = f;
+    return bindFilter(ctx, { ...rest, subtypes: [...new Set(ctx.resolution?.chosenTypes ?? [])].length ? [...new Set(ctx.resolution!.chosenTypes!)] : ['\u0000none'] });
+  }
   if (f.sharesCardTypeWithSacrificed) {
     // Braids: the card types of the permanent sacrificed first in this resolution, as it last existed (CR 608.2h).
     const was = ctx.resolution?.lkiThisWay?.sacrificed?.[0]?.types ?? [];

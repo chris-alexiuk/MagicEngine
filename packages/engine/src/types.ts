@@ -561,6 +561,8 @@ export interface Resolution {
   drew?: Record<PlayerId, number>;
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
   chosen?: { color?: Color; creatureType?: string; landType?: string };
+  /** Patriarch's Bidding: the creature types each player chose as this resolved ("of a type chosen this way"). */
+  chosenTypes?: string[];
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */
   lifeLost?: number;
   /** Myr Battlesphere: how many permanents "you may tap X untapped Myr" tapped. */
@@ -752,6 +754,8 @@ export interface CostChoices {
   blighted?: ObjectId[];
   /** CR 701.61a: forage by sacrificing a Food (in `sacrifice`) rather than exiling three cards (in `exile`). */
   forageFood?: boolean;
+  /** Forge Anew, Bruenor Battlehammer: pay {0} rather than this equip ability's cost (the first equip ability this turn). */
+  freeEquip?: boolean;
   /** CR 701.67a: artifacts and creatures tapped to pay a waterbend cost's generic mana. */
   waterbend?: ObjectId[];
   /** "Remove a counter from a permanent you control": which counters, from which permanents. */

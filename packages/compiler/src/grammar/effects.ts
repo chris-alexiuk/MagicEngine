@@ -40,6 +40,27 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Scroll Rack: "Exile any number of cards from your hand face down. Put that many cards from the top of your library into your
+  // hand. Then look at the exiled cards and put them on top of your library in any order."
+  if (/^Exile any number of cards from your hand face down\. Put that many cards from the top of your library into your hand\. Then look at the exiled cards and put them on top of your library in any order\.$/.test(text.trim())) {
+    return [{ type: 'scroll_rack' }];
+  }
+  // Patriarch's Bidding: "Each player chooses a creature type. Each player returns all creature cards of a type chosen this
+  // way from their graveyard to the battlefield."
+  if (/^Each player chooses a creature type\. Each player returns all creature cards of a type chosen this way from their graveyard to the battlefield\.$/.test(text.trim())) {
+    return [
+      { type: 'choose_value', choice: 'creature_type', each: true },
+      { type: 'move', what: { ref: 'all', filter: { zone: 'graveyard', types: ['Creature'], subtypesChosenThisWay: true } }, to: 'battlefield' },
+    ];
+  }
+  // Ezuri's Predation: "For each creature your opponents control, create a 4/4 green Phyrexian Beast creature token. Each of
+  // those tokens fights a different one of those creatures." (CR 701.14)
+  const predation = /^(For each creature your opponents control, create an? [^.]+ creature token)\. Each of those tokens fights a different one of those creatures\.$/.exec(text.trim());
+  if (predation) {
+    const made = parseEffectText(`${predation[1]}.`, b);
+    if (made?.length !== 1 || made[0]!.type !== 'create_token') return null;
+    return [...made, { type: 'fight_distinct', a: { ref: 'created' }, b: { ref: 'all', filter: { types: ['Creature'], controller: 'opponent' } } }];
+  }
   // Eldritch Evolution: "Search your library for … X or less, where X is …. Put that card onto the battlefield, then
   // shuffle." — the same as one sentence.
   // Traverse the Outlands: "… up to X basic land cards, where X is …. Put those cards onto the battlefield tapped, then shuffle."

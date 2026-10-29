@@ -1043,6 +1043,22 @@ interface ActivationChoices {
   divide?: number[];
 }
 
+/** CR 702.6a: an equip ability ("Equip [cost]": attach to target creature you control). */
+export function isEquipAbility(a: ActivatedAbility): boolean {
+  return /^Equip\b/.test(a.text) && a.effects.some((e) => e.type === 'attach');
+}
+
+/** Leonin Shikari, Forge Anew (during your turn): equip abilities any time you could cast an instant. */
+export function equipAtInstantSpeed(g: GameState, player: PlayerId, a: ActivatedAbility): boolean {
+  return isEquipAbility(a) && Boolean(playerRule(g, player, 'equip_instant'));
+}
+
+/** Forge Anew, Bruenor Battlehammer: {0} rather than the cost of the first equip ability this player activates this turn. */
+export function freeEquipAvailable(g: GameState, player: PlayerId, a: ActivatedAbility): boolean {
+  if (!isEquipAbility(a) || (g.turnLog.equipped ?? []).includes(player)) return false;
+  return Boolean(playerRule(g, player, 'first_equip_free_each_turn')) || (g.active === player && Boolean(playerRule(g, player, 'first_equip_free')));
+}
+
 function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
   const o = obj(g, id);
   // CR 602.2: only an object's controller (or owner, outside the battlefield) can activate its abilities.
@@ -1075,8 +1091,9 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     // CR 606.6: a negative loyalty cost needs at least that many loyalty counters ("−X": X of them).
     if ((o.counters.loyalty ?? 0) + cost.loyalty + (cost.loyaltyX ?? 0) * choices.x < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
   }
-  // CR 602.5d: "Activate only as a sorcery."
-  if (ability.timing === 'sorcery' && !sorcerySpeed) throw new RulesError(`That ability can only be activated as a sorcery.`);
+  // CR 602.5d: "Activate only as a sorcery." (Forge Anew: equip any time you could cast an instant during your turn.)
+  if (ability.timing === 'sorcery' && !sorcerySpeed && !equipAtInstantSpeed(g, player, ability)) throw new RulesError(`That ability can only be activated as a sorcery.`);
+  if (choices.costs.freeEquip && !freeEquipAvailable(g, player, ability)) throw new RulesError('Only the first equip ability you activate each turn can be free.');
   // "Activate only if this Class is level 1" (CR 716.2a) and other conditions on activating.
   if (ability.activateIf && !evalCondition(ability.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) {
     throw new RulesError('That ability can’t be activated now.');
@@ -1102,7 +1119,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   recordModes(g, source, ability, choices.modes);
 
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
-  const mana = parseManaCost(cost.mana ?? '');
+  const mana = parseManaCost(choices.costs.freeEquip ? '' : (cost.mana ?? ''));
+  if (isEquipAbility(ability)) (g.turnLog.equipped ??= []).push(player);
   applyPowerUp(g, o, ability, mana, player);
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
@@ -1127,8 +1145,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     if (phyrexianLife + other > g.players[player]!.life) throw new RulesError(`You don’t have ${phyrexianLife + other} life to pay.`);
     if (playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
   }
-  if (cost.mana && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
-  if (cost.mana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
+  if (cost.mana && !choices.costs.freeEquip && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
+  if (cost.mana && !choices.costs.freeEquip && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
   if (phyrexianLife) {
     const ps = g.players[player]!;
     const lost = lifeLoss(g, player, phyrexianLife);
