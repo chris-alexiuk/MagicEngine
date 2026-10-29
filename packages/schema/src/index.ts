@@ -518,6 +518,8 @@ export interface ObjectFilter {
   controllerHitBySource?: true;
   /** Oran-Rief: "each green creature that entered this turn" */
   enteredThisTurn?: true;
+  /** Eriette of the Charmed Apple: "enchanted by an Aura you control". */
+  enchantedByYou?: true;
 }
 
 export interface Compare {
@@ -748,6 +750,8 @@ export const RULE_FLAGS = [
   /** CR 510.1c: "You may have ~ assign its combat damage as though it weren't blocked." */
   'assign_as_unblocked',
   'cant_be_countered',
+  /** Banefire: "the damage can't be prevented" — the spell's own damage, while it's on the stack (CR 615.12). */
+  'damage_unpreventable',
   // Airtight Alibi: "can't become suspected" (CR 701.60).
   'cant_be_suspected',
   'doesnt_untap',
@@ -1425,6 +1429,9 @@ export const CORE_NODES = {
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',
+    // Vines of Vastwood, Canopy Cover: "can't be the target of spells or abilities your opponents control" — `you` is the
+    // granting effect's controller.
+    'untargetable_by_opponents',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
     'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'ascend', 'sunburst',

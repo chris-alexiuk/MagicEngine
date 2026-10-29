@@ -160,6 +160,11 @@ export class ParserRegistry {
           const parts = l.split(/(?<=\.) (?=As long as it's )/);
           return [parts[0]!, ...parts.slice(1).map((x) => x.replace(/^As long as it's ([^,]+), it /, `As long as ${subj} is $1, it `))];
         }
+        // Scion of Draco: "Each creature you control has vigilance if it's white, hexproof if it's blue, …" — one static for each
+        // color.
+        const byColor = /^Each creature you control has (.+)\.$/.exec(l);
+        const colorParts = byColor ? byColor[1]!.split(/, (?:and )?/).map((p) => /^([a-z ]+) if it's (white|blue|black|red|green)$/.exec(p)) : null;
+        if (colorParts && colorParts.length > 1 && colorParts.every(Boolean)) return colorParts.map((m) => `${capitalise(m![2]!)} creatures you control have ${m![1]}.`);
         // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
         const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);
         if (turnOtherwise) return [`During your turn, ${turnOtherwise[1]} has ${turnOtherwise[2]}.`, `During turns other than yours, ${turnOtherwise[1]} has ${turnOtherwise[3]}.`];

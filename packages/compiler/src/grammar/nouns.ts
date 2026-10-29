@@ -34,8 +34,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // (A power compared with this creature's own stays powerBelowSource, below.)
   // Buster Sword: "with mana value less than or equal to that damage" — how much the trigger event was.
   // Birthing Pod: "a creature card with mana value equal to 1 plus the sacrificed creature's mana value" (CR 608.2h).
-  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature)|that damage|\w+ plus the sacrificed (?:creature|artifact|permanent)'s mana value)$/, (f, m, b) => {
+  [/ with (mana value|power|toughness) (less than or equal to|less than|greater than or equal to|greater than|equal to) (the number of .+|(?:~|this creature)'s (?:power|toughness)|the amount of mana spent to cast (?:~|this creature)|that damage|\w+ plus the sacrificed (?:creature|artifact|permanent)'s mana value|your devotion to \w+(?: and \w+)?)$/, (f, m, b) => {
     const key = m[1] === 'mana value' ? 'manaValue' : (m[1] as 'power' | 'toughness');
+    // Grim Servant: "with mana value less than or equal to your devotion to black".
     if (key !== 'manaValue' && !/^the number of /.test(m[3]!)) return false;
     if (/ plus the sacrificed /.test(m[3]!) && m[2] !== 'equal to') return false;
     // "… in your library" is the card's zone: peeled first.
@@ -73,6 +74,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
   // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
   [/ (?:that's|that are) attacking (?:one of your opponents|an opponent)$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingOpponent = true), true)],
+  // Eriette of the Charmed Apple: "each creature that's enchanted by an Aura you control".
+  [/ (?:that's|that are) enchanted by an Aura you control$/, (f) => !f.enchantedByYou && ((f.enchantedByYou = true), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   // Aku Djinn: "each creature each opponent controls"

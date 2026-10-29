@@ -1,4 +1,4 @@
-import type { AddManaEffect, AmountExpr, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
+import type { AddManaEffect, AmountExpr, ConditionNode, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
 import { SUBTYPES } from '@mtg/schema';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, bindTargetsX, type Binder } from './binder.js';
@@ -40,6 +40,25 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Stonehewer Giant: "Search your library for an Equipment card, put it onto the battlefield, attach it to a creature you
+  // control, then shuffle." — the creature chosen as it resolves.
+  const searchAttach = /^(Search your library for an? [^.]+?), put it onto the battlefield, attach it to (a creature you control), then shuffle\.$/.exec(text.trim());
+  if (searchAttach) {
+    const r = attempt(b, (b) => {
+      const inner = parseEffectText(`${searchAttach[1]}, put it onto the battlefield, then shuffle.`, b);
+      const pf = parseFilter(searchAttach[2]!.replace(/^a /, ''), b);
+      if (inner?.length !== 1 || inner[0]!.type !== 'search' || !pf || pf.plural) return null;
+      return [...inner, { type: 'attach', what: { ref: 'created' }, choose: pf.filter } as EffectNode];
+    });
+    if (r) return r;
+  }
+  // Spinner of Souls: "you may reveal cards from the top of your library until you reveal a creature card. Put that card into
+  // your hand and the rest on the bottom …" — the whole of it, if you choose to.
+  const mayRevealUntil = /^You may (reveal cards from the top of your library until .+)$/s.exec(text.trim());
+  if (mayRevealUntil) {
+    const inner = attempt(b, (b) => parseEffectText(capitalise(mayRevealUntil[1]!), b));
+    if (inner?.length === 1 && inner[0]!.type === 'reveal_until') return [{ type: 'may', effects: inner }];
+  }
   // CR 702.60a: ripple N.
   const ripple = /^You may reveal the top (\w+) cards of your library, or, if there are fewer than \1 cards in your library, you may reveal all the cards in your library\. If you reveal cards from your library this way, you may cast any of those cards with the same name as (?:this spell|~) without paying their mana costs, then put all revealed cards not cast this way on the bottom of your library in any order\.$/i.exec(text.trim());
   if (ripple && typeof parseAmount(ripple[1]!) === 'number') return [{ type: 'ripple', n: parseAmount(ripple[1]!) as number }];
@@ -2618,10 +2637,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const playerWard = /^(You|Players|Each player) gains? (hexproof|shroud) until (end of turn|your next turn)$/.exec(s);
   if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: playerWard[3] === 'end of turn' ? 'eot' : 'your_next_turn' }];
   // Roiling Vortex: "Your opponents can't gain life this turn."; Skullcrack: "Players can't gain life this turn." (CR 119.7)
-  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent) can't gain life this turn$/.exec(s);
+  // Screaming Nemesis: "… they can't gain life for the rest of the game."
+  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent) can't gain life (this turn|for the rest of the game)$/.exec(s);
   if (noGain) {
     const who: Ref | null = noGain[1] === 'Players' ? { ref: 'players', who: 'each' } : /^(?:Your opponents|Each opponent)$/.test(noGain[1]!) ? { ref: 'players', who: 'opponents' } : parsePlayerRef(noGain[1]!.toLowerCase(), b);
-    return who ? [{ type: 'player_effect', who, rule: 'cant_gain_life', until: 'eot' }] : null;
+    return who ? [{ type: 'player_effect', who, rule: 'cant_gain_life', until: noGain[2] === 'this turn' ? 'eot' : 'game' }] : null;
+  }
+  // Screaming Nemesis: "If a player is dealt damage this way, they can't gain life for the rest of the game." — the damage's
+  // target, if it's a player that was dealt damage.
+  if (/^If a player is dealt damage this way, they can't gain life for the rest of the game$/.test(s)) {
+    const index = [...b.targets.keys()].reverse().find((i) => b.targets[i]!.what === 'any' || b.targets[i]!.what === 'player');
+    if (index === undefined) return null;
+    return [{ type: 'if', cond: { type: 'amount', amount: { kind: 'damage_this_way' }, op: 'gt', n: 0 } as ConditionNode, effects: [{ type: 'player_effect', who: { ref: 'target', index }, rule: 'cant_gain_life', until: 'game' }] }];
   }
   // Everybody Lives!: "Players can't lose life this turn and players can't lose the game or win the game this turn.";
   // Courageous Resolve: "you can't lose life this turn, you can't lose the game this turn, and your opponents can't win the
@@ -3529,6 +3556,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const who = exileLibrary[1] === 'your' ? ({ ref: 'you' } as Ref) : parsePlayerRef(exileLibrary[1]!, b);
       return who ? [{ type: 'exile_top', who, amount: 999 } as EffectNode] : null;
+    });
+    if (r) return r;
+  }
+  // Vines of Vastwood: "Target creature can't be the target of spells or abilities your opponents control this turn." — this
+  // spell's controller's opponents (not hexproof: its own controller may be one of them).
+  const shielded = /^(.+?) can't be the targets? of spells or abilities your opponents control this turn$/.exec(s);
+  if (shielded) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(shielded[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
+      return what ? [{ type: 'modify', what: what.ref, until: 'eot', keywords: [{ id: 'untargetable_by_opponents' }] } as EffectNode] : null;
     });
     if (r) return r;
   }

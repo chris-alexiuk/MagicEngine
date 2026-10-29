@@ -2305,6 +2305,12 @@ export const continuousRule: GrammarRule = {
     }
     if (!env || !line.endsWith('.') || /["“”]/.test(line)) return null;
     const b = new Binder(env);
+    // Banefire: "If X is 5 or more, this spell can't be countered and the damage can't be prevented."; Demonfire (hellbent).
+    const banefire = /^If (.+?), (?:this spell|~) can't be countered and the damage can't be prevented\.$/.exec(line);
+    if (banefire && /\b(?:Instant|Sorcery)\b/.test(env.typeLine)) {
+      const condition = attempt(b, (b) => parseCondition(banefire[1]!, b));
+      return condition ? ({ kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['cant_be_countered', 'damage_unpreventable'], condition } } as StaticAbility) : null;
+    }
     // Conditions in front: "During your turn, …", "As long as [condition], …" (CR 611.3a: checked continuously).
     const conds: ConditionNode[] = [];
     let rest = line.slice(0, -1);
@@ -2491,7 +2497,9 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
   // Rite of the Raging Storm: "Creatures named Lightning Rager can't attack you or planeswalkers you control."
-  const ban = /^(.*?creatures(?: with [a-z]+| named [A-Z][\w ,'-]+?)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
+  // Eriette of the Charmed Apple: "Each creature that's enchanted by an Aura you control can't attack you …".
+  body = body.replace(/^Each creature that's (enchanted by an Aura you control) can't attack you/, "Creatures that are $1 can't attack you");
+  const ban = /^(.*?creatures(?: with [a-z]+| named [A-Z][\w ,'-]+?| that are enchanted by an Aura you control)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
   if (ban) {
     const pf = parseFilter(ban[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
@@ -2748,6 +2756,13 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Jetmir, Nexus of Revels: "Creatures you control also get +1/+0 and have trample as long as …" — "also" adds nothing.
   body = body.replace(/^(.+?) also (?=(?:gets?|ha(?:s|ve)) )/, '$1 ');
+  // Canopy Cover: "Enchanted creature can't be the target of spells or abilities your opponents control." (the Aura's
+  // controller's opponents)
+  const shielded = /^(.+?) can't be the targets? of spells or abilities your opponents control$/.exec(body);
+  if (shielded) {
+    const what = parseObjectRef(shielded[1]!.replace(/^(?=Enchanted|Equipped|Creatures|Other|Each)\w/, (c) => c.toLowerCase()), b, 'static');
+    return what && !what.targeted ? { type: 'continuous', affected: what.ref, keywords: [{ id: 'untargetable_by_opponents' }] } : null;
+  }
   // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — the player too.
   // Serra's Emissary: "You and creatures you control have protection from the chosen card type." (CR 702.16b–e)
   const youToo = /^You, (.+), and (.+?) have (hexproof|shroud|protection from .+)$/.exec(body) ?? /^You and (.+?)() have (hexproof|shroud|protection from .+)$/.exec(body);
@@ -4395,7 +4410,8 @@ export const topPermissionRule: GrammarRule = {
     const gated = /^As long as (.+?), you may (.+)$/.exec(line);
     const condition = gated && env ? parseCondition(gated[1]!, new Binder(env)) : null;
     if (gated && !condition) return null;
-    const body = gated ? `You may ${gated[2]}` : line;
+    // Fortune Teller's Talent: "you may play cards from the top of your library" — lands and spells.
+    const body = (gated ? `You may ${gated[2]}` : line).replace(/^You may play cards from the top of your library\.$/, 'You may play lands and cast spells from the top of your library.');
     // Bolas's Citadel: "… If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost."
     // Crystal Skull, Isu Spyglass: "You may play historic lands and cast historic spells from the top of your library."
     const m = /^You may (?:(play (?:(historic) )?lands)(?: and )?)?(?:cast (.+?))? from the top of your library\.( If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost\.)?$/.exec(body)?.filter((_, i) => i !== 2) ?? null;

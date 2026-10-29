@@ -563,7 +563,22 @@ function layered(g: GameState, o: GameObject): Characteristics {
     // A spell's own "can't be countered" works while it's on the stack.
     for (const a of printedAbilities(faceOf(g, o))) {
       const e = a.kind === 'static' && a.effect.type === 'continuous' ? (a.effect as ContinuousEffectNode) : null;
-      if (e && e.affected.ref === 'self') for (const r of e.rules ?? []) c.rules.add(r);
+      if (!e || e.affected.ref !== 'self' || !e.rules?.length) continue;
+      // Banefire: "If X is 5 or more, this spell can't be countered …" — with the X chosen for it. (A condition that looks at
+      // this spell's own characteristics isn't one of these: it's not evaluated from inside them.)
+      if (e.condition) {
+        if (SPELL_CONDITIONS.has(o.id)) continue;
+        const entry = g.stack.find((s) => s.kind === 'spell' && s.object === o.id);
+        SPELL_CONDITIONS.add(o.id);
+        let holds = false;
+        try {
+          holds = evalCondition(e.condition, { g, controller: o.controller, source: o, events: [], targets: [], x: entry?.x ?? 0, memo: {} });
+        } finally {
+          SPELL_CONDITIONS.delete(o.id);
+        }
+        if (!holds) continue;
+      }
+      for (const r of e.rules) c.rules.add(r);
     }
     // Layer 6 on spells (CR 613.1f): "Instant and sorcery spells you control have lifelink" (Heartflame Duelist).
     // A keyword that's a triggered ability (cascade, ripple, storm) triggers once for each instance (CR 702.85c): Maelstrom
@@ -1083,6 +1098,11 @@ export function matchesFilter(
   // Oran-Rief: "that entered this turn" — on the battlefield since it entered this turn.
   if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;
   if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
+  // Eriette: "enchanted by an Aura you control".
+  if (f.enchantedByYou && !g.zones.battlefield.some((id) => {
+    const a = g.objects[id]!;
+    return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && a.controller === ctx.controller && chars(g, a).subtypes.includes('Aura');
+  })) return false;
   // Shared Animosity: "that shares a creature type with it" — bound to that object's types as the effect applies
   // (bindFilter); unbound, it matches nothing.
   if (f.sharesCreatureTypeWith && !f.sharesCreatureTypes) {
@@ -1233,6 +1253,9 @@ export function lkiStats(g: GameState, o: GameObject): LKIStats {
   return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors], ...(o.token ? { token: true as const } : {}) };
 }
 
+/** Spells whose conditional self-rules are being evaluated (a guard against a condition that reads the spell itself). */
+const SPELL_CONDITIONS = new Set<string>();
+
 /** CR 702.16g: "protection from A and from B" is two protection abilities. */
 export function protectionQualities(g: GameState, o: GameObject): string[] {
   return chars(g, o).keywords.filter((k) => k.id === 'protection' && k.text).flatMap((k) => splitQualities(k.text!));
@@ -1247,8 +1270,10 @@ export function bindQualityKeywords(
   keywords: KeywordInstance[],
   bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string; chosenCardType?: string },
 ): KeywordInstance[] {
-  if (!keywords.some((k) => (k.id === 'protection' || k.id === 'hexproof_from') && k.text)) return keywords;
+  if (!keywords.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents')) return keywords;
   return keywords.flatMap((k) => {
+    // Vines of Vastwood: "your opponents" are the granting effect's controller's.
+    if (k.id === 'untargetable_by_opponents') return [{ ...k, you: bind.you }];
     if ((k.id !== 'protection' && k.id !== 'hexproof_from') || !k.text) return [k];
     let ok = true;
     const parts = splitQualities(k.text).map((q) => {

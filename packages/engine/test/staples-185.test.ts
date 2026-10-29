@@ -835,6 +835,15 @@ const CARDS = [
   makeCard({ name: 'Palisade Lite', type_line: 'Creature — Giant Soldier', mana_cost: '{0}', power: '2', toughness: '7', oracle_text: 'All damage that would be dealt to you and other permanents you control is dealt to this creature instead.' }),
   makeCard({ name: 'Bodyguard Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '5', oracle_text: 'As long as this creature is untapped, all damage that would be dealt to you by unblocked creatures is dealt to this creature instead.' }),
   makeCard({ name: 'Karazikar Lite', type_line: 'Legendary Creature — Beholder', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Whenever an opponent attacks another one of your opponents, you and the attacking player each draw a card and lose 1 life.' }),
+  makeCard({ name: 'Heirloom Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +3/+1.\nWhenever equipped creature dies, you may reveal cards from the top of your library until you reveal a creature card that shares a creature type with it. Put that card into your hand and the rest on the bottom of your library in a random order.\nEquip {0}' }),
+  makeCard({ name: 'Stonehewer Lite', type_line: 'Creature — Giant Warrior', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: '{0}, {T}: Search your library for an Equipment card, put it onto the battlefield, attach it to a creature you control, then shuffle.' }),
+  makeCard({ name: 'Eriette Lite', type_line: 'Legendary Creature — Human Warlock', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: "Each creature that's enchanted by an Aura you control can't attack you or planeswalkers you control." }),
+  makeCard({ name: 'Charm Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature' }),
+  makeCard({ name: 'Nemesis Lite', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '3', toughness: '6', oracle_text: "Whenever this creature is dealt damage, it deals that much damage to any other target. If a player is dealt damage this way, they can't gain life for the rest of the game." }),
+  makeCard({ name: 'Vines Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Target creature can't be the target of spells or abilities your opponents control this turn." }),
+  makeCard({ name: 'Banefire Lite', type_line: 'Sorcery', mana_cost: '{X}{R}', oracle_text: "Banefire Lite deals X damage to any target.\nIf X is 5 or more, this spell can't be countered and the damage can't be prevented." }),
+  makeCard({ name: 'Jaws Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Whenever a creature you control enters, target opponent loses life equal to the difference between that creature's power and its toughness." }),
+  makeCard({ name: 'Wall Fourteen', type_line: 'Creature — Wall', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: '' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -7229,6 +7238,97 @@ describe('Sieges', () => {
     g = drive(g, () => null);
     expect([g.zones.hand.alice!.length, g.zones.hand.bob!.length]).toEqual([ah + 1, bh + 1]);
     expect([g.players.alice!.life, g.players.bob!.life]).toEqual([al - 1, bl - 1]);
+  });
+
+  it('Heirloom Blade: reveal until a creature card sharing a type with the one that died', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const zombie = give(g, 'alice', 'Zombie', 'battlefield');
+    const blade = give(g, 'alice', 'Heirloom Lite', 'battlefield');
+    g.objects[blade]!.attachedTo = { id: zombie, zcc: g.objects[zombie]!.zcc };
+    const lib = g.zones.library.alice!;
+    const top = ['Bear', 'Zombie'].map((n) => give(g, 'alice', n, 'library'));
+    for (const id of top) lib.splice(lib.indexOf(id), 1);
+    lib.unshift(...top);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: zombie }]] }));
+    g = drive(g, (g) => (g.pending!.kind === 'may' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } }) : null), 10);
+    expect(g.objects[top[1]!]!.zone).toBe('hand');
+    expect(g.zones.library.alice!.at(-1)).toBe(top[0]);
+  });
+
+  it('Stonehewer Giant: the Equipment found is attached to a creature you choose', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const giant = give(g, 'alice', 'Stonehewer Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const sword = give(g, 'alice', 'Sword Lite', 'library');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: giant, ability: 0 }));
+    g = drive(g, (g) => {
+      const p = g.pending!;
+      if (p.kind === 'search') return act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [sword] } });
+      if (p.kind !== 'choose_objects') return null;
+      expect(p.candidates).toEqual(expect.arrayContaining([bear, giant]));
+      return act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [bear] } });
+    }, 10);
+    expect(g.objects[sword]!.zone).toBe('battlefield');
+    expect(g.objects[sword]!.attachedTo?.id).toBe(bear);
+  });
+
+  it("Eriette: creatures enchanted by your Auras can't attack you", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Eriette Lite', 'battlefield');
+    const charmed = give(g, 'bob', 'Bear', 'battlefield');
+    const free = give(g, 'bob', 'Bear', 'battlefield');
+    const charm = give(g, 'alice', 'Charm Lite', 'battlefield');
+    g.objects[charm]!.attachedTo = { id: charmed, zcc: g.objects[charmed]!.zcc };
+    g = toAttack(toStep(g, 'beginning_of_combat', 'bob'));
+    illegal(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: charmed, target: { kind: 'player', player: 'alice' } }] } });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: free, target: { kind: 'player', player: 'alice' } }] } });
+    expect(g.combat?.attackers[free]).toBeDefined();
+  });
+
+  it("Screaming Nemesis: the player it damages can't gain life for the rest of the game", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const nemesis = give(g, 'alice', 'Nemesis Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: nemesis }]] });
+    g = drive(g, (g) => (g.pending!.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }) : null), 10);
+    expect(g.players.bob!.life).toBe(life - 3);
+    g = toStep(g, 'main1', 'bob');
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Salve', 'hand') }));
+    expect(g.players.bob!.life).toBe(life - 3);
+  });
+
+  it("Vines of Vastwood: the caster's opponents can't target it — even its own controller", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Vines Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    g = act(g, { type: 'pass', player: 'alice' });
+    illegal(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: bear }]] });
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const theirs = give(h, 'bob', 'Bear', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Vines Lite', 'hand'), targets: [[{ kind: 'object', object: theirs }]] }));
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: theirs }]] }));
+    expect(h.objects[theirs]!.zone).toBe('graveyard');
+  });
+
+  it("Banefire: with X 5 or more its damage can't be prevented", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'bob', 'Chasm Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g.players.alice!.pool.R = 5;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Banefire Lite', 'hand'), x: 4, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(life);
+    g.players.alice!.pool.R = 6;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Banefire Lite', 'hand'), x: 5, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.players.bob!.life).toBe(life - 5);
+  });
+
+  it("Jaws of Defeat: the difference between the creature's power and toughness", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Jaws Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Wall Fourteen', 'hand') }));
+    g = drive(g, (g) => (g.pending!.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }) : null), 10);
+    expect(g.players.bob!.life).toBe(life - 3);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

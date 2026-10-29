@@ -384,7 +384,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^it's your combat phase$/.test(t)) return { type: 'step', combat: true, yours: true };
   if (/^it's your (?:precombat )?main phase$/.test(t)) return { type: 'step', main: true, yours: true };
   // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
-  const statIs = /^(its|~'s|that creature's|that card's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t);
+  // Level Up: "if it has power 10 or greater" — the same.
+  const hasStat = /^(it|~|that creature) has (power|toughness|mana value) (\w+) or (greater|more|less|fewer)$/.exec(t);
+  const statIs = /^(its|~'s|that creature's|that card's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
   if (statIs) {
     const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : b.it;
     const n = parseAmount(statIs[3]!);

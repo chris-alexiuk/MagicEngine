@@ -131,6 +131,8 @@ function canTargetObject(g: GameState, controller: PlayerId, spec: TargetSpec, o
     // CR 702.11b: hexproof — can't be the target of spells or abilities its controller's opponents control.
     if (o.controller !== controller && hasKeyword(g, o, 'hexproof')) return false;
     if (o.controller !== controller && source && hasHexproofFrom(g, o, source)) return false;
+    // Vines of Vastwood: "can't be the target of spells or abilities your opponents control" — the granting player's.
+    if (chars(g, o).keywords.some((k) => k.id === 'untargetable_by_opponents' && k.you && k.you !== controller)) return false;
     // CR 702.16b: protection — can't be targeted by spells or abilities from a source with that quality.
     if (source && hasProtectionFrom(g, o, source)) return false;
   }

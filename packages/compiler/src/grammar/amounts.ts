@@ -393,6 +393,15 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
   if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
+  // Jaws of Defeat: "the difference between that creature's power and its toughness" — the larger minus the smaller.
+  const pt = /^the difference between (that creature's|its|~'s) power and its toughness$/.exec(t);
+  if (pt) {
+    const of: Ref | null = pt[1] === "~'s" ? { ref: 'self' } : b.it;
+    if (!of) return null;
+    const p: AmountExpr = { kind: 'stat', stat: 'power', of };
+    const q: AmountExpr = { kind: 'stat', stat: 'toughness', of };
+    return { kind: 'max', parts: [{ kind: 'sum', parts: [p, { ...q, times: -1 }] }, { kind: 'sum', parts: [q, { ...p, times: -1 }] }] } as AmountExpr;
+  }
   // The Ten Rings: "equal to the difference" — as the condition before it said.
   if (t === 'the difference' && b.difference) return b.difference;
   // Maester Seymour: "the number of counters among creatures you control" — every counter on them.

@@ -925,6 +925,8 @@ function hasRedirects(g: GameState): boolean {
 
 /** CR 615.12: a static ability saying damage (or combat damage) can't be prevented. */
 function staticUnpreventable(g: GameState, combat: boolean, source: GameObject): boolean {
+  // Banefire: "If X is 5 or more, … the damage can't be prevented." — the spell's own damage.
+  if (source.zone === 'stack' && hasRule(g, source, 'damage_unpreventable')) return true;
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     for (const a of objectAbilities(g, o)) {

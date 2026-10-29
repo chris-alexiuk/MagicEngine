@@ -914,7 +914,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 702.16a: "gains protection from the color of your choice" — chosen now; "from the chosen color" — as chosen
     // before (by this spell, or as its source entered: Floating Shield remembers it as it's sacrificed).
     let keywords = Array.isArray(node.keywords) ? (node.keywords as KeywordInstance[]) : undefined;
-    if (keywords?.some((k) => (k.id === 'protection' || k.id === 'hexproof_from') && k.text)) {
+    if (keywords?.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents')) {
       const src = ctx.source;
       const lk = src && !src.chosen ? g.lastKnown?.[src.id] : undefined;
       const before = src?.chosen ?? (lk && lk.zcc + 1 === src!.zcc ? lk.chosen : undefined);
@@ -1233,6 +1233,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   attach(node, ctx) {
     const what = refObjects(ctx, ref(node, 'what'))[0];
+    // Stonehewer Giant: "… put it onto the battlefield, attach it to a creature you control" — chosen as it resolves.
+    if (node.choose) {
+      const g = ctx.g;
+      if (!what || what.zone !== 'battlefield') return true;
+      const filter = liveFilter(ctx, node.choose as ObjectFilter);
+      const candidates = g.zones.battlefield.filter((id) => id !== what.id && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }) && canAttach(g, what, g.objects[id]!));
+      if (!candidates.length) return true;
+      const answer = answerOf(ctx, 'choose_objects');
+      const min = node.optional ? 0 : 1;
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max: 1, text: `Choose a creature to attach ${nameOf(g, what)} to.`, sourceName: sourceName(ctx) } };
+      if (answer.objects.length < min || answer.objects.length > 1 || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose one of those creatures.');
+      if (answer.objects[0]) attach(g, what, g.objects[answer.objects[0]]!, ctx.events);
+      return true;
+    }
     const to = refObjects(ctx, ref(node, 'to'))[0];
     if (what && to) attach(ctx.g, what, to, ctx.events);
     return true;
