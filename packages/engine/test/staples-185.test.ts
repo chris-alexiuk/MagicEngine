@@ -456,6 +456,16 @@ const CARDS = [
   makeCard({ name: 'Passage Lite', type_line: 'Land', mana_cost: '', oracle_text: "As this land enters, choose a basic land type. Then you may pay 2 life. If you don't, it enters tapped.\nThis land is the chosen type." }),
   makeCard({ name: 'Talion Lite', type_line: 'Legendary Creature — Faerie Noble', mana_cost: '{0}', power: '3', toughness: '4', oracle_text: 'As Talion Lite enters, choose a number between 1 and 10.\nWhenever an opponent casts a spell with mana value, power, or toughness equal to the chosen number, that player loses 2 life and you draw a card.' }),
   makeCard({ name: 'Tithes Lite', type_line: 'Creature — Angel', mana_cost: '{0}', power: '3', toughness: '5', oracle_text: "As long as this creature is attacking, creatures can't block unless their controller pays {1} for each of those creatures." }),
+  makeCard({ name: 'Overlord Lite', type_line: 'Enchantment Creature — Avatar Horror', mana_cost: '{4}{G}{G}', cmc: 6, colors: ['G'], power: '6', toughness: '5', oracle_text: 'Impending 2—{G}\nWhenever this permanent enters or attacks, create a tapped colorless land token named Everywhere that is every basic land type.' }),
+  makeCard({ name: 'Forge Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'At the beginning of combat on your turn, put an oil counter on this artifact, then create an X/1 red Phyrexian Horror creature token with trample and haste, where X is the number of oil counters on this artifact. Sacrifice that token at the beginning of the next end step.' }),
+  makeCard({ name: 'Dusk Knight Lite', type_line: 'Creature — Human Knight', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{0}: Destroy target creature blocking this creature.' }),
+  makeCard({ name: 'Maelstrom Nexus Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'The first spell you cast each turn has cascade.' }),
+  makeCard({ name: 'Twinning Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'If you would copy a spell one or more times, instead copy it that many times plus an additional time. You may choose new targets for the additional copy.' }),
+  makeCard({ name: 'Twin Spell Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Copy target instant or sorcery spell you control.' }),
+  makeCard({ name: 'Visitation Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If one or more creature tokens would be created under your control, that many 4/4 white Angel creature tokens with flying and vigilance are created instead.' }),
+  makeCard({ name: 'Spores Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create two 1/1 green Saproling creature tokens and a Treasure token.' }),
+  makeCard({ name: 'Tempest Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Tempest Lite deals damage to each creature your opponents control equal to the total mana value of other spells you've cast this turn." }),
+  makeCard({ name: 'Mother Lode Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Discover 10. If the discovered card's mana value is less than 10, create a number of tapped Treasure tokens equal to the difference." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5268,6 +5278,92 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it('Hit the Mother Lode: tapped Treasures for the difference', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'library');
+    const lib = g.zones.library.alice!;
+    lib.splice(lib.indexOf(bear), 1);
+    lib.unshift(bear);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mother Lode Lite', 'hand') }));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: false } }));
+    const treasures = Object.values(g.objects).filter((o) => o.token && o.zone === 'battlefield');
+    expect([g.objects[bear]!.zone, treasures.length, treasures.every((t) => t.tapped)]).toEqual(['hand', 8, true]);
+  });
+  it('Call Forth the Tempest: damage equal to the total mana value of the other spells you cast this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const theirs = give(g, 'bob', 'Bear', 'battlefield');
+    g.players.alice!.pool.G = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tempest Lite', 'hand') }));
+    expect(g.objects[theirs]!.zone).toBe('graveyard');
+  });
+  it('Divine Visitation: creature tokens are 4/4 Angels instead; a Treasure is a Treasure', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Visitation Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Spores Lite', 'hand') }));
+    const tokens = Object.values(g.objects).filter((o) => o.token && o.zone === 'battlefield').map((o) => chars(g, o).name).sort();
+    expect(tokens).toEqual(['Angel Token', 'Angel Token', 'Treasure']);
+  });
+  it('Twinning Staff: one more copy, and new targets for that one', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Twinning Lite', 'battlefield');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const bolt = give(g, 'alice', 'Bolt', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: bolt, targets: [[{ kind: 'player', player: 'bob' }]] });
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Twin Spell Lite', 'hand'), targets: [[{ kind: 'object', object: bolt }]] });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'copy_targets' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'copy_targets', targets: [[{ kind: 'object', object: bear }]] } }));
+    expect([g.players.bob!.life, g.objects[bear]!.zone]).toEqual([14, 'graveyard']);
+  });
+  it('Maelstrom Nexus: only the first spell each turn has cascade', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Maelstrom Nexus Lite', 'battlefield');
+    g.players.alice!.pool.G = 4;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') });
+    expect(g.stack.map((e) => e.kind)).toEqual(['spell', 'ability']);
+    g = settle(g);
+    while (g.pending) g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: false } }));
+    const before = g.stack.length;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bear', 'hand') });
+    expect(g.stack.length).toBe(before + 1);
+  });
+  it('Knight of Dusk: "target creature blocking this creature"', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const knight = give(g, 'alice', 'Dusk Knight Lite', 'battlefield');
+    const [b1, b2] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    expect(illegal(g, { type: 'activate', player: 'alice', object: knight, ability: 0, targets: [[{ kind: 'object', object: b1 }]] })).toBeTruthy();
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: knight, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 10 && g.pending?.kind !== 'declare_blockers'; i++) if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: b1, attacker: knight }] } });
+    for (let i = 0; i < 10 && g.priority !== 'alice'; i++) if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    expect(illegal(g, { type: 'activate', player: 'alice', object: knight, ability: 0, targets: [[{ kind: 'object', object: b2 }]] })).toBeTruthy();
+    g = settle(act(g, { type: 'activate', player: 'alice', object: knight, ability: 0, targets: [[{ kind: 'object', object: b1 }]] }));
+    expect([g.objects[b1]!.zone, g.objects[b2]!.zone]).toEqual(['graveyard', 'battlefield']);
+  });
+  it("Urabrask's Forge: an X/1 token, X the oil counters", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const forge = give(g, 'alice', 'Forge Lite', 'battlefield');
+    g.objects[forge]!.counters.oil = 1;
+    g = settle(toStep(g, 'beginning_of_combat', 'alice'));
+    const token = Object.values(g.objects).find((o) => o.token && o.zone === 'battlefield')!;
+    expect([chars(g, token).power, chars(g, token).toughness]).toEqual([2, 1]);
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(g.objects[token.id]?.zone ?? 'gone').not.toBe('battlefield');
+  });
+  it('impending: cast for its impending cost, it enters with time counters and is not a creature until the last is removed', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lord = give(g, 'alice', 'Overlord Lite', 'hand');
+    g.players.alice!.pool.G = 1;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: lord, alt: 'impending' }));
+    const everywhere = Object.values(g.objects).find((o) => o.token && o.zone === 'battlefield')!;
+    expect([g.objects[lord]!.counters.time, chars(g, g.objects[lord]!).types, chars(g, everywhere).subtypes, everywhere.tapped]).toEqual([2, ['Enchantment'], ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'], true]);
+    g = settle(toStep(g, 'end', 'alice'));
+    expect(g.objects[lord]!.counters.time).toBe(1);
+    g = settle(toStep(toStep(g, 'main1', 'alice'), 'end', 'alice'));
+    expect([g.objects[lord]!.counters.time ?? 0, chars(g, g.objects[lord]!).types]).toEqual([0, ['Enchantment', 'Creature']]);
+  });
   it('Archangel of Tithes: while it attacks, blocking costs {1} for each blocker', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const angel = give(g, 'alice', 'Tithes Lite', 'battlefield');

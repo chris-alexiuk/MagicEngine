@@ -63,6 +63,9 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // Koma: "a 3/3 blue Serpent creature token named Koma's Coil" — the card's own name was shortened to "~".
   const legendary = /^(\w+) (tapped )?legendary /.test(text.trim());
   if (legendary) text = text.trim().replace(/^(\w+ (?:tapped )?)legendary /, '$1');
+  // Overlord of the Hauntwoods: "a tapped colorless land token named Everywhere that is every basic land type".
+  const everyBasic = / named [A-Z]\w* that is every basic land type$/.test(text.trim());
+  if (everyBasic) text = text.trim().replace(/ that is every basic land type$/, '');
   const m = /^(\w+) (tapped )?(?:(\d+|X)\/(\d+|X) )?(.+?) tokens?(?: named ((?:~'s )?[A-Z][^,]*?))?(?: with (.+))?$/.exec(text.trim());
   if (m?.[6]?.startsWith('~')) m[6] = m[6].replace(/^~/, b.env.faceName.split(',')[0]!);
   if (!m) return null;
@@ -74,9 +77,8 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if ((amount === 1) === plural && amount !== 'X' && !/^\d+$/.test(m[1]!)) return null;
   const tapped = Boolean(m[2]);
   const words = m[5]!;
-  // Only "X/X": one number for both.
+  // "X/X", or Urabrask's Forge's "X/1": X is one number, worked out as the token is made.
   const sizeX = m[3] === 'X' || m[4] === 'X';
-  if (sizeX && (m[3] !== 'X' || m[4] !== 'X')) return null;
 
   const predefined = PREDEFINED[words];
   if (predefined) {
@@ -121,6 +123,11 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   if (legendary) {
     face.supertypes = ['Legendary'];
     face.typeLine = `Legendary ${face.typeLine}`;
+  }
+  if (everyBasic) {
+    if (!types.includes('Land') || subtypes.length) return null;
+    face.subtypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
+    face.typeLine = `${face.typeLine} — ${face.subtypes.join(' ')}`;
   }
   if (snow) {
     face.supertypes = [...face.supertypes, 'Snow'];

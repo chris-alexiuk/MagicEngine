@@ -238,6 +238,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // Volcanic Torrent: "the number of spells you've cast this turn".
   if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
+  if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
   // The Ten Rings: "equal to the difference" — as the condition before it said.
   if (t === 'the difference' && b.difference) return b.difference;
   // Maester Seymour: "the number of counters among creatures you control" — every counter on them.

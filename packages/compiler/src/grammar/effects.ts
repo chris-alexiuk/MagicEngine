@@ -1910,6 +1910,14 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Hit the Mother Lode: "If the discovered card's mana value is less than 10, create a number of tapped Treasure tokens equal
+  // to the difference." — none if nothing was discovered (CR 701.57a).
+  const shortfall = /^If the discovered card's mana value is less than (\d+), create a number of (tapped )?Treasure tokens equal to the difference$/.exec(s);
+  if (shortfall) {
+    const made = parseSentence(`Create ${shortfall[2] ? 'a tapped' : 'a'} Treasure token`, b);
+    const node = made?.length === 1 && made[0]!.type === 'create_token' ? made[0]! : null;
+    return node ? [{ ...node, amount: { kind: 'discover_shortfall', n: Number(shortfall[1]) } }] : null;
+  }
   // Party Thrasher: "exile the top two cards of your library, then choose one of them" — "that card" afterwards.
   const exileChoose = /^[Ee]xile the top (two|three|four|five) cards of your library, then choose one of them$/.exec(s);
   if (exileChoose) {

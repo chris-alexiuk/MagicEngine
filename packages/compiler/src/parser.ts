@@ -1,5 +1,5 @@
 import { parseEffectText } from './grammar/effects.js';
-import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, SpellAbility } from '@mtg/schema';
+import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
@@ -287,6 +287,22 @@ export class ParserRegistry {
         } else result.unparsed.push(line);
         continue;
       }
+      // Maelstrom Nexus: "The first spell you cast each turn has cascade."; Wild-Magic Sorcerer: "The first spell you cast from
+      // exile each turn has cascade."; Thrumming Stone-like grants: "Spells you cast have cascade." — layer 6 on spells (CR
+      // 613.1f), so the cast trigger is there as it's cast (CR 702.85a).
+      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast have) (cascade|storm)\.$/i.exec(line);
+      if (spellGrant) {
+        const kws = this.keywords.parseLine(spellGrant[3]!);
+        if (kws?.length === 1) {
+          const abilities = this.expandKeyword(kws[0]!, env);
+          if (abilities) kws[0]!.abilities = abilities;
+        }
+        if (kws?.length === 1 && keywordSupported(kws[0]!)) {
+          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
+          result.abilities.push({ kind: 'static', text: line, effect: { type: 'continuous', affected: { ref: 'all', filter }, keywords: kws } } as AbilityNode);
+        } else result.unparsed.push(line);
+        continue;
+      }
       // The Sieges, Mirrodin Besieged: "As this enchantment enters, choose Khans or Dragons." then "• Khans — [ability]" and
       // "• Dragons — [ability]" — each ability is the permanent's only while that word is the one chosen (CR 614.12).
       const words = /^As (?:this enchantment|this permanent|~) enters, choose ([A-Z][A-Za-z]+) or ([A-Z][A-Za-z]+)\.$/.exec(line);
@@ -466,7 +482,10 @@ export class ParserRegistry {
         while (i + 1 < lines.length && /^\d+(?:—\d+|\+)? \| /.test(lines[i + 1]!)) block.push(lines[++i]!);
       }
 
-      const node = this.parseBlock(block, env);
+      let node = this.parseBlock(block, env);
+      // Tinder Wall: "{R}, Sacrifice this creature: It deals 2 damage to target creature it's blocking." — once it has left,
+      // what it was blocking is a look back the engine doesn't keep yet.
+      if (node?.kind === 'activated' && node.cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'exile_self') && JSON.stringify(node.targets ?? []).includes('combatWithSource')) node = null;
       if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
@@ -595,6 +614,12 @@ export class ParserRegistry {
       kw.abilities = [{ kind: 'activated', text: `Ninjutsu ${kw.cost}`, zone: 'hand', cost: { mana: kw.cost, other: [{ type: 'return_unblocked' }] }, effects: [{ type: 'ninjutsu' }] }];
       result.manualKeywords = result.manualKeywords.filter((l) => !/^Ninjutsu\b/.test(l));
     }
+    // CR 702.49d: "Commander ninjutsu [cost]" — the same, from the hand or the command zone (it isn't cast: no commander tax).
+    for (const kw of result.keywords) {
+      if (kw.id !== 'commander_ninjutsu' || !kw.cost || !/^(\{[^}]+\})+$/.test(kw.cost) || kw.abilities?.length) continue;
+      kw.abilities = (['hand', 'command'] as const).map((zone) => ({ kind: 'activated' as const, text: `Commander ninjutsu ${kw.cost}`, zone, cost: { mana: kw.cost, other: [{ type: 'return_unblocked' }] }, effects: [{ type: 'ninjutsu' }] }));
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Commander ninjutsu\b/.test(l));
+    }
     // CR 702.184a: "Station" — "Tap another untapped creature you control: Put a number of charge counters on this
     // permanent equal to the tapped creature's power. Activate only as a sorcery."
     for (const kw of result.keywords) {
@@ -722,6 +747,17 @@ export class ParserRegistry {
  * rule does nothing in a game; the other ability is this trigger.
  */
 const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+  // CR 702.176a, in words the grammar reads ("this permanent's impending cost" is "its impending cost").
+  impending: {
+    rule: '702.176a',
+    pattern: 'Impending N—[cost]',
+    meaning: [
+      "You may choose to pay [cost] rather than pay this spell's mana cost.",
+      'If its impending cost was paid, it enters with N time counters on it.',
+      "As long as its impending cost was paid and this creature has a time counter on it, this creature isn't a creature.",
+      'At the beginning of your end step, if its impending cost was paid and this creature has a time counter on it, remove a time counter from this creature.',
+    ],
+  },
   // CR 702.151a: two activated abilities, quoted in one sentence of the rule.
   reconfigure: {
     rule: '702.151a',

@@ -227,7 +227,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     });
   }
   // Abilities that work from the hand (cycling, CR 702.29a) or the graveyard (CR 113.6m).
-  for (const id of [...zoneList(g, 'hand', player), ...zoneList(g, 'graveyard', player)]) {
+  // Commander ninjutsu works from the command zone (CR 702.49d).
+  for (const id of [...zoneList(g, 'hand', player), ...zoneList(g, 'graveyard', player), ...g.zones.command.filter((c) => g.objects[c]?.owner === player && !g.objects[c]?.emblem)]) {
     const o = g.objects[id]!;
     if (activationProhibited(g, player, o, false)) continue;
     activatedAbilities(g, o).forEach((ab, ability) => {

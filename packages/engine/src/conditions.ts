@@ -28,7 +28,7 @@ export interface TurnLog {
   damageTaken?: Record<PlayerId, number>;
   spellsCast: Record<PlayerId, number>;
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
-  castSpells?: { player: PlayerId; id: ObjectId }[];
+  castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
   noncreatureCast: PlayerId[];
   /** Active players who have drawn in this turn's draw step ("except the first one you draw in each of your draw steps"). */
   drawStepDrew?: PlayerId[];
@@ -182,8 +182,9 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       }
       case 'cast': {
         log.spellsCast[e.player] = (log.spellsCast[e.player] ?? 0) + 1;
-        (log.castSpells ??= []).push({ player: e.player, id: e.object });
         const o = g.objects[e.object];
+        // Call Forth the Tempest: its mana value as it was cast (CR 202.3e: X counts on the stack).
+        (log.castSpells ??= []).push({ player: e.player, id: e.object, ...(o ? { zcc: o.zcc, mv: manaValueOf(g, o), ...(o.cast?.from ? { from: o.cast.from } : {}) } : {}) });
         if (o) ((g.castNames ??= {})[e.player] ??= []).push(nameOf(g, o));
         const face = o ? g.cards[o.card]?.faces[o.face] : undefined;
         if (face && !face.types.includes('Creature') && !log.noncreatureCast.includes(e.player)) log.noncreatureCast.push(e.player);

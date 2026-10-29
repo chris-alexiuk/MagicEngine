@@ -201,8 +201,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
   boast?: true;
   /** CR 602.2: "Any player may activate this ability." */
   anyPlayer?: true;
-  /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a). */
-  zone?: 'hand' | 'graveyard';
+  /** Where it can be activated from, when not the battlefield (cycling: the hand, CR 702.29a; commander ninjutsu: the command zone, CR 702.49d). */
+  zone?: 'hand' | 'graveyard' | 'command';
 }
 
 export interface TriggeredAbility extends AbilityBase, Program {
@@ -349,6 +349,16 @@ export interface ObjectFilter {
   notTypes?: string[];
   notSubtypes?: string[];
   notSupertypes?: string[];
+  /**
+   * Its combat with the source: Knight of Dusk's "creature blocking this creature" ('blocking'), Goblin Snowman's "creature
+   * it's blocking" ('blocked'), "creature blocking or blocked by this creature" ('either').
+   */
+  combatWithSource?: 'blocking' | 'blocked' | 'either';
+  /**
+   * Maelstrom Nexus: "The first spell you cast each turn" — a spell that's the first its controller cast this turn
+   * (Wild-Magic Sorcerer: `fromZone` 'exile', the first they cast from exile).
+   */
+  firstCastThisTurn?: { fromZone?: 'exile' | 'hand' | 'graveyard' };
   /** Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number" (the source's). */
   statIsChosenNumber?: true;
   /** Drown in the Loch: "with mana value less than or equal to the number of cards in its controller's graveyard" — each object's own. */
@@ -605,7 +615,9 @@ export type AmountExpr = (
   | { kind: 'colors_among'; filter: ObjectFilter }
   /** Aetherflux Reservoir: "for each spell you've cast this turn". */
   /** Rug of Smothering: `player` — that player's spells ("each spell they've cast this turn"). */
-  | { kind: 'spells_cast_this_turn'; player?: Ref }
+  /** Hit the Mother Lode: N minus the discovered card's mana value (0 if none, or if it's N or more). */
+  | { kind: 'discover_shortfall'; n: number }
+  | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
@@ -1123,12 +1135,16 @@ export interface ExileInsteadNode extends EffectNode {
 export interface QuantityReplacementNode extends EffectNode {
   type: 'replace_quantity';
   /** `mill`: The Water Crystal — "If an opponent would mill one or more cards, they mill that many cards plus four instead." */
-  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate';
+  /** `copies`: Twinning Staff — "If you would copy a spell one or more times, instead copy it that many times plus an additional time." */
+  event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate' | 'copies';
+  /** copies: "You may choose new targets for the additional copy." */
+  newTargetsForExtra?: true;
   /** Bloodletter of Aclazotz: only during its controller's turn. */
   yourTurn?: true;
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn); 'half':
    * "half that many …, rounded down" (Vorinclex, Monstrous Raider). */
-  op: 'double' | 'triple' | 'plus' | 'extra' | 'half';
+  /** 'swap' (tokens): Divine Visitation — "that many 4/4 white Angel creature tokens … are created instead" (`extra.token`). */
+  op: 'double' | 'triple' | 'plus' | 'extra' | 'half' | 'swap';
   n?: number;
   /** op 'extra': the token made as well — one, or as many as the event made ("plus that many 1/1 Squirrels"). */
   extra?: { token: FaceDef; thatMany?: true };
@@ -1258,7 +1274,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

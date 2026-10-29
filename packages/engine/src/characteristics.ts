@@ -894,6 +894,26 @@ export function matchesFilter(
   if (f.power && !compare(thenPT ? thenPT.power : c.power, counted(f.power))) return false;
   if (f.toughness && !compare(thenPT ? thenPT.toughness : c.toughness, counted(f.toughness))) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), counted(f.manaValue))) return false;
+  if (f.firstCastThisTurn) {
+    // Maelstrom Nexus: the first spell its controller cast this turn (from that zone) — this one, as a spell on the stack.
+    if (o.zone !== 'stack' || !o.cast || o.cast.copy) return false;
+    const from = f.firstCastThisTurn.fromZone;
+    if (from && o.cast.from !== from) return false;
+    const first = (g.turnLog.castSpells ?? []).find((s) => s.player === o.cast!.by && (!from || s.from === from));
+    if (first && !(first.id === o.id && (first.zcc === undefined || first.zcc === o.zcc))) return false;
+  }
+  if (f.combatWithSource) {
+    const src = ctx.source;
+    const cb = g.combat;
+    if (!src || !cb) return false;
+    const blocks = (b: GameObject, a: GameObject) => {
+      const e = cb.blockers[b.id];
+      return Boolean(e && e.zcc === b.zcc && (e.blocking === a.id || e.alsoBlocking?.includes(a.id)));
+    };
+    const blocking = blocks(o, src);
+    const blocked = blocks(src, o);
+    if (f.combatWithSource === 'blocking' ? !blocking : f.combatWithSource === 'blocked' ? !blocked : !blocking && !blocked) return false;
+  }
   if (f.statIsChosenNumber) {
     const n = ctx.source?.chosen?.number;
     if (n === undefined || (manaValueOf(g, o) !== n && !(c.types.includes('Creature') && (c.power === n || c.toughness === n)))) return false;

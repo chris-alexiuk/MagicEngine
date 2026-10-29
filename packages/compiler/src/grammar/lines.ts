@@ -2948,6 +2948,11 @@ export const quantityReplacementRule: GrammarRule = {
       const op = quantityOp(mill[2]!);
       return op ? make({ event: 'mill', who: mill[1] === 'you' ? 'you' : mill[1] === 'a player' ? 'each' : 'opponents', ...op }) : null;
     }
+    // Twinning Staff: "If you would copy a spell one or more times, instead copy it that many times plus an additional time. You
+    // may choose new targets for the additional copy."
+    if (/^If you would copy a spell one or more times, instead copy it that many times plus an additional time\. You may choose new targets for the additional copy\.$/.test(line)) {
+      return make({ event: 'copies', who: 'you', op: 'plus', n: 1, newTargetsForExtra: true });
+    }
     // Tekuthal, Inquiry Dominus: "If you would proliferate, proliferate twice instead."
     if (/^If you would proliferate, proliferate twice instead\.$/.test(line)) return make({ event: 'proliferate', who: 'you', op: 'double' });
     // Bloodletter of Aclazotz: "If an opponent would lose life during your turn, they lose twice that much life instead."
@@ -2977,6 +2982,15 @@ export const quantityReplacementRule: GrammarRule = {
         tokenFilter = f;
       }
       return make({ event: 'tokens', who: 'you', op: 'extra', extra: { token, ...(plusToken[2] === 'that many' ? { thatMany: true as const } : {}) }, ...(tokenFilter ? { tokenFilter } : {}) });
+    }
+    // Divine Visitation: "If one or more creature tokens would be created under your control, that many 4/4 white Angel creature
+    // tokens with flying and vigilance are created instead." (CR 614.1a)
+    const swapToken = /^If one or more (creature) tokens would be created under your control, that many (.+?) tokens (.*?)are created instead\.$/.exec(line);
+    if (swapToken) {
+      const made = parseEffectText(`Create a ${swapToken[2]} token${swapToken[3] ? ` ${swapToken[3].trim()}` : ''}.`.replace(/ a ([AEIOU0-9]\b|8)/, ' an $1'), new Binder(env));
+      const token = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.amount === 1 && !made[0]!.tapped ? (made[0]!.token as FaceDef | undefined) : undefined;
+      if (!token || !token.types.includes('Creature')) return null;
+      return make({ event: 'tokens', who: 'you', op: 'swap', extra: { token }, tokenFilter: { types: ['Creature'] } });
     }
     // Teferi's Ageless Insight: "If you would draw a card except the first one you draw in each of your draw steps, draw
     // two cards instead."; Thought Reflection: "If you would draw a card, draw two cards instead."

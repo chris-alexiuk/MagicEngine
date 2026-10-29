@@ -3,7 +3,7 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, QuantityReplacementNode, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
@@ -910,7 +910,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const n = amountOf(ctx, node.amount);
     // CR 107.3: "an X/X … token" — X is worked out as the effect resolves, and the token is made that size.
     const sized = node.size !== undefined ? Math.max(0, amountOf(ctx, node.size)) : null;
-    const face = sized !== null && node.token ? { ...(node.token as FaceDef), power: String(sized), toughness: String(sized) } : (node.token as FaceDef | undefined);
+    // Urabrask's Forge: "an X/1 … token" — only the X is that number.
+    const tokenFace = node.token as FaceDef | undefined;
+    const face = sized !== null && tokenFace ? { ...tokenFace, power: tokenFace.power === 'X' ? String(sized) : tokenFace.power, toughness: tokenFace.toughness === 'X' ? String(sized) : tokenFace.toughness } : tokenFace;
     // Adeline: "for each opponent, create a 1/1 white Human creature token that's tapped and attacking that player or a
     // planeswalker they control" (CR 508.4) — for each opponent in turn, attacking them or one of their planeswalkers.
     if (node.attackingEach && face) {
@@ -1681,7 +1683,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   ninjutsu(_node, ctx) {
     const g = ctx.g;
     const o = ctx.source;
-    if (!o || o.zone !== 'hand' || (ctx.sourceZcc !== undefined && o.zcc !== ctx.sourceZcc)) return true;
+    // CR 702.49d: commander ninjutsu, from the command zone too.
+    if (!o || (o.zone !== 'hand' && o.zone !== 'command') || (ctx.sourceZcc !== undefined && o.zcc !== ctx.sourceZcc)) return true;
     moveObject(g, o.id, 'battlefield', ctx.events, { controller: ctx.controller, tapped: true });
     const target = ctx.resolution?.entry.costLKI?.attackTarget;
     if (g.combat && target && chars(g, o).types.includes('Creature')) g.combat.attackers[o.id] = { zcc: o.zcc, target: { ...target }, blocked: false, blockers: [] };
@@ -3074,10 +3077,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!ctx.memo.made) {
       const n = amountOf(ctx, node.amount ?? 1);
       const made: string[] = [];
+      const extra: string[] = [];
       for (const entry of refEntries(ctx, ref(node, 'what'))) {
-        for (let i = 0; i < n; i++) made.push(entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events) : copyAbility(g, entry, ctx.controller, ctx.events));
+        // Twinning Staff: "instead copy it that many times plus an additional time" (CR 614.1a) — spells only.
+        const times = entry.kind === 'spell' && n > 0 ? replaceQuantity(g, 'copies', n, { player: ctx.controller }) : n;
+        for (let i = 0; i < times; i++) {
+          const id = entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events) : copyAbility(g, entry, ctx.controller, ctx.events);
+          made.push(id);
+          if (i >= n) extra.push(id);
+        }
       }
       ctx.memo.made = made;
+      ctx.memo.extra = extra;
       ctx.memo.index = 0;
     }
     const made = ctx.memo.made as string[];
@@ -3097,9 +3108,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       ctx.memo.index = (ctx.memo.index as number) + 1;
     }
-    if (node.newTargets) {
+    // "You may choose new targets for the additional copy." (Twinning Staff)
+    const extraNew = copiesNewTargetsForExtra(g, ctx.controller) ? ((ctx.memo.extra as string[] | undefined) ?? []) : [];
+    if (node.newTargets || extraNew.length) {
       for (; (ctx.memo.index as number) < made.length; ctx.memo.index = (ctx.memo.index as number) + 1) {
         const id = made[ctx.memo.index as number]!;
+        if (!node.newTargets && !extraNew.includes(id)) continue;
         const entry = entryOf(id);
         if (!entry?.program?.specs.length) continue;
         const current = entry.targets.map((list) =>
@@ -4297,6 +4311,7 @@ function revealUntilCast(ctx: EffectContext, qualifies: (o: GameObject, g: GameS
     }
     ctx.memo.exiled = exiled;
     ctx.memo.hit = hit;
+    if (hit && ctx.resolution && rest === 'hand') ctx.resolution.discoveredMv = manaValueOf(g, g.objects[hit]!);
   }
   const hit = ctx.memo.hit as string | null;
   if (hit && g.objects[hit]?.zone === 'exile' && ctx.memo.castFree === undefined) {
@@ -4449,6 +4464,14 @@ function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefi
   if (!target) return;
   // CR 508.4d: during or after the declare blockers step, it's unblocked.
   c.attackers[o.id] = { zcc: o.zcc, target, blocked: false, blockers: [] };
+}
+
+/** Twinning Staff: whether its controller may choose new targets for the additional copies a replacement made. */
+function copiesNewTargetsForExtra(g: GameState, player: PlayerId): boolean {
+  return abilitySources(g).some((id) => {
+    const src = g.objects[id]!;
+    return src.controller === player && objectAbilities(g, src).some((a) => a.kind === 'static' && a.effect.type === 'replace_quantity' && (a.effect as QuantityReplacementNode).event === 'copies' && Boolean((a.effect as QuantityReplacementNode).newTargetsForExtra));
+  });
 }
 
 /** CR 614.1c: a copy exception's "it enters with an additional +1/+1 counter on it" for a token copy — those counters, replaced. */

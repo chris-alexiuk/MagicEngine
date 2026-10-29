@@ -1,6 +1,6 @@
 import { copyChoicePending } from './as-enters.js';
-import type { Amount, ConditionNode, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
-import { abilitiesOf, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
+import type { Amount, ConditionNode, KeywordInstance, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
+import { abilitiesOf, chars, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns, recordModes, usedModes } from './program.js';
@@ -122,7 +122,10 @@ function collect(g: GameState, events: GameEvent[]): void {
           : g.cards[at.card]?.faces[at.face];
     if (!face) return [];
     const lastGranted = last && last.zcc === c.o.zcc - 1 ? (last.granted ?? []) : [];
-    const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? printedAbilities(face) : [...abilitiesOf(g, c.o), ...ringAbilities(g, c.o)];
+    // Maelstrom Nexus: a spell given cascade ("The first spell you cast each turn has cascade") has its trigger as it's cast.
+    // (Each instance triggers, CR 702.85c: a spell with cascade that's given cascade has two.)
+    const grantedOnStack = c.o.zone === 'stack' && !c.left ? grantedKeywords(chars(g, c.o).keywords, face.keywords).flatMap((k) => (k.abilities ?? []).filter((a) => a.kind === 'triggered')) : [];
+    const abilities = c.left ? [...printedAbilities(face), ...lastGranted] : c.o.zone !== 'battlefield' ? [...printedAbilities(face), ...grantedOnStack] : [...abilitiesOf(g, c.o), ...ringAbilities(g, c.o)];
     return abilities.some((a) => a.kind === 'triggered') ? [{ ...c, face, abilities }] : [];
   });
 
@@ -667,4 +670,18 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
       });
     }
   }
+}
+
+/** The keywords in `all` beyond the printed ones (one printed instance accounts for one of the same id). */
+function grantedKeywords(all: readonly KeywordInstance[], printed: readonly KeywordInstance[]): KeywordInstance[] {
+  const left = new Map<string, number>();
+  for (const k of printed) left.set(k.id, (left.get(k.id) ?? 0) + 1);
+  return all.filter((k) => {
+    const n = left.get(k.id) ?? 0;
+    if (n > 0) {
+      left.set(k.id, n - 1);
+      return false;
+    }
+    return true;
+  });
 }

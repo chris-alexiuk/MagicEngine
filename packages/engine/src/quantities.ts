@@ -89,6 +89,7 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
   switch (e.event) {
     case 'gain_life':
     case 'mill':
+    case 'copies':
       return who(s.player);
     case 'lose_life':
       return who(s.player) && (!e.yourTurn || g.active === you);

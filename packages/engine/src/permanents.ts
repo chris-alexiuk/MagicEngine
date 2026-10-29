@@ -1,9 +1,9 @@
-import type { CardDef, FaceDef, TargetSpec } from '@mtg/schema';
-import { chars, hasKeyword, hasType, matchesFilter, protectedFromAttachment } from './characteristics.js';
+import type { CardDef, FaceDef, QuantityReplacementNode, TargetSpec } from '@mtg/schema';
+import { chars, hasKeyword, hasType, matchesFilter, objectAbilities, protectedFromAttachment } from './characteristics.js';
 import { replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
-import { createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
+import { abilitySources, createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
 
 /**
  * CR 701.8a: destroying moves a permanent to its owner's graveyard.
@@ -159,8 +159,30 @@ function tokenCard(g: GameState, face: FaceDef): string {
   return key;
 }
 
+/**
+ * Divine Visitation: the token created instead of a creature token under `controller`'s control (CR 614.1a), if any.
+ * (The replacement token isn't replaced again, CR 614.5.)
+ */
+function tokenSwap(g: GameState, controller: PlayerId, face: FaceDef | undefined): FaceDef | undefined {
+  if (!face) return undefined;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    if (src.controller !== controller) continue;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || a.effect.type !== 'replace_quantity') continue;
+      const e = a.effect as QuantityReplacementNode;
+      if (e.event !== 'tokens' || e.op !== 'swap' || !e.extra) continue;
+      if (e.tokenFilter?.types && !e.tokenFilter.types.some((t) => face.types.includes(t))) continue;
+      return e.extra.token;
+    }
+  }
+  return undefined;
+}
+
 /** CR 111.2: a token is created on the battlefield under the control of the player who created it. */
-export function createToken(g: GameState, face: FaceDef, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): GameObject {
+export function createToken(g: GameState, face: FaceDef, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; swapped?: boolean } = {}): GameObject {
+  const swap = opts.swapped ? undefined : tokenSwap(g, controller, face);
+  if (swap) return createToken(g, swap, controller, events, { ...opts, swapped: true });
   const o = createObject(g, tokenCard(g, face), controller, 'battlefield');
   o.token = true;
   o.sick = true;
@@ -202,6 +224,9 @@ export function createEmblem(g: GameState, face: FaceDef, player: PlayerId): Gam
 
 /** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
 export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number> } = {}): GameObject {
+  // Divine Visitation: a token copy of a creature is a creature token too — an Angel is created instead.
+  const swap = tokenSwap(g, controller, g.cards[of.card]?.faces[of.face]);
+  if (swap) return createToken(g, swap, controller, events, { tapped: opts.tapped, swapped: true });
   const o = createObject(g, of.card, controller, 'battlefield');
   o.face = of.face;
   o.token = true;

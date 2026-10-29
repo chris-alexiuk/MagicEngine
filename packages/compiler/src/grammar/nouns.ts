@@ -47,6 +47,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f[key] = { op, n };
     return true;
   }],
+  // Combat with the source: "target creature blocking or blocked by this creature", "target creature blocking it",
+  // "target creature it's blocking" (Knight of Dusk, Urborg Panther, Goblin Snowman).
+  [/ blocking or (?:being )?blocked by (~|this creature|it)$/, (f, m, b) => !f.combatWithSource && (m[1] !== 'it' || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'either'), true)],
+  [/ blocking (~|this creature|it)$/, (f, m, b) => !f.combatWithSource && (m[1] !== 'it' || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'blocking'), true)],
+  [/ (?:it's|it is|~ is|this creature is) blocking$| blocked by (?:~|this creature)$/, (f, m, b) => !f.combatWithSource && (!/^ it/.test(m[0]!) || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'blocked'), true)],
   // Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number".
   [/ with mana value, power, or toughness equal to the chosen number$/, (f) => !f.statIsChosenNumber && ((f.statIsChosenNumber = true), true)],
   // Drown in the Loch: "… with mana value less than or equal to the number of cards in its controller's graveyard".

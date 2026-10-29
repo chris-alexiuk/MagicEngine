@@ -1046,7 +1046,7 @@ interface ActivationChoices {
 function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
   const o = obj(g, id);
   // CR 602.2: only an object's controller (or owner, outside the battlefield) can activate its abilities.
-  const yours = o.zone === 'battlefield' ? o.controller === player : (o.zone === 'hand' || o.zone === 'graveyard') && o.owner === player;
+  const yours = o.zone === 'battlefield' ? o.controller === player : (o.zone === 'hand' || o.zone === 'graveyard' || o.zone === 'command') && o.owner === player;
   const ability: ActivatedAbility | undefined = activatedAbilities(g, o)[index];
   // "Any player may activate this ability." (CR 602.2)
   if (!yours && !(o.zone === 'battlefield' && ability?.anyPlayer)) throw new RulesError('You can’t activate abilities of that object.');

@@ -262,7 +262,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -403,7 +403,10 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'spells_cast_this_turn': {
       // Aetherflux Reservoir: including the one that triggered it; Rug of Smothering: that player's.
       const p = e.player ? refPlayers(ctx, e.player)[0] : ctx.controller;
-      return p === undefined ? 0 : (g.turnLog.spellsCast[p] ?? 0);
+      if (p === undefined) return 0;
+      // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
+      if (e.totalMv) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id && (s.zcc === undefined || s.zcc === ctx.source.zcc))).reduce((n, s) => n + (s.mv ?? 0), 0);
+      return g.turnLog.spellsCast[p] ?? 0;
     }
     case 'drawn_this_turn':
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
@@ -413,6 +416,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.resolution?.tappedThisWay ?? 0;
     case 'damage_this_way':
       return ctx.resolution?.damageDealt ?? 0;
+    case 'discover_shortfall': {
+      // Hit the Mother Lode: "If the discovered card's mana value is less than 10, … equal to the difference."
+      const mv = ctx.resolution?.discoveredMv;
+      return mv === undefined ? 0 : Math.max(0, Number(e.n ?? 0) - mv);
+    }
     case 'excess_this_way':
       return ctx.resolution?.excess ?? 0;
     case 'died_this_turn':

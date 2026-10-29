@@ -9,6 +9,7 @@ const CARDS = [
   card('Ninja Lite', 'Creature — Human Ninja', 'Ninjutsu {U}', { mana_cost: '{3}{U}', power: '3', toughness: '3' }),
   card('Sneaker Lite', 'Creature — Turtle', 'Sneak {G}', { mana_cost: '{4}{G}', power: '4', toughness: '4' }),
   card('Scout', 'Creature — Human', '', { power: '1', toughness: '1' }),
+  card('Yuriko Lite', 'Legendary Creature — Human Ninja', 'Commander ninjutsu {U}{B}', { mana_cost: '{2}{U}{B}', power: '1', toughness: '3' }),
 ];
 
 function setup(): GameState {
@@ -49,6 +50,22 @@ describe('CR 702.49: ninjutsu, CR 702.190: sneak', () => {
     expect(g.combat!.attackers[ninja]).toMatchObject({ target: { kind: 'player', player: 'bob' }, blocked: false });
     g = damage(g);
     expect(g.players.bob!.life).toBe(17);
+  });
+
+  it('commander ninjutsu works from the command zone (CR 702.49d), with no commander tax', () => {
+    let g = toStep(start({ format: 'commander', extra: CARDS, decks: { alice: [...Array(98).fill('Scout'), 'Yuriko Lite'], bob: Array(99).fill('Scout') }, commanders: { alice: ['Yuriko Lite'] } }), 'main1', 'alice');
+    const yuriko = Object.values(g.objects).find((o) => o.commander && o.owner === 'alice')!.id;
+    expect(g.objects[yuriko]!.zone).toBe('command');
+    const scout = give(g, 'alice', 'Scout', 'battlefield');
+    g = unblocked(g, scout);
+    g.players.alice!.pool = { W: 0, U: 1, B: 1, R: 0, G: 0, C: 0 };
+    const ability = legalActions(g, 'alice').find((a) => a.type === 'activate' && a.object === yuriko);
+    expect(ability).toMatchObject({ costs: { returned: [scout] } });
+    g = act(g, ability!);
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'pass', player: 'bob' });
+    expect([g.objects[yuriko]!.zone, g.objects[yuriko]!.tapped, g.commanderCasts[yuriko] ?? 0]).toEqual(['battlefield', true, 0]);
+    expect(g.combat!.attackers[yuriko]).toMatchObject({ target: { kind: 'player', player: 'bob' } });
   });
 
   it('sneak casts the creature in the declare blockers step; it enters tapped and attacking', () => {
