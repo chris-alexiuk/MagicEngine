@@ -118,6 +118,18 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   const moved = movedThisWay(t, b) ?? diedThisTurn(t, b);
   if (moved) return moved;
+  // Discordant Spirit: "for each 1 damage dealt to you this turn".
+  if (t === '1 damage dealt to you this turn') return { kind: 'life_this_turn', who: 'you', stat: 'damage' };
+  // Mobilized District: "for each legendary creature and planeswalker you control" — each permanent that's either.
+  if (t === 'legendary creature and planeswalker you control') {
+    return { kind: 'count', filter: { controller: 'you', anyOf: [{ types: ['Creature'], supertypes: ['Legendary'] }, { types: ['Planeswalker'] }] } };
+  }
+  // Deepwood Denizen: "for each +1/+1 counter on creatures you control" — that kind, on all of them.
+  const kindOn = /^([+-]\d+\/[+-]\d+|\w+) counter on (.+)$/.exec(t);
+  if (kindOn && !/^(?:~|it|him|her|this \w+|that \w+|target .+|enchanted .+|equipped .+)$/.test(kindOn[2]!)) {
+    const pf = parseFilter(kindOn[2]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone) return { kind: 'counters_among', filter: pf.filter, counter: kindOn[1]! };
+  }
   // Ancient Imperiosaur: "for each creature that convoked it" (CR 702.51c).
   if (/^creature that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Syphon Mind: "for each card discarded this way"
@@ -148,6 +160,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Smuggler's Share: "for each opponent who drew two or more cards this turn", "… who had two or more lands enter the
   // battlefield under their control this turn".
   if (/^opponent who drew a card this way$/.test(t)) return { kind: 'players', who: 'opponents', drewThisWay: true };
+  // Aclazotz, Deepest Betrayal: "Each opponent discards a card. For each opponent who can't, you draw a card."
+  if (t === "opponent who didn't discard a card this way") return { kind: 'players', who: 'opponents', discardedNone: true };
   const drewN = /^(opponent|player) who drew (two|three|four) or more cards this turn$/.exec(t);
   if (drewN) return { kind: 'players', who: drewN[1] === 'player' ? 'each' : 'opponents', drew: parseAmount(drewN[2]!) as number };
   const landsN = /^(opponent|player) who had (two|three) or more lands enter the battlefield under their control this turn$/.exec(t);
@@ -238,6 +252,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // Volcanic Torrent: "the number of spells you've cast this turn".
   if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Chandra's Incinerator: "the total amount of noncombat damage dealt to your opponents this turn".
+  // Notorious Throng: "the damage dealt to your opponents this turn"; Simulacrum: "the damage dealt to you this turn".
+  const dealtTo = /^the (?:total )?(?:amount of )?(noncombat )?damage dealt to (your opponents|you) this turn$/.exec(t);
+  if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
   if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
   // The Ten Rings: "equal to the difference" — as the condition before it said.

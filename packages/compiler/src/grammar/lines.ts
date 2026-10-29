@@ -519,6 +519,10 @@ export const activatedRule: GrammarRule = {
   id: 'activated',
   parse(line, original, ctx) {
     const env = envOf(ctx);
+    // CR 702.6a: "Equip {3}. This ability costs {1} less to activate for each other Equipment you control." (Plate Armor,
+    // Crown of Gondor) — "[Cost]: Attach this permanent to target creature you control. Activate only as a sorcery."
+    const equip = /^Equip ((?:\{[^}]+\})+)\. (This ability costs [^.]+\.)$/.exec(line);
+    if (equip) line = `${equip[1]}: Attach ~ to target creature you control. Activate only as a sorcery. ${equip[2]}`;
     const colon = line.indexOf(': ');
     if (!env || colon < 0) return null;
     const cost = parseCost(line.slice(0, colon), /\bPlaneswalker\b/.test(ctx.typeLine), new Binder(env));
@@ -555,10 +559,21 @@ export const activatedRule: GrammarRule = {
         }
       }
       // "This ability costs {1} less to activate for each legendary creature you control." (channel lands)
-      const reduce = / This ability costs \{(\d+)\} less to activate (?:for each ([^.]+?)|if ([^.]+?)|(during your turn))\.$/.exec(effectText);
-      if (reduce) {
+      // Dragonfire Blade: "This ability costs {1} less to activate for each color of the creature it targets."; Belt of Giant
+      // Strength: "This ability costs {X} less to activate, where X is the power of the creature it targets."
+      const byTarget = / This ability costs \{(\d+|X)\} less to activate(?: for each (color) of the creature it targets|, where X is the (power) of the creature it targets)\.$/.exec(effectText);
+      if (byTarget && (byTarget[1] === 'X') === Boolean(byTarget[3]) && !node.costReduction) {
+        node.costReduction = { amount: byTarget[1] === 'X' ? 1 : Number(byTarget[1]), per: { kind: 'stat', stat: byTarget[2] ? 'colors' : 'power', of: { ref: 'target', index: 0 } } };
+        effectText = effectText.slice(0, byTarget.index);
+        changed = true;
+      }
+      // Baru, Wurmspeaker: "This ability costs {X} less to activate, where X is the greatest power among Wurms you control."
+      const reduce = / This ability costs \{(\d+|X)\} less to activate(?: for each ([^.]+?)| if ([^.]+?)| (during your turn)|, where X is ([^.]+?))\.$/.exec(effectText);
+      if (reduce && (reduce[1] === 'X') === Boolean(reduce[5])) {
         const rb = new Binder(env);
-        const per = reduce[2] ? parseForEach(reduce[2], rb) : undefined;
+        const per = reduce[2] ? parseForEach(reduce[2], rb) : reduce[5] ? parseCount(reduce[5], rb) : undefined;
+        if (reduce[5] && !per) return null;
+        if (reduce[1] === 'X') reduce[1] = '1';
         const condition = reduce[3] ? parseCondition(reduce[3], rb) : undefined;
         if ((reduce[2] && !per) || (reduce[3] && !condition) || node.costReduction) return null;
         node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}) };
@@ -3253,6 +3268,63 @@ export const staticPreventionRule: GrammarRule = {
     if (line === "You control your opponents while they're searching their libraries.") return { kind: 'static', text: original, effect: { type: 'search_control' } } as StaticAbility;
     if (line === 'While an opponent is searching their library, they exile each card they find. You may play those cards for as long as they remain exiled, and you may spend mana as though it were mana of any color to cast them.') {
       return { kind: 'static', text: original, effect: { type: 'search_exile' } } as StaticAbility;
+    }
+    // CR 615.5: a prevention effect with an additional effect right after it. "If damage would be dealt to Anti-Venom,
+    // prevent that damage and put that many +1/+1 counters on him."; "If damage would be dealt to this creature while it
+    // has a +1/+1 counter on it, prevent that damage and remove a +1/+1 counter from this creature." (Undergrowth
+    // Champion); "If a source you control would deal damage to an opponent, prevent that damage and each opponent mills
+    // that many cards." (The Mindskinner); "If damage would be dealt to you, prevent that damage and mill twice that many
+    // cards." (Angel of Suffering); "If a creature would deal combat damage to this creature, prevent that damage and put
+    // a +1/+1 counter on this creature." (Ironscale Hydra); "If equipped creature would be dealt damage, …" (Panther Habit).
+    const pm = /^If (.+?), prevent that damage(?:(?: and|\.) ([^.]+?))?\.$/.exec(line);
+    if (pm && !/^damage would be dealt to (?:another|an?) /.test(pm[1]!)) {
+      let head = pm[1]!;
+      const b = new Binder(env);
+      b.it = { ref: 'self' };
+      // "that many": the damage prevented.
+      b.eventAmount = true;
+      let condition: ConditionNode | undefined;
+      const whileAt = / while (.+)$/.exec(head);
+      if (whileAt) {
+        const c = parseCondition(whileAt[1]!, b);
+        if (!c) return null;
+        condition = c;
+        head = head.slice(0, whileAt.index);
+      }
+      const node: StaticPreventionNode = { type: 'prevent_damage', ...(condition ? { condition } : {}) };
+      let who: string | undefined;
+      let h: RegExpExecArray | null;
+      if ((h = /^damage would be dealt to (.+)$/.exec(head))) who = h[1];
+      else if ((h = /^(.+?) would be dealt damage$/.exec(head))) who = h[1];
+      else if ((h = /^a source( you control)? would deal damage to (.+)$/.exec(head))) {
+        if (h[1]) node.from = { controller: 'you' };
+        node.eachSource = true;
+        who = h[2];
+      } else if ((h = /^a creature would deal (combat )?damage to (.+)$/.exec(head))) {
+        node.from = { types: ['Creature'] };
+        node.eachSource = true;
+        if (h[1]) node.damage = 'combat';
+        who = h[2];
+      }
+      if (!who) return null;
+      if (who === 'you') node.toYou = true;
+      else if (who === 'an opponent') node.toOpponents = true;
+      else if (/^(?:~|this creature|this permanent|him|her)$/.test(who)) node.toSelf = true;
+      else if (/^(?:equipped|enchanted) creature$/.test(who)) {
+        node.toAttached = true;
+        b.it = { ref: 'trigger_object' };
+      } else return null;
+      if (pm[2]) {
+        const follow = pm[2]
+          .replace(/^[Pp]ut an? ([+-]1\/[+-]1) counter on (this creature|~) for each 1 damage prevented this way$/, 'put that many $1 counters on $2')
+          .replace(/^([a-z])/, (c) => c.toUpperCase());
+        const effects = parseEffectText(`${follow}.`, b);
+        // The additional effect never asks anything (the engine runs it right away, CR 615.5).
+        const quiet = new Set(['add_counters', 'remove_counters', 'mill', 'lose_life', 'gain_life', 'draw', 'get_counters']);
+        if (!effects?.length || b.targets.length || !effects.every((e) => quiet.has(e.type) && !(e as { upTo?: true }).upTo)) return null;
+        node.then = effects;
+      }
+      return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
     // Vigor: "If damage would be dealt to another creature you control, prevent that damage. Put a +1/+1 counter on that
     // creature for each 1 damage prevented this way." (CR 615.5: the counters right after)

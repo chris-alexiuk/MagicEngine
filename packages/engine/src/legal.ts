@@ -11,7 +11,7 @@ import { spendablePool } from './spending.js';
 import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
-import { defaultTargets } from './targets.js';
+import { defaultTargets, targetCandidates } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
@@ -332,7 +332,20 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const freeEquip = freeEquipAvailable(g, player, ab);
       const mana = parseManaCost(freeEquip ? '' : (cost.mana ?? ''));
       if (mana.unsupported.length || mana.x > 0) return;
-      applyPowerUp(g, o, ab, mana, player);
+      // Dragonfire Blade: "This ability costs {1} less to activate for each color of the creature it targets." — the
+      // target it costs least with (CR 601.2f: the cost is determined after targets are chosen).
+      let reducedFor: Target[][] | undefined;
+      const spec = ab.costReduction && JSON.stringify(ab.costReduction).includes('"ref":"target"') ? flatten([ab], undefined).specs[0] : undefined;
+      if (spec) {
+        let best: typeof mana | undefined;
+        for (const t of targetCandidates(g, player, spec, o)) {
+          const m = structuredClone(mana);
+          applyPowerUp(g, o, ab, m, player, [[t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : t]]);
+          if (!best || m.generic < best.generic) [best, reducedFor] = [m, [[t]]];
+        }
+        if (!best) return;
+        Object.assign(mana, best);
+      } else applyPowerUp(g, o, ab, mana, player);
       // Ruthless Technomancer: "Sacrifice X artifacts: … X can't be 0." — the least X allowed.
       const xLeast = ab.xMin !== undefined && cost.other?.some((c) => c.amount === 'X') ? ab.xMin : undefined;
       let costs = defaultCostChoices(g, player, o, xLeast === undefined ? (cost.other ?? []) : cost.other!.map((c) => (c.amount === 'X' ? { ...c, amount: xLeast } : c)));
@@ -357,6 +370,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       }
       const choice = defaultProgramChoice(g, player, o, [ab]);
       if (!choice) return;
+      if (reducedFor && choice.targets?.length === 1) choice.targets = reducedFor;
       // "−X": as much loyalty as it has, and 1 (CR 606.6); "+X": 1.
       if (cost.loyaltyX) {
         const most = cost.loyaltyX < 0 ? (o.counters.loyalty ?? 0) : 1;

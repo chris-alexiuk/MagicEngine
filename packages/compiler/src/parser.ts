@@ -551,9 +551,6 @@ export class ParserRegistry {
       }
 
       let node = this.parseBlock(block, env);
-      // Tinder Wall: "{R}, Sacrifice this creature: It deals 2 damage to target creature it's blocking." — once it has left,
-      // what it was blocking is a look back the engine doesn't keep yet.
-      if (node?.kind === 'activated' && node.cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'exile_self') && JSON.stringify(node.targets ?? []).includes('combatWithSource')) node = null;
       if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);

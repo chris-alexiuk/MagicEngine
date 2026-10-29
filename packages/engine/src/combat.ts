@@ -867,14 +867,26 @@ function planDamage(g: GameState, dealers: GameObject[], chosen: Record<ObjectId
   return plan;
 }
 
+/**
+ * Combat damage being dealt at once: the prevention follow-ups already done for it. Undergrowth Champion: "If damage would
+ * be dealt to this creature …, prevent that damage and remove a +1/+1 counter" — damage from several sources at once is
+ * one event, so one counter (CR 615.5); "If a source would deal damage …" (Nine Lives) is one for each source.
+ */
+let combatFollowUps: Set<string> | undefined;
+
 /** CR 510.2: all assigned combat damage is dealt at once. */
 function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent[]): void {
   const lifeGain = new Map<PlayerId, number>();
-  for (const d of plan) {
-    const source = g.objects[d.source]!;
-    const dealt = dealDamage(g, source, d.to, d.amount, true, events);
-    // CR 702.15b / CR 120.3f: lifelink — the source's controller gains the damage dealt.
-    if (dealt > 0 && hasKeyword(g, source, 'lifelink')) lifeGain.set(source.controller, (lifeGain.get(source.controller) ?? 0) + dealt);
+  combatFollowUps = new Set();
+  try {
+    for (const d of plan) {
+      const source = g.objects[d.source]!;
+      const dealt = dealDamage(g, source, d.to, d.amount, true, events);
+      // CR 702.15b / CR 120.3f: lifelink — the source's controller gains the damage dealt.
+      if (dealt > 0 && hasKeyword(g, source, 'lifelink')) lifeGain.set(source.controller, (lifeGain.get(source.controller) ?? 0) + dealt);
+    }
+  } finally {
+    combatFollowUps = undefined;
   }
   for (const [player, dealt] of lifeGain) {
     const ps = g.players[player]!;
@@ -1000,7 +1012,7 @@ export function dealDamage(
 
 /** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; then?: PreventionFollowUp } {
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; then?: PreventionFollowUp; batch?: string; once?: true } {
   let halves = 0;
   // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
   // granted ability of the creature itself.
@@ -1022,18 +1034,28 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'prevent_damage') continue;
       const e = (a as StaticAbility).effect as StaticPreventionNode;
       if ((e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
-      if (!staticConditionHolds(g, e, holder)) continue;
+      // Simultaneous combat damage is one event: Undergrowth Champion's "while it has a +1/+1 counter on it" was true for
+      // all of it, though the first counter removed made it false (CR 510.2, 615.5).
+      const batchKey = `${holder.id}:${to.kind === 'player' ? to.player : to.object}`;
+      if (!staticConditionHolds(g, e, holder) && !(e.then && !e.eachSource && combatFollowUps?.has(batchKey))) continue;
+      // The Mindskinner: "If a source you control would deal damage …"; Ironscale Hydra: "If a creature would deal …".
+      if (e.from && !matchesFilter(g, source, e.from, { controller: holder.controller, source: holder, anyZone: true })) continue;
       let hit = false;
       if (e.bySelf && source.id === holder.id) hit = true;
-      else if (to.kind === 'player') hit = Boolean(e.toYou && to.player === holder.controller);
+      else if (to.kind === 'player') hit = Boolean((e.toYou && to.player === holder.controller) || (e.toOpponents && to.player !== holder.controller));
       else {
         const o = g.objects[to.object];
-        hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
+        // Panther Habit: "If equipped creature would be dealt damage".
+        const host = e.toAttached && holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
+        hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (host !== undefined && o.id === host) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
       }
       if (!hit) continue;
       if (e.half) halves++;
       // Vigor: "Put a +1/+1 counter on that creature for each 1 damage prevented this way." (CR 615.5)
-      else return { all: true, halves, ...(e.then ? { then: { effects: e.then as EffectNode[], controller: holder.controller, source: { id: holder.id, zcc: holder.zcc }, about: 'recipient' as const } } : {}) };
+      else {
+        const batch = e.then && !e.eachSource ? { batch: batchKey, ...(JSON.stringify(e.then).includes('"kind":"event"') ? {} : { once: true as const }) } : {};
+        return { all: true, halves, ...(e.then ? { then: { effects: e.then as EffectNode[], controller: holder.controller, source: { id: holder.id, zcc: holder.zcc }, about: 'recipient' as const } } : {}), ...batch };
+      }
     }
   }
   return { all: false, halves };
@@ -1079,7 +1101,10 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
   const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : { all: false, halves: 0 };
   if (fixed.all) {
     events.push({ type: 'prevented', source: source.id, amount, to });
-    if (fixed.then) preventedFollowUps.push({ then: fixed.then, amount });
+    // "remove a +1/+1 counter from this creature": once for all the damage dealt to it at once.
+    const again = fixed.once && fixed.batch !== undefined && combatFollowUps?.has(fixed.batch);
+    if (fixed.batch !== undefined) combatFollowUps?.add(fixed.batch);
+    if (fixed.then && !again) preventedFollowUps.push({ then: fixed.then, amount });
     return 0;
   }
   // Gisela: "prevent half that damage, rounded up" — what's left is half, rounded down.

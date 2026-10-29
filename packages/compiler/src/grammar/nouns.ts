@@ -747,7 +747,10 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         if (x && y && x.plural && y.plural && !x.filter.zone && !y.filter.zone) pf = { filter: { anyOf: [x.filter, y.filter] }, plural: true };
       }
       if (!pf) return null;
-      if (each[1]) pf.filter.other = true;
+      // Mirror of Life Trapping: "exile it, then return all other permanent cards exiled with this artifact" — other than
+      // the card just named (the source itself is never among them).
+      if (each[1] && pf.filter.exiledWithSource && b.it && b.it.ref !== 'self') pf.filter.otherThan = b.it;
+      else if (each[1]) pf.filter.other = true;
       return set(b, { ref: { ref: 'all', filter: pf.filter }, plural: true, targeted: false });
     }
     // Bare plurals: "Creatures you control", "Other Zombies you control".
@@ -806,6 +809,13 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     const count = anyPlayers[1] === 'two' ? { count: 2 } : anyPlayers[1] === 'three' ? { count: 3 } : { count: 100, upTo: true as const };
     const spec: TargetSpec = { what: 'player', text: t, ...count, ...(anyPlayers[2] === 'opponents' ? { player: 'opponent' as const } : {}) };
     return b.addTarget(spec);
+  }
+  // The Lord of Pain: "Whenever a player casts their first spell each turn, choose another target player." — other than
+  // the player the trigger is about.
+  if (/^another target player$/.test(t) && b.player?.ref === 'trigger_player') {
+    const ref = b.addTarget({ what: 'player', text: t, notTriggerPlayer: true });
+    b.player = ref;
+    return ref;
   }
   const playerTarget = /^(up to one )?target (player|opponent)$/.exec(t);
   if (playerTarget) {

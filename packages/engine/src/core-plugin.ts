@@ -514,6 +514,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of ids) moveObject(ctx.g, id, 'library', ctx.events, { position: 'bottom' });
       return true;
     }
+    // Bow of Nylea: "… on the bottom of your library in any order" — the player orders them (CR 401.4).
+    if (to === 'library' && node.order === 'any') {
+      const ids = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone !== 'stack' && o.zone !== 'library').map((o) => o.id);
+      const answer = ids.length > 1 ? answerOf(ctx, 'choose_objects') : null;
+      if (ids.length > 1 && !answer) {
+        const where = node.position === 'top' ? 'top' : 'bottom';
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: ids, min: ids.length, max: ids.length, text: `Order these cards for the ${where} of your library (first chosen goes on top of the others).`, ordered: true } };
+      }
+      const order = answer?.objects ?? ids;
+      if (order.length !== ids.length || !order.every((id) => ids.includes(id)) || new Set(order).size !== order.length) throw new RulesError('Put each of those cards in order.');
+      for (const id of node.position === 'top' ? [...order].reverse() : order) moveObject(ctx.g, id, 'library', ctx.events, { position: node.position === 'top' ? 'top' : 'bottom' });
+      return true;
+    }
     const movedOnto: ObjectRef[] = [];
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
@@ -883,7 +896,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(Array.isArray(node.creatureTypes) ? { creatureTypes: (node.creatureTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.creatureType ? [chosen.creatureType] : []) : [t])) } : {}),
       ...(Array.isArray(node.landTypes) ? { landTypes: (node.landTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.landType ? [chosen.landType] : []) : [t])) } : {}),
       ...(node.loseAbilities ? { loseAbilities: true as const } : {}),
-      ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), setToughness: amountOf(ctx, node.setToughness ?? 0) } : {}),
+      // PuPu UFO: "this creature's base power becomes equal to …" — its base toughness stays.
+      ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), ...(node.powerOnly ? {} : { setToughness: amountOf(ctx, node.setToughness ?? 0) }) } : {}),
       // Druid Class: 'becomes a creature with … "This creature's power and toughness are each equal to …"' — counted as it goes.
       ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),

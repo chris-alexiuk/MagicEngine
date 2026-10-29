@@ -979,11 +979,12 @@ function spliceCards(g: GameState, player: PlayerId, spell: GameObject, face: Fa
 }
 
 /** CR 702.193a: "If this permanent entered this turn, this ability's cost is reduced by this permanent's mana cost." */
-export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbility, mana: ManaCost, player: PlayerId = o.controller): void {
+export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbility, mana: ManaCost, player: PlayerId = o.controller, targets: TargetRef[][] = []): void {
   // "This ability costs {1} less to activate for each legendary creature you control." — generic mana only.
+  // Dragonfire Blade: "… for each color of the creature it targets" (CR 601.2f: after targets are chosen).
   const r = ability.costReduction;
   if (r) {
-    const ctx = { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} };
+    const ctx = { g, controller: player, source: o, events: [], targets, x: 0, memo: {} };
     const applies = (!r.condition || evalCondition(r.condition, ctx)) && (!r.yourTurn || g.active === player);
     const n = applies ? r.amount * (r.per ? Math.max(0, amountOf(ctx, r.per)) : 1) : 0;
     if (n > 0) mana.generic = Math.max(0, mana.generic - n);
@@ -1164,7 +1165,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
   const mana = parseManaCost(choices.costs.freeEquip ? '' : (cost.mana ?? ''));
   if (isEquipAbility(ability)) (g.turnLog.equipped ??= []).push(player);
-  applyPowerUp(g, o, ability, mana, player);
+  applyPowerUp(g, o, ability, mana, player, targets);
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.

@@ -132,6 +132,8 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   if (!livePlayers(g).includes(player)) return false;
   if (spec.player === 'opponent' && player === controller) return false;
   if (spec.player === 'you' && player !== controller) return false;
+  // The Lord of Pain: "choose another target player" — not the player who cast that spell.
+  if (spec.notTriggerPlayer && triggerInfo?.player === player) return false;
   // CR 702.11c: a player with hexproof can't be the target of spells or abilities their opponents control;
   // CR 702.18: with shroud, of any spell or ability.
   if (playerRule(g, player, 'shroud')) return false;

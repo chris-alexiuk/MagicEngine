@@ -26,6 +26,8 @@ export interface TurnLog {
   combatPhases?: number;
   /** Damage dealt to each player this turn (Spinerock Knoll). */
   damageTaken?: Record<PlayerId, number>;
+  /** Chandra's Incinerator: the noncombat part of it. */
+  noncombatDamageTaken?: Record<PlayerId, number>;
   spellsCast: Record<PlayerId, number>;
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
   castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
@@ -180,6 +182,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'damage':
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
         if (e.to.kind === 'player') (log.damageTaken ??= {})[e.to.player] = (log.damageTaken[e.to.player] ?? 0) + e.amount;
+        if (e.to.kind === 'player' && !e.combat) (log.noncombatDamageTaken ??= {})[e.to.player] = (log.noncombatDamageTaken[e.to.player] ?? 0) + e.amount;
         if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
           const s = g.objects[e.source]!;
           const c = chars(g, s);
@@ -394,7 +397,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'cast_by_you': {
       // "if you cast it" — the spell or permanent itself, or what "it" names.
       const o = cond.of ? refObjects(ctx, cond.of as never)[0] : source;
-      return !o?.cast?.copy && o?.cast?.by === controller && (!cond.fromHand || o.cast.from === 'hand') && (!cond.from || o.cast.from === cond.from);
+      return !o?.cast?.copy && o?.cast !== undefined && (cond.anyone || o.cast.by === controller) && (!cond.fromHand || o.cast.from === 'hand') && (!cond.from || o.cast.from === cond.from);
     }
     case 'self_tapped':
       return Boolean(source && source.zone === 'battlefield' && source.tapped === cond.tapped);
@@ -442,6 +445,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife + Number(cond.plus ?? 0) });
       return cmp(g.players[controller]!.life, cond);
     case 'hand': {
+      // Temple of the Dead: "if a player has one or fewer cards in hand".
+      if (cond.any) return livePlayers(g).some((p) => (cond.any === 'player' || p !== controller) && cmp(zoneList(g, 'hand', p).length, cond));
       // Ghirapur Orrery: "if that player has no cards in hand".
       const whose = cond.who ? (refPlayers(ctx, cond.who as Ref)[0] ?? controller) : controller;
       const mine = zoneList(g, 'hand', whose).length;
@@ -471,7 +476,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_player') return g.order.some((p) => cmp(zoneList(g, 'graveyard', p).length, cond));
       const cards = zoneList(g, 'graveyard', controller).map((id) => g.objects[id]!);
       // Delirium: "four or more card types among cards in your graveyard" (CR 300.1's card types).
-      if (cond.cardTypes) return cmp(new Set(cards.flatMap((o) => faceOf(g, o).types)).size, cond);
+      // Matzalantli: "four or more permanent types among cards in your graveyard" (CR 110.4).
+      const permanentTypes = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
+      if (cond.cardTypes) return cmp(new Set(cards.flatMap((o) => faceOf(g, o).types).filter((t) => !cond.permanentTypes || permanentTypes.includes(t))).size, cond);
       // Descend: "four or more permanent cards in your graveyard"
       if (cond.filter) return cmp(cards.filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, anyZone: true })).length, cond);
       return cmp(cards.length, cond);

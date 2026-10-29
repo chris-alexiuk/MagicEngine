@@ -381,6 +381,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (e.drew === undefined || (g.turnLog.drawn?.[p] ?? 0) >= e.drew) &&
           (e.landsEntered === undefined || lands(p) >= e.landsEntered) &&
           (!e.drewThisWay || (ctx.resolution?.drew?.[p] ?? 0) > 0) &&
+          // Aclazotz: "For each opponent who can't [discard a card]".
+          (!e.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
           // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
           (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)),
       ).length;
@@ -449,7 +451,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".
     case 'life_this_turn': {
-      const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : g.turnLog.lifeGained;
+      const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : e.stat === 'noncombat_damage' ? g.turnLog.noncombatDamageTaken : g.turnLog.lifeGained;
       // Archfiend of Despair: "the life that player lost this turn".
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : e.who === 'a_player' ? [...g.order] : g.order.filter((p) => p !== ctx.controller);
       const each = players.map((p) => log?.[p] ?? 0);

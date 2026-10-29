@@ -474,7 +474,8 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     timestamp: e.timestamp,
     ...(e.power !== undefined ? { pt: (): [number, number] => [e.power ?? 0, e.toughness ?? 0] } : {}),
     // CR 701.12g: an exchange with a life total sets just one of them.
-    ...(e.setPower !== undefined || e.setToughness !== undefined ? { set: { layer: '7b' as const, pt: (): [number | null, number | null] => [e.setPower ?? null, e.setToughness ?? (e.setPower !== undefined ? 0 : null)] } } : {}),
+    // Evra, Halcyon Witness: "Exchange your life total with Evra's power" — its toughness stays as it was.
+    ...(e.setPower !== undefined || e.setToughness !== undefined ? { set: { layer: '7b' as const, pt: (): [number | null, number | null] => [e.setPower ?? null, e.setToughness ?? null] } } : {}),
     ...(e.livePT ? { set: { layer: '7b' as const, pt: (o: GameObject): [number, number] => [staticAmount(g, e.livePT!.power, o), staticAmount(g, e.livePT!.toughness, o)] } } : {}),
     ...(e.types ? { types: { types: e.types, subtypes: e.subtypes ?? [], retain: Boolean(e.retainTypes) } } : {}),
     ...(e.colors ? { colors: e.colors } : {}),
@@ -916,9 +917,12 @@ export function matchesFilter(
     const src = ctx.source;
     const cb = g.combat;
     if (!src || !cb) return false;
+    // Tinder Wall: "{R}, Sacrifice this creature: It deals 2 damage to target creature it's blocking." — as it last
+    // existed on the battlefield, once it's gone (CR 608.2h).
+    const zccOf = (x: GameObject) => (x.id === src.id && x.zone !== 'battlefield' ? (g.lastKnown?.[x.id]?.zcc ?? x.zcc) : x.zcc);
     const blocks = (b: GameObject, a: GameObject) => {
       const e = cb.blockers[b.id];
-      return Boolean(e && e.zcc === b.zcc && (e.blocking === a.id || e.alsoBlocking?.includes(a.id)));
+      return Boolean(e && e.zcc === zccOf(b) && (e.blocking === a.id || e.alsoBlocking?.includes(a.id)));
     };
     const blocking = blocks(o, src);
     const blocked = blocks(src, o);

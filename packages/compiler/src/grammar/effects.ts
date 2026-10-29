@@ -88,6 +88,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/\b([Dd])estroy ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
     list.split(/,? and |, /).map((one, i) => `${i === 0 ? `${d}estroy` : 'Destroy'} ${one}.`).join(' '),
   );
+  // Aclazotz, Deepest Betrayal: "each opponent discards a card. For each opponent who can't, you draw a card."
+  text = text.replace(/\b([Ee]ach opponent discards a card)\. For each opponent who can't, ([^.]+)\./, (_m, d: string, then: string) => `${d}. ${then[0]!.toUpperCase()}${then.slice(1)} for each opponent who didn't discard a card this way.`);
   // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
   text = text.replace(/\b([Uu])ntap (it|~) and all ([^.]+)\./, (_m, u: string, it: string, rest: string) => `${u}ntap ${it}. Untap all ${rest}.`);
   // Alandra, Sky Dreamer: "Alandra and Drakes you control each get +X/+X until end of turn, where X is …" — it, and the others.
@@ -2489,12 +2491,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // "Remove a time counter from it" (vanishing, CR 702.63a).
-  const remove = /^[Rr]emove (a|an|one|two|three|\d+) (\S+) counters? from (.+)$/.exec(s);
-  if (remove) {
+  // Protean Hydra: "prevent that damage and remove that many +1/+1 counters from it" — the damage prevented.
+  const remove = /^[Rr]emove (a|an|one|two|three|\d+|that many) (\S+) counters? from (.+)$/.exec(s);
+  if (remove && (remove[1] !== 'that many' || b.eventAmount)) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(remove[3]!, b);
-      const amount = parseAmount(remove[1]!);
-      return what && !what.plural && typeof amount === 'number' ? [{ type: 'remove_counters', what: what.ref, counter: remove[2]!, amount }] : null;
+      const amount = remove[1] === 'that many' ? { kind: 'event' as const } : parseAmount(remove[1]!);
+      return what && !what.plural && (typeof amount === 'number' || remove[1] === 'that many') ? [{ type: 'remove_counters', what: what.ref, counter: remove[2]!, amount }] : null;
     });
     if (r) return r;
   }
@@ -3286,7 +3289,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Great Train Heist: "Choose target opponent." — the player, for what follows ("that player").
-  if (/^[Cc]hoose target (?:opponent|player)$/.test(s)) {
+  if (/^[Cc]hoose (?:another )?target (?:opponent|player)$/.test(s)) {
     const r = attempt(b, (b) => {
       const who = parsePlayerRef(s.slice(7), b);
       if (!who) return null;
@@ -3959,10 +3962,12 @@ const VERBS: Record<string, VerbHandler> = {
       });
       if (r) return r;
     }
-    const lib = /^(.+?) on (top|the bottom) of (?:its owner's|their owners'|your) library$/.exec(args);
+    // Bow of Nylea: "Put up to four target cards from your graveyard on the bottom of your library in any order."
+    const lib = /^(.+?) on (top|the bottom) of (?:its owner's|their owners'|your) library( in any order)?$/.exec(args);
     if (lib) {
       const what = parseObjectRef(lib[1]!, b);
-      return what ? [{ type: 'move', what: what.ref, to: 'library', position: lib[2] === 'top' ? 'top' : 'bottom' }] : null;
+      if (lib[3] && (!what?.plural || !/\byour graveyard$/.test(lib[1]!))) return null;
+      return what ? [{ type: 'move', what: what.ref, to: 'library', position: lib[2] === 'top' ? 'top' : 'bottom', ...(lib[3] ? { order: 'any' } : {}) }] : null;
     }
     return null;
   },
@@ -4662,6 +4667,15 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
       const what = parseObjectRef(baseEach[1]!, b);
       const n = what ? parseCount(baseEach[2]!, b) : null;
       return what && n ? [{ type: 'modify', what: what.ref, setPower: n, setToughness: n, until: 'eot' }] : null;
+    });
+  }
+  // PuPu UFO: "Until end of turn, this creature's base power becomes equal to the number of Towns you control."
+  const basePower = /^(.+?)'s base power becomes equal to (.+?) until end of turn$/.exec(c);
+  if (basePower) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(basePower[1]!, b);
+      const n = what && !what.plural ? parseCount(basePower[2]!, b) : null;
+      return what && n ? [{ type: 'modify', what: what.ref, setPower: n, powerOnly: true, until: 'eot' }] : null;
     });
   }
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".

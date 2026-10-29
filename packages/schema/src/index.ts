@@ -292,6 +292,8 @@ export interface TargetSpec {
   filter?: ObjectFilter;
   /** For players: "target opponent". */
   player?: 'opponent' | 'you';
+  /** The Lord of Pain: "Whenever a player casts …, choose another target player" — not the player the trigger is about. */
+  notTriggerPlayer?: true;
   /** How many; 1 unless stated. */
   count?: number;
   /** "Exile X target creatures": as many as the X announced (CR 601.2b–c). `count` is then ignored. */
@@ -601,7 +603,7 @@ export type AmountExpr = (
    * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
    */
   /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
-  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true }
+  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; discardedNone?: true }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -667,7 +669,7 @@ export type AmountExpr = (
    * opponents have lost this turn" (lost, summed); Spinerock Knoll's "an opponent was dealt 7 or more damage this turn"
    * (damage, the most any one opponent was dealt).
    */
-  | { kind: 'life_this_turn'; who: 'you' | 'opponents' | 'an_opponent' | 'a_player'; stat?: 'gained' | 'lost' | 'damage'; player?: Ref }
+  | { kind: 'life_this_turn'; who: 'you' | 'opponents' | 'an_opponent' | 'a_player'; stat?: 'gained' | 'lost' | 'damage' | 'noncombat_damage'; player?: Ref }
   /** "for each opponent you attacked with a creature this combat" (melee, CR 702.121a). */
   | { kind: 'opponents_attacked' }
   /** "for each color of mana spent to cast it" (sunburst, converge, CR 702.44a). */
@@ -797,6 +799,14 @@ export interface StaticPreventionNode extends EffectNode {
   /** Permanents (matched with the source's controller as "you"). */
   to?: ObjectFilter;
   bySelf?: true;
+  /** The Mindskinner: "damage to an opponent" — a player, not their permanents. */
+  toOpponents?: true;
+  /** Panther Habit: "If equipped creature would be dealt damage" — what this is attached to. */
+  toAttached?: true;
+  /** "If a source you control would deal damage", "If a creature would deal combat damage" (CR 615.1a). */
+  from?: ObjectFilter;
+  /** Nine Lives: "If a source would deal damage to you, prevent that damage and …" — the additional effect for each source. */
+  eachSource?: true;
   /** "during your turn" (CR 611.3a: checked continuously). */
   condition?: ConditionNode;
   /** Gisela: "prevent half that damage, rounded up" — not all of it. */
@@ -966,6 +976,8 @@ export interface ContinuousEffectNode extends EffectNode {
    * 7b ("has base power and toughness 1/1"): power and toughness set to a value.
    */
   setPower?: Amount;
+  /** PuPu UFO: "base power becomes …" — only its base power is set (layer 7b). */
+  powerOnly?: true;
   setToughness?: Amount;
   setLayer?: '7a' | '7b';
   keywords?: KeywordInstance[];

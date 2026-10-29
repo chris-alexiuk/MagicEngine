@@ -285,6 +285,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
   // Sevinne's Reclamation: "If this spell was cast from a graveyard"; "if this spell was cast from your hand" (a copy wasn't
   // cast, CR 707.10).
+  // Anti-Venom: "When Anti-Venom enters, if he was cast" — by anyone (CR 601.2: it was a spell before it entered).
+  // Mirror of Life Trapping: "Whenever a creature enters, if it was cast" — the entering creature.
+  if (/^(?:~|it|he|she) was cast$/.test(t)) return { type: 'cast_by_you', anyone: true, ...(!t.startsWith('~') && b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
   const castFrom = /^~ was cast from (your hand|a graveyard|exile)$/.exec(t);
   if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
   // Approach of the Second Sun: "you've cast another spell named ~ this game".
@@ -457,6 +460,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Resonating Lute: "… cards in your hand" means the same.
   if (/^you have /.test(t)) t = t.replace(/ cards in your hand( than|$)/, ' cards in hand$1');
   if (/^you have no cards in hand$/.test(t)) return { type: 'hand', op: 'le', n: 0 };
+  // Temple of the Dead: "if a player has one or fewer cards in hand"; "an opponent has no cards in hand".
+  const someHand = /^(a player|an opponent) has (no|\w+ or (?:fewer|more)) cards in hand$/.exec(t);
+  if (someHand) {
+    const c = someHand[2] === 'no' ? { op: 'le' as const, n: 0 } : compare(someHand[2]!);
+    return c ? { type: 'hand', ...c, any: someHand[1] === 'a player' ? 'player' : 'opponent' } : null;
+  }
   // "you have more cards in hand than each opponent"
   const moreHand = /^you have (more|fewer) cards in hand than (each|an) opponent$/.exec(t);
   if (moreHand) return { type: 'hand', than: moreHand[2] === 'each' ? 'each_opponent' : 'an_opponent', op: moreHand[1] === 'more' ? 'gt' : 'lt' };
@@ -501,10 +510,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Meren: "that card's mana value is less than or equal to the number of experience counters you have"; "its power is 3
   // or less" — the object the text named, as the instruction is followed.
   // Liberator: "the amount of mana spent to cast that spell is greater than ~'s power".
-  const spentVs = /^the amount of mana spent to cast (?:that spell|it) is greater than (.+)$/.exec(t);
+  // Ancient Cellarspawn: "if the amount of mana spent to cast it was less than its mana value, target opponent loses life
+  // equal to the difference".
+  const spentVs = /^the amount of mana spent to cast (?:that spell|it) (?:is|was) (greater|less) than (.+)$/.exec(t);
   if (spentVs && b.it?.ref === 'trigger_object') {
-    const n = parseCount(spentVs[1]!, b);
-    return n ? { type: 'amount', amount: { kind: 'mana_spent', of: b.it }, op: 'gt', n } : null;
+    const n = parseCount(spentVs[2]!, b);
+    if (!n) return null;
+    const spent: AmountExpr = { kind: 'mana_spent', of: b.it };
+    b.difference = spentVs[1] === 'greater' ? { kind: 'sum', parts: [spent, { ...n, times: -1 } as AmountExpr] } : { kind: 'sum', parts: [n, { ...spent, times: -1 }] };
+    return { type: 'amount', amount: spent, op: spentVs[1] === 'greater' ? 'gt' : 'lt', n };
   }
   const statVs = /^(that card|that creature|it)(?:'s|s) (mana value|power|toughness) is (less|greater) than or equal to (.+)$/.exec(t);
   if (statVs && b.it && b.it.ref !== 'self') {
@@ -519,10 +533,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'amount', amount: { kind: 'x' }, ...c } : null;
   }
   // Delirium: "there are four or more card types among cards in your graveyard"
-  const cardTypes = /^there are (\w+ or more) card types among cards in your graveyard$/.exec(t);
+  // Matzalantli: "there are four or more permanent types among cards in your graveyard".
+  const cardTypes = /^there are (\w+ or more) (card|permanent) types among cards in your graveyard$/.exec(t);
   if (cardTypes) {
     const c = compare(cardTypes[1]!);
-    return c ? { type: 'graveyard', ...c, cardTypes: true } : null;
+    return c ? { type: 'graveyard', ...c, cardTypes: true, ...(cardTypes[2] === 'permanent' ? { permanentTypes: true } : {}) } : null;
   }
   // Descend: "there are four or more permanent cards in your graveyard", "five or more creature cards are in your graveyard"
   const gyKind = /^there are (\w+ or more) (.+?) cards in your graveyard$/.exec(t) ?? /^(\w+ or more) (.+?) cards are in your graveyard$/.exec(t);
