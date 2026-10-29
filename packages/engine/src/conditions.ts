@@ -488,7 +488,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'total_power': {
       // Formidable: "creatures you control have total power 8 or greater"
-      const total = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).reduce((n, o) => n + Math.max(0, power(g, o)), 0);
+      const stat = cond.stat === 'toughness' ? toughness : power;
+      const total = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.controller === controller && chars(g, o).types.includes('Creature')).reduce((n, o) => n + Math.max(0, stat(g, o)), 0);
       return cmp(total, cond);
     }
     case 'entered_this_turn': {

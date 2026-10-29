@@ -76,6 +76,9 @@ export class ParserRegistry {
       parseAbilities: (t, name, typeLine) => this.parse(t, { cardName: name, faceName: name, typeLine }),
     };
     const result: ParseResult = { keywords: [], abilities: [], unparsed: [], manualKeywords: [] };
+    // Battle Angels of Tyr: "Flying, myriad" — a keyword line is read once each of its keywords is (myriad's ability is
+    // attached below).
+    const lineKeywords = new Map<string, KeywordInstance[]>();
     // CR 309.4: a dungeon's rooms, topmost first — "Room — Effect. (Leads to: A, B)", each a room ability (CR 309.4c).
     if (/^Dungeon\b/.test(ctx.typeLine)) {
       for (const raw of text.split('\n')) {
@@ -118,6 +121,13 @@ export class ParserRegistry {
         // Rakdos, Lord of Riots: "You can't cast Rakdos unless an opponent lost life this turn." — cast it only if that holds.
         const castUnless = new RegExp(`^You can't cast (?:~|this spell|${names}) unless (.+)\\.$`).exec(l);
         if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
+        // Mycosynth Golem: "Artifact creature spells you cast have affinity for artifacts." — CR 702.41a: each costs {1} less
+        // for each artifact you control (Pearl-Ear: "affinity for Auras").
+        const affinity = /^((?:[A-Z][a-z]+(?: and [a-z]+| [a-z]+)* )?[Ss]pells you cast) have affinity for (artifacts|Auras|Equipment|enchantments|creatures)\.$/.exec(l);
+        if (affinity) return [`${affinity[1]} cost {1} less to cast for each ${affinity[2] === 'Equipment' ? 'Equipment' : affinity[2]!.replace(/s$/, '')} you control.`];
+        // Thryx, the Sudden Storm: "Spells you cast with mana value 5 or greater cost {1} less to cast and can't be countered."
+        const costAndUncounterable = /^(.*\b[Ss]pells you cast\b.*?) cost (\{\d+\}) less to cast and can't be countered\.$/.exec(l);
+        if (costAndUncounterable) return [`${costAndUncounterable[1]} cost ${costAndUncounterable[2]} less to cast.`, `${costAndUncounterable[1]} can't be countered.`];
         // Khalni Heart Expedition: "Remove three quest counters from this enchantment and sacrifice it: …" — both costs.
         const removeAndSac = /^(Remove (?:a|an|\w+) \S+ counters? from (?:this \w+|~)) and sacrifice it: (.+)$/.exec(l);
         if (removeAndSac) return [`${removeAndSac[1]}, Sacrifice ~: ${removeAndSac[2]}`];
@@ -440,7 +450,10 @@ export class ParserRegistry {
           if (abilities) kw.abilities = abilities;
         }
         result.keywords.push(...kws);
-        if (!kws.every(keywordSupported)) result.manualKeywords.push(line);
+        if (!kws.every(keywordSupported)) {
+          result.manualKeywords.push(line);
+          lineKeywords.set(line, kws);
+        }
         continue;
       }
 
@@ -716,6 +729,7 @@ export class ParserRegistry {
       kw.abilities = [{ kind: 'static', text: `Overload ${kw.cost}`, effect: { type: 'cast_option', id: 'overload', kind: 'alternative', cost: { mana: kw.cost }, spell } as CastOptionNode }];
       result.manualKeywords = result.manualKeywords.filter((l) => !/^Overload\b/.test(l));
     }
+    result.manualKeywords = result.manualKeywords.filter((l) => !lineKeywords.get(l)?.every(keywordSupported));
     return result;
   }
 

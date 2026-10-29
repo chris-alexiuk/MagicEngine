@@ -1992,7 +1992,8 @@ describe('slice 167', () => {
     expect(parse('Whenever equipped creature deals combat damage to a player, that player loses half their life, rounded up.', 'Artifact — Equipment', 'Q').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', amount: { kind: 'life', half: 'up' } }] });
     expect(parse('Target player mills half their library, rounded down.', 'Sorcery', 'T').abilities[0]).toMatchObject({ effects: [{ type: 'mill', amount: { kind: 'cards', zone: 'library', half: 'down' } }] });
     expect(parse('At the beginning of your upkeep, create X 2/2 black Zombie creature tokens, where X is half the number of Zombies you control, rounded down.', 'Enchantment', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'count', half: 'down' } }] });
-    expect(parse('Each opponent loses half their life, rounded up.', 'Sorcery', 'E').unparsed).toHaveLength(1);
+    // Betor, Kin to All: each opponent loses half their own life.
+    expect(parse('Each opponent loses half their life, rounded up.', 'Sorcery', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'lose_life', amount: { kind: 'life', who: { ref: 'each_player' }, half: 'up' }, who: { ref: 'players', who: 'opponents' } }] });
   });
 });
 

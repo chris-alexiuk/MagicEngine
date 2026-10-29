@@ -719,7 +719,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         // "up to two target cards from a single graveyard"
         const single = / from a single graveyard$/.test(tm[4]!);
         const pf = parseFilter(single ? `${tm[4]!.replace(/ from a single graveyard$/, '')} in a graveyard` : tm[4]!, b);
-        if (!pf || pf.plural !== count > 1 || pf.filter.ownedBy) return null;
+        // Ink-Eyes: "target creature card from that player's graveyard" — the player the trigger is about, known as the
+        // target is chosen (not another target, chosen at the same time).
+        if (!pf || pf.plural !== count > 1 || (pf.filter.ownedBy && (pf.filter.ownedBy as Ref).ref !== 'trigger_player')) return null;
         if (tm[3]) pf.filter.other = true;
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), ...(single ? { sameOwner: true } : {}) };
         if (count > 1) spec.count = count;

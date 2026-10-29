@@ -404,8 +404,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'different_powers', ...c } : null;
   }
   // Formidable: "creatures you control have total power 8 or greater"
-  const total = /^creatures you control have total power (\d+) or greater$/.exec(t);
-  if (total) return { type: 'total_power', op: 'ge', n: Number(total[1]) };
+  // Betor, Kin to All: "creatures you control have total toughness 10 or greater".
+  const total = /^creatures you control have total (power|toughness) (\d+) or greater$/.exec(t);
+  if (total) return { type: 'total_power', op: 'ge', n: Number(total[2]), ...(total[1] === 'toughness' ? { stat: 'toughness' } : {}) };
   // Corrupted: "an opponent has three or more poison counters"
   const poison = /^(an opponent|you) ha(?:s|ve) (\w+ or more) poison counters$/.exec(t);
   if (poison) {
@@ -622,6 +623,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Conduit of Worlds: "If you haven't cast a spell this turn".
   if (/^you (?:haven't|have not|didn't) cast a spell this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_cast_spell' } };
   if (/^you(?:'ve)? lost life this turn$/.test(t)) return { type: 'this_turn', event: 'you_lost_life' };
+  // Luminarch Ascension: "if you didn't lose life this turn".
+  if (/^you didn't lose life this turn$|^you haven't lost life this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_lost_life' } };
   // Lyse Hext: "you've cast two or more noncreature spells this turn"
   const castN = /^you(?:'ve)? cast (two|three|four|five) or more (.+?) spells this turn$/.exec(t);
   if (castN) {

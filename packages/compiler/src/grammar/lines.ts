@@ -1088,6 +1088,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures"; Mangara: "Whenever an opponent
   // attacks with creatures, if two or more of those creatures are attacking you and/or planeswalkers you control".
+  // Lulu, Stern Guardian: "Whenever an opponent attacks you"; Cunning Rhetoric: "… you and/or one or more planeswalkers you
+  // control" — once, as they declare attackers.
+  const oppAttacksYou = /^an opponent attacks you( and\/or one or more planeswalkers you control)?$/.exec(t);
+  if (oppAttacksYou) {
+    return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacksYou[1] ? 'or_planeswalkers' : 'you', min: 1 }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   const oppAttacks =
     /^an opponent attacks you with (\w+) or more creatures$/.exec(t) ??
     /^an opponent attacks with creatures, if (\w+) or more of those creatures are attacking you(?: and\/or| or) (planeswalkers you control)$/.exec(t);
@@ -2183,11 +2189,12 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   if (/^Spells can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true };
   // Spider-Punk: "Spells and abilities can't be countered." — activated and triggered abilities too.
   if (/^Spells and abilities can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true, abilitiesToo: true };
-  const uncounterable = /^(.*?)\bspells you (?:control|cast) can't be countered$/i.exec(body);
+  // Thryx, the Sudden Storm: "Spells you cast with mana value 5 or greater can't be countered."
+  const uncounterable = /^(.*?)\bspells you (?:control|cast)( with [^,]+?)? can't be countered$/i.exec(body);
   if (uncounterable) {
     const words = uncounterable[1]!.trim();
-    if (!words) return { type: 'uncounterable', filter: {} };
-    const pf = parseFilter(`${words.replace(/ and /g, ' or ').replace(/^\w/, (c) => c.toLowerCase())} spells`, b);
+    if (!words && !uncounterable[2]) return { type: 'uncounterable', filter: {} };
+    const pf = parseFilter(`${words ? `${words.replace(/ and /g, ' or ').replace(/^\w/, (c) => c.toLowerCase())} ` : ''}spells${uncounterable[2] ?? ''}`, b);
     if (!pf) return null;
     const { zone: _z, ...filter } = pf.filter;
     return { type: 'uncounterable', filter };
@@ -2896,11 +2903,14 @@ export const costModifierRule: GrammarRule = {
     // Killian, Ink Duelist: "Spells you cast that target a creature cost {2} less to cast." (CR 601.2f: targets first)
     // Charix: "Spells your opponents cast that target Charix cost {2} more to cast."
     // Monastery Siege: "Spells your opponents cast that target you or a permanent you control cost {2} more to cast."
-    const thatTarget = /^Spells (you|your opponents) cast that target (?:(you or )?(?:a|an) (.+?)|(~)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
+    // Esior, Wardwing Familiar: "Spells your opponents cast that target one or more commanders you control cost {3} more".
+    const thatTarget = /^Spells (you|your opponents) cast that target (?:(you or )?(a|an|one or more) (.+?)|(~)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
     if (thatTarget) {
+      thatTarget.splice(3, 1, ...[]);
+      const many = /^one or more /.test(body.replace(/^Spells \w+(?: \w+)? cast that target (?:you or )?/, ''));
       const a = amountOf(thatTarget[5]!);
       const pf = a && !thatTarget[4] ? parseFilter(thatTarget[3]!, b) : null;
-      if (!a || (!thatTarget[4] && (!pf || pf.plural))) return null;
+      if (!a || (!thatTarget[4] && (!pf || pf.plural !== many))) return null;
       if (thatTarget[2] && thatTarget[1] === 'you') return null;
       const ifTargets: ObjectFilter = thatTarget[4] ? { isSource: true } : pf!.filter;
       return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[6] as 'less' | 'more', ifTargets, ...(thatTarget[2] ? { ifTargetsYou: true } : {}), ...a } as CostModifierNode };

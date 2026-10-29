@@ -577,7 +577,12 @@ const CARDS = [
   makeCard({ name: 'Toph Lite', type_line: 'Legendary Creature — Human Warrior', mana_cost: '{0}', power: '*', toughness: '3', oracle_text: "Toph Lite's power is equal to the number of +1/+1 counters on lands you control." }),
   makeCard({ name: 'Tyvar Lite', type_line: 'Legendary Creature — Elf Warrior', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Tap another untapped creature you control: Tyvar Lite gains indestructible until end of turn. Tap it.' }),
   makeCard({ name: 'Any Counter Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever a counter is put on a creature you control, draw a card.' }),
+  makeCard({ name: 'Snatcher Lite', type_line: 'Creature — Rat Ninja', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever this creature deals combat damage to a player, exile up to two target cards from that player's graveyard." }),
+  makeCard({ name: 'Betor Lite', type_line: 'Legendary Creature — Spirit Dragon', mana_cost: '{0}', power: '5', toughness: '7', oracle_text: 'At the beginning of your end step, if creatures you control have total toughness 10 or greater, draw a card. Then if creatures you control have total toughness 20 or greater, untap each creature you control. Then if creatures you control have total toughness 40 or greater, each opponent loses half their life, rounded up.' }),
+  makeCard({ name: 'Thick Wall Lite', type_line: 'Creature — Wall', mana_cost: '{0}', power: '0', toughness: '33', oracle_text: '' }),
   makeCard({ name: 'Bonded Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "This creature attacks each combat if able.\nThis creature can't attack alone." }),
+  makeCard({ name: 'Stone Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." }),
+  makeCard({ name: 'Morph Lite', type_line: 'Creature — Human Wizard', mana_cost: '{5}{U}', cmc: 6, power: '1', toughness: '1', oracle_text: 'Morph {3}' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5390,6 +5395,18 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it("a face-down spell isn't an artifact: Powerstone-style mana can't pay for it", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of g.zones.battlefield) if (g.objects[id]!.controller === 'alice') g.objects[id]!.tapped = true;
+    give(g, 'alice', 'Island', 'battlefield');
+    give(g, 'alice', 'Island', 'battlefield');
+    const stone = give(g, 'alice', 'Stone Lite', 'battlefield');
+    const morph = give(g, 'alice', 'Morph Lite', 'hand');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === morph)).toBe(false);
+    g.objects[stone]!.tapped = true;
+    give(g, 'alice', 'Island', 'battlefield');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === morph && (a as { alt?: string }).alt === 'morph')).toBe(true);
+  });
   for (const friend of [false, true]) {
     it(`a creature that must attack but can't attack alone: ${friend ? 'brings a friend' : 'stays home with no one to go with'} (CR 508.1d)`, () => {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
@@ -5402,6 +5419,35 @@ describe('Sieges', () => {
       else expect(() => act(g, none as never)).not.toThrow();
     });
   }
+  it('Betor, Kin to All: total toughness 40 — each opponent loses half their life, rounded up', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Betor Lite', 'battlefield');
+    const wall = give(g, 'alice', 'Thick Wall Lite', 'battlefield');
+    g.objects[wall]!.tapped = true;
+    g.players.bob!.life = 37;
+    const hand = g.zones.hand.alice!.length;
+    g = settle(toStep(g, 'end', 'alice'));
+    for (let i = 0; i < 5 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    expect([g.players.bob!.life, g.zones.hand.alice!.length, g.objects[wall]!.tapped]).toEqual([18, hand + 1, false]);
+  });
+  it("Skullsnatcher: targets only cards in the damaged player's graveyard", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const rat = give(g, 'alice', 'Snatcher Lite', 'battlefield', { sick: false });
+    const mine = give(g, 'alice', 'Cub', 'graveyard');
+    const theirs = give(g, 'bob', 'Cub', 'graveyard');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: rat, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 30 && g.pending?.kind !== 'trigger_targets'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect(g.pending?.kind).toBe('trigger_targets');
+    expect(() => act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: mine }]] } } as never)).toThrow();
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: theirs }]] } } as never);
+    for (let i = 0; i < 10 && g.stack.length; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect([g.objects[theirs]!.zone, g.objects[mine]!.zone]).toEqual(['exile', 'graveyard']);
+  });
   it('Jolrael: base power and toughness equal to the cards in your hand, counted as it resolves', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const jol = give(g, 'alice', 'Jolrael Lite', 'battlefield');

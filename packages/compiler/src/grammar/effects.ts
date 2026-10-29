@@ -83,6 +83,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
+  text = text.replace(/\b([Uu])ntap (it|~) and all ([^.]+)\./, (_m, u: string, it: string, rest: string) => `${u}ntap ${it}. Untap all ${rest}.`);
   // Alandra, Sky Dreamer: "Alandra and Drakes you control each get +X/+X until end of turn, where X is …" — it, and the others.
   text = text.replace(/^~ and (\w+) you control each get ([+-]\w+\/[+-]\w+ until end of turn)(, where X is [^.]+)?\.$/, (_m, kind: string, pt: string, where?: string) => `~ gets ${pt}${where ?? ''}. Other ${kind} you control get ${pt}${where ?? ''}.`);
   // Sephiroth, One-Winged Angel: "you may sacrifice any number of other creatures. If you do, draw that many cards." — choosing
@@ -1646,8 +1648,14 @@ function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] 
       if (out.amount !== 'X') return out;
       if (kinds[0] === 'x') out.amount = { kind: 'x', half: dir };
       else {
-        // The player who loses, mills or discards: one player, counted as they do (CR 608.2h).
-        if (!one(e.who)) return out;
+        // The player who loses, mills or discards: one player, counted as they do (CR 608.2h). Betor, Kin to All: "each
+        // opponent loses half their life" — each their own.
+        if (!one(e.who)) {
+          if (kinds[0] !== 'life' || e.type !== 'lose_life' || (e.who as Ref | undefined)?.ref !== 'players') return out;
+          out.amount = { kind: 'life', who: { ref: 'each_player' }, half: dir };
+          bound++;
+          return out;
+        }
         // Singularity Rupture: "any number of target players each mill half their library" — each of them their own.
         const many = (e.who as Ref).ref === 'target' && ((b.targets[(e.who as { index: number }).index]?.count ?? 1) > 1);
         const player: Ref = many && e.type === 'mill' ? { ref: 'each_player' } : (e.who as Ref);
@@ -3866,7 +3874,7 @@ const VERBS: Record<string, VerbHandler> = {
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|that player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }

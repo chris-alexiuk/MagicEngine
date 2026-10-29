@@ -849,6 +849,7 @@ export function matchesFilter(
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
   if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
   if (f.notCopy && o.spellCopy) return false;
+  if (f.ownerPlayer !== undefined && o.owner !== f.ownerPlayer) return false;
   // Avenging Arrow: "target creature that dealt damage this turn".
   if (f.dealtDamageThisTurn && !((g.turnLog.dealtDamage ?? {})[`${o.id}:${o.zcc}`] ?? 0)) return false;
   // Vengeful Ancestor: "a goaded creature" (CR 701.15) — by an effect, or a static "is goaded".

@@ -55,7 +55,14 @@ export function withTargetX<T>(x: number | undefined, fn: () => T): T {
   }
 }
 
-function countedFilter(g: GameState, controller: PlayerId, filter: ObjectFilter, source: GameObject | null): ObjectFilter {
+function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, source: GameObject | null): ObjectFilter {
+  // Ink-Eyes: "target creature card from that player's graveyard" — the player the trigger is about.
+  let filter = given;
+  if (filter.ownedBy) {
+    const { ownedBy, ...rest } = filter;
+    const player = (ownedBy as { ref?: string }).ref === 'trigger_player' ? triggerInfo?.player : undefined;
+    filter = { ...rest, ownerPlayer: player ?? '\u0000none' };
+  }
   const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object' || (filter[k]?.n === 'X' && targetX !== undefined));
   if (!keys.length) return filter;
   const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: targetX ?? 0, memo: {}, ...(triggerInfo ? { trigger: triggerInfo } : {}) } as EffectContext;

@@ -13,7 +13,7 @@
  *   - invariant: the state broke a structural invariant after an action
  * Exit code 1 if anything failed.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef, Color } from '@mtg/schema';
@@ -486,6 +486,7 @@ interface Failure {
   action?: string;
 }
 
+let dumped = false;
 const failures: Failure[] = [];
 let actions = 0;
 let turns = 0;
@@ -573,6 +574,11 @@ for (let game = 0; game < GAMES; game++) {
     if (!r.ok) {
       if (offered || answer) {
         failures.push({ game, kind: 'rejected', detail: r.error, action: label });
+        // FUZZ_DUMP=file: the state and action of the first rejection, to replay it.
+        if (process.env.FUZZ_DUMP && !dumped) {
+          dumped = true;
+          writeFileSync(process.env.FUZZ_DUMP, JSON.stringify({ state: g, action, error: r.error }));
+        }
         // Unstick: pass if we can, otherwise give up on this game.
         if (g.priority && !g.pending) {
           const p = apply(g, { type: 'pass', player: g.priority });

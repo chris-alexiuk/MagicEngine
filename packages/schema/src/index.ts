@@ -424,6 +424,8 @@ export interface ObjectFilter {
   controlledBy?: Ref;
   /** "all cards from target player's graveyard": owned by the player(s) this refers to (as an effect resolves). */
   ownedBy?: Ref;
+  /** The player who owns it (ownedBy, bound as a target is checked). */
+  ownerPlayer?: string;
   /** "creatures that aren't of the chosen type" (Kindred Dominance). */
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */

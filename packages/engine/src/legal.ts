@@ -163,7 +163,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // Aven Interrupter: "Spells your opponents cast from graveyards or from exile cost {2} more to cast."
       const exileCost = parseManaCost(`${opt.cost.mana ?? ''}${req.map((r) => r.cost.mana ?? '').join('')}`);
       applyCostModifiers(g, player, o, face, exileCost);
-      if (exileCost.unsupported.length || !planAutoTap(g, player, exileCost)) continue;
+      if (exileCost.unsupported.length || !planAutoTap(g, player, exileCost, 0, [], { kind: 'spell', object: o })) continue;
       const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...req.flatMap((r) => r.cost.other ?? [])]);
       const choice = costs ? defaultSpellChoice(g, player, o, face) : null;
       if (!choice) continue;
@@ -394,7 +394,8 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       // Cost changes apply to the face-down spell too ("Creature spells you cast cost {1} more").
       const downCost = parseManaCost('{3}');
       applyCostModifiers(g, player, o, faceDownFace({ ...o, faceDown: opt.id === 'disguise' ? 'disguise' : 'morph' }), downCost);
-      if (!downCost.unsupported.length && planAutoTap(g, player, downCost)) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
+      // Powerstone mana can't pay for it (a face-down spell isn't an artifact).
+      if (!downCost.unsupported.length && planAutoTap(g, player, downCost, 0, [], { kind: 'spell', object: o })) out.push({ type: 'cast', player, object: o.id, autoTap: true, alt: opt.id });
       continue;
     }
     // CR 601.3: "Cast this spell only during combat" applies whatever cost it's cast for (not face down: no text).
