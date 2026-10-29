@@ -40,6 +40,8 @@ export interface TurnLog {
   drawStepCards?: number;
   /** What died this turn, as it last existed ("for each creature that died this turn"). */
   died?: { controller: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
+  /** Kutzil's Flanker: the permanents that left the battlefield this turn, as they last existed. */
+  leftList?: { controller: PlayerId; types: string[] }[];
   /** CR 700.11: how many times each player descended this turn. */
   descended?: Record<PlayerId, number>;
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
@@ -159,6 +161,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           // As it last existed on the battlefield (CR 603.10a).
           const lk = g.lastKnown?.[e.object];
           if ((lk?.types ?? types).includes('Creature') && !(log.creatureLeft ??= []).includes(e.controller)) log.creatureLeft.push(e.controller);
+          (log.leftList ??= []).push({ controller: e.controller, types: [...(lk?.types ?? types)] });
         }
         if (e.to === 'battlefield') {
           const o = g.objects[e.object];
@@ -738,6 +741,10 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(log.cardExiled);
         case 'you_committed_crime':
           return (log.crimes ?? []).includes(controller);
+        // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
+        // battlefield just now (one zone change ago if it has left).
+        case 'self_dealt_combat_damage':
+          return Boolean(source && (log.combatDamagers ?? []).some((d) => d.source === source.id && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
         // Barrin, Tolarian Archmage: "if a permanent was put into your hand from the battlefield this turn".
         case 'bounced_to_your_hand':
           return (log.bouncedToHand ?? []).includes(controller);

@@ -82,6 +82,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:that's|that are) enchanted by an Aura you control$/, (f) => !f.enchantedByYou && ((f.enchantedByYou = true), true)],
   // Don Andres, the Renegade: "each creature you control but don't own".
   [/ you control but don't own$/, (f) => !f.controller && !f.owner && ((f.controller = 'you'), (f.owner = 'opponent'), true)],
+  // Kothophed, Soul Hoarder: "a permanent owned by another player".
+  [/ (?:owned by (?:another player|an opponent)|an opponent owns|your opponents own)$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
   // Zedruu the Greathearted: "permanents you own that your opponents control".
   [/ you own that (?:your opponents|an opponent) controls?$/, (f) => !f.controller && !f.owner && ((f.controller = 'opponent'), (f.owner = 'you'), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
@@ -182,6 +184,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that(?: are|'s| is) one or more colors$/, (f) => !f.colors && ((f.colors = ['W', 'U', 'B', 'R', 'G']), true)],
   // Oran-Rief: "each green creature that entered this turn"
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
+  [/ that didn't enter (?:the battlefield )?this turn$/, (f) => f.enteredThisTurn === undefined && ((f.enteredThisTurn = false), true)],
   // Coiling Stalker: "target creature you control that doesn't have a +1/+1 counter on it".
   [/ that (?:doesn't|don't) have an? (\S+) counter on (?:it|them)$/, (f, m) => !f.notCounter && !f.counter && ((f.notCounter = m[1]!), true)],
   // Wash Away: "target spell that wasn't cast from its owner's hand".
@@ -429,6 +432,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
   // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
+  // Spectacular Pileup: "all creatures and Vehicles" — either.
+  rest = rest.replace(/^(artifacts|creatures|enchantments|lands|planeswalkers) and (Vehicles|Equipment|Auras|Mounts|Spacecraft)$/, '$1 or $2');
   // Elspeth, Knight-Errant: "Artifacts, creatures, enchantments, and lands you control" — likewise.
   rest = rest.replace(/\b((?:(?:artifacts|creatures|enchantments|lands|planeswalkers), )+)and (?=(?:artifacts|creatures|enchantments|lands|planeswalkers)\b)/g, '$1or ');
   const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];

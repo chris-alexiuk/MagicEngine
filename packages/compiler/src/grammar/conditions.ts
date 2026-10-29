@@ -346,6 +346,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Anti-Venom: "When Anti-Venom enters, if he was cast" — by anyone (CR 601.2: it was a spell before it entered).
   // Mirror of Life Trapping: "Whenever a creature enters, if it was cast" — the entering creature.
   if (/^(?:~|it|he|she) was cast$/.test(t)) return { type: 'cast_by_you', anyone: true, ...(!t.startsWith('~') && b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
+  // Otterball Antics: "If this spell was cast from anywhere other than your hand" — cast, and not from there.
+  if (t === '~ was cast from anywhere other than your hand') return { type: 'and', all: [{ type: 'cast_by_you' }, { type: 'not', cond: { type: 'cast_by_you', fromHand: true } }] };
   const castFrom = /^~ was cast from (your hand|a graveyard|exile)$/.exec(t);
   if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
   // Approach of the Second Sun: "you've cast another spell named ~ this game".
@@ -857,6 +859,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you(?:'ve)? played a land this turn$/.test(t)) return { type: 'this_turn', event: 'you_played_land' };
   // Mirrex: "Activate only if this land entered this turn."
   if (/^(?:~|this (?:land|creature|artifact|permanent|enchantment)) entered (?:the battlefield )?this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } };
+  // Thrasta, Tempest's Roar: "~ has hexproof as long as it entered this turn" — itself.
+  if (t === 'it entered this turn' && (!b.it || b.it.ref === 'self')) return { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } };
   // Malamet Battle Glyph: "If the creature you control entered this turn" — the object the text named.
   const namedEntered = /^(that creature|it|the creature you control) entered (?:the battlefield )?this turn$/.exec(t);
   if (namedEntered) {
@@ -1017,6 +1021,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   if (t === 'a permanent was put into your hand from the battlefield this turn') return { type: 'this_turn', event: 'bounced_to_your_hand' };
+  if (/^(?:it|~) dealt combat damage to a player this turn$/.test(t) && (!b.it || b.it.ref === 'self' || b.it.ref === 'trigger_object')) return { type: 'this_turn', event: 'self_dealt_combat_damage' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
   const oppCast = /^an opponent (?:has )?cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
   if (oppCast) {
@@ -1066,7 +1071,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (hadOne && b.it) return { type: 'counters', of: b.it, counter: hadOne[1]!, min: 1 };
   // The Ozolith: "if it had counters on it" (as it last existed), "if ~ has counters on it".
   // Nikara, Lair Scavenger: "if it had one or more counters on it".
-  if ((t === 'it had counters on it' || t === 'it had one or more counters on it') && b.it) return { type: 'counters', of: b.it, min: 1 };
+  // Leader's Talent: "if it had a counter on it".
+  if ((t === 'it had counters on it' || t === 'it had one or more counters on it' || t === 'it had a counter on it') && b.it) return { type: 'counters', of: b.it, min: 1 };
   // Unstoppable Slasher: "if it had no counters on it" — any kind.
   if (t === 'it had no counters on it' && b.it) return { type: 'counters', of: b.it, max: 0 };
   if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };

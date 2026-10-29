@@ -981,6 +981,7 @@ export function castRestrictionProblem(g: GameState, player: PlayerId, face: Fac
       after_combat: step === 'main2' || step === 'end' || step === 'cleanup',
       before_combat: STEPS.indexOf(step) < STEPS.indexOf('beginning_of_combat') || step === 'beginning_of_combat' || step === 'declare_attackers',
       upkeep: step === 'upkeep',
+      end: step === 'end',
     };
     if (r.during && !ok[String(r.during)]) return `${face.name} can't be cast now.`;
     if (r.whose === 'your' && g.active !== player) return `${face.name} can only be cast during your turn.`;

@@ -19,6 +19,10 @@ const ZONES: Record<string, { zone: 'hand' | 'graveyard' | 'library' | 'exile'; 
   "in your opponents' graveyards": { zone: 'graveyard', who: 'opponents' },
   "in each opponent's graveyard": { zone: 'graveyard', who: 'opponents' },
   "in an opponent's graveyard": { zone: 'graveyard', who: 'opponents' },
+  // Realm Seekers: "the total number of cards in all players' hands".
+  "in all players' hands": { zone: 'hand', who: 'each' },
+  "in each player's hand": { zone: 'hand', who: 'each' },
+  "in your opponents' hands": { zone: 'hand', who: 'opponents' },
 };
 
 /** "creatures you control", "creature cards in your graveyard", "cards in your hand" (plural or not). */
@@ -121,6 +125,12 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
 
 /** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
 function diedThisTurn(text: string, b: Binder): AmountExpr | null {
+  // Kutzil's Flanker: "each creature that left the battlefield under your control this turn".
+  const left = /^(creatures?|permanents?|artifacts?) that left the battlefield (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
+  if (left) {
+    const kind = left[1]!.replace(/s$/, '');
+    return { kind: 'left_this_turn', ...(kind !== 'creature' ? { types: kind === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : ['Artifact'] } : {}), ...(left[2] ? { controller: left[2] === 'your' ? 'you' : 'opponent' } : {}) };
+  }
   // Body Count: "each creature that died under your control this turn".
   const m = /^(.+?) that died (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
   if (!m) return null;
@@ -237,6 +247,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   // Fists of Flame: "for each card you've drawn this turn"
   if (t === "card you've drawn this turn") return { kind: 'drawn_this_turn' };
+  // Ancient Excavation: "discard a card for each card drawn this way".
+  if (t === 'card drawn this way') return { kind: 'drawn_this_way' };
   // Heliod, the Radiant Dawn: "for each card your opponents have drawn this turn".
   if (t === 'card your opponents have drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
@@ -352,7 +364,8 @@ function lifeThisTurn(who: string): AmountExpr | null {
 /** A number phrase: "the number of creatures you control", "its power", "twice …", "2 plus …". */
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Dovescape: "where X is the spell's mana value" — the spell a cast trigger is about.
-  const t = b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim();
+  // Realm Seekers: "the total number of cards in all players' hands" — the same as "the number of".
+  const t = (b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim()).replace(/^the total number of (?=cards )/, 'the number of ');
   // CR 702.179a: The Speed Demon: "where X is your speed".
   if (t === 'your speed') return { kind: 'speed' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.
@@ -605,6 +618,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     return of && !of.plural && of.ref.ref !== 'all' ? { kind: 'stat', stat: s, of: of.ref } : null;
   }
   if (t === 'your life total') return { kind: 'life', who: { ref: 'you' } };
+  // Sorin, Grim Nemesis: "the highest life total among all players"; "… among your opponents".
+  const highest = /^the (?:highest|greatest) life total among (all players|your opponents)$/.exec(t);
+  if (highest) return { kind: 'life', who: { ref: 'players', who: highest[1] === 'all players' ? 'each' : 'opponents' } as Ref, most: true };
   // Heartless Hidetsugu: "half that player's life total, rounded down" — each player's own (perPlayerCount).
   const lifeOf = /^(that player|that opponent|target player|target opponent|their)(?:'s)? life total$/.exec(t);
   if (lifeOf) {

@@ -276,7 +276,8 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     // Mondrak: "Sacrifice two other artifacts and/or creatures"
     const pf = parseFilter(sac[3]!.replace(/ and\/or /g, ' or '), b);
     const amount = sac[1] === 'another' ? 1 : parseAmount(sac[1]!);
-    if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1) return null;
+    // Eldrazi Ravager: "Sacrifice two Eldrazi" — a word that's its own plural.
+    if (!pf || typeof amount !== 'number' || (pf.plural !== amount > 1 && !pf.invariant)) return null;
     if (sac[1] === 'another' || sac[2]) pf.filter.other = true;
     return { type: 'sacrifice', filter: pf.filter, amount };
   }
@@ -300,14 +301,15 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
   }
   // "Tap an untapped creature you control", "tap two untapped creatures you control that each share a color with it"
   // Tyvar, the Pummeler: "Tap another untapped creature you control" — not this one.
-  const tap = /^[Tt]ap (a|an|another|one|two|three|four|five|six|seven|eight|nine|ten) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
+  // Saradoc, Master of Buckland: "Tap two other untapped Halflings you control" — not this one.
+  const tap = /^[Tt]ap (a|an|another|one|two|three|four|five|six|seven|eight|nine|ten)( other)? untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item)?.map((x, i, m) => (i === 2 ? m[3] : i === 3 ? m[4] : i === 4 ? m[2] : x));
   if (tap && b) {
     const amount = parseAmount(tap[1]!.replace(/^an(?:other)?$/, 'a'));
     const pf = parseFilter(tap[2]!, b);
     // Myr Turbine: "Tap five untapped Myr you control" — a word that's its own plural.
-    const ownPlural = /^(?:Myr|Treefolk|Merfolk|Kithkin|Moonfolk|Samurai) /.test(tap[2]!);
+    const ownPlural = /^(?:Myr|Treefolk|Merfolk|Kithkin|Moonfolk|Samurai|Eldrazi) /.test(tap[2]!) || Boolean(pf?.invariant);
     if (!pf || typeof amount !== 'number' || (pf.plural !== amount > 1 && !ownPlural) || pf.filter.controller !== 'you' || pf.filter.zone) return null;
-    if (tap[1] === 'another') pf.filter.other = true;
+    if (tap[1] === 'another' || tap[4]) pf.filter.other = true;
     if (tap[3]) pf.filter.sharesColorWithSource = true;
     return { type: 'tap_creatures', amount, filter: pf.filter };
   }
@@ -871,6 +873,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Black Vise: "At the beginning of the chosen player's upkeep" — "that player" is the chosen player.
     const chosenStep = /^the beginning of the chosen player's (upkeep|draw step|end step)$/.exec(t);
     if (chosenStep) return { trigger: { type: 'phase', step: STEP_WORDS[chosenStep[1]!]!, whose: 'chosen' }, it: { ref: 'self' }, player: { ref: 'chosen_player' } };
+    // Archivist of Gondor: "At the beginning of the monarch's end step, that player draws a card." (CR 725)
+    const monarchStep = /^the beginning of the monarch's (upkeep|draw step|end step)$/.exec(t);
+    if (monarchStep) return { trigger: { type: 'phase', step: STEP_WORDS[monarchStep[1]!]!, whose: 'monarch' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     // CR 511.1: "At end of combat"
     if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
     // Rose, Cutthroat Raider: "At end of combat on your turn".
@@ -1533,7 +1538,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // Cityscape Leveler: "When you cast this spell and whenever this creature attacks" (CR 603.2) — from the stack, then from
   // the battlefield.
-  const castAnd = /^you cast ~ and whenever (?:it|~) (attacks|blocks|dies)$/.exec(t);
+  // Eldrazi Repurposer: "When you cast this spell and when this creature dies".
+  const castAnd = /^you cast ~ and when(?:ever)? (?:it|~) (attacks|blocks|dies)$/.exec(t);
   if (castAnd) {
     const one = parseTrigger(word, 'you cast ~', b);
     const two = one ? parseTrigger('Whenever', `~ ${castAnd[1]}`, b) : null;
@@ -2040,6 +2046,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you clash' || t === 'you win a clash') return { trigger: { type: 'clashed', ...(t === 'you win a clash' ? { won: true } : {}) }, it: { ref: 'self' }, player: null };
   // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
   if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
+  // Custodi Lich: "Whenever you become the monarch"; Garland: "Whenever an opponent becomes the monarch" (CR 725.1).
+  if (t === 'you become the monarch') return { trigger: { type: 'became_monarch', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
+  if (t === 'an opponent becomes the monarch') return { trigger: { type: 'became_monarch', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
   const heroic = /^you cast a spell that targets ~$/.exec(t);
   if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targetsSource: true }, it: { ref: 'self' }, player: { ref: 'you' } };
@@ -2382,7 +2391,8 @@ export const continuousRule: GrammarRule = {
     // Topiary Stomper: "This creature can't attack or block unless you control seven or more lands." (CR 611.3a)
     // ("… unless defending player controls an Island" is checked per attack, elsewhere.)
     const unless = /^(~ can't (?:attack|block|attack or block)) unless (?!defending player)(.+)$/.exec(rest);
-    const unlessCond = unless ? attempt(b, (b) => parseCondition(unless[2]!, b)) : null;
+    // Technodrome: "… unless its power is 6 or greater" — this creature's.
+    const unlessCond = unless ? attempt(b, (b) => parseCondition(unless[2]!.replace(/^its (power|toughness) /, "~'s $1 "), b)) : null;
     if (unless && unlessCond) {
       conds.push({ type: 'not', cond: unlessCond });
       rest = unless[1]!;
@@ -2543,7 +2553,10 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   // Arwen: "… enters with a number of additional +1/+1 counters on it equal to Arwen's toughness".
   const extraMany =
     /^Each (other )?(.+?) enters with an additional (\S+) counter on it for each (.+?) you already control$/.exec(body) ??
-    /^Each (other )?(.+?) enters with a number of additional (\S+) counters on it equal to (.+)$/.exec(body);
+    /^Each (other )?(.+?) enters with a number of additional (\S+) counters on it equal to (.+)$/.exec(body) ??
+    // Bloodspore Thrinax: "… enters with an additional X +1/+1 counters on it, where X is the number of +1/+1 counters on this
+    // creature."
+    /^Each (other )?(.+?) enters with an additional X (\S+) counters on it, where X is (.+)$/.exec(body);
   if (extraMany) {
     const pf = parseFilter(extraMany[2]!, b);
     if (!pf || pf.plural || pf.filter.zone) return null;
@@ -3266,7 +3279,6 @@ export const castRestrictionRule: GrammarRule = {
       'before the combat damage step': 'before_damage',
       'after combat': 'after_combat',
       'before combat or during combat before blockers are declared': 'before_combat',
-      'during your upkeep': 'upkeep',
     };
     let rest = m[1]!;
     const effect: Record<string, unknown> = { type: 'cast_restriction' };
@@ -3279,9 +3291,14 @@ export const castRestrictionRule: GrammarRule = {
       effect.whose = /opponent/.test(turn[0]) ? 'opponent' : 'your';
       rest = rest.slice(0, turn.index);
     }
+    // "during your upkeep"; Necrologia: "during your end step" — that step of your own turn.
+    const yourStep = /^during your (upkeep|end step)$/.exec(rest);
     if (rest === "during an opponent's turn") effect.whose = 'opponent';
     else if (rest === 'during your turn') effect.whose = 'your';
-    else if (DURING[rest]) effect.during = DURING[rest];
+    else if (yourStep) {
+      effect.during = yourStep[1] === 'upkeep' ? 'upkeep' : 'end';
+      effect.whose = 'your';
+    } else if (DURING[rest]) effect.during = DURING[rest];
     else {
       const iff = /^if (.+)$/.exec(rest);
       const cond = iff ? parseCondition(iff[1]!, new Binder(env)) : null;
@@ -4609,6 +4626,38 @@ export const topPermissionRule: GrammarRule = {
 };
 
 /**
+ * Nightveil Specter: "You may play lands and cast spells from among cards exiled with this creature."; The Temporal Anchor:
+ * "During your turn, you may play cards exiled with ~."; Rona: "You may cast spells from among cards exiled with ~."; Pick
+ * Up the Pace: "… as long as you attacked this turn." — the cards this object exiled (CR 601.3, 305.1, 607.2a).
+ */
+export const exilePlayRule: GrammarRule = {
+  id: 'exile_play',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!env) return null;
+    const m = /^(?:During your turn, (?:as long as ([^,]+), |if ([^,]+), )?)?you may (play lands and cast spells from among|play|cast spells from among|play lands from among) (?:the )?cards exiled with (?:~|this (?:creature|artifact|enchantment|permanent|Class|land))(?: as long as (.+?))?\.$/i.exec(line);
+    if (!m) return null;
+    const b = new Binder(env);
+    const conditions: ConditionNode[] = [];
+    if (/^During your turn/.test(line)) conditions.push({ type: 'your_turn', value: true });
+    for (const text of [m[1], m[2], m[4]]) {
+      if (!text) continue;
+      const c = parseCondition(text, b);
+      if (!c) return null;
+      conditions.push(c);
+    }
+    const what = m[3]!.toLowerCase();
+    // "you may play cards exiled with ~" — lands and spells.
+    const condition: ConditionNode | undefined = conditions.length > 1 ? ({ type: 'and', all: conditions } as ConditionNode) : conditions[0];
+    return {
+      kind: 'static',
+      text: original,
+      effect: { type: 'exile_play', ...(what !== 'cast spells from among' ? { lands: true } : {}), ...(what !== 'play lands from among' ? { spells: true } : {}), ...(condition ? { condition } : {}) },
+    } as StaticAbility;
+  },
+};
+
+/**
  * Lurrus of the Dream-Den: "Once during each of your turns, you may cast a permanent spell with mana value 2 or less from
  * your graveyard."; Karador, Gisa and Geralf, Rivaz of the Claw, Danitha (CR 601.3).
  */
@@ -4658,6 +4707,9 @@ export const abilityCostReductionRule: GrammarRule = {
     if (cycling) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, cyclingOnly: true, amount: Number(cycling[1]) } } as StaticAbility;
     const ninjutsu = /^Ninjutsu abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
     if (ninjutsu) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, ninjutsuOnly: true, amount: Number(ninjutsu[1]) } } as StaticAbility;
+    // Power Artifact: "Enchanted artifact's activated abilities cost {2} less to activate. This effect can't reduce …"
+    const attached = /^(?:Enchanted|Equipped) (?:artifact|creature|permanent|land)'s activated abilities cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
+    if (attached) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', filter: { sourceAttachedTo: true }, amount: Number(attached[1]), ...(attached[2] ? { minOne: true } : {}) } } as StaticAbility;
     const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
     if (!env || !m) return null;
     const pf = parseFilter(m[1]!.replace(/ and /g, ' or '), new Binder(env));
@@ -4829,6 +4881,7 @@ export const triggerExtraRule: GrammarRule = {
 
 export const GRAMMAR_RULES: GrammarRule[] = [
   topPermissionRule,
+  exilePlayRule,
   graveyardCastRule,
   manaTriggerRule,
   manaMultiplierRule,

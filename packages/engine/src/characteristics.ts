@@ -969,6 +969,7 @@ export function matchesFilter(
   // Ajani Unrelenting: "each creature except for tokens you control"; Cyclone Summoner: "… except for Giants, Wizards, and
   // lands".
   if (f.except && matchesFilter(g, o, f.except, { ...ctx, anyZone: true }, c)) return false;
+  if (f.sourceAttachedTo && !(ctx.source?.attachedTo && ctx.source.attachedTo.id === o.id && ctx.source.attachedTo.zcc === o.zcc)) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);
@@ -1113,6 +1114,8 @@ export function matchesFilter(
   if (f.notChosenType && ctx.source?.chosen?.creatureType && c.subtypes.includes(ctx.source.chosen.creatureType)) return false;
   // Oran-Rief: "that entered this turn" — on the battlefield since it entered this turn.
   if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;
+  // Let the Galaxy Burn: "each creature that didn't enter this turn".
+  if (f.enteredThisTurn === false && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id))) return false;
   if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
   // Eriette: "enchanted by an Aura you control".
   if (f.enchantedByYou && !g.zones.battlefield.some((id) => {

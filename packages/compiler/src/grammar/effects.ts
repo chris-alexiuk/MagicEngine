@@ -145,6 +145,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Increasing Ambition: "Search your library for a card and put that card into your hand. If this spell was cast from a
+  // graveyard, instead search your library for two cards and put those cards into your hand. Then shuffle." — each search
+  // shuffles (the same instruction, with "instead").
+  text = text.replace(
+    /^Search your library for ([^.,]+?) and put (that card|those cards) into your hand\. (If [^,]+), instead search your library for ([^.,]+?) and put (that card|those cards) into your hand\. Then shuffle\.$/,
+    (_m, one: string, it1: string, cond: string, two: string, it2: string) => `Search your library for ${one}, put ${it1} into your hand, then shuffle. ${cond}, instead search your library for ${two}, put ${it2} into your hand, then shuffle.`,
+  );
   // Sword of Sinew and Steel: "destroy up to one target planeswalker and up to one target artifact" — each its own target.
   // Urgent Necropsy: "Destroy up to one target artifact, up to one target creature, … and up to one target planeswalker."
   // Pull from the Deep: "Return up to one target instant card and up to one target sorcery card from your graveyard to your
@@ -576,7 +583,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
       // Electro: "When you do, he deals X damage to target player." — a character card calling itself "he" or "she".
       // Kaito Shizuki: "If Kaito entered this turn, he phases out."
-      if (/\b(?:Creature|Planeswalker)\b/.test(b.env.typeLine)) s = s.replace(/^((?:If [^,]+, )?)(?:[Hh]e|[Ss]he) (?=(?:deals|gains|gets|fights|phases) )/, '$1~ ');
+      if (/\b(?:Creature|Planeswalker)\b/.test(b.env.typeLine)) s = s.replace(/^((?:If [^,]+, )?)(?:[Hh]e|[Ss]he) (?=(?:deals|gains|gets|fights|phases|connives|explores)(?: |$))/, '$1~ ');
       // Dawn's Truce: "If the gift was promised, permanents you control also gain indestructible until end of turn."
       s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Finale of Glory: "If X is 10 or more, also create X 4/4 white Angel creature tokens …"
@@ -1420,6 +1427,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const moreTokens = /^create (\w+) of those tokens$/.exec(instead);
         const tokenCount = moreTokens ? parseAmount(moreTokens[1]!) : null;
         if (!yes && tokenCount !== null && previous.length === 1 && previous[0]!.type === 'create_token') yes = [{ ...structuredClone(previous[0]!), amount: tokenCount }];
+        // Increasing Confusion: "If this spell was cast from a graveyard, that player mills twice that many cards instead."
+        if (!yes && /^(?:that player|they|you) mills? twice that many cards$/.test(instead) && previous.length === 1 && previous[0]!.type === 'mill') {
+          const was = previous[0]!;
+          const amt = was.amount;
+          const doubled = typeof amt === 'number' ? amt * 2 : amt === 'X' ? { kind: 'x', times: 2 } : amt && typeof amt === 'object' && (amt as { times?: number }).times === undefined ? { ...(amt as object), times: 2 } : null;
+          if (doubled !== null) yes = [{ ...structuredClone(was), amount: doubled as never }];
+        }
         if (!yes) return null;
         // Behind the Mask: "… becomes an artifact creature with base power and toughness 4/3. If evidence was collected, it
         // has base power and toughness 1/1 until end of turn instead." — only the numbers are replaced; it still becomes one.
@@ -2295,7 +2309,14 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
           const expr = inner && parseCount(what, b);
           return inner && expr ? bindX(inner, expr) : null;
         }
+        // Abyssal Hunter: "Tap target creature. ~ deals damage equal to its power to that creature." — "its" is the subject's
+        // (the source), not the creature named before.
+        // (When "it" is already the source — "When ~ dies, … deals damage equal to its power" — it stays: as it last existed.)
+        const sourceSubject = /^~ deals? /.test(text) && /^its (?:power|toughness)$/.test(what) && b.it?.ref !== 'self' && !(b.it?.ref === 'trigger_object' && b.itIsSource);
+        const savedIt = b.it;
+        if (sourceSubject) b.it = { ref: 'self' };
         const expr = parseCount(what, b);
+        if (sourceSubject) b.it = savedIt;
         const inner = expr && parseInner(text, b);
         // "each opponent loses life equal to … that player's …": each of them (below).
         if (inner?.length === 1 && (inner[0] as { who?: Ref }).who?.ref === 'players' && /\b(?:that player|they|their|them)\b/.test(what)) return null;
@@ -3301,6 +3322,28 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         return one && JSON.stringify(c.targets) === JSON.stringify(b.targets) ? one : null;
       });
       return rest.every(Boolean) ? [{ type: 'choose_one', labels: options, options: [first, ...(rest as EffectNode[][])] }] : null;
+    });
+    if (r) return r;
+  }
+  // The Third Doctor: "create your choice of a Clue token, a Food token, or a Treasure token"; The Night of the Doctor: "Put
+  // your choice of a first strike, vigilance, or lifelink counter on it." — chosen as it resolves (CR 608.2d).
+  const makeChoice = /^([Cc]reate) your choice of ((?:an? [A-Z]\w+ token, )+an? [A-Z]\w+ token,? or an? [A-Z]\w+ token)$/.exec(s);
+  const counterChoice = /^([Pp]ut) your choice of an? ((?:[a-z ]+?, )+[a-z ]+?,? or [a-z ]+?) counter on (.+)$/.exec(s);
+  if (makeChoice || counterChoice) {
+    const sentences = makeChoice
+      ? makeChoice[2]!.split(/,? or |, /).map((one) => `Create ${one}`)
+      : counterChoice![2]!.split(/,? or |, /).map((one) => `Put a${/^[aeiou]/.test(one) ? 'n' : ''} ${one} counter on ${counterChoice![3]}`);
+    const labels = makeChoice ? makeChoice[2]!.split(/,? or |, /) : counterChoice![2]!.split(/,? or |, /);
+    const r = attempt(b, (b) => {
+      const before = b.clone();
+      const first = parseSentence(sentences[0]!, b);
+      if (!first) return null;
+      const rest = sentences.slice(1).map((one) => {
+        const c = before.clone();
+        const parsed = parseSentence(one, c);
+        return parsed && JSON.stringify(c.targets) === JSON.stringify(b.targets) ? parsed : null;
+      });
+      return rest.every(Boolean) ? [{ type: 'choose_one', labels, options: [first, ...(rest as EffectNode[][])] } as EffectNode] : null;
     });
     if (r) return r;
   }
@@ -5599,12 +5642,13 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   }
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
   // Biomass Mutation: "Creatures you control have base power and toughness X/X until end of turn."
-  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+|X)\/(\d+|X) until end of turn$/.exec(c);
+  // Mass Diminish: "Until your next turn, creatures target player controls have base power and toughness 1/1."
+  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+|X)\/(\d+|X) (until end of turn|until your next turn)$/.exec(c);
   if (base) {
     return attempt(b, (b) => {
       const what = parseObjectRef(base[1]!, b);
       const v = (x: string) => (x === 'X' ? 'X' : Number(x));
-      return what ? [{ type: 'modify', what: what.ref, setPower: v(base[2]!), setToughness: v(base[3]!), until: 'eot' }] : null;
+      return what ? [{ type: 'modify', what: what.ref, setPower: v(base[2]!), setToughness: v(base[3]!), until: base[4] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
     });
   }
   // Beorn's Hospitality: "… becomes a Bear creature in addition to its other types and gains "This creature's power and
@@ -5764,7 +5808,8 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     });
   }
   // Crackle with Power: "~ deals five times X damage to each of up to X targets."
-  const m = /^(~|[Ii]t) deals ((?:twice|(?:three|four|five) times) X|\S+) damage to (.+)$/.exec(c);
+  // Let the Galaxy Burn: "~ deals X plus 2 damage to each creature …".
+  const m = /^(~|[Ii]t) deals ((?:twice|(?:three|four|five) times) X|X plus \d+|\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
     const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
@@ -5773,7 +5818,8 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     const fromAttached = m[1] !== '~' && b.it?.ref === 'attached';
     if (m[1] !== '~' && b.it?.ref !== 'self' && !(b.itIsSource && b.it?.ref === 'trigger_object') && !fromIt && !fromAttached) return null;
     const timesX = /^(twice|three times|four times|five times) X$/.exec(m[2]!);
-    const amount = timesX ? { kind: 'x' as const, times: { twice: 2, 'three times': 3, 'four times': 4, 'five times': 5 }[timesX[1] as 'twice'] } : parseAmount(m[2]!);
+    const plusX = /^X plus (\d+)$/.exec(m[2]!);
+    const amount = timesX ? { kind: 'x' as const, times: { twice: 2, 'three times': 3, 'four times': 4, 'five times': 5 }[timesX[1] as 'twice'] } : plusX ? { kind: 'x' as const, plus: Number(plusX[1]) } : parseAmount(m[2]!);
     if (amount === null) return null;
     const out: EffectNode[] = [];
     // Dragonspark Reactor: "… to target player and that much damage to up to one target creature" — the same amount.
@@ -5805,6 +5851,8 @@ function delayedOnZone(effects: EffectNode[]): boolean {
 
 /** "Target creature gets +2/+2 and gains trample until end of turn." (CR 611.2a: lasts as stated.) */
 function parsePump(c: string, b: Binder): EffectNode[] | null {
+  // Plagon: "Target creature you control assigns combat damage equal to its toughness rather than its power this turn."
+  c = c.replace(/^(.+? assigns? combat damage equal to (?:its|their) toughness rather than (?:its|their) power) this turn$/, '$1 until end of turn');
   // Without a duration it lasts indefinitely (CR 611.2a): "It gains haste." (unearth).
   // Elspeth, Storm Slayer: "Those creatures gain flying until your next turn."
   // Walking Bulwark: "… gains haste, can attack as though it didn't have defender, and assigns combat damage equal to its
@@ -5885,6 +5933,15 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
       const plain = (k: { text?: string; cost?: string; n?: number }[] | null) => k && !k.some((x) => x.text || x.cost || x.n !== undefined);
       const what = plain(kws) && plain(banned) ? parseObjectRef(loseHave[1]!, b) : null;
       return what && kws && banned ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), cantHave: banned.map((k) => k.id), until: 'eot' }] : null;
+    });
+    if (r) return r;
+  }
+  // Hammerheim: "Target creature loses all landwalk abilities until end of turn." (CR 702.14)
+  const noWalk = /^(.+?) loses? all landwalk abilities until end of turn$/.exec(c);
+  if (noWalk) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(noWalk[1]!, b);
+      return what ? [{ type: 'modify', what: what.ref, loseKeywords: ['landwalk'], until: 'eot' } as EffectNode] : null;
     });
     if (r) return r;
   }

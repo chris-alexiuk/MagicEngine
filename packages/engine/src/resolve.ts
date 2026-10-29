@@ -307,7 +307,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -400,6 +400,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return colors.reduce((n, c) => n + (ps.pool[c] ?? 0), 0) + (ps.restricted ?? []).filter((r) => !e.color || r.color === e.color).reduce((n, r) => n + r.amount, 0);
     }
     case 'life':
+      if (e.most) return Math.max(0, ...refPlayers(ctx, e.who).map((p) => g.players[p]?.life ?? 0));
       return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
     case 'counters': {
       // "the number of experience counters you have": counters on a player (CR 122.1).
@@ -515,6 +516,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
       return (g.turnLog.discarded ?? []).filter((d) => d.player === ctx.controller).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === ctx.controller).length;
     }
+    case 'drawn_this_way':
+      return ctx.resolution?.drew?.[ctx.controller] ?? 0;
     case 'drawn_this_turn':
       // Heliod, the Radiant Dawn: "each card your opponents have drawn this turn" — all of theirs.
       if (e.who === 'opponents') return livePlayers(g).filter((p) => p !== ctx.controller).reduce((n, p) => n + (g.turnLog.drawn?.[p] ?? 0), 0);
@@ -551,6 +554,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const [p] = refPlayers(ctx, e.player as Ref);
       return p ? (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && r.owner === p).length : 0;
     }
+    // Kutzil's Flanker: "for each creature that left the battlefield under your control this turn".
+    case 'left_this_turn':
+      return (g.turnLog.leftList ?? []).filter((d) => (e.types ?? ['Creature']).some((t) => d.types.includes(t)) && (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller))).length;
     case 'died_this_turn':
       // "for each creature that died this turn" — creatures by default, as they last existed (CR 700.4).
       return (g.turnLog.died ?? []).filter(

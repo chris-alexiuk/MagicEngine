@@ -5380,6 +5380,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.whose === 'enchanted' && active !== check.source.attachedToPlayer) return [];
     // Black Vise: "At the beginning of the chosen player's upkeep"
     if (t.whose === 'chosen' && active !== check.source.chosen?.player) return [];
+    // Archivist of Gondor: "At the beginning of the monarch's end step" (CR 725).
+    if (t.whose === 'monarch' && active !== check.g.monarch) return [];
     // "At the beginning of the upkeep of enchanted creature's controller"
     if (t.whose === 'attached_controller') {
       const r = check.source.attachedTo;
@@ -5709,6 +5711,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'proliferated' || check.sourceLeft || e.player !== check.controller) return [];
     return [{ player: e.player }];
   },
+  // Custodi Lich: "Whenever you become the monarch"; Garland: "Whenever an opponent becomes the monarch" (CR 725.1).
+  became_monarch(t, check) {
+    const e = check.event;
+    if (e.type !== 'monarch' || check.sourceLeft) return [];
+    if (t.who === 'you' ? e.player !== check.controller : t.who === 'opponent' ? e.player === check.controller : false) return [];
+    return [{ player: e.player }];
+  },
   searched(t, check) {
     const e = check.event;
     if (e.type !== 'searched' || check.sourceLeft || e.owner !== e.player) return [];
@@ -5867,7 +5876,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

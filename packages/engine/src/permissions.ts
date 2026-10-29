@@ -122,9 +122,24 @@ export function mayPlayFrom(g: GameState, player: PlayerId, o: GameObject, what:
   if (o.zone === 'graveyard' && what === 'spell' && graveyardPermission(g, player, o)) return true;
   // Misthollow Griffin: "You may cast this card from exile." — its own permission, its mana cost paid.
   if (o.zone === 'exile' && what === 'spell' && o.owner === player && !o.faceDown && castableFromExileItself(g, o)) return true;
+  if (o.zone === 'exile' && o.exiledBy && exiledWithPermission(g, player, o, what)) return true;
   return (g.mayPlay ?? []).some(
     (p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p) && (what === 'spell' || p.mode === 'play'),
   );
+}
+
+/**
+ * Nightveil Specter: "You may play lands and cast spells from among cards exiled with this creature." — a static ability of
+ * the permanent that exiled the card, for its controller (CR 607.2a: the cards exiled with that object, as that object).
+ */
+function exiledWithPermission(g: GameState, player: PlayerId, o: GameObject, what: 'land' | 'spell'): boolean {
+  const src = g.objects[o.exiledBy!.id];
+  if (!src || src.zone !== 'battlefield' || src.controller !== player) return false;
+  return objectAbilities(g, src).some((a) => {
+    if (a.kind !== 'static' || a.effect.type !== 'exile_play') return false;
+    if (what === 'land' ? !a.effect.lands : !a.effect.spells) return false;
+    return staticConditionHolds(g, a.effect as never, src) && matchesFilter(g, o, { zone: 'exile', exiledWithSource: true }, { controller: player, source: src, anyZone: true });
+  });
 }
 
 function castableFromExileItself(g: GameState, o: GameObject): boolean {
