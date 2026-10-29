@@ -215,6 +215,15 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^creature that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Seasoned Pyromancer: "for each nonland card discarded this way".
+  const kindDiscarded = /^(nonland|land|creature|noncreature|instant or sorcery) card discarded this way$/.exec(t);
+  if (kindDiscarded) {
+    const pf = parseFilter(`${kindDiscarded[1]} card in your graveyard`, b.clone());
+    if (pf && !pf.plural) {
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      return { kind: 'discarded_this_way', filter };
+    }
+  }
   // Moraug: "for each time it has attacked this turn".
   if (t === 'time it has attacked this turn') {
     const of = parseObjectRef('it', b.clone(), 'static');
@@ -365,7 +374,7 @@ function lifeThisTurn(who: string): AmountExpr | null {
 export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Dovescape: "where X is the spell's mana value" — the spell a cast trigger is about.
   // Realm Seekers: "the total number of cards in all players' hands" — the same as "the number of".
-  const t = (b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim()).replace(/^the total number of (?=cards )/, 'the number of ');
+  const t = (b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim()).replace(/^the total number of (?=(?:[a-z]+ (?:and|or) [a-z]+ |[a-z]+ )?cards )/, 'the number of ');
   // CR 702.179a: The Speed Demon: "where X is your speed".
   if (t === 'your speed') return { kind: 'speed' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.

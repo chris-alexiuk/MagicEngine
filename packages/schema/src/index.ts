@@ -556,6 +556,9 @@ export type Ref =
   | { ref: 'trigger_object' }
   /** The player a trigger event was about ("deals combat damage to a player, that player …"). */
   | { ref: 'trigger_player' }
+  /** Willbreaker: "Whenever a creature an opponent controls becomes the target of …, gain control of that creature" — the
+   * permanent that became a target (the trigger's object is the spell or ability). */
+  | { ref: 'trigger_targeted' }
   /** What the source Aura or Equipment is attached to. */
   | { ref: 'attached' }
   /** CR 702.95: soulbond's "each of those creatures" — the source and the creature it's paired with (none if unpaired). */
@@ -717,7 +720,7 @@ export type AmountExpr = (
   /** Myr Battlesphere: "you may tap X untapped Myr you control" — how many were tapped. */
   | { kind: 'tapped_this_way' }
   /** "the number of cards discarded this way"; `max`: "the greatest number of cards a player discarded this way" (Windfall). */
-  | { kind: 'discarded_this_way'; max?: true }
+  | { kind: 'discarded_this_way'; max?: true; filter?: ObjectFilter }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
   // Combustible Gearhulk: `stat` — "the total mana value of those cards" rather than how many.
   | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'discarded'; types?: string[]; notTypes?: string[]; subtypes?: string[]; other?: true; token?: boolean; stat?: 'mana_value'; yours?: true; /** Deadly Tempest: what that player controlled. */ controlledBy?: Ref }
@@ -1409,6 +1412,8 @@ export const PLAYER_RULES = [
   'cant_search',
   /** Aggressive Mining: "You can't play lands." (CR 305.2) */
   'cant_play_lands',
+  /** Maralen of the Mornsong: "Players can't draw cards." (CR 121.2) */
+  'cant_draw',
   /** Stasis: "Players skip their untap steps." (CR 614.10) */
   'skip_untap',
 ] as const;

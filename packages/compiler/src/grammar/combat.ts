@@ -18,7 +18,8 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   if (/^can't attack you or planeswalkers you control$/.test(p)) return { cantAttackYou: true };
   if (/^can't be blocked by more than one creature(?: each combat)?$/.test(p)) return { maxBlockers: 1 };
   // CR 509.1a: blocking more than one attacker.
-  const additional = /^can block (?:an additional|(\w+) additional) creatures?(?: each combat)?$/.exec(p);
+  // Watcher in the Web: "can block an additional seven creatures each combat".
+  const additional = /^can block (?:an additional(?: (\w+))?|(\w+) additional) creatures?(?: each combat)?$/.exec(p)?.map((x, i, m) => (i === 1 ? m[1] ?? m[2] : x));
   if (additional) {
     const n = additional[1] ? parseAmount(additional[1]) : 1;
     return typeof n === 'number' ? { extraBlocks: n } : null;

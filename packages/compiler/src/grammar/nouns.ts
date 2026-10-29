@@ -430,10 +430,12 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/,\s+(?=non)/g, ' ');
   // "each instant and sorcery card": each card that's either (as with "or").
   rest = rest.replace(/\b(artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle) and (artifact|creature|enchantment|instant|sorcery|land|planeswalker|battle)(?= (?:cards?|spells?)\b)/gi, '$1 or $2');
+  // "Artifacts and creatures you control gain indestructible …" — a card-type word that starts the sentence.
+  rest = rest.replace(/^(Artifacts|Creatures|Enchantments|Lands|Planeswalkers)(?= and )/, (w) => w.toLowerCase());
   // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
   // Spectacular Pileup: "all creatures and Vehicles" — either.
-  rest = rest.replace(/^(artifacts|creatures|enchantments|lands|planeswalkers) and (Vehicles|Equipment|Auras|Mounts|Spacecraft)$/, '$1 or $2');
+  rest = rest.replace(/^(artifacts|creatures|enchantments|lands|planeswalkers) and (Vehicles|Equipment|Auras|Mounts|Spacecraft)\b/, '$1 or $2');
   // Elspeth, Knight-Errant: "Artifacts, creatures, enchantments, and lands you control" — likewise.
   rest = rest.replace(/\b((?:(?:artifacts|creatures|enchantments|lands|planeswalkers), )+)and (?=(?:artifacts|creatures|enchantments|lands|planeswalkers)\b)/g, '$1or ');
   const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];

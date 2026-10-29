@@ -5209,7 +5209,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const o = check.g.objects[e.object];
     if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
     const spell = e.spell ? check.g.objects[e.spell] : undefined;
-    return [{ player: e.controller, ...(spell ? { object: refTo(spell) } : {}), ...(e.entry ? { entry: e.entry } : {}) }];
+    // Wild Defiance: "an instant or sorcery spell".
+    if (Array.isArray(t.spellTypes) && !(spell && chars(check.g, spell).types.some((x) => (t.spellTypes as string[]).includes(x)))) return [];
+    return [{ player: e.controller, ...(spell ? { object: refTo(spell) } : {}), ...(e.entry ? { entry: e.entry } : {}), targeted: refTo(o) }];
   },
   deals_combat_damage(t, check) {
     const e = check.event;

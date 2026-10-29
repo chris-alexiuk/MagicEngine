@@ -546,7 +546,8 @@ function emptyDrawWins(g: GameState, player: PlayerId): boolean {
 /** Draws one card. CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions. */
 export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], replaced = false): void {
   // CR 121.2: a draw that can't happen doesn't (Narset) — it isn't a draw from an empty library either.
-  if (drawLimited(g, player)) return;
+  // Maralen of the Mornsong: "Players can't draw cards."
+  if (drawLimited(g, player) || playerRule(g, player, 'cant_draw')) return;
   // Notion Thief: that player skips the draw; its controller draws instead.
   const thief = drawThief(g, player);
   if (thief) {

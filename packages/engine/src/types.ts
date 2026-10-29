@@ -362,6 +362,8 @@ export interface TriggerInfo {
   player?: PlayerId;
   /** A stack entry the trigger is about (an ability that targeted something, for ward). */
   entry?: string;
+  /** A "becomes the target" trigger: the permanent that became a target ("that creature"). */
+  targeted?: ObjectRef;
   /** CR 603.10a: the object as it last existed on the battlefield. */
   lki?: { counters: Record<string, number> };
   /** How much happened ("that much life", "that many +1/+1 counters"): damage dealt, life gained or lost. */

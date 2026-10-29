@@ -90,6 +90,11 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       const o = r ? g.objects[r.id] : undefined;
       return o && r && (o.zcc === r.zcc || foundNow(ctx, o)) ? [o] : [];
     }
+    case 'trigger_targeted': {
+      const r = ctx.trigger?.targeted;
+      const o = r ? g.objects[r.id] : undefined;
+      return o && r && (o.zcc === r.zcc || foundNow(ctx, o)) ? [o] : [];
+    }
     case 'chosen_object': {
       // Currency Converter: "Put a card exiled with this artifact into its owner's graveyard. If it's a land card, …" —
       // followed to where this resolution put it (CR 400.7j).
@@ -583,6 +588,10 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return e.who === 'an_opponent' || e.who === 'a_player' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
     }
     case 'discarded_this_way': {
+      // Seasoned Pyromancer: "For each nonland card discarded this way" — those of that kind.
+      if (e.filter) {
+        return (ctx.resolution?.moves ?? []).filter((m) => m.effect === 'discard' && m.from === 'hand' && g.objects[m.id] && matchesFilter(g, g.objects[m.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
+      }
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});
       return e.max ? Math.max(0, ...counts) : counts.reduce((a, b) => a + b, 0);

@@ -786,6 +786,14 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         const ok = (v: number, c?: { op: string; n: unknown }) => !c || (c.op === 'lt' ? v < Number(c.n) : c.op === 'gt' ? v > Number(c.n) : c.op === 'le' ? v <= Number(c.n) : c.op === 'ge' ? v >= Number(c.n) : v === Number(c.n));
         return Boolean(lk && Object.keys(f).every((k) => k === 'power' || k === 'toughness') && ok(lk.power, f.power) && ok(lk.toughness, f.toughness));
       }
+      // Cemetery Recruitment: "Return target creature card from your graveyard to your hand. If it's a Zombie card, …" — the
+      // card this resolution just put into a hand (a hidden zone, CR 400.7j), checked as the card it is.
+      if (!o && cond.toHand && (cond.of as Ref).ref === 'target') {
+        const t = ctx.targets?.[(cond.of as { index: number }).index]?.[0];
+        const card = t?.kind === 'object' ? g.objects[t.id] : undefined;
+        const moved = card && (ctx.resolution?.moves ?? []).some((m) => m.id === card.id && m.to === 'hand' && card.zone === 'hand');
+        return Boolean(moved && matchesFilter(g, card!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }));
+      }
       return Boolean(o && matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: o.zone !== 'battlefield', ...(cond.was ? { lookBack: true } : {}) }));
     }
     case 'has_attached': {

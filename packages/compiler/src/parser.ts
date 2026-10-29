@@ -654,6 +654,8 @@ export class ParserRegistry {
         line = `${limited[1]}Choose ${limited[2]} —`;
         tail = ` ${limited[3]}`;
       }
+      // Cunning Nightbonder: "Spells with flash you cast cost {1} less to cast and can't be countered." — two statics.
+      line = line.replace(/^((?:[A-Z][\w ]*?)?[Ss]pells[^.]*? you cast) cost (\{\d+\}) less to cast and can['’]t be countered\.$/, "$1 cost $2 less to cast. $1 can't be countered.");
       const block = [line];
       if (
         /\bchoose (?:one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i.test(line) ||
@@ -1106,6 +1108,8 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   }
   // "this creature", "this Aura", "this Equipment" (the subtype words are capitalised).
   out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'gi'), '~');
+  // Falcon and Redwing: a pair's name takes plural verbs ("Whenever ~ deal combat damage", "~ attack") — the same as "deals".
+  if (/ (?:and|&) /.test(ctx.faceName)) out = out.replace(/(^|[ ,(])~ (deal|attack|enter|die|block|leave|get|gain|have|become) /g, (_m, pre: string, verb: string) => `${pre}~ ${verb === 'have' ? 'has' : `${verb}s`} `).replace(/(~ (?:enters|attacks|blocks)) or (attack|block|die)\b/g, '$1 or $2s');
   // Blood for the Blood God!: "… Exile Blood for the Blood God!" — the name's "!" ended the sentence.
   if (/~$/.test(out) && [...names].some((n) => n.endsWith('!'))) out += '.';
   return out;

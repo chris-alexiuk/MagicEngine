@@ -154,6 +154,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   );
   // Sword of Sinew and Steel: "destroy up to one target planeswalker and up to one target artifact" — each its own target.
   // Urgent Necropsy: "Destroy up to one target artifact, up to one target creature, … and up to one target planeswalker."
+  // Bebop: "you may draw X cards, where X is …. If you do, you lose X life." — both with that X, if you draw.
+  text = text.replace(/\b([Yy]ou may draw X cards), (where X is [^.]+)\. If you do, you lose X life\./, '$1 and lose X life, $2.');
   // Pull from the Deep: "Return up to one target instant card and up to one target sorcery card from your graveyard to your
   // hand."; Thwart the Grave: "Return target creature card and up to one target Cleric, … creature card from your graveyard to
   // the battlefield." — each its own target, from the same graveyard.
@@ -1390,7 +1392,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const backOnField =
         lastMove?.type === 'move' &&
         JSON.stringify(lastMove.what) === JSON.stringify(b.it) &&
-        (lastMove.to === 'battlefield' || (b.it?.ref === 'chosen_object' && (lastMove.to === 'graveyard' || lastMove.to === 'exile')));
+        (lastMove.to === 'battlefield' || (b.it?.ref === 'chosen_object' && (lastMove.to === 'graveyard' || lastMove.to === 'exile')) ||
+          // Cemetery Recruitment: "Return target creature card from your graveyard to your hand. If it's a Zombie card, …" — the
+          // card in the hand it went to.
+          (lastMove.to === 'hand' && b.it?.ref === 'target' && /^If it's an? [A-Z][\w-]* card, /.test(s)));
       if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       // Splash Portal: "If that creature is a Bird, Frog, Otter, or Rat, draw a card." — a list in the condition.
@@ -1476,6 +1481,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           }
         }
         if (!yes) return null;
+        // Cemetery Recruitment: the condition is about the card just returned to a hand.
+        if (cond.type === 'is' && lastMove?.type === 'move' && lastMove.to === 'hand' && JSON.stringify((cond as { of?: Ref }).of) === JSON.stringify(lastMove.what) && /^If it's an? [A-Z][\w-]* card, /.test(s)) (cond as { toHand?: true }).toHand = true;
         // Currency Converter: "If it's a land card, create a Treasure token. If it's a nonland card, …" — the next "it" is
         // still the card the condition was about, not the token.
         if (cond.type === 'is' && b.it && JSON.stringify((cond as { of?: Ref }).of) === JSON.stringify({ ref: 'chosen_object' })) b.it = { ref: 'chosen_object' };
@@ -3960,14 +3967,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Goblin Traprunner: "For each flip you win, create a 1/1 red Goblin creature token that's tapped and attacking."
   // Turn Stones: "For each opponent, you create a 1/1 … Pest creature token with "When this token dies, you gain 1 life.""
   const eachCreate = /^For each (.+?), (?:you )?create (a|an|one|two) (.+? tokens?(?: that(?:'s| are) tapped and attacking| with QUOTED_\d+)?)$/.exec(s);
-  if (eachCreate && !/ copy | that player| it\b|them\b|this way/.test(s)) {
+  // Seasoned Pyromancer: "For each nonland card discarded this way, create …" — counted by this resolution's discards.
+  if (eachCreate && !/ copy | that player| it\b|them\b|this way/.test(s.replace(/ card discarded this way,/, ' card,'))) {
     const r = attempt(b, (b) => parseSentence(`Create ${eachCreate[2]} ${eachCreate[3]} for each ${eachCreate[1]}`, b));
     if (r) return r;
   }
   // Hex Parasite: "For each counter removed this way, ~ gets +1/+0 until end of turn." — "… gets +1/+0 … for each …".
-  const eachGets = /^For each ([^,]+), (~|target creature|it) gets? ([+-]\d+\/[+-]\d+) until end of turn$/.exec(s);
+  // Pyretic Charge: "For each card discarded this way, creatures you control get +1/+0 until end of turn."
+  const eachGets = /^For each ([^,]+), (~|target creature|it|creatures you control) gets? ([+-]\d+\/[+-]\d+) until end of turn$/.exec(s);
   if (eachGets && !/ it\b|them\b/.test(eachGets[1]!)) {
-    const r = attempt(b, (b) => parseSentence(`${eachGets[2]} gets ${eachGets[3]} until end of turn for each ${eachGets[1]}`, b));
+    const r = attempt(b, (b) => parseSentence(`${eachGets[2]} ${eachGets[2] === 'creatures you control' ? 'get' : 'gets'} ${eachGets[3]} until end of turn for each ${eachGets[1]}`, b));
     if (r) return r;
   }
   // Second Harvest: "For each token you control, create a token that's a copy of that permanent." (CR 707.2)
@@ -5257,6 +5266,8 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
   }
   // Obscuring Haze: "Prevent all damage that would be dealt this turn by creatures your opponents control."
   // Safe Passage: "Prevent all damage that would be dealt to you and creatures you control this turn." — a shield for each.
+  // Haze Frog: "prevent all combat damage that other creatures would deal this turn" — dealt by them.
+  c = c.replace(/^([Pp])revent all (combat )?damage that (other creatures|creatures your opponents control|creatures you don't control) would deal this turn$/, (_m, p: string, combat: string | undefined, who: string) => `${p}revent all ${combat ?? ''}damage that would be dealt this turn by ${who}`);
   const all = /^Prevent all (combat )?damage that would be dealt (?:to|by) (.+?) this turn$/.exec(c) ?? /^Prevent all (combat )?damage that would be dealt this turn (?:to|by) (.+)$/.exec(c);
   if (all) {
     const to = parseRecipients(all[2]!, b);
