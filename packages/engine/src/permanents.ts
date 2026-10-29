@@ -1,6 +1,6 @@
 import type { CardDef, FaceDef, QuantityReplacementNode, TargetSpec } from '@mtg/schema';
 import { chars, hasKeyword, hasType, matchesFilter, objectAbilities, protectedFromAttachment } from './characteristics.js';
-import { replaceQuantity } from './quantities.js';
+import { counterBlocked, replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
 import { abilitySources, createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
@@ -241,7 +241,7 @@ export function createTokenCopy(g: GameState, of: { card: string; face: number }
   // Littjara Mirrorlake: "… except it enters with an additional +1/+1 counter on it" (CR 614.1c). Incubate: counters it
   // enters with are put on it (CR 122.6), so Doubling Season doubles them (`replace`).
   for (const [counter, n0] of Object.entries(opts.counters ?? {})) {
-    const n = opts.replace ? replaceQuantity(g, 'counters', n0, { player: controller, object: o, counter }) : n0;
+    const n = opts.replace ? replaceQuantity(g, 'counters', n0, { player: controller, object: o, counter }) : counterBlocked(g, o, counter) ? 0 : n0;
     if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
   }
   intrinsicCounters(g, o);

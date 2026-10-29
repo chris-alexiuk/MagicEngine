@@ -6,8 +6,9 @@ import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
-import { applyLifeGain, replaceQuantity } from './quantities.js';
+import { applyLifeGain, counterBlocked, replaceQuantity } from './quantities.js';
 import { playerRule } from './player-rules.js';
+import { createToken } from './permanents.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -358,6 +359,8 @@ export function moveObject(
     // The Darkness Crystal: "… instead exile it and you gain 2 life." — exiled with it (CR 607.2a).
     o.exiledBy = { id: instead.source.id, zcc: battlefieldZcc(g, instead.source) };
     if (instead.node.gainLife) applyLifeGain(g, instead.source.controller, instead.node.gainLife, events);
+    // Kalitas, Traitor of Ghet: "… and create a 2/2 black Zombie creature token" — its controller's.
+    if (instead.node.createToken) createToken(g, instead.node.createToken, instead.source.controller, events);
   }
 
   // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.
@@ -378,7 +381,8 @@ export function moveObject(
     // "onto the battlefield tapped": it enters tapped (it doesn't become tapped, CR 110.5b).
     if (opts.tapped) o.tapped = true;
     // CR 122.6: "returns … with a -1/-1 counter on it" — it enters with them.
-    for (const [counter, n] of Object.entries(opts.counters ?? {})) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+    // (Melira, Sylvok Outcast: persist's -1/-1 counter isn't put on a creature that can't have it.)
+    for (const [counter, n] of Object.entries(opts.counters ?? {})) if (!counterBlocked(g, o, counter)) o.counters[counter] = (o.counters[counter] ?? 0) + n;
     // Opal Palace's mana: the commander enters with its additional counters (CR 122.6).
     // CR 614.1a: "enters with" counters are counters put on it (Doubling Season, Hardened Scales, Vorinclex).
     const entering = (counter: string, n: number) => replaceQuantity(g, 'counters', n, { player: o.controller, object: o, counter });

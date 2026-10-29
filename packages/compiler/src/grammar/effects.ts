@@ -2713,12 +2713,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^You can't lose the game this turn and your opponents can't win the game this turn$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'opponents_cant_win', until: 'eot' }];
   if (/^Until end of turn, damage that would reduce your life total to less than 1 reduces it to 1 instead$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'damage_floor', until: 'eot' }];
   // Teferi, Time Raveler: "Until your next turn, you may cast sorcery spells as though they had flash." (CR 702.8a)
-  const flashUntil = /^Until your next turn, you may cast (sorcery|creature|instant and sorcery|noncreature) spells as though they had flash$/.exec(s);
-  if (flashUntil) {
-    const pf = parseFilter(`${flashUntil[1]!.replace(' and ', ' or ')} spells`, b);
+  // Winding Canyons: "You may cast creature spells this turn as though they had flash."
+  const flashUntil = /^Until (your next turn|end of turn), you may cast (sorcery|creature|instant and sorcery|noncreature) spells as though they had flash$/.exec(s);
+  const flashThisTurn = /^You may cast (sorcery|creature|noncreature) spells this turn as though they had flash$/.exec(s);
+  if (flashUntil || flashThisTurn) {
+    const kind = flashUntil ? flashUntil[2]! : flashThisTurn![1]!;
+    const when = flashUntil ? flashUntil[1]! : 'end of turn';
+    const pf = parseFilter(`${kind.replace(' and ', ' or ')} spells`, b);
     if (!pf) return null;
     const { zone: _z, ...filter } = pf.filter;
-    return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash', until: 'your_next_turn', filter }];
+    return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash', until: when === 'your next turn' ? 'your_next_turn' : 'eot', filter }];
   }
   // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
   const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
@@ -3865,7 +3869,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Brass's Bounty: "For each land you control, create a Treasure token." — the same as "Create … for each …".
   // Goblin Traprunner: "For each flip you win, create a 1/1 red Goblin creature token that's tapped and attacking."
-  const eachCreate = /^For each (.+?), create (a|an|one|two) (.+? tokens?(?: that(?:'s| are) tapped and attacking)?)$/.exec(s);
+  // Turn Stones: "For each opponent, you create a 1/1 … Pest creature token with "When this token dies, you gain 1 life.""
+  const eachCreate = /^For each (.+?), (?:you )?create (a|an|one|two) (.+? tokens?(?: that(?:'s| are) tapped and attacking| with QUOTED_\d+)?)$/.exec(s);
   if (eachCreate && !/ copy | that player| it\b|them\b|this way/.test(s)) {
     const r = attempt(b, (b) => parseSentence(`Create ${eachCreate[2]} ${eachCreate[3]} for each ${eachCreate[1]}`, b));
     if (r) return r;
@@ -4597,7 +4602,7 @@ const VERBS: Record<string, VerbHandler> = {
     // Grim Return: "Choose target creature card in a graveyard …. Put that card onto the battlefield under your control." — a
     // target card in a graveyard.
     const itCardTarget = b.it?.ref === 'target' && b.targets[b.it.index]?.filter?.zone === 'graveyard';
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|that player's|defending player's|all) graveyards?$|^target .+ card$|^target .+ card in (?:a|your|an opponent's) graveyard$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && (b.it?.ref === 'trigger_object' || itCardTarget)) || (onto[1] === 'them' && Boolean(b.named['them'])))) {
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|that player's|defending player's|all) graveyards?$|^target .+ card$|^target .+ card in (?:a|your|an opponent's) graveyard$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && (b.it?.ref === 'trigger_object' || b.it?.ref === 'chosen_object' || itCardTarget)) || (onto[1] === 'them' && Boolean(b.named['them'])))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }
@@ -5750,6 +5755,13 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
   // Elspeth, Storm Slayer: "Those creatures gain flying until your next turn."
   // Walking Bulwark: "… gains haste, can attack as though it didn't have defender, and assigns combat damage equal to its
   // toughness rather than its power" — rule flags among the grants.
+  // Aegis Angel: "another target permanent gains indestructible for as long as you control this creature".
+  const whileYours = / for as long as you control (?:~|this (?:creature|artifact|enchantment|permanent))$/.exec(c);
+  if (whileYours) {
+    const inner = attempt(b, (b) => parsePump(c.slice(0, whileYours.index), b));
+    const node = inner?.length === 1 && inner[0]!.type === 'modify' && inner[0]!.until === 'game' ? inner[0]! : null;
+    if (node) return [{ ...node, until: 'source_controlled' }];
+  }
   const m =
     /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ??
     /^(.+?) ((?:can attack as though (?:it|they) didn't have defender|assigns? combat damage equal to (?:its|their) toughness rather than (?:its|their) power)(?:,? and .+)?) until end of turn$/.exec(c) ??

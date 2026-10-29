@@ -1,5 +1,5 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
-import { matchesFilter, objectAbilities } from './characteristics.js';
+import { hasRule, matchesFilter, objectAbilities } from './characteristics.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 import { playerRule } from './player-rules.js';
@@ -29,6 +29,8 @@ export interface QuantitySubject {
 }
 
 export function replaceQuantity(g: GameState, event: QuantityReplacementNode['event'], n: number, subject: QuantitySubject): number {
+  // Melira, Sylvok Outcast: "Creatures you control can't have -1/-1 counters put on them." (CR 122.1) — none are put.
+  if (event === 'counters' && n > 0 && subject.object && subject.counter && counterBlocked(g, subject.object, subject.counter)) return 0;
   if (n <= 0) return n;
   const mods: QuantityReplacementNode[] = [];
   for (const id of abilitySources(g)) {
@@ -55,6 +57,12 @@ export function lifeLoss(g: GameState, player: PlayerId, n: number): number {
   // Everybody Lives!: "Players can't lose life this turn." (CR 119.7)
   if (cantLoseLife(g, player)) return 0;
   return replaceQuantity(g, 'lose_life', n, { player });
+}
+
+/** Melira's Keepers, Melira, Blightbeetle: whether counters of this kind can't be put on this permanent (CR 122.1). */
+export function counterBlocked(g: GameState, o: GameObject, counter: string): boolean {
+  if (o.zone !== 'battlefield') return false;
+  return hasRule(g, o, 'no_counters') || (counter === '-1/-1' && hasRule(g, o, 'no_minus_counters')) || (counter === '+1/+1' && hasRule(g, o, 'no_plus_counters'));
 }
 
 /**

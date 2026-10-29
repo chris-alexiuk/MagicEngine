@@ -20,7 +20,7 @@ import {
 } from './types.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { playerProtectedFrom, playerRule } from './player-rules.js';
-import { applyLifeGain, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
+import { applyLifeGain, counterBlocked, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { removeShield } from './permanents.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
@@ -1005,7 +1005,8 @@ export function dealDamage(
       putPlayerCounters(g, source.controller, to.player, 'poison', amount, events);
     } else {
       // CR 120.3a: damage to a player makes them lose that much life (CR 119.8: unless their life total can't change).
-      if (!playerRule(g, to.player, 'life_cant_change')) {
+      // Archon of Coronation: "As long as you're the monarch, damage doesn't cause you to lose life." (CR 120.3a)
+      if (!playerRule(g, to.player, 'life_cant_change') && !playerRule(g, to.player, 'damage_no_life_loss')) {
         // Bloodletter of Aclazotz: the damage is the same; the life lost may be more. Worship: never below 1 from damage.
         const raw = lifeLoss(g, to.player, amount);
         const lost = playerRule(g, to.player, 'damage_floor') ? Math.max(0, Math.min(raw, ps.life - 1)) : raw;
@@ -1045,7 +1046,8 @@ export function dealDamage(
   }
   if (infect || hasKeyword(g, source, 'wither')) {
     // CR 120.3d: wither or infect puts -1/-1 counters instead of marking damage.
-    o.counters['-1/-1'] = (o.counters['-1/-1'] ?? 0) + amount;
+    // (Melira, Sylvok Outcast: not on a creature that can't have them — the damage is still dealt.)
+    if (!counterBlocked(g, o, '-1/-1')) o.counters['-1/-1'] = (o.counters['-1/-1'] ?? 0) + amount;
   } else {
     // CR 120.3e: otherwise damage is marked on the creature.
     o.damage += amount;

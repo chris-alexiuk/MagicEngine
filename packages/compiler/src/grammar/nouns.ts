@@ -247,6 +247,16 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const subs = [...(m[1] ?? m[3])!.split(', '), (m[2] ?? m[4])!].map((w) => subtypeOf(w.replace(/^an? /, '')));
     return Boolean(subs.every(Boolean) && !f.subtypes && ((f.subtypes = subs as string[]), true));
   }],
+  // Bounty Agent: "target legendary permanent that's an artifact, creature, or enchantment" — any of those card types.
+  [/ that's an? ((?:artifact|creature|enchantment|land|planeswalker|battle)(?:, (?:an? )?(?:artifact|creature|enchantment|land|planeswalker|battle))*),? or (?:an? )?(artifact|creature|enchantment|land|planeswalker|battle)$/, (f, m) => {
+    const types = [...m[1]!.split(', '), m[2]!].map((w) => TYPE_NOUNS[w.replace(/^an? /, '')]!);
+    return Boolean(types.every(Boolean) && !f.types && ((f.types = types), true));
+  }],
+  // Paladin Danse: "Each creature you control that's an artifact or Human" — a card type or a subtype.
+  [/ that's an? (artifact|enchantment|land) or (?:an? )?([A-Z][\w-]*)$/, (f, m) => {
+    const st = subtypeOf(m[2]!);
+    return Boolean(st && !f.anyOf && ((f.anyOf = [{ types: [TYPE_NOUNS[m[1]!]!] }, { subtypes: [st] }]), true));
+  }],
   // Finneas, Ace Archer: "each other creature you control that's a token or a Rabbit".
   [/ that's a token or an? ([A-Z][\w-]*)$/, (f, m) => {
     const st = subtypeOf(m[1]!);

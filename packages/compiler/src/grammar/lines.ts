@@ -304,7 +304,9 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
   if (tap && b) {
     const amount = parseAmount(tap[1]!.replace(/^an(?:other)?$/, 'a'));
     const pf = parseFilter(tap[2]!, b);
-    if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || pf.filter.zone) return null;
+    // Myr Turbine: "Tap five untapped Myr you control" — a word that's its own plural.
+    const ownPlural = /^(?:Myr|Treefolk|Merfolk|Kithkin|Moonfolk|Samurai) /.test(tap[2]!);
+    if (!pf || typeof amount !== 'number' || (pf.plural !== amount > 1 && !ownPlural) || pf.filter.controller !== 'you' || pf.filter.zone) return null;
     if (tap[1] === 'another') pf.filter.other = true;
     if (tap[3]) pf.filter.sharesColorWithSource = true;
     return { type: 'tap_creatures', amount, filter: pf.filter };
@@ -887,10 +889,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (t === 'the beginning of each of your postcombat main phases' || t === 'the beginning of each of your second main phases') {
       return { trigger: { type: 'phase', step: 'main2', whose: 'you' }, it: { ref: 'self' }, player: null };
     }
-    const m = /^the beginning of (?:(your|each|each opponent's|each player's|the) )?(upkeep|draw step|precombat main phase|first main phase|second main phase|postcombat main phase|end step|combat)( on your turn| on each opponent's turn)?$/.exec(t);
+    // Well of Ideas: "each other player's draw step" — every other player is an opponent (CR 102.2).
+    const m = /^the beginning of (?:(your|each|each opponent's|each other player's|each player's|the) )?(upkeep|draw step|precombat main phase|first main phase|second main phase|postcombat main phase|end step|combat)( on your turn| on each opponent's turn)?$/.exec(t);
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
-    const whose = m[3] === " on each opponent's turn" ? 'opponent' : m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
+    const whose = m[3] === " on each opponent's turn" ? 'opponent' : m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" || m[1] === "each other player's" ? 'opponent' : 'each';
     // "At the beginning of each player's upkeep, that player …": the player whose turn it is (Rivalry: "… to them").
     if (whose !== 'you') b.named['them'] ??= { ref: 'trigger_player' };
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: whose === 'you' ? null : { ref: 'trigger_player' } };
@@ -949,6 +952,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (by) b.named['the blocking creature'] = b.named['that creature'] = { ref: 'trigger_object' };
     b.named['defending player'] = { ref: 'trigger_player' };
     return { trigger: { type: 'becomes_blocked', subject: { ref: 'attached' }, ...(by ? { by: by.filter } : {}) }, it: by ? { ref: 'trigger_object' } : { ref: 'attached' }, player: null };
+  }
+  // Barrow-Blade: "Whenever equipped creature blocks or becomes blocked by a creature, that creature loses all abilities …".
+  const attachedEither = /^(?:equipped|enchanted) creature blocks or becomes blocked by (?:a|an) (.+)$/.exec(t);
+  if (attachedEither) {
+    const by = parseFilter(attachedEither[1]!, b);
+    if (!by || by.plural) return null;
+    b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'blocks', subject: { ref: 'attached' }, orBlocked: true, other: by.filter }, it: { ref: 'trigger_object' }, player: null };
   }
   const blocked = /^~ (blocks or becomes blocked|becomes blocked)(?: by (?:a|an) (.+))?$/.exec(t);
   if (blocked) {
@@ -1897,10 +1908,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger: { type: 'damage_prevented', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
-  const life = /^(you) gain life( for the first time each turn)?$/.exec(t);
+  // Cat Collector: "Whenever you gain life for the first time during each of your turns" — the first time that turn, on yours.
+  const life = /^(you) gain life( for the first time each turn| for the first time during each of your turns)?$/.exec(t);
   if (life) {
     b.eventAmount = true;
-    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
+    const yours = / during each of your turns$/.test(t);
+    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}), ...(yours ? { while: { type: 'your_turn', value: true } } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
   // "Whenever you draw your second card each turn"
   // Alandra: "your fifth card each turn"; Tamiyo, Inquisitive Student: "When you draw your third card in a turn"; King T'Challa:
@@ -2179,6 +2192,13 @@ export const triggeredRule: GrammarRule = {
           // planeswalker you control (CR 506.2); that can't change before it resolves.
           trig.trigger = { ...trig.trigger, defender: 'you' };
           effectText = iff[2]!;
+        } else if (iff && /^(?:~|this card|this creature) is in your graveyard$/.test(iff[1]!) && trig.trigger.type === 'phase') {
+          // Master of Death: "At the beginning of your upkeep, if this card is in your graveyard, you may pay 1 life. If you do,
+          // return it to your hand." — it triggers from the graveyard (CR 603.4: and only while it's still there).
+          condition = { type: 'is', of: { ref: 'self' }, filter: { zone: 'graveyard' } } as ConditionNode;
+          b.selfZone = 'graveyard';
+          b.it = { ref: 'self' };
+          effectText = iff[2]!;
         } else if (iff && /^~ is in the command zone(?: or on the battlefield)?$/.test(iff[1]!)) {
           // Eminence (Edgar Markov): it triggers from the command zone as well as the battlefield, and does nothing once it's
           // elsewhere (CR 603.4). Oloro, Ageless Ascetic: "if Oloro is in the command zone" — only from there.
@@ -2270,6 +2290,13 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   // Doran, the Siege Tower (CR 510.1a)
   'assigns combat damage equal to its toughness rather than its power': ['damage_by_toughness'],
   "can't attack": ['cant_attack'],
+  // CR 122.1: Melira, Sylvok Outcast; Blightbeetle; Melira's Keepers.
+  "can't have counters put on it": ['no_counters'],
+  "can't have counters put on them": ['no_counters'],
+  "can't have -1/-1 counters put on it": ['no_minus_counters'],
+  "can't have -1/-1 counters put on them": ['no_minus_counters'],
+  "can't have +1/+1 counters put on it": ['no_plus_counters'],
+  "can't have +1/+1 counters put on them": ['no_plus_counters'],
   // CR 506.5
   "can't attack alone": ['cant_attack_alone'],
   // Port Razer: "This creature can't attack a player it has already attacked this turn."
@@ -2489,6 +2516,17 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
     const pf = parseFilter(extra[2]!, b);
     if (!pf || pf.plural || pf.filter.zone) return null;
     return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extra[1] ? { other: true } : {}) }, counter: extra[3]!, amount: 1 };
+  }
+  // Curator Beastie: "Colorless creatures you control enter with two additional +1/+1 counters on them." — the plural.
+  // Gev, Scaled Scorch: "… an additional +1/+1 counter on them for each opponent who lost life this turn".
+  const extraPlural = /^(Other )?(.+?) enter with (an|one|two|three) additional (\S+) counters? on them(?: for each (.+))?$/.exec(body);
+  if (extraPlural) {
+    const pf = parseFilter(extraPlural[2]!.replace(/^\w/, (c) => c.toLowerCase()), b);
+    const n = parseAmount(extraPlural[3] === 'an' ? 'one' : extraPlural[3]!);
+    if (!pf || !pf.plural || pf.filter.zone || typeof n !== 'number' || (n === 1) !== / counter on /.test(body)) return null;
+    const each = extraPlural[5] ? parseForEach(extraPlural[5], b) : null;
+    if (extraPlural[5] && (!each || n !== 1)) return null;
+    return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extraPlural[1] ? { other: true } : {}) }, counter: extraPlural[4]!, amount: each ?? n };
   }
   // Giada: "Each other Angel you control enters with an additional +1/+1 counter on it for each Angel you already control";
   // Arwen: "… enters with a number of additional +1/+1 counters on it equal to Arwen's toughness".
@@ -2749,6 +2787,11 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (body === 'For each {B} in a cost, you may pay 2 life rather than pay that mana') return { type: 'player_rule', who: 'you', rule: 'black_as_phyrexian' };
   // Platinum Angel: "You can't lose the game and your opponents can't win the game." (CR 104.3a: conceding still works.)
   if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
+  // Archon of Coronation: "As long as you're the monarch, damage doesn't cause you to lose life."
+  if (/^damage doesn't cause you to lose life$/i.test(body)) return { type: 'player_rule', who: 'you', rule: 'damage_no_life_loss' };
+  // Mindlock Orb: "Players can't search libraries."; Stranglehold: "Your opponents can't search libraries."
+  const noSearch = /^(Players|Your opponents) can't search libraries$/.exec(body);
+  if (noSearch) return { type: 'player_rule', who: noSearch[1] === 'Players' ? 'each' : 'opponents', rule: 'cant_search' };
   // Tainted Remedy: "If an opponent would gain life, that player loses that much life instead."
   if (body === 'If an opponent would gain life, that player loses that much life instead') return { type: 'player_rule', who: 'opponents', rule: 'gain_becomes_loss' };
   // Abyssal Persecutor: the other way around.
@@ -2932,7 +2975,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     }
     // Archetype of Endurance: "… lose hexproof and can't have or gain hexproof".
     // (Not Arrest's "can't have its abilities activated" — a rule flag.)
-    const cantHave = /^can't have(?: or gain)? (?!(?:its|their) )([a-z ,]+)$/.exec(part);
+    const cantHave = /^can't have(?: or gain)? (?!(?:its|their) )(?![a-z ,]*\bcounters\b)([a-z ,]+)$/.exec(part);
     if (cantHave && !effect.cantHave) {
       const kws = parseKeywordList(cantHave[1]!.replace(/ or /g, ' and '), b);
       if (!kws || kws.some((k) => k.text || k.cost || k.n !== undefined)) return null;
@@ -3831,6 +3874,15 @@ export const exileInsteadRule: GrammarRule = {
       const life = dies[2] ? parseAmount(dies[2]) : null;
       if (dies[2] && typeof life !== 'number') return null;
       return make({ dies: true, filter: pf.filter, ...(typeof life === 'number' ? { gainLife: life } : {}) });
+    }
+    // Kalitas, Traitor of Ghet: "If a nontoken creature an opponent controls would die, instead exile that card and create a 2/2
+    // black Zombie creature token."
+    const kalitas = /^If (?:a|an) (.+?) would die, instead exile that card and create (an? .+? token)\.$/.exec(line);
+    if (kalitas) {
+      const pf = parseFilter(kalitas[1]!, new Binder(env));
+      const made = pf && !pf.plural ? parseEffectText(`Create ${kalitas[2]}.`, new Binder(env)) : null;
+      const node = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.amount === 1 && !made[0]!.tapped ? made[0]! : null;
+      if (pf && node?.token) return make({ dies: true, filter: pf.filter, createToken: node.token as FaceDef });
     }
     const gy =
       /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line) ??

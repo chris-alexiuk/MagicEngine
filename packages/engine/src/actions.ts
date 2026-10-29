@@ -57,7 +57,7 @@ import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
-import { lifeLoss, replaceQuantity } from './quantities.js';
+import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
@@ -330,7 +330,7 @@ function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: 
   // CR 708.8: it's the same permanent, now with its own characteristics; nothing about entering happens.
   delete o.faceDown;
   // CR 702.37b: megamorph — a +1/+1 counter as it's turned face up.
-  if (face.keywords.some((k) => k.id === 'megamorph')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+  if (face.keywords.some((k) => k.id === 'megamorph') && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
   events.push({ type: 'turned_face_up', object: id });
   // CR 116.3: a player who takes a special action receives priority afterward.
   givePriority(g, player);

@@ -465,6 +465,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const filter = stateFilter(partner[1]!, b);
     if (filter && !filter.zone && !filter.controller) return { type: 'is', of: b.it, filter: { combatPartner: { types: ['Creature'], ...filter } } };
   }
+  // Dreamdew Entrancer: "If you control that creature, draw two cards." — the one the effect is about, now.
+  if (/^you control (?:that creature|that permanent)$/.test(t) && b.it && ['target', 'trigger_object', 'chosen_object'].includes(b.it.ref)) return { type: 'is', of: b.it, filter: { controller: 'you' } };
   // Lord Windgrace: "If a land card is discarded this way" — the one card just discarded.
   const discardedIs = /^an? (.+?) card (?:is|was) discarded this way$/.exec(t);
   if (discardedIs && b.other?.ref === 'discarded_this_way') {
@@ -551,7 +553,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (!pf || pf.plural) return null;
     return { type: 'count', who: 'you', filter: { ...pf.filter, ...(dont[1] === 'another' ? { other: true } : {}) }, max: 0 };
   }
-  const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer) (other )?(.+)$/.exec(t);
+  const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer) (other )?(?!more )(.+)$/.exec(t);
   if (control) {
     const c = count(control[2]!);
     const pf = parseFilter(control[4]!.replace(/ or an? /g, ' or '), b);
@@ -984,13 +986,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Land Tax: "if an opponent controls more lands than you"
   // Archaeomancer's Map: "if that player controls more lands than you"
   // Aerial Surveyor: "if defending player controls more lands than you".
-  const more = /^(an opponent|that player|defending player) controls more (.+?) than you(?: do)?$/.exec(t);
+  // Isolated Watchtower: "if an opponent controls at least two more lands than you" — by that many.
+  const more = /^(an opponent|that player|defending player) controls (?:at least (two|three|four) )?more (.+?) than you(?: do)?$/.exec(t);
   if (more) {
-    const pf = parseFilter(more[2]!, b);
+    const pf = parseFilter(more[3]!, b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
     const player = more[1] !== 'an opponent' ? parsePlayerRef(more[1]!, b) : null;
     if (more[1] !== 'an opponent' && !player) return null;
-    return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}) };
+    return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}), ...(more[2] ? { by: parseAmount(more[2]) } : {}) };
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"

@@ -987,8 +987,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
-      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' ? 'game' : 'eot',
+      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' || node.until === 'source_controlled' ? 'game' : 'eot',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
+      // Aegis Angel: "for as long as you control this creature" (CR 611.2b).
+      ...(node.until === 'source_controlled' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc, player: ctx.controller } } : {}),
       ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
       ...(typeof node.whileCounter === 'string' ? { whileCounter: node.whileCounter } : {}),
     });
@@ -3048,6 +3050,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Ashiok, Dream Render: "Spells and abilities your opponents control can't cause their controller to search their library."
     // — nothing is found (anything else the effect does still happens).
     const barred = owner === player && player === ctx.controller && Boolean(playerRule(g, player, 'cant_search_own_library'));
+    // Mindlock Orb: "Players can't search libraries." — no search happens (CR 101.2): nothing is found, and the rest of the
+    // effect (the shuffle) still happens.
+    if (playerRule(g, player, 'cant_search') && zones.every((z) => z === 'library')) {
+      shuffleInPlace(g, zoneList(g, 'library', owner));
+      ctx.events.push({ type: 'shuffled', player });
+      return true;
+    }
     const candidates = barred ? [] : zones.flatMap((z) => searchable(z).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
     const count = amountOf(ctx, node.amount);
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.

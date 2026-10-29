@@ -406,7 +406,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const mine = count(controller);
       // Archaeomancer's Map: "that player" — the one the trigger is about.
       const others = cond.player ? refPlayers(ctx, cond.player as Ref) : livePlayers(g);
-      return others.some((p) => p !== controller && count(p) > mine);
+      // Isolated Watchtower: "at least two more lands than you".
+      return others.some((p) => p !== controller && count(p) >= mine + Number(cond.by ?? 1));
     }
     case 'votes': {
       // CR 701.38: "If sickness gets more votes", "If psychosis gets more votes or the vote is tied"

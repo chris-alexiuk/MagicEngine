@@ -790,6 +790,8 @@ export const RULE_FLAGS = [
   'cant_be_regenerated',
   /** Ophidian: "this creature assigns no combat damage this turn" (CR 510.1). */
   'assigns_no_combat_damage',
+  /** Melira's Keepers: "This creature can't have counters put on it."; Melira: "… -1/-1 counters …"; Blightbeetle: "… +1/+1 …". */
+  'no_counters', 'no_minus_counters', 'no_plus_counters',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -1271,6 +1273,8 @@ export interface ExileInsteadNode extends EffectNode {
   withCounter?: string;
   /** The Darkness Crystal: "instead exile it and you gain 2 life". */
   gainLife?: number;
+  /** Kalitas, Traitor of Ghet: "instead exile that card and create a 2/2 black Zombie creature token" — for the source's controller. */
+  createToken?: FaceDef;
 }
 
 /**
@@ -1389,6 +1393,10 @@ export const PLAYER_RULES = [
   'cant_win_opponents_cant_lose',
   /** Tainted Remedy, Plague Drone: "If an opponent would gain life, that player loses that much life instead." (CR 614.1a) */
   'gain_becomes_loss',
+  /** Archon of Coronation: "damage doesn't cause you to lose life" (CR 120.3a; the damage is still dealt). */
+  'damage_no_life_loss',
+  /** Mindlock Orb, Stranglehold: "Players can't search libraries." (CR 701.23) */
+  'cant_search',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

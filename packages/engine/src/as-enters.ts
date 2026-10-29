@@ -1,6 +1,6 @@
 import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
 import { chars, hasType, matchesFilter } from './characteristics.js';
-import { lifeLoss, replaceQuantity } from './quantities.js';
+import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
 import { sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
@@ -191,11 +191,11 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       for (const id of chosen) sacrifice(g, g.objects[id]!, player, events);
       // "This permanent enters with N +1/+1 counters on it for each creature sacrificed this way."
       const n = Number(next.node.amount ?? 1) * chosen.length;
-      if (n > 0) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + n;
+      if (n > 0 && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + n;
       break;
     }
     case 'counter': {
-      if (answer.pay) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+      if (answer.pay && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
       else if (next.node.elseHaste) {
         // "If you don't, it gains haste" — for as long as it's on the battlefield.
         g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: o.id, zcc: o.zcc }, controller: o.controller, objects: [{ id: o.id, zcc: o.zcc }], keywords: [{ id: 'haste' }], until: 'game' });

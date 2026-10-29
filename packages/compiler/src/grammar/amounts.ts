@@ -175,7 +175,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const distinctMv = /^different mana value among (.+)$/.exec(t);
   if (distinctMv) {
     const pf = parseFilter(distinctMv[1]!, b.clone());
-    if (pf && pf.plural && pf.filter.zone) return { kind: 'distinct_mana_values', filter: pf.filter };
+    // Lunar Insight: "… among nonland permanents you control" — on the battlefield.
+    if (pf && pf.plural) return { kind: 'distinct_mana_values', filter: pf.filter };
   }
   // Kefka, Court Mage: "for each card type among cards discarded this way".
   if (t === 'card type among cards discarded this way') return { kind: 'card_types', discardedThisWay: true };
