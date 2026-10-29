@@ -887,6 +887,8 @@ export class ParserRegistry {
  * rule does nothing in a game; the other ability is this trigger.
  */
 const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+  // CR 702.125a: "Undaunted means 'This spell costs {1} less to cast for each opponent you have.'"
+  undaunted: { rule: '702.125a', pattern: 'Undaunted', meaning: ['This spell costs {1} less to cast for each opponent you have.'] },
   // CR 702.176a, in words the grammar reads ("this permanent's impending cost" is "its impending cost").
   impending: {
     rule: '702.176a',

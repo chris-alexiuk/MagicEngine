@@ -57,6 +57,10 @@ for (const t of SUBTYPE_SET) {
   if (/f$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -1)}ves`, t); // Elf → Elves, Wolf → Wolves
   if (/fe$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -2)}ves`, t);
 }
+// Irregular plurals in Oracle text: "Mice", "Oxen", "Dwarves", "Octopi" aren't formed by the rules above.
+for (const [plural, t] of [['Mice', 'Mouse'], ['Oxen', 'Ox'], ['Dwarves', 'Dwarf'], ['Fungi', 'Fungus'], ['Homunculi', 'Homunculus']] as const) {
+  if (SUBTYPE_SET.has(t)) SUBTYPE_PLURALS.set(plural, t);
+}
 
 /** "Elf", "Elves", "Zombies" → the subtype (CR 205.3), else null. */
 export function subtypeOf(word: string): string | null {

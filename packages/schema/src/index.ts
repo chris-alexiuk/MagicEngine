@@ -300,6 +300,8 @@ export interface TargetSpec {
   count?: number;
   /** "Exile X target creatures": as many as the X announced (CR 601.2b–c). `count` is then ignored. */
   countX?: true;
+  /** Rot Hulk: "up to X target Zombie cards …, where X is the number of opponents you have" — counted as targets are chosen. */
+  countAmount?: AmountExpr;
   /** Comet Storm: "then choose another target for each time this spell was kicked" — `count` plus the kicks. */
   plusKicks?: true;
   /** CR 115.6: "up to N" allows fewer, including zero. */
@@ -616,6 +618,8 @@ export type AmountExpr = (
   | { kind: 'sacrificed_to_cast'; of: Ref }
   /** Multani: "for each land you control and each land card in your graveyard" — counts added together. */
   | { kind: 'sum'; parts: AmountExpr[] }
+  /** CR 106.4: Omnath, Locus of Mana: "for each unspent green mana you have" (any color, if absent). */
+  | { kind: 'unspent_mana'; color?: string }
   /** "A or B, whichever is greater" (Prophet of the Scarab). */
   | { kind: 'max'; parts: AmountExpr[] }
   | { kind: 'life'; who: Ref }
@@ -1214,6 +1218,8 @@ export interface QuantityReplacementNode extends EffectNode {
   event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate' | 'copies';
   /** copies: "You may choose new targets for the additional copy." */
   newTargetsForExtra?: true;
+  /** gain_life: Phial of Galadriel — "If you would gain life while you have 5 or less life, …". */
+  lifeAtMost?: number;
   /** Bloodletter of Aclazotz: only during its controller's turn. */
   yourTurn?: true;
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn); 'half':
@@ -1295,6 +1301,8 @@ export const PLAYER_RULES = [
   'spend_any_color',
   /** CR 500.5: "You don't lose unspent red mana as steps and phases end" — mana of its `colors` (any, without them) stays. */
   'keep_mana',
+  /** Kruphix, God of Horizons: "If you would lose unspent mana, that mana becomes colorless instead." — of its `colors[0]`. */
+  'mana_becomes',
   /** Birgi, God of Storytelling: "Creatures you control can boast twice during each of your turns rather than once." */
   'boast_twice',
   /** Leonin Shikari: "You may activate equip abilities any time you could cast an instant." (Forge Anew: during your turn, a condition.) */
@@ -1361,7 +1369,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

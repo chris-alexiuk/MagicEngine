@@ -257,6 +257,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // "for each instant and sorcery card in your graveyard": a card of either type.
   const both = /^(\w+) and (\w+) card (in .+)$/.exec(t);
   if (both) return objects(`${both[1]} or ${both[2]} card ${both[3]}`, b, false);
+  // Omnath, Locus of Mana: "for each unspent green mana you have"; Omnath, Locus of the Void: "for each unspent mana you have".
+  const unspent = /^unspent (?:(white|blue|black|red|green|colorless) )?mana you have$/.exec(t);
+  if (unspent) return { kind: 'unspent_mana', ...(unspent[1] ? { color: unspent[1] === 'colorless' ? 'C' : COLOR_WORDS[unspent[1]]! } : {}) };
   // CR 702.33c (multikicker): "for each time it was kicked"
   if (/^time (?:~|it) was kicked$/.test(t)) return { kind: 'kicks' };
   // "for each time its replicate cost was paid", "… its squad cost was paid"
@@ -305,6 +308,16 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const two = one && num(whichever[2]!);
     return one && two ? { kind: 'max', parts: [one, two] } : null;
   }
+  // Glissa Sunseeker: "the amount of unspent mana you have".
+  if (t === 'the amount of unspent mana you have') return { kind: 'unspent_mana' };
+  // Prismabasher: "the number of colors among permanents you control" (CR 105.2).
+  const colorsAmong = /^the number of colors among (other )?(.+)$/.exec(t);
+  if (colorsAmong) {
+    const pf = parseFilter(colorsAmong[2]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { kind: 'colors_among', filter: { ...pf.filter, ...(colorsAmong[1] ? { other: true } : {}) } } : null;
+  }
+  // Marshal's Anthem: "the number of times this enchantment was kicked" (CR 702.33c, multikicker).
+  if (/^the number of times (?:~|it|this \w+) was kicked$/.test(t)) return { kind: 'kicks' };
   // Knight-Errant of Eos: "the number of creatures that convoked it" (CR 702.51c).
   if (/^the number of creatures that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Cavern-Hoard Dragon: "the greatest number of artifacts an opponent controls" — the most any one opponent controls.

@@ -127,6 +127,11 @@ export class Binder {
  */
 export function bindTargetsX(b: Binder, from: number, expr: unknown): void {
   for (const spec of b.targets.slice(from)) {
+    // Rot Hulk: "return up to X target Zombie cards …, where X is the number of opponents you have" — how many.
+    if (spec.countX && spec.upTo && (targetCountable(expr) || ['players', 'kicks', 'colors_among'].includes((expr as { kind?: string }).kind ?? ''))) {
+      delete spec.countX;
+      spec.countAmount = expr as never;
+    }
     const f = spec.filter as Record<string, { op: string; n: unknown } | undefined> | undefined;
     if (!f) continue;
     for (const k of ['manaValue', 'power', 'toughness']) {

@@ -784,6 +784,15 @@ const CARDS = [
   makeCard({ name: 'Agrus Lite', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "When this creature enters, choose up to one target creature. If it's suspected, exile it. Otherwise, suspect it." }),
   makeCard({ name: 'Lammasu Lite', type_line: 'Creature — Lammasu', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'When this creature enters, all suspected creatures are no longer suspected.' }),
   makeCard({ name: 'Case Lite', type_line: 'Enchantment — Case', mana_cost: '{0}', oracle_text: 'To solve — You control three or more artifacts. (If unsolved, solve at the beginning of your end step.)\nSolved — {T}: Draw a card.' }),
+  makeCard({ name: 'Rot Hulk Lite', type_line: 'Creature — Zombie', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'When this creature enters, return up to X target Zombie cards from your graveyard to the battlefield, where X is the number of opponents you have.' }),
+  makeCard({ name: 'Requiem Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: '{1}, Sacrifice this enchantment: Destroy up to X target creatures, where X is the number of verse counters on this enchantment.' }),
+  makeCard({ name: 'Tormentor Lite', type_line: 'Creature — Demon', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'At the beginning of your upkeep, draw a card unless target opponent sacrifices a creature of their choice or pays 3 life.' }),
+  makeCard({ name: 'Skirmisher Lite', type_line: 'Creature — Angel', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'At the beginning of each combat, choose first strike, vigilance, or lifelink. Creatures you control gain that ability until end of turn.' }),
+  makeCard({ name: 'Raven Man Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'At the beginning of each end step, if a player discarded a card this turn, create a 1/1 black Bird creature token with flying.' }),
+  makeCard({ name: 'Fangorn Lite', type_line: 'Creature — Treefolk', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Whenever one or more Treefolk you control attack, add twice that much {G}.' }),
+  makeCard({ name: 'Time Twist Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Exile target permanent you control. Return that card to the battlefield under its owner's control at the beginning of the next end step. If it enters as a creature, it enters with an additional +1/+1 counter on it." }),
+  makeCard({ name: 'Kruphix Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If you would lose unspent mana, that mana becomes colorless instead.' }),
+  makeCard({ name: 'Omnath Mana Lite', type_line: 'Creature — Elemental', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Omnath Mana Lite gets +1/+1 for each unspent green mana you have.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -6666,6 +6675,89 @@ describe('Sieges', () => {
       }
     });
   }
+  it('Rot Hulk: up to X targets, X counted as they are chosen (one per opponent)', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const zs = [0, 1, 2].map(() => give(g, 'alice', 'Zombie', 'graveyard'));
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Rot Hulk Lite', 'hand') });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'trigger_targets' });
+    expect((g.pending as { prompts?: { count: number }[] }).prompts?.[0]?.count ?? (g.pending as never as { targets: { count: number }[] }).targets?.[0]?.count).toBe(2);
+    expect(() => act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [zs.map((z) => ({ kind: 'object' as const, object: z }))] } } as never)).toThrow();
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [zs.slice(0, 2).map((z) => ({ kind: 'object' as const, object: z }))] } } as never));
+    expect(zs.map((z) => g.objects[z]!.zone)).toEqual(['battlefield', 'battlefield', 'graveyard']);
+  });
+  it('Vile Requiem: X is its verse counters as targets are chosen, before it is sacrificed', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const rq = give(g, 'alice', 'Requiem Lite', 'battlefield');
+    g.objects[rq]!.counters.verse = 2;
+    const zs = [0, 1].map(() => give(g, 'bob', 'Zombie', 'battlefield'));
+    g.players.alice!.pool.C = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: rq, ability: 0, targets: [zs.map((z) => ({ kind: 'object' as const, object: z }))] }));
+    expect(zs.map((z) => g.objects[z]!.zone)).toEqual(['graveyard', 'graveyard']);
+  });
+  it('Indulgent Tormentor: the opponent may pay 3 life instead (CR 119.4)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Tormentor Lite', 'battlefield');
+    g = toStep(g, 'upkeep', 'alice');
+    g = drive(g, (g) => (g.pending?.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } } as never) : null), 4);
+    expect(g.pending).toMatchObject({ kind: 'choose_option', player: 'bob' });
+    const options = (g.pending as { options: string[] }).options;
+    expect(options).toEqual(['pay 3 life', 'Neither: draw']);
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_option', choice: 'pay 3 life' } }));
+    expect([g.players.bob!.life, g.zones.hand.alice!.length]).toEqual([17, hand]);
+  });
+  it('Angelic Skirmisher: the chosen ability for creatures you control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sk = give(g, 'alice', 'Skirmisher Lite', 'battlefield');
+    g = toStep(g, 'beginning_of_combat', 'alice');
+    g = drive(g, () => null, 2);
+    expect(g.pending).toMatchObject({ kind: 'choose_option' });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'lifelink' } }));
+    expect(chars(g, g.objects[sk]!).keywords.map((k) => k.id)).toContain('lifelink');
+  });
+  for (const discard of [false, true]) {
+    it(`The Raven Man: a Bird ${discard ? 'when' : 'only if'} a player discarded this turn`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      give(g, 'alice', 'Raven Man Lite', 'battlefield');
+      if (discard) g.turnLog.discarded = [{ id: g.zones.hand.bob![0]!, zcc: 0, player: 'bob' }];
+      const n = g.zones.battlefield.length;
+      g = settle(toStep(g, 'end', 'alice'));
+      expect(g.zones.battlefield.length - n).toBe(discard ? 1 : 0);
+    });
+  }
+  it('Fangorn: twice as much {G} as Treefolk attacking', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const a = [give(g, 'alice', 'Fangorn Lite', 'battlefield', { sick: false }), give(g, 'alice', 'Fangorn Lite', 'battlefield', { sick: false })];
+    g = settle(attackWith(g, a));
+    expect(g.players.alice!.pool.G ?? 0).toBe(8);
+  });
+  for (const creature of [true, false]) {
+    it(`Teferi's Time Twist: ${creature ? 'a creature returns with a +1/+1 counter' : 'a noncreature returns without one'}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const p = give(g, 'alice', creature ? 'Zombie' : 'Sword Lite', 'battlefield');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Time Twist Lite', 'hand'), targets: [[{ kind: 'object', object: p }]] }));
+      expect(g.objects[p]!.zone).toBe('exile');
+      g = settle(toStep(g, 'end', 'alice'));
+      expect([g.objects[p]!.zone, g.objects[p]!.counters['+1/+1'] ?? 0]).toEqual(['battlefield', creature ? 1 : 0]);
+    });
+  }
+  it('Kruphix: unspent mana becomes colorless instead of being lost (CR 614.1a)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Kruphix Lite', 'battlefield');
+    g.players.alice!.pool.G = 2;
+    g.players.alice!.pool.R = 1;
+    g.players.bob!.pool.G = 2;
+    g = toStep(g, 'beginning_of_combat', 'alice');
+    expect([g.players.alice!.pool.G, g.players.alice!.pool.R, g.players.alice!.pool.C, g.players.bob!.pool.G]).toEqual([0, 0, 3, 0]);
+  });
+  it('Omnath, Locus of Mana: +1/+1 for each unspent green mana', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const o = give(g, 'alice', 'Omnath Mana Lite', 'battlefield');
+    g.players.alice!.pool.G = 3;
+    g.players.alice!.pool.R = 2;
+    expect(chars(g, g.objects[o]!).power).toBe(4);
+  });
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const bomb = give(g, 'alice', 'Blazing Bomb Lite', 'battlefield');

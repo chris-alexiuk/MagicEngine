@@ -82,6 +82,20 @@ export function keptManaColors(g: GameState, player: PlayerId): Set<string> {
   return out;
 }
 
+/** CR 614.1a: Kruphix: "If you would lose unspent mana, that mana becomes colorless instead." — the color it becomes. */
+export function manaBecomes(g: GameState, player: PlayerId): string | undefined {
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode & { colors?: string[] };
+      if (e.rule !== 'mana_becomes' || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      return e.colors?.[0];
+    }
+  }
+  return undefined;
+}
+
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
   // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.

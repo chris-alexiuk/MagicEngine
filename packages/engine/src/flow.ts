@@ -9,7 +9,7 @@ import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
-import { keptManaColors, legendRuleExempt, maxHandSize, playerRule } from './player-rules.js';
+import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
@@ -17,7 +17,7 @@ import { ascendOnResolve, checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
 import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
-import type { ChoiceAnswer, GameEvent, GameObject, GameState, ManaColor, PlayerId, Step, StackEntry } from './types.js';
+import type { ChoiceAnswer, GameEvent, GameObject, GameState, ManaColor, PlayerId, RestrictedMana, Step, StackEntry } from './types.js';
 import { STEPS } from './types.js';
 import { drawCard, faceOf, livePlayers, moveObject, nameOf, nextPlayer, obj, setTapped, zoneList } from './zones.js';
 
@@ -336,10 +336,18 @@ export function endStep(g: GameState, events: GameEvent[]): void {
   for (const p of Object.values(g.players)) {
     // Omnath, Locus of Mana / Electro: "You don't lose unspent green (red) mana as steps and phases end."
     const keep = keptManaColors(g, p.id);
+    // Kruphix, God of Horizons: "If you would lose unspent mana, that mana becomes colorless instead." (CR 614.1a)
+    const becomes = manaBecomes(g, p.id) as ManaColor | undefined;
     const pool = emptyPool();
     for (const c of keep) pool[c as ManaColor] = p.pool[c as ManaColor];
+    if (becomes) for (const c of Object.keys(p.pool) as ManaColor[]) if (!keep.has(c)) pool[becomes] += p.pool[c];
     p.pool = pool;
-    const kept = (p.restricted ?? []).filter((r) => keep.has(r.color) || (r.keep === 'end_of_turn' ? g.step !== 'cleanup' : r.keep === 'end_of_combat' ? !combatEnds : false));
+    const survives = (r: RestrictedMana) => keep.has(r.color) || (r.keep === 'end_of_turn' ? g.step !== 'cleanup' : r.keep === 'end_of_combat' ? !combatEnds : false);
+    const kept = (p.restricted ?? []).flatMap((r) => {
+      if (survives(r)) return [r];
+      const { keep: _k, ...rest } = r;
+      return becomes ? [{ ...rest, color: becomes }] : [];
+    });
     if (kept.length) p.restricted = kept;
     else delete p.restricted;
   }

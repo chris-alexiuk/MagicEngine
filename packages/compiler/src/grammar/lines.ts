@@ -1161,6 +1161,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Firemane Commando: "Whenever another player attacks with two or more creatures, they draw a card if none of those
   // creatures attacked you."
   // Avatar Roku: "Whenever a player attacks" — once as attackers are declared, whoever attacks (CR 508.3d).
+  // Jolene, the Plunder Queen: "Whenever a player attacks one or more of your opponents" — creatures attacking them.
+  if (t === 'a player attacks one or more of your opponents') {
+    b.named['that attacking player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'you_attack', anyone: true, atOpponents: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   const playerAttacks = /^(a|another) player attacks(?: with (\w+) or more creatures)?$/.exec(t);
   if (playerAttacks) {
     const min = playerAttacks[2] ? NUMBER_WORDS[playerAttacks[2]!] : 1;
@@ -1219,7 +1224,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   const attackWith = /^you attack with one or more (.+)$/.exec(t);
   if (attackWith && !/ you control$/.test(attackWith[1]!) && attackWith[1] !== 'creatures') return parseTrigger(word, `one or more ${attackWith[1]} you control attack`, b);
-  const someAttack = /^one or more (.+? you control) attack$/.exec(t);
+  // The Earth King: "Whenever one or more creatures you control with power 4 or greater attack".
+  const someAttack = /^one or more (.+? you control(?: with [^,]+)?) attack$/.exec(t);
   if (someAttack && someAttack[1] !== 'creatures you control') {
     const pf = parseFilter(someAttack[1]!, b);
     if (!pf || !(pf.plural || pf.invariant) || pf.filter.controller !== 'you') return null;
@@ -2504,12 +2510,13 @@ function parseFlashFor(body: string, b: Binder): PlayerRuleNode | null {
     const { zone: _z, ...filter } = pf.filter;
     return { type: 'player_rule', who: 'you', rule: 'flash', filter: { ...filter, owner: 'you' } };
   }
-  const m = /^You may cast (.+?) spells as though they had flash$/.exec(body);
+  // Quick Sliver: "Any player may cast Sliver spells as though they had flash."
+  const m = /^(You|Any player) may cast (.+?) spells as though they had flash$/.exec(body);
   if (!m) return null;
-  const pf = parseFilter(`${m[1]!.replace(/ and /g, ' or ')} spells`, b);
+  const pf = parseFilter(`${m[2]!.replace(/ and /g, ' or ')} spells`, b);
   if (!pf || !pf.plural) return null;
   const { zone: _z, ...filter } = pf.filter;
-  return Object.keys(filter).length ? { type: 'player_rule', who: 'you', rule: 'flash', filter } : null;
+  return Object.keys(filter).length ? { type: 'player_rule', who: m[1] === 'You' ? 'you' : 'each', rule: 'flash', filter } : null;
 }
 
 /**
@@ -2595,6 +2602,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // don't lose unspent mana as steps and phases end."
   const keepMana = /^(You|Players) don't lose unspent (?:(white|blue|black|red|green) )?mana as steps and phases end$/.exec(body);
   if (keepMana) return { type: 'player_rule', who: keepMana[1] === 'You' ? 'you' : 'each', rule: 'keep_mana', ...(keepMana[2] ? { colors: [COLOR_WORDS[keepMana[2]]!] } : {}) };
+  // CR 500.5 / 614.1a: Kruphix, God of Horizons: "If you would lose unspent mana, that mana becomes colorless instead."
+  const becomes = /^If you would lose unspent mana, that mana becomes (colorless|white|blue|black|red|green) instead$/.exec(body);
+  if (becomes) return { type: 'player_rule', who: 'you', rule: 'mana_becomes', colors: [becomes[1] === 'colorless' ? 'C' : COLOR_WORDS[becomes[1]!]!] };
   // Birgi, God of Storytelling (CR 702.142a)
   if (body === 'Creatures you control can boast twice during each of your turns rather than once') return { type: 'player_rule', who: 'you', rule: 'boast_twice' };
   // K'rrik, Son of Yawgmoth: "For each {B} in a cost, you may pay 2 life rather than pay that mana." (CR 107.4f)
@@ -2742,7 +2752,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) every creature type|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) every creature type|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2850,8 +2860,11 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       continue;
     }
     // Lignify: "is a Treefolk with base power and toughness 0/4" — its creature types replaced, its card types kept.
-    const isKind = /^is an? ((?:[A-Z][\w’'-]* )+)with base power and toughness (\d+)\/(\d+)$/.exec(part);
-    if (isKind && !effect.creatureTypes && effect.setPower === undefined) {
+    // Eye of Nidhogg: "is a black Dragon with base power and toughness 4/2" — its color too (layer 5).
+    const isKind = /^is an? (?:(white|blue|black|red|green) )?((?:[A-Z][\w’'-]* )+)with base power and toughness (\d+)\/(\d+)$/.exec(part);
+    if (isKind && !effect.creatureTypes && effect.setPower === undefined && !(isKind[1] && effect.colors)) {
+      if (isKind[1]) effect.colors = [COLOR_WORDS[isKind[1]]! as Color];
+      isKind.splice(1, 1);
       const kinds = isKind[1]!.trim().split(' ');
       if (kinds.some((w) => subtypeOf(w) !== w || !(SUBTYPES.creature as readonly string[]).includes(w))) return null;
       effect.creatureTypes = kinds;
@@ -3284,10 +3297,11 @@ export const quantityReplacementRule: GrammarRule = {
       const op = quantityOp(lose[3]!);
       return op && /\blife\b/.test(lose[3]!) ? make({ event: 'lose_life', who: lose[1] === 'a player' ? 'each' : 'opponents', ...op, ...(lose[2] ? { yourTurn: true } : {}) }) : null;
     }
-    const life = /^If you would gain life, you gain (.+?) instead\.$/.exec(line);
+    // Phial of Galadriel: "If you would gain life while you have 5 or less life, you gain twice that much life instead."
+    const life = /^If you would gain life(?: while you have (\d+) or less life)?, you gain (.+?) instead\.$/.exec(line);
     if (life) {
-      const op = quantityOp(life[1]!);
-      return op && /\blife\b/.test(life[1]!) ? make({ event: 'gain_life', who: 'you', ...op }) : null;
+      const op = quantityOp(life[2]!);
+      return op && /\blife\b/.test(life[2]!) ? make({ event: 'gain_life', who: 'you', ...op, ...(life[1] ? { lifeAtMost: Number(life[1]) } : {}) }) : null;
     }
     // Peregrin Took, Xorn, Chatterfang: "… those tokens plus an additional Food token are created instead."
     const plusToken =
@@ -3317,8 +3331,9 @@ export const quantityReplacementRule: GrammarRule = {
     }
     // Teferi's Ageless Insight: "If you would draw a card except the first one you draw in each of your draw steps, draw
     // two cards instead."; Thought Reflection: "If you would draw a card, draw two cards instead."
-    const drawTwo = /^If you would draw a card( except the first one you draw in each of your draw steps)?, draw two cards instead\.$/.exec(line);
-    if (drawTwo) return { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1] ? { exceptFirst: true } : {}) } };
+    // Phial of Galadriel: "If you would draw a card while you have no cards in hand, draw two cards instead."
+    const drawTwo = /^If you would draw a card( except the first one you draw in each of your draw steps| while you have no cards in hand)?, draw two cards instead\.$/.exec(line);
+    if (drawTwo) return { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1] ? (drawTwo[1].startsWith(' while') ? { emptyHand: true } : { exceptFirst: true }) : {}) } };
     // Notion Thief: "If an opponent would draw a card except the first one they draw in each of their draw steps, instead that
     // player skips that draw and you draw a card."
     if (/^If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card\.$/.test(line)) {

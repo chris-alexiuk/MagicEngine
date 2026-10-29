@@ -88,6 +88,8 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
   const who = (p: PlayerId | undefined) => !e.who || e.who === 'each' || (e.who === 'you' ? p === you : p !== undefined && p !== you);
   switch (e.event) {
     case 'gain_life':
+      // Phial of Galadriel: "… while you have 5 or less life".
+      return who(s.player) && (e.lifeAtMost === undefined || (s.player !== undefined && (g.players[s.player]?.life ?? 0) <= e.lifeAtMost));
     case 'mill':
     case 'copies':
       return who(s.player);

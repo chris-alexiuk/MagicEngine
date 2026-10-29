@@ -488,6 +488,8 @@ function drawReplacements(g: GameState, player: PlayerId): number {
     for (const a of objectAbilities(g, source)) {
       if (a.kind !== 'static' || a.effect.type !== 'draw_replacement' || a.effect.emptyWin || a.effect.steal) continue;
       if (a.effect.exceptFirst && firstInDrawStep) continue;
+      // Phial of Galadriel: "… while you have no cards in hand".
+      if (a.effect.emptyHand && (g.zones.hand[player]?.length ?? 0) > 0) continue;
       n++;
     }
   }

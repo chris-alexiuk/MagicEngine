@@ -191,6 +191,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Lantern Flare: "~ deals X damage to target creature or planeswalker and you gain X life. X is the number of creatures
   // you control." — X defined in a sentence of its own.
   text = text.replace(/^([^.]*\bX\b[^.]*)\. X is (the [^.]+)\.$/, '$1, where X is $2.');
+  // Angelic Skirmisher: "choose first strike, vigilance, or lifelink. Creatures you control gain that ability until end of
+  // turn." — the same as "gain your choice of …" (CR 608.2d).
+  text = text.replace(/^[Cc]hoose ((?:[a-z][a-z ]*, )+)or ([a-z][a-z ]*)\. (.+?) (gains?) that ability until end of turn\.$/, '$3 $4 your choice of $1or $2 until end of turn.');
   // Tempt with Discovery: "Search your library for a land card and put it onto the battlefield. … Then each player who
   // searched a library this way shuffles." — each search, then a shuffle.
   if (/ Then each player who searched a library this way shuffles\.$/.test(text.trim())) {
@@ -909,6 +912,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const inner = parseSentence(capitalise(thatCombat[1]!), b);
         if (!inner) return null;
         last.begin = inner;
+        continue;
+      }
+      // Teferi's Time Twist: "Return that card to the battlefield … at the beginning of the next end step. If it enters as a
+      // creature, it enters with an additional +1/+1 counter on it." — the return, with the counter if it's a creature.
+      const asCreature = i > 0 ? /^If it enters as a creature, it enters with an additional (\S+) counter on it$/.exec(s) : null;
+      if (asCreature) {
+        const last = out[out.length - 1];
+        const ret = last?.type === 'delayed' && (last.effects as EffectNode[]).length === 1 ? (last.effects as EffectNode[])[0] : last;
+        if (ret?.type !== 'move' || ret.to !== 'battlefield' || ret.counters) return null;
+        ret.counters = { [asCreature[1]!]: 1 };
+        ret.countersIfCreature = true;
         continue;
       }
       const spendOnly = i > 0 ? /^Spend this mana only (.+)$/.exec(s) : null;
@@ -2646,7 +2660,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (where) {
     return attempt(b, (b) => {
       // "… as this ability resolves": effects count as they resolve anyway (CR 608.2h).
-      const what = where[2]!.replace(/ as this (?:ability|spell) resolves$/, '');
+      const what = where[2]!.replace(/ as this (?:ability|spell) resolves$/, '').replace(/ as you activate this ability$/, '');
+      // Agility Bobblehead: "Up to X target creatures …, where X is the number of Bobbleheads you control as you activate
+      // this ability" — only a target count (counted as targets are chosen) can be counted then.
+      const asActivated = what !== where[2]!.replace(/ as this (?:ability|spell) resolves$/, '');
+      const onlyCount = (inner: EffectNode[] | null) => !asActivated || (inner !== null && !/"X"|"kind":"x"/.test(JSON.stringify(inner)) && b.targets.some((t) => t.countAmount));
       // Rush of Blood: "Target creature gets +X/+0 until end of turn, where X is its power." — "its" is what the
       // instruction is about, so that's read first.
       if (perEach(what, where[1]!, b)) return null;
@@ -2658,12 +2676,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         const inner = parseSentence(where[1]!, b);
         const expr = inner && parseCount(what, b);
         if (inner && expr) bindTargetsX(b, from, expr);
+        if (!onlyCount(inner)) return null;
         return inner && expr ? bindX(inner, expr) : null;
       }
       const expr = parseCount(what, b);
       const from = b.targets.length;
       const inner = expr && parseSentence(where[1]!, b);
       if (inner && expr) bindTargetsX(b, from, expr);
+      if (!onlyCount(inner)) return null;
       return inner && expr ? bindX(inner, expr) : null;
     });
   }
@@ -2676,12 +2696,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 118.12a / CR 119.4: "… unless that player pays 3 life" (or "{2} and 2 life").
   const unlessLife = /^(.+) unless (.+?) (?:pays|pay) (?:((?:\{(?:\d+|[WUBRGC])\})+) and )?(\d+) life$/.exec(s);
   if (unlessLife) {
-    return attempt(b, (b) => {
+    const r = attempt(b, (b) => {
       const before = b.clone();
       const inner = parseSentence(unlessLife[1]!, b);
       const payer = inner ? payerOf(unlessLife[2]!, before, b) : null;
       return inner && payer ? [{ type: 'unless_pays', payer, cost: unlessLife[3] ?? '', life: Number(unlessLife[4]), effects: inner }] : null;
     });
+    if (r) return r;
   }
   // "… unless that player discards a card" / "sacrifices a creature"; Tergrid's Lantern: "… unless they sacrifice a
   // nonland permanent of their choice or discard a card" (either); "Each opponent loses 3 life unless that player …"
@@ -2692,7 +2713,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const r = attempt(b, (b) => {
       const third = (v: string) => (v.endsWith('s') ? v : `${v}s`);
       const strip = (o: string) => o.replace(/ of their choice$/, '');
-      const alt = /^(.+?) or (discards?|sacrifices?|returns?) (.+)$/.exec(unlessDoes[4]!);
+      // Indulgent Tormentor: "… unless target opponent sacrifices a creature of their choice or pays 3 life".
+      const alt = /^(.+?) or (discards?|sacrifices?|returns?|pays?) (.+)$/.exec(unlessDoes[4]!);
       const parts: [string, string][] = alt ? [[unlessDoes[3]!, alt[1]!], [alt[2]!, alt[3]!]] : [[unlessDoes[3]!, unlessDoes[4]!]];
       // Unnatural Hunger: "unless they sacrifice another creature" means other than the enchanted one, not the Aura.
       if (parts.some(([, o]) => /^another /.test(o)) && /\b(?:Aura|Equipment)\b/.test(b.env.typeLine)) return null;
@@ -2716,8 +2738,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         const pf = m ? parseFilter(m[2]!, b.clone()) : null;
         return m && pf && !pf.filter.zone && payer.ref === 'you' ? { effects: [{ type: 'tap_choice', filter: pf.filter, amount: m[1] === 'an' ? 1 : parseAmount(m[1]!) as number } as EffectNode] } : null;
       };
+      const payLife = (o: string) => {
+        const m = /^(\d+) life$/.exec(o);
+        return m ? { effects: [{ type: 'lose_life', amount: Number(m[1]), who: payer, paid: true } as EffectNode] } : null;
+      };
       const actions = parts.map(([v, o]) =>
-        /^taps?$/.test(v) ? tapOne(o) : /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
+        /^pays?$/.test(v) ? payLife(o) : /^taps?$/.test(v) ? tapOne(o) : /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
       );
       if (actions.some((a) => !a)) return null;
       return actions.length === 1 ? [{ type: 'unless_does', payer, action: actions[0]!.effects, effects: inner }] : [{ type: 'unless_does', payer, actions: actions.map((a) => a!.effects), effects: inner }];
@@ -3880,7 +3906,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(kardur[1]!, b);
     if (what) return [{ type: 'goad', what: what.ref, quiet: true }];
   }
-  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?) (.+)$/.exec(s);
+  const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?|assigns?|can attack) (.+)$/.exec(s);
   if (until) return parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b);
   // Taunt from the Rampart: "Until your next turn, those creatures can't block."
   const untilNext = /^Until your next turn, ([^,]+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
@@ -5041,12 +5067,15 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return what ? [{ type: 'double_counters', what: what.ref, counter: /^each/.test(dblCounters[1]!) ? 'each' : '+1/+1' }] : null;
   }
   // CR 701.10a/c: "double its power until end of turn", "double the power and toughness of each creature you control until end of turn"
-  const dblPT = /^double (?:(its|.+?'s) power( and toughness)?|the power( and toughness)? of (.+?))( until end of turn)?$/i.exec(c);
+  // CR 701.11: Tifa's Limit Break: "Triple target creature's power and toughness until end of turn."
+  const dblPT = /^(double|triple) (?:(its|.+?'s) power( and toughness)?|the power( and toughness)? of (.+?))( until end of turn)?$/i.exec(c);
   if (dblPT) {
+    const triple = dblPT[1]!.toLowerCase() === 'triple';
+    dblPT.splice(1, 1);
     const whoText = dblPT[1] ? (dblPT[1] === 'its' ? 'it' : dblPT[1].replace(/'s$/, '')) : dblPT[4]!;
     const what = parseObjectRef(whoText, b);
     if (!what) return null;
-    return [{ type: 'modify', what: what.ref, double: dblPT[2] || dblPT[3] ? 'both' : 'power', until: dblPT[5] ? 'eot' : 'game' }];
+    return [{ type: 'modify', what: what.ref, double: dblPT[2] || dblPT[3] ? 'both' : 'power', ...(triple ? { triple: true } : {}), until: dblPT[5] ? 'eot' : 'game' }];
   }
   // CR 701.61a
   if (/^forage$/i.test(c)) return [{ type: 'forage' }];
@@ -5147,6 +5176,12 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const base = parseManaProduction(addAmount[1]!);
     const times = base ? parseCount(addAmount[2]!, b) : null;
     if (base && times) return [{ ...base, times }];
+  }
+  // Fangorn, Tree Shepherd: "Whenever one or more Treefolk you control attack, add twice that much {G}." — the event's count.
+  const thatMuch = add && b.eventAmount ? /^(twice )?that much (\{[WUBRGC]\})$/.exec(add[1]!) : null;
+  if (thatMuch) {
+    const base = parseManaProduction(thatMuch[2]!);
+    if (base) return [{ ...base, times: { kind: 'event', ...(thatMuch[1] ? { times: 2 } : {}) } }];
   }
   // Mana Geyser: "Add {R} for each tapped land your opponents control."
   // Culling Ritual: "Add {B} or {G} for each permanent destroyed this way" — any mix of the two.
@@ -5488,7 +5523,12 @@ function delayedOnZone(effects: EffectNode[]): boolean {
 function parsePump(c: string, b: Binder): EffectNode[] | null {
   // Without a duration it lasts indefinitely (CR 611.2a): "It gains haste." (unearth).
   // Elspeth, Storm Slayer: "Those creatures gain flying until your next turn."
-  const m = /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ?? /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
+  // Walking Bulwark: "… gains haste, can attack as though it didn't have defender, and assigns combat damage equal to its
+  // toughness rather than its power" — rule flags among the grants.
+  const m =
+    /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ??
+    /^(.+?) ((?:can attack as though (?:it|they) didn't have defender|assigns? combat damage equal to (?:its|their) toughness rather than (?:its|their) power)(?:,? and .+)?) until end of turn$/.exec(c) ??
+    /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
   if (!m) return null;
   const until = / until end of turn$/.test(c) ? 'eot' : / until your next turn$/.test(c) ? 'your_next_turn' : 'game';
   return attempt(b, (b) => {
@@ -5498,10 +5538,15 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
     if (!what || (each && !what.plural)) return null;
     // An instant or sorcery is never on the battlefield to get anything ("Search … It gains indestructible": the card found).
     if (what.ref.ref === 'self' && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
-    const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)![2]!;
-    const parts = `${verb} ${m[2]}`.split(/ and (?=gets? |gains? |has |have )/);
+    const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)?.[2] ?? '';
+    const parts = `${verb ? `${verb} ` : ''}${m[2]}`.split(/,? and (?=gets? |gains? |has |have |can attack as |assigns? combat )|, (?=can attack as |assigns? combat )/);
     const node: EffectNode = { type: 'modify', what: what.ref, until };
     for (const part of parts) {
+      const flags = PUMP_RULES[part.replace(/\bthey\b/, 'it').replace(/\btheir\b/g, 'its').replace(/^assign /, 'assigns ')];
+      if (flags) {
+        node.rules = [...((node.rules as RuleFlag[] | undefined) ?? []), ...flags];
+        continue;
+      }
       const pm = /^(gets?|gains?|has|have) (.+)$/.exec(part);
       if (!pm) return null;
       if (/^get/.test(pm[1]!)) {
@@ -5519,6 +5564,13 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
     return [node];
   });
 }
+
+/** Rule flags a temporary effect can grant along with keywords (Walking Bulwark). */
+const PUMP_RULES: Record<string, RuleFlag[]> = {
+  "can attack as though it didn't have defender": ['can_attack_with_defender'],
+  // CR 510.1a (Doran, the Siege Tower)
+  'assigns combat damage equal to its toughness rather than its power': ['damage_by_toughness'],
+};
 
 const RESTRICTIONS: Record<string, RuleFlag[]> = {
   "can't block": ['cant_block'],
@@ -5651,6 +5703,12 @@ export function parseManaSpend(text: string, b: Binder): ManaSpend | null {
   text = text.replace(/(an ability of (?:a|an) \w+) source (of the chosen type)$/, '$1 $2');
   // Gwenna: "or activate abilities of creature sources" — of creatures.
   text = text.replace(/ abilities of (creature|artifact|enchantment|land|planeswalker) sources$/, ' abilities of $1s');
+  // Shang-Chi, Master of Kung Fu: "Spend this mana only to activate abilities of creature sources." — no spells.
+  const abilitiesOnly = /^to activate abilities of (.+)$/.exec(text);
+  if (abilitiesOnly) {
+    const pf = parseFilter(abilitiesOnly[1]!, b);
+    return pf && pf.plural && !pf.filter.zone ? { abilities: pf.filter } : null;
+  }
   // Throne of Eldraine: "to cast monocolored spells of that color" — the color chosen for its source.
   text = text.replace(/ spells of that color$/, ' spells of the chosen color');
   const m = /^to cast (.+?)(?:,? or (?:to )?activate (?:abilities of (.+)|an ability of (?:a|an) (.+?)(?: source)?))?$/.exec(text);

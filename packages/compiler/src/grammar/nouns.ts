@@ -17,7 +17,7 @@ export interface ParsedFilter {
 }
 
 /** Subtypes whose plural is the same word ("Other Merfolk you control get +1/+1"). */
-const INVARIANT_PLURALS = new Set(['Merfolk', 'Kithkin', 'Moonfolk', 'Kor', 'Samurai', 'Fish', 'Sheep', 'Djinn', 'Efreet', 'Aetherborn', 'Viashino', 'Vedalken', 'Eldrazi', 'Myr', 'Nephilim', 'Surrakar', 'Jellyfish', 'Starfish', 'Equipment']);
+const INVARIANT_PLURALS = new Set(['Merfolk', 'Kithkin', 'Moonfolk', 'Kor', 'Samurai', 'Fish', 'Sheep', 'Djinn', 'Efreet', 'Aetherborn', 'Viashino', 'Vedalken', 'Eldrazi', 'Myr', 'Nephilim', 'Surrakar', 'Jellyfish', 'Starfish', 'Treefolk', 'Deer', 'Elk', 'Bison', 'Kirin', 'Equipment']);
 
 const PLURAL_HEADS = new Set(['permanents', 'spells', 'cards', 'tokens']);
 /** CR 110.4: the permanent card types. */
@@ -387,6 +387,11 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   const SAME_PLURAL = ['Treefolk', 'Merfolk', 'Kithkin', 'Moonfolk', 'Fish', 'Sheep', 'Elk', 'Samurai', 'Myr', 'Equipment'];
   // Valley Rotcaller: "Squirrels, Bats, Lizards, and Rats you control" — a list of them.
   rest = rest.replace(/\b([A-Z][\w-]*)(,?) and (?=([A-Z][\w-]*))/g, (m, a: string, comma: string, z: string) => (subtypeOf(a) && subtypeOf(z) && ((subtypeOf(a) === a) === (subtypeOf(z) === z) || SAME_PLURAL.includes(a) || SAME_PLURAL.includes(z)) ? `${a}${comma} or ` : m));
+  // Valley Questcaller: "other Rabbits, Bats, Birds, and/or Mice you control" — "other" goes with every one of them.
+  if (/^other [A-Z][\w-]*,? (?:and\/)?or |^other [A-Z][\w-]*, /.test(rest)) {
+    rest = rest.slice(6);
+    f.other = true;
+  }
   const parts = rest.split(/,\s*(?:and\/)?or\s+|\s+(?:and\/)?or\s+|,\s+/).map((p) => p.replace(/^an? /, ''));
   // "multicolored instant or sorcery spell", "red instant or sorcery spell": the leading words
   // describe every alternative.

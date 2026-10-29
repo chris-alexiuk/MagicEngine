@@ -398,12 +398,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return cond.orTied ? mine >= best : mine > best;
     }
     case 'discarded_this_turn':
+      // The Raven Man: "if a player discarded a card this turn" (or an opponent, or you).
+      if (cond.who) return (g.turnLog.discarded ?? []).some((d) => d.player !== undefined && (cond.who === 'any' || (cond.who === 'you') === (d.player === controller)));
       // CR 702.187b (mayhem): "As long as you discarded this card this turn" — it's still the card that was discarded.
       return Boolean(source && (g.turnLog.discarded ?? []).some((d) => d.id === source.id && d.zcc === source.zcc));
     case 'combat_damage_by': {
       // CR 702.76a (prowl): "a source you controlled that had any of this spell's creature types";
       // CR 702.173a (freerunning): "an Assassin creature or a commander under your control".
       // Blitzball: "if an opponent was dealt combat damage by a legendary creature this turn" — anyone's creature.
+      if (cond.anyone) return (g.turnLog.combatDamagers ?? []).some((d) => d.types.includes('Creature') && d.subtypes.includes(String(cond.subtype)));
       if (cond.toOpponent) return (g.turnLog.combatDamagers ?? []).some((d) => d.player !== controller && d.types.includes('Creature') && (!cond.legendary || d.legendary));
       const mine = (g.turnLog.combatDamagers ?? []).filter((d) => d.controller === controller);
       if (cond.sharesType) {

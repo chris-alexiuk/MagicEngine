@@ -547,7 +547,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // Unless it says otherwise, a permanent is put onto the battlefield under its owner's control.
         const controller = node.under === 'you' ? ctx.controller : o.owner;
         if (o.zone === 'stack' || o.zone === 'battlefield') continue;
-        const counters = node.counters as Record<string, number> | undefined;
+        // Teferi's Time Twist: "If it enters as a creature, it enters with an additional +1/+1 counter on it."
+        const counters = node.countersIfCreature && !faceOf(ctx.g, o).types.includes('Creature') ? undefined : (node.counters as Record<string, number> | undefined);
         // CR 712.14a: "transformed" — a double-faced card enters with its back face up (others don't move at all).
         const dfc = (ctx.g.cards[o.card]?.faces.length ?? 0) > 1 && ['transform', 'modal_dfc', 'meld'].includes(ctx.g.cards[o.card]!.layout);
         if (node.transformed && !dfc) continue;
@@ -902,9 +903,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     // CR 701.10a / 701.10c: "double its power and toughness" — it gets +X/+Y, where X and Y are its power and toughness now.
     if (node.double) {
+      // CR 701.11a: tripling gives it +2X/+2Y.
+      const k = node.triple ? 2 : 1;
       for (const o of objects) {
-        const p = power(g, o);
-        const t = node.double === 'both' ? toughness(g, o) : 0;
+        const p = k * power(g, o);
+        const t = node.double === 'both' ? k * toughness(g, o) : 0;
         g.effects.push({
           id: `e${g.nextId++}`, timestamp: ++g.clock,
           source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
@@ -4655,6 +4658,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   if (e.type === 'move' && ['self', 'target', 'trigger_object'].includes(String((e.what as { ref?: string } | undefined)?.ref))) return refObjects(ctx, ref(e, 'what')).length > 0;
   // Coral Atoll: "unless you return an untapped Island you control to its owner's hand".
   if (e.type === 'move_chosen') return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null })).length >= amountOf(ctx, e.amount ?? 1);
+  // CR 119.4: "… or pays 3 life" — only with that much life (and a life total that can change, CR 119.8).
+  if (e.type === 'lose_life' && e.paid) return (g.players[chooser]?.life ?? 0) >= amountOf(ctx, e.amount) && !playerRule(g, chooser, 'life_cant_change');
   // CR 701.68b, 701.61a
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
@@ -4811,7 +4816,8 @@ function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reor
 }
 
 function describeEffects(list: EffectNode[]): string {
-  return list.map((e) => e.type.replace(/_/g, ' ')).join(', ');
+  // "… or pays 3 life" (CR 119.4).
+  return list.map((e) => (e.type === 'lose_life' && e.paid && typeof e.amount === 'number' ? `pay ${e.amount} life` : e.type.replace(/_/g, ' '))).join(', ');
 }
 
 function describeSearch(node: EffectNode, count: number): string {
@@ -5267,7 +5273,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // Firemane Commando: "Whenever another player attacks …".
     if (t.other && check.g.active === check.controller) return [];
     // General Kreat: "Whenever one or more Goblins you control attack" — only those count.
-    const attacks = t.filter ? e.attacks.filter(({ attacker }) => check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.filter as ObjectFilter, { controller: check.controller, source: check.source ?? null })) : e.attacks;
+    const matching = t.filter ? e.attacks.filter(({ attacker }) => check.g.objects[attacker] && matchesFilter(check.g, check.g.objects[attacker]!, t.filter as ObjectFilter, { controller: check.controller, source: check.source ?? null })) : e.attacks;
+    // Jolene, the Plunder Queen: "attacks one or more of your opponents" — the attackers attacking them.
+    const attacks = t.atOpponents ? matching.filter(({ target }) => target.kind === 'player' && target.player !== check.controller) : matching;
     if (!attacks.length) return [];
     // CR 508.3e: "Whenever you attack a player [with one or more …]", "two or more creatures you control attack a
     // player" — once for each player attacked by enough of the matching creatures.

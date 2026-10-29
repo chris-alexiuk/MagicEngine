@@ -594,11 +594,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === 'evidence was collected') return { type: 'paid', cost: 'collect_evidence' };
   // CR 702.187b (mayhem): "you discarded this card this turn"
   if (/^you discarded (?:~|it) this turn$/.test(t)) return { type: 'discarded_this_turn' };
+  // The Raven Man: "if a player discarded a card this turn"; Tinybones: "if an opponent discarded a card this turn".
+  const someoneDiscarded = /^(a player|an opponent|you) discarded a card this turn$/.exec(t);
+  if (someoneDiscarded) return { type: 'discarded_this_turn', who: someoneDiscarded[1] === 'a player' ? 'any' : someoneDiscarded[1] === 'you' ? 'you' : 'opponent' };
   // CR 702.76a (prowl), CR 702.173a (freerunning)
   if (/^a player was dealt combat damage this turn by a source that, at the time it dealt that damage, was under your control and had any of ~'s creature types$/.test(t)) {
     return { type: 'combat_damage_by', sharesType: true };
   }
   // Blitzball: "an opponent was dealt combat damage by a legendary creature this turn".
+  // Lost Monarch of Ifnir: "if a player was dealt combat damage by a Zombie this turn" — anyone's.
+  const bySubtype = /^a player was dealt combat damage by an? ([A-Z]\w+) this turn$/.exec(t);
+  if (bySubtype && isSubtype(bySubtype[1]!)) return { type: 'combat_damage_by', anyone: true, subtype: bySubtype[1]! };
   const byLegend = /^an opponent was dealt combat damage by an? (legendary )?creature this turn$/.exec(t);
   if (byLegend) return { type: 'combat_damage_by', toOpponent: true, ...(byLegend[1] ? { legendary: true } : {}) };
   const freerun = /^a player was dealt combat damage this turn by a creature that, at the time it dealt that damage, was an? (\w+) creature or a commander under your control$/.exec(t);
@@ -916,6 +922,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (toYards) {
     const n = parseAmount(toYards[1]!);
     return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[2] ? { cardType: capitalise(toYards[2].trim()) } : {}) } : null;
+  }
+  // Ozai, the Phoenix King: "as long as you have six or more unspent mana".
+  const unspent = /^you have (\w+) or more unspent mana$/.exec(t);
+  if (unspent) {
+    const n = parseAmount(unspent[1]!);
+    return typeof n === 'number' ? { type: 'amount', amount: { kind: 'unspent_mana' }, op: 'ge', n } : null;
   }
   // Case of the Shattered Pact: "There are five colors among permanents you control."
   const colorsAmong = /^there are (\w+)(?: or more)? colors among (.+)$/.exec(t);

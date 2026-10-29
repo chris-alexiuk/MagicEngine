@@ -1778,8 +1778,9 @@ describe('slice 159', () => {
   it('reads "X target …" with the announced X, and "Do this only once each turn"', () => {
     expect(parse('Exile X target creatures. For each creature exiled this way, its controller creates a 2/2 green Boar creature token.', 'Sorcery', 'C').abilities[0]).toMatchObject({ targets: [{ countX: true, filter: { types: ['Creature'] } }] });
     expect(parse('{X}, {T}: Untap X target lands.', 'Artifact', 'C').abilities[0]).toMatchObject({ targets: [{ countX: true }] });
-    expect(parse('{U}, Sacrifice this enchantment: Return up to X target permanents to their owners\' hands, where X is the number of verse counters on this enchantment.', 'Enchantment', 'R').unparsed).toHaveLength(1);
-    expect(parse('When this creature enters, return up to X target Zombie cards from your graveyard to the battlefield, where X is the number of opponents you have.', 'Creature — Zombie', 'R').unparsed).toHaveLength(1);
+    // Recantation, Rot Hulk: an X the text defines — counted as the targets are chosen.
+    expect(parse('{U}, Sacrifice this enchantment: Return up to X target permanents to their owners\' hands, where X is the number of verse counters on this enchantment.', 'Enchantment', 'R').abilities[0]).toMatchObject({ targets: [{ upTo: true, countAmount: { kind: 'counters', counter: 'verse' } }] });
+    expect(parse('When this creature enters, return up to X target Zombie cards from your graveyard to the battlefield, where X is the number of opponents you have.', 'Creature — Zombie', 'R').abilities[0]).toMatchObject({ targets: [{ upTo: true, countAmount: { kind: 'players', who: 'opponents' } }] });
     expect(parse('Whenever you put one or more +1/+1 counters on a creature you control, you may draw that many cards. Do this only once each turn.', 'Enchantment', 'T').abilities[0]).toMatchObject({ doOnce: true, effects: [{ type: 'may', doOnce: true }] });
   });
   it('reads punishers: "unless they sacrifice … or discard a card", each opponent on their own', () => {

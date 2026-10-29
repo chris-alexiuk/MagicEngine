@@ -268,8 +268,9 @@ function whoseTarget(g: GameState, t: Target): PlayerId | undefined {
 }
 
 /** How many targets a spec takes at most (CR 601.2c). */
-export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec, x = 0): number {
+export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec, x = 0, source: GameObject | null = null): number {
   if (spec.countX) return Math.max(0, x);
+  if (spec.countAmount) return Math.max(0, amountOf({ g, controller, source, events: [], targets: [], x, memo: {} } as EffectContext, spec.countAmount));
   if (spec.plusKicks) return (spec.count ?? 1) + targetKicks;
   return spec.perPlayer ? perPlayerSet(g, controller, spec).length : (spec.count ?? 1);
 }
@@ -299,7 +300,7 @@ function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
     const min = spec.perPlayer ? targetsRequired(g, controller, spec, candidates) : spec.upTo ? spec.min : undefined;
     return {
       text: spec.text,
-      count: targetCount(g, controller, spec, x),
+      count: targetCount(g, controller, spec, x, source),
       upTo: Boolean(spec.upTo || spec.perPlayer),
       // "one, two, or three targets": at least this many (CR 601.2c).
       ...(min ? { min } : {}),
@@ -383,7 +384,7 @@ function defaultTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec
 function defaultTargetsInto(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number, out: Target[][]): Target[][] | null {
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source).filter((t) => !another(spec) || !out.flat().some((u) => sameTarget(t, u)));
-    const n = targetCount(g, controller, spec, x);
+    const n = targetCount(g, controller, spec, x, source);
     if (candidates.length < targetsRequired(g, controller, spec, candidates, x)) return null;
     if (spec.perPlayer) {
       // One for each player who has a legal one.
@@ -498,7 +499,7 @@ function chooseTargetsGiven(g: GameState, controller: PlayerId, specs: TargetSpe
   }
   return specs.map((spec, i) => {
     const list = given[i]!;
-    const n = targetCount(g, controller, spec, x);
+    const n = targetCount(g, controller, spec, x, source);
     if (spec.perPlayer) {
       // CR 601.2c: each target for a different one of those players.
       const need = targetsRequired(g, controller, spec, targetCandidates(g, controller, spec, source));
