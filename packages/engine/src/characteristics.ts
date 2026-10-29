@@ -886,6 +886,10 @@ export function matchesFilter(
       const t = g.combat?.attackers[o.id]?.target;
       if (t?.kind !== 'player' || t.player === ctx.controller) return false;
     }
+    if (f.attackingPlayer !== undefined || f.attackingPlayerRef) {
+      const t = g.combat?.attackers[o.id]?.target;
+      if (t?.kind !== 'player' || t.player !== f.attackingPlayer) return false;
+    }
   }
   // Sting, the Glinting Dagger: "blocking or blocked by a Goblin or Orc" (CR 509.1g).
   if (f.combatPartner && !combatPartners(g, o.id).some((id) => g.objects[id] && matchesFilter(g, g.objects[id]!, f.combatPartner!, { ...ctx, anyZone: false }))) return false;

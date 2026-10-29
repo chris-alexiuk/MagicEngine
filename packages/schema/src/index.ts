@@ -484,6 +484,9 @@ export interface ObjectFilter {
   attackedThisTurn?: true;
   /** Wildsear, Scouring Maw: "Enchantment spells you cast from your hand" — a spell cast from that zone. */
   castFromZone?: 'hand' | 'exile' | 'graveyard';
+  /** Within Range: "creatures attacking them" — that player (bound to `attackingPlayer` as it's counted). */
+  attackingPlayerRef?: Ref;
+  attackingPlayer?: string;
   /** Domri, Anarch of Bolas: "Creature spells you cast" — not a copy of a spell (CR 707.10). */
   notCopy?: true;
   /** Avenging Arrow: "that dealt damage this turn" */

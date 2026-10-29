@@ -606,6 +606,11 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const o = ctx.affected;
     return bindFilter(ctx, { ...rest, attachedToObject: o ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } });
   }
+  // Within Range: "the number of creatures attacking them" — the player counted for.
+  if (f.attackingPlayerRef) {
+    const { attackingPlayerRef, ...rest } = f;
+    return bindFilter(ctx, { ...rest, attackingPlayer: refPlayers(ctx, attackingPlayerRef as Ref)[0] ?? '\u0000none' });
+  }
   // Patriarch's Bidding: "creature cards of a type chosen this way".
   if (f.subtypesChosenThisWay) {
     const { subtypesChosenThisWay: _c, ...rest } = f;

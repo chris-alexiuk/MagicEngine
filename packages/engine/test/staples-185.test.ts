@@ -592,6 +592,15 @@ const CARDS = [
   makeCard({ name: 'Wildsear Lite', type_line: 'Legendary Creature — Dragon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'Enchantment spells you cast from your hand have cascade.' }),
   makeCard({ name: 'Stone Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." }),
   makeCard({ name: 'Morph Lite', type_line: 'Creature — Human Wizard', mana_cost: '{5}{U}', cmc: 6, power: '1', toughness: '1', oracle_text: 'Morph {3}' }),
+  makeCard({ name: 'Vohar Lite', type_line: 'Legendary Creature — Merfolk Wizard', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: '{T}: Draw a card, then discard a card. If you discarded an instant or sorcery card this way, each opponent loses 1 life and you gain 1 life.' }),
+  makeCard({ name: 'Goblin Visions Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your first main phase, discard a card. If you do, draw a card.' }),
+  makeCard({ name: 'Dion Lite', type_line: 'Legendary Creature — Human Knight', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'During your turn, Dion Lite and other Knights you control have flying.' }),
+  makeCard({ name: 'Knight Squire Lite', type_line: 'Creature — Human Knight', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Sinew Sword Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy up to one target planeswalker and up to one target artifact.' }),
+  makeCard({ name: 'Mauhur Lite', type_line: 'Legendary Creature — Orc Soldier', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'If one or more +1/+1 counters would be put on an Army, Goblin, or Orc you control, that many plus one +1/+1 counters are put on it instead.' }),
+  makeCard({ name: 'Goblin Lite', type_line: 'Creature — Goblin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Zhalfir Lite', type_line: 'Legendary Creature — Human Wizard', mana_cost: '{0}', power: '3', toughness: '4', oracle_text: "Creature cards you own that aren't on the battlefield have flash." }),
+  makeCard({ name: 'Within Range', type_line: 'Enchantment', mana_cost: '{2}{B}', cmc: 3, oracle_text: 'Whenever you attack, each opponent loses life equal to the number of creatures attacking them.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5404,6 +5413,73 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it('Within Range: each opponent loses life equal to the number of creatures attacking them', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'alice', 'Within Range', 'battlefield');
+    const zs = [0, 1, 2].map(() => give(g, 'alice', 'Zombie', 'battlefield', { sick: false }));
+    const [bob, carol] = [g.players.bob!.life, g.players.carol!.life];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [
+      { attacker: zs[0]!, target: { kind: 'player', player: 'bob' } },
+      { attacker: zs[1]!, target: { kind: 'player', player: 'bob' } },
+      { attacker: zs[2]!, target: { kind: 'player', player: 'carol' } },
+    ] } });
+    g = settle(g);
+    expect([bob - g.players.bob!.life, carol - g.players.carol!.life]).toEqual([2, 1]);
+  });
+  it('Mauhúr: one more +1/+1 counter on an Army, Goblin or Orc', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Mauhur Lite', 'battlefield');
+    const gob = give(g, 'alice', 'Goblin Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    for (const t of [gob, cub]) g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Counter Pump Lite', 'hand'), targets: [[{ kind: 'object', object: t }]] }));
+    expect([g.objects[gob]!.counters['+1/+1'], g.objects[cub]!.counters['+1/+1']]).toEqual([2, 1]);
+  });
+  it("Teferi, Mage of Zhalfir: your creature cards have flash", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Zhalfir Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'hand');
+    g = toStep(g, 'upkeep', 'bob');
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === cub) || g.priority !== 'alice').toBe(true);
+    for (let i = 0; i < 5 && g.priority !== 'alice'; i++) g = act(g, { type: 'pass', player: g.priority! });
+    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === cub)).toBe(true);
+  });
+  it('Vohar: drains only when an instant or sorcery card was discarded this way', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const vohar = give(g, 'alice', 'Vohar Lite', 'battlefield', { sick: false });
+    for (const id of [...g.zones.hand.alice!]) g.zones.hand.alice = g.zones.hand.alice!.filter((x) => x !== id);
+    const bolt = give(g, 'alice', 'Bolt', 'library');
+    g.zones.library.alice = [bolt, ...g.zones.library.alice!.filter((x) => x !== bolt)];
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: vohar, ability: 0 }));
+    if (g.pending?.kind === 'discard') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: g.zones.hand.alice!.slice(0, 1) } } as never));
+    expect(g.players.bob!.life).toBe(life - 1);
+  });
+  it('Shadow of the Goblin: no card to discard, no card drawn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Goblin Visions Lite', 'battlefield');
+    g = toStep(toStep(g, 'main1', 'bob'), 'main1', 'alice');
+    expect(g.stack.length).toBe(1);
+    const library = g.zones.library.alice!.length;
+    g.zones.hand.alice = [];
+    for (let i = 0; i < 5 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    expect([g.zones.hand.alice!.length, g.zones.library.alice!.length]).toEqual([0, library]);
+  });
+  it('Dion: he and other Knights fly during your turn only', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dion = give(g, 'alice', 'Dion Lite', 'battlefield');
+    const squire = give(g, 'alice', 'Knight Squire Lite', 'battlefield');
+    const fly = (id: string) => chars(g, g.objects[id]!).keywords.some((k) => k.id === 'flying');
+    expect([fly(dion), fly(squire)]).toEqual([true, true]);
+    g = toStep(g, 'main1', 'bob');
+    expect([fly(dion), fly(squire)]).toEqual([false, false]);
+  });
+  it('Sword of Sinew and Steel: up to one planeswalker and up to one artifact', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const trinket = give(g, 'bob', 'Trinket', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Sinew Sword Lite', 'hand'), targets: [[], [{ kind: 'object', object: trinket }]] }));
+    expect(g.objects[trinket]!.zone).toBe('graveyard');
+  });
   it("a face-down spell isn't an artifact: Powerstone-style mana can't pay for it", () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     for (const id of g.zones.battlefield) if (g.objects[id]!.controller === 'alice') g.objects[id]!.tapped = true;

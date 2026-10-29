@@ -83,6 +83,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Sword of Sinew and Steel: "destroy up to one target planeswalker and up to one target artifact" — each its own target.
+  // Urgent Necropsy: "Destroy up to one target artifact, up to one target creature, … and up to one target planeswalker."
+  text = text.replace(/\b([Dd])estroy ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
+    list.split(/,? and |, /).map((one, i) => `${i === 0 ? `${d}estroy` : 'Destroy'} ${one}.`).join(' '),
+  );
   // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
   text = text.replace(/\b([Uu])ntap (it|~) and all ([^.]+)\./, (_m, u: string, it: string, rest: string) => `${u}ntap ${it}. Untap all ${rest}.`);
   // Alandra, Sky Dreamer: "Alandra and Drakes you control each get +X/+X until end of turn, where X is …" — it, and the others.
@@ -1955,14 +1960,15 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         const expr = parseCount(what, b);
         const inner = expr && parseInner(text, b);
         // "each opponent loses life equal to … that player's …": each of them (below).
-        if (inner?.length === 1 && (inner[0] as { who?: Ref }).who?.ref === 'players' && /\b(?:that player|they|their)\b/.test(what)) return null;
+        if (inner?.length === 1 && (inner[0] as { who?: Ref }).who?.ref === 'players' && /\b(?:that player|they|their|them)\b/.test(what)) return null;
         return inner && expr ? bindX(inner, expr) : null;
       });
       if (r) return r;
       // "~ deals damage to target player equal to the number of cards in that player's hand": the count names a
       // player the instruction targets.
       // Peer into the Abyss: "Target player draws cards equal to … cards in their library" — that player's.
-      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b|\bthey (?:control|lost|gained)\b/.test(what)
+      // Within Range: "… equal to the number of creatures attacking them".
+      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b|\bthey (?:control|lost|gained)\b|\battacking them\b/.test(what)
         ? attempt(b, (b) => {
             const inner = parseInner(text, b);
             // "Each opponent loses life equal to the life that player lost this turn": "that player" is each of them.

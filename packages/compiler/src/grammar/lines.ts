@@ -2311,6 +2311,15 @@ function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | nu
 
 /** Sigarda's Aid, Shimmer Myr: "You may cast Aura and Equipment spells as though they had flash." (CR 702.8a) */
 function parseFlashFor(body: string, b: Binder): PlayerRuleNode | null {
+  // Teferi, Mage of Zhalfir: "Creature cards you own that aren't on the battlefield have flash." — cast as though they had it
+  // (the cards you own; CR 702.8a).
+  const cards = /^(\w+) cards you own that aren't on the battlefield have flash$/.exec(body);
+  if (cards) {
+    const pf = parseFilter(`${cards[1]!.toLowerCase()} spells`, b);
+    if (!pf || !pf.plural) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return { type: 'player_rule', who: 'you', rule: 'flash', filter: { ...filter, owner: 'you' } };
+  }
   const m = /^You may cast (.+?) spells as though they had flash$/.exec(body);
   if (!m) return null;
   const pf = parseFilter(`${m[1]!.replace(/ and /g, ' or ')} spells`, b);
@@ -3150,13 +3159,14 @@ export const quantityReplacementRule: GrammarRule = {
     }
     // Winding Constrictor: "If one or more counters would be put on an artifact or creature you control, that many plus one of
     // each of those kinds of counters are put on that permanent instead."
-    const anyKind = /^If one or more counters would be put on (.+?), (.+?) of each of those kinds of counters are put on (?:it|that \w+) instead\.$/.exec(line);
+    // Mauhúr, Uruk-hai Captain: "on an Army, Goblin, or Orc you control, …" — the list keeps its commas.
+    const anyKind = /^If one or more counters would be put on (.+), ((?:that many|twice that many|three times that many)[^,]*?) of each of those kinds of counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (anyKind) {
       const op = quantityOp(anyKind[2]!);
       const pf = parseFilter(anyKind[1]!.replace(/^(?:a|an) /, ''), b);
       return op && pf && !pf.plural ? make({ event: 'counters', filter: pf.filter, ...op }) : null;
     }
-    const counters = /^If one or more (\S+) counters would be put on (.+?), (.+?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
+    const counters = /^If one or more (\S+) counters would be put on (.+), ((?:that many|twice that many|three times that many)[^,]*?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (counters) {
       const op = quantityOp(counters[3]!);
       const pf = parseFilter(counters[2]!.replace(/^(?:a|an) /, ''), b);

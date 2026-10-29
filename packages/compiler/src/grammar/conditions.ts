@@ -302,7 +302,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // The Reality Chip: "~ is attached to a creature" — what it's attached to is one.
   const attachedTo = /^(?:~|it) is attached to (a|an) (creature|permanent|land|artifact)$/.exec(t);
   if (attachedTo) return { type: 'is', of: { ref: 'attached' }, filter: attachedTo[2] === 'permanent' ? {} : { types: [capitalise(attachedTo[2]!)] } };
-  const attached = /^~ is (equipped|enchanted)$/.exec(t);
+  // Merry, Esquire of Rohan: "~ has first strike as long as it's equipped" — "it" being this creature.
+  const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
   if (/^~ is monstrous$/.test(t)) return { type: 'monstrous' };
   // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human", "enchanted permanent is a creature".

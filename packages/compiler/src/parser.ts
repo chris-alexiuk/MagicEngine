@@ -121,6 +121,21 @@ export class ParserRegistry {
         // Rakdos, Lord of Riots: "You can't cast Rakdos unless an opponent lost life this turn." — cast it only if that holds.
         const castUnless = new RegExp(`^You can't cast (?:~|this spell|${names}) unless (.+)\\.$`).exec(l);
         if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
+        // Nighthowler, Eidolon of Countless Battles (bestow): "This creature and enchanted creature each get +X/+X, where X is …"
+        const andEnchanted = /^(?:This creature|~) and enchanted creature each get (.+)\.$/.exec(l);
+        if (andEnchanted) return [`This creature gets ${andEnchanted[1]}.`, `Enchanted creature gets ${andEnchanted[1]}.`];
+        // Tidal Barracuda: "Any player may cast spells as though they had flash."
+        if (l === 'Any player may cast spells as though they had flash.') return ['Players may cast spells as though they had flash.'];
+        // Vizier of the Menagerie: "You can spend mana of any type to cast creature spells." — as though any color.
+        const anyType = /^You can spend mana of any type to cast (.+) spells\.$/.exec(l);
+        if (anyType) return [`You may spend mana as though it were mana of any color to cast ${anyType[1]} spells.`];
+        // Dion, Bahamut's Dominant: "During your turn, Dion and other Knights you control have flying."; Yuna: "Yuna and
+        // enchantment creatures you control have …" — the card, and the others (once each).
+        const selfAndOthers = new RegExp(`^((?:[A-Z][\\w' ]+ — )?(?:During your turn, )?)(?:~|this creature|${names}) and (?:other )?(.+? you control) have (.+)\\.$`).exec(l);
+        if (selfAndOthers && !/\bget\b/.test(selfAndOthers[3]!)) {
+          const lead = selfAndOthers[1]!;
+          return [`${lead}${lead ? '~' : '~'} has ${selfAndOthers[3]}.`, `${lead}${lead ? 'other' : 'Other'} ${selfAndOthers[2]} have ${selfAndOthers[3]}.`];
+        }
         // Mycosynth Golem: "Artifact creature spells you cast have affinity for artifacts." — CR 702.41a: each costs {1} less
         // for each artifact you control (Pearl-Ear: "affinity for Auras").
         const affinity = /^((?:[A-Z][a-z]+(?: and [a-z]+| [a-z]+)* )?[Ss]pells you cast) have affinity for (artifacts|Auras|Equipment|enchantments|creatures)\.$/.exec(l);
@@ -314,7 +329,9 @@ export class ParserRegistry {
       // Imoti, Celebrant of Bounty: "Spells you cast with mana value 6 or greater have cascade."
       // Wildsear, Scouring Maw: "Enchantment spells you cast from your hand have cascade."
       const fromHand = / from your hand have (?:cascade|storm)\.$/.test(line) ? line.replace(/ from your hand have /, ' have ') : line;
-      const kind = /^(Enchantment|Artifact|Creature) spells you cast/.exec(fromHand)?.[1];
+      // The First Sliver: "Sliver spells you cast have cascade." — a card type or a subtype.
+      const kind = /^([A-Z][a-z]+) spells you cast (?:have|with)/.exec(fromHand)?.[1];
+      const kindFilter = kind ? parseFilter(`${['Enchantment', 'Artifact', 'Creature', 'Instant', 'Sorcery', 'Planeswalker'].includes(kind) ? kind.toLowerCase() : kind} spells`, new Binder(env as GrammarEnv)) : null;
       const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
       if (spellGrant) {
         const kws = this.keywords.parseLine(spellGrant[4]!);
@@ -323,7 +340,7 @@ export class ParserRegistry {
           if (abilities) kws[0]!.abilities = abilities;
         }
         if (kws?.length === 1 && keywordSupported(kws[0]!)) {
-          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kind ? { types: [kind] } : {}), ...(fromHand !== line ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
+          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kindFilter ? (({ zone: _z, ...f }) => f)(kindFilter.filter) : {}), ...(fromHand !== line ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
           result.abilities.push({ kind: 'static', text: line, effect: { type: 'continuous', affected: { ref: 'all', filter }, keywords: kws } } as AbilityNode);
         } else result.unparsed.push(line);
         continue;
