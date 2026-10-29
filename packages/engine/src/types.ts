@@ -309,6 +309,8 @@ export interface CombatState {
   attackersDeclared: boolean;
   /** Kytheon: the creatures declared as attackers this combat (CR 508.1). */
   declared?: { id: ObjectId; zcc: number }[];
+  /** Pack tactics: the attackers' total power as they were declared. */
+  declaredPower?: number;
   /** Defending players still to declare blockers, in APNAP order (CR 802.4). */
   toDeclareBlockers: PlayerId[];
   /** Creatures that had first strike or double strike when a first-strike damage step began (CR 510.4). */

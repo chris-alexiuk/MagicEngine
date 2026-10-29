@@ -404,6 +404,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const twice = made.map((e) => ({ ...e, amount: { ...(e.amount as object), times: 2 } }));
     return [{ type: 'if', cond, effects: twice, else: made }];
   }
+  // Consult the Star Charts: "Look at the top X cards …. Put one of those cards into your hand. If this spell was kicked, put
+  // two of those cards into your hand instead. Put the rest on the bottom of your library in a random order."
+  const moreIf = /^(Look at the top [^.]+)\. Put one of those cards into your hand\. If ([^,]+), put two of those cards into your hand instead\. (Put the rest [^.]+\.)$/.exec(text.trim());
+  if (moreIf) {
+    const cond = parseCondition(moreIf[2]!, b);
+    const one = cond ? attempt(b, (b) => parseEffectText(`${moreIf[1]}. Put one of those cards into your hand. ${moreIf[3]}`, b)) : null;
+    const two = one ? attempt(b, (b) => parseEffectText(`${moreIf[1]}. Put two of those cards into your hand. ${moreIf[3]}`, b)) : null;
+    return cond && one && two ? [{ type: 'if', cond, effects: two, else: one }] : null;
+  }
   // Hellkite Courser: "you may put a commander you own from the command zone onto the battlefield. It gains haste. Return it
   // to the command zone at the beginning of the next end step."
   if (/^You may put a commander you own from the command zone onto the battlefield\. It gains haste\. Return it to the command zone at the beginning of the next end step\.$/.test(text.trim())) {
@@ -1701,7 +1710,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           out.push(...now);
           continue;
         }
-        const inner = parseSentence(capitalise(what), b);
+        // Berserk: "… destroy that creature if it attacked this turn" — a condition on the delayed effect.
+        const inner = parseSentence(capitalise(what), b) ?? (/ if [^,]+$/.test(what) ? attempt(b, (b) => parseEffectText(`${capitalise(what)}.`, b)) : null);
         if (!inner) return null;
         // Fickle Efreet: "flip a coin at end of combat. If you lose the flip, …" — the flip's outcome waits for it too.
         while (inner.some((n) => n.type === 'flip_coin') && /^If you (?:win|lose) the flip, /.test(sentences[i + 1] ?? '')) {
@@ -2196,6 +2206,40 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const node = made?.length === 1 && made[0]!.type === 'create_token' ? made[0]! : null;
     return node ? [{ ...node, amount: { kind: 'discover_shortfall', n: Number(shortfall[1]) } }] : null;
   }
+  // Extract from Darkness: "Then you put a creature card from a graveyard onto the battlefield under your control." — any
+  // graveyard's, chosen as it resolves.
+  // Soul of Windgrace: "you may put a land card from a graveyard onto the battlefield tapped under your control".
+  const fromAYard = /^(?:Then )?[Yy]ou (may )?put (?:a|an) (.+? card) from a graveyard onto the battlefield( tapped)? under your control$/.exec(s);
+  if (fromAYard) {
+    const pf = parseFilter(`${fromAYard[2]} in your graveyard`, b.clone());
+    if (pf && !pf.plural) {
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      b.it = { ref: 'chosen_object' };
+      const put: EffectNode[] = [
+        { type: 'choose_object', filter: { ...filter, zone: 'graveyard' } },
+        { type: 'move', what: { ref: 'chosen_object' }, to: 'battlefield', under: 'you', ...(fromAYard[3] ? { tapped: true } : {}) },
+      ];
+      return fromAYard[1] ? [{ type: 'may_do', effects: put }] : put;
+    }
+  }
+  // Lord of the Void: "exile the top seven cards of that player's library, then put a creature card from among them onto the
+  // battlefield under your control".
+  const exilePut = /^(.+?), then put (?:a|an) (.+? card) from among them onto the battlefield( tapped)?( under your control)?$/.exec(s);
+  if (exilePut) {
+    const r = attempt(b, (b) => {
+      const first = parseSentence(exilePut[1]!, b);
+      const pf = first?.length === 1 && first[0]!.type === 'exile_top' && !first[0]!.play ? parseFilter(`${exilePut[2]} in your graveyard`, b.clone()) : null;
+      if (!first || !pf || pf.plural) return null;
+      const { zone: _z, owner: _o, ...filter } = pf.filter;
+      b.it = { ref: 'chosen_object' };
+      return [
+        ...first,
+        { type: 'choose_object', filter: { ...filter, zone: 'exile' }, among: { ref: 'moved_onto' } },
+        { type: 'move', what: { ref: 'chosen_object' }, to: 'battlefield', ...(exilePut[3] ? { tapped: true } : {}), ...(exilePut[4] ? { under: 'you' } : {}) },
+      ];
+    });
+    if (r) return r;
+  }
   // Party Thrasher: "exile the top two cards of your library, then choose one of them" — "that card" afterwards.
   const exileChoose = /^[Ee]xile the top (two|three|four|five) cards of your library, then choose one of them$/.exec(s);
   if (exileChoose) {
@@ -2217,6 +2261,25 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       return rest ? [{ type: 'modify', what: what.ref, rules: ['assigns_no_combat_damage'], until: 'eot' }, ...rest] : null;
     });
     if (r) return r;
+  }
+  // Kroxa: "each opponent discards a card, then each opponent who didn't discard a nonland card this way loses 3 life" —
+  // each of them on their own.
+  const discardOrLose = /^[Ee]ach (opponent|player) discards a card, then each \1 who didn't discard (?:a|an) (.+? card) this way loses (\d+) life$/.exec(s);
+  if (discardOrLose) {
+    const pf = parseFilter(`${discardOrLose[2]} in your hand`, b.clone());
+    if (pf && !pf.plural) {
+      const { zone: _z, owner: _o, ...f } = pf.filter;
+      if (Object.keys(f).some((k) => k !== 'types' && k !== 'notTypes')) return null;
+      const discarded: AmountExpr = { kind: 'moved_this_way', how: 'discarded', yours: true, ...(f.types ? { types: f.types } : {}), ...(f.notTypes ? { notTypes: f.notTypes } : {}) };
+      return [{
+        type: 'players_do',
+        players: { ref: 'players', who: discardOrLose[1] === 'opponent' ? 'opponents' : 'each' },
+        effects: [
+          { type: 'discard', amount: 1, who: { ref: 'you' } },
+          { type: 'if', cond: { type: 'amount', amount: discarded, op: 'ge', n: 1 }, effects: [], else: [{ type: 'lose_life', amount: Number(discardOrLose[3]), who: { ref: 'you' } }] },
+        ],
+      }];
+    }
   }
   // Starfall Invocation: "return a creature card put into your graveyard this way to the battlefield under your control".
   const backThisWay = /^[Rr]eturn (?:a|an) (.+? card) put into your graveyard this way to the battlefield( tapped)?(?: under your control)?$/.exec(s);
@@ -2612,7 +2675,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // nonland permanent of their choice or discard a card" (either); "Each opponent loses 3 life unless that player …"
   // (each of them on their own).
   // Coral Atoll: "sacrifice it unless you return an untapped Island you control to its owner's hand"
-  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?|returns?) (.+)$/.exec(s);
+  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?|returns?|taps?) (.+)$/.exec(s);
   if (unlessDoes) {
     const r = attempt(b, (b) => {
       const third = (v: string) => (v.endsWith('s') ? v : `${v}s`);
@@ -2635,8 +2698,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const payer = inner ? payerOf(unlessDoes[2]!, before, b) : null;
       if (!inner || !payer || payer.ref === 'players') return null;
       // "unless you return an untapped Island you control to its owner's hand" — one you choose (move_chosen).
+      // Command Bridge: "sacrifice it unless you tap an untapped permanent you control" — one the payer chooses.
+      const tapOne = (o: string) => {
+        const m = /^(a|an|one|two|three) untapped (.+? you control)$/.exec(o);
+        const pf = m ? parseFilter(m[2]!, b.clone()) : null;
+        return m && pf && !pf.filter.zone && payer.ref === 'you' ? { effects: [{ type: 'tap_choice', filter: pf.filter, amount: m[1] === 'an' ? 1 : parseAmount(m[1]!) as number } as EffectNode] } : null;
+      };
       const actions = parts.map(([v, o]) =>
-        /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
+        /^taps?$/.test(v) ? tapOne(o) : /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
       );
       if (actions.some((a) => !a)) return null;
       return actions.length === 1 ? [{ type: 'unless_does', payer, action: actions[0]!.effects, effects: inner }] : [{ type: 'unless_does', payer, actions: actions.map((a) => a!.effects), effects: inner }];
@@ -3458,6 +3527,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // "Exile all graveyards." — every card in them.
   if (/^[Ee]xile all graveyards$/.test(s)) return parseSentence('Exile all cards from all graveyards', b);
+  // Phyrexian Scriptures: "Exile all opponents' graveyards."
+  if (/^[Ee]xile all opponents' graveyards$/.test(s)) return parseSentence("Exile each opponent's graveyard", b);
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
   // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
@@ -4370,6 +4441,15 @@ const VERBS: Record<string, VerbHandler> = {
     if (withCounters) {
       const n = parseAmount(withCounters[1]!);
       return typeof n === 'number' ? [{ type: 'move', what: { ref: 'self' }, to: 'exile', counters: { [withCounters[2]!]: n } }] : null;
+    }
+    // Relic of Progenitus: "Target player exiles a card from their graveyard." — that player chooses it.
+    const theirYard = !imperative && who.ref !== 'you' ? /^(a|an|one|two|three) (?:(.+?) )?cards? from (?:their|his or her) graveyard$/.exec(args) : null;
+    if (theirYard) {
+      const amount = parseAmount(theirYard[1] === 'an' ? 'a' : theirYard[1]!);
+      const pf = theirYard[2] ? parseFilter(`${theirYard[2]} card in your graveyard`, b.clone()) : null;
+      if (typeof amount !== 'number' || (theirYard[2] && (!pf || pf.plural))) return null;
+      const { zone: _z, owner: _o, ...filter } = pf?.filter ?? {};
+      return [{ type: 'players_do', players: who, effects: [{ type: 'return_chosen', filter, amount, to: 'exile' }] }];
     }
     // Masked Vandal: "you may exile a creature card from your graveyard. If you do, …" — chosen as it resolves (no target).
     const chosenExile = imperative && who.ref === 'you' ? /^(a|an) ((?!.*\btarget\b).+? card) from your graveyard$/.exec(args) : null;
@@ -5310,6 +5390,13 @@ function perPlayerCount(inner: EffectNode[], expr: AmountExpr): AmountExpr | nul
 
 /** "~ deals 3 damage to any target", "… to target creature and 2 damage to its controller". */
 function parseDamage(c: string, b: Binder): EffectNode[] | null {
+  // Fireball: "~ deals X damage divided evenly, rounded down, among any number of targets." — each gets the same share of
+  // the targets chosen as it was cast (an illegal one's share is lost).
+  const evenly = /^(?:~|[Ii]t) deals X damage divided evenly, rounded down, among any number of targets$/.exec(c);
+  if (evenly && (/^~/.test(c) || b.it?.ref === 'self')) {
+    const to = b.addTarget({ what: 'any', filter: { types: ['Creature', 'Planeswalker', 'Battle'] }, text: 'any number of targets', count: 100, upTo: true, min: 1 });
+    return [{ type: 'deal_damage', amount: 'X', to, evenly: true }];
+  }
   // CR 601.2d: "~ deals 3 damage divided as you choose among one, two, or three targets."
   const divided = /^(~|[Ii]t) deals (\S+) damage divided as you choose among (any number of|one or two|one, two, or three|up to (\w+)) (targets|target .+)$/.exec(c);
   if (divided) {

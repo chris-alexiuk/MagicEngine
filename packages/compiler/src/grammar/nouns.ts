@@ -48,6 +48,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f[key] = { op, n };
     return true;
   }],
+  // Hammerhead Tyrant: "with mana value less than or equal to that spell's mana value" — the spell the trigger is about.
+  [/ with mana value (less than or equal to|less than|equal to) that spell's mana value$/, (f, m, b) => {
+    if (f.manaValue || b.it?.ref !== 'trigger_object') return false;
+    const op = ({ 'less than or equal to': 'le', 'less than': 'lt', 'equal to': 'eq' } as const)[m[1] as 'less than'];
+    f.manaValue = { op, n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } };
+    return true;
+  }],
   // Combat with the source: "target creature blocking or blocked by this creature", "target creature blocking it",
   // "target creature it's blocking" (Knight of Dusk, Urborg Panther, Goblin Snowman).
   [/ blocking or (?:being )?blocked by (~|this creature|it)$/, (f, m, b) => !f.combatWithSource && (m[1] !== 'it' || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'either'), true)],
@@ -227,6 +234,11 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const one = subtypeOf((m[1] ?? m[3])!);
     const two = subtypeOf((m[2] ?? m[4])!);
     return Boolean(one && two && !f.subtypes && ((f.subtypes = [one, two]), true));
+  }],
+  // Finneas, Ace Archer: "each other creature you control that's a token or a Rabbit".
+  [/ that's a token or an? ([A-Z][\w-]*)$/, (f, m) => {
+    const st = subtypeOf(m[1]!);
+    return Boolean(st && !f.anyOf && ((f.anyOf = [{ token: true }, { subtypes: [st] }]), true));
   }],
   // On Wings of Gold: "Creatures you control that are Zombies and/or tokens".
   [/ that are ([A-Z][\w-]*s) and\/or tokens$/, (f, m) => {

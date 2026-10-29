@@ -141,7 +141,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Preacher of the Schism: "you have the most life or are tied for most life"
   if (/^you have the most life or are tied for (?:the )?most life$/.test(t)) return { type: 'life', most: true };
   // Righteous Valkyrie: "you have at least 7 life more than your starting life total"
-  const moreThanStart = /^you have at least (\w+) life more than your starting life total$/.exec(t);
+  // Elenda, Saint of Dusk: "your life total is at least 10 greater than your starting life total".
+  const moreThanStart = /^you have at least (\w+) life more than your starting life total$/.exec(t) ?? /^your life total is at least (\w+) greater than your starting life total$/.exec(t);
   if (moreThanStart && typeof parseAmount(moreThanStart[1]!) === 'number') return { type: 'life', op: 'ge', starting: true, plus: parseAmount(moreThanStart[1]!) as number };
   // Thickest in the Thicket: "if you control the creature with the greatest power or tied for the greatest power".
   if (t === 'you control the creature with the greatest power or tied for the greatest power') return { type: 'greatest_power', filter: { types: ['Creature'] } };
@@ -299,6 +300,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ was dealt damage this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { damagedThisTurn: true } };
   // Agent Frank Horrigan: "~ has indestructible as long as it attacked this turn" — "it" being this object.
   if (/^it attacked this turn$/.test(t) && (!b.it || b.it.ref === 'self')) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
+  // Berserk: "destroy that creature if it attacked this turn" — the target.
+  if (/^it attacked this turn$/.test(t) && b.it?.ref === 'target') return { type: 'is', of: b.it, filter: { attackedThisTurn: true } };
   // Vaultborn Tyrant: "When this creature dies, if it's not a token, …" — a token that died has ceased to exist.
   if (/^(?:it's not|it isn't|it wasn't|it was not|~ isn't|~ wasn't|~ is not|~ was not) a token$/.test(t)) return { type: 'is', of: b.it ?? { ref: 'self' }, filter: { token: false } };
   // CR 702.194b: "if this spell was cast using teamwork"
@@ -348,6 +351,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // The Reality Chip: "~ is attached to a creature" — what it's attached to is one.
   const attachedTo = /^(?:~|it) is attached to (a|an) (creature|permanent|land|artifact)$/.exec(t);
   if (attachedTo) return { type: 'is', of: { ref: 'attached' }, filter: attachedTo[2] === 'permanent' ? {} : { types: [capitalise(attachedTo[2]!)] } };
+  // Brass Knuckles: "Equipped creature has double strike as long as two or more Equipment are attached to it."
+  const manyAttached = /^(two|three|four) or more (Equipment|Auras) are attached to it$/.exec(t);
+  if (manyAttached && (b.it?.ref === 'attached' || (!b.it && /\b(?:Equipment|Aura)\b/.test(b.env.typeLine)))) {
+    return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [manyAttached[2] === 'Auras' ? 'Aura' : 'Equipment'], attachedTo: 'attached' } }, op: 'ge', n: parseAmount(manyAttached[1]!) as number };
+  }
   // Merry, Esquire of Rohan: "~ has first strike as long as it's equipped" — "it" being this creature.
   const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
@@ -602,6 +610,20 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     b.difference = spentVs[1] === 'greater' ? { kind: 'sum', parts: [spent, { ...n, times: -1 } as AmountExpr] } : { kind: 'sum', parts: [n, { ...spent, times: -1 }] };
     return { type: 'amount', amount: spent, op: spentVs[1] === 'greater' ? 'gt' : 'lt', n };
   }
+  // Marauding Raptor: "If a Dinosaur is dealt damage this way" — what the damage was just dealt to, if any was.
+  const dealtThisWay = /^(?:a|an) ([A-Z][a-z]+|creature) is dealt damage this way$/.exec(t);
+  if (dealtThisWay && b.damaged) {
+    const pf = parseFilter(dealtThisWay[1] === 'creature' ? 'creature' : dealtThisWay[1]!, b.clone());
+    if (pf && !pf.plural) {
+      // The Black Arrow: "If a Dragon is dealt damage this way, destroy it." — "it" is that creature.
+      const of = b.damaged;
+      b.it = of;
+      return { type: 'and', all: [{ type: 'is', of, filter: pf.filter }, { type: 'amount', amount: { kind: 'damage_this_way' }, op: 'ge', n: 1 }] };
+    }
+  }
+  // Pack tactics: "if you attacked with creatures with total power 6 or greater this combat".
+  const packTactics = /^you attacked with creatures with total power (\d+) or greater this combat$/.exec(t);
+  if (packTactics) return { type: 'attack_power', n: Number(packTactics[1]) };
   // Wistfulness: "if {G}{G} was spent to cast it"; Seed Spark: "If {G} was spent to cast this spell".
   const spentColors = /^((?:\{[WUBRG]\})+) was spent to cast (?:it|this spell|~)$/.exec(t);
   if (spentColors) {
@@ -885,12 +907,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Land Tax: "if an opponent controls more lands than you"
   // Archaeomancer's Map: "if that player controls more lands than you"
-  const more = /^(an opponent|that player) controls more (.+?) than you(?: do)?$/.exec(t);
+  // Aerial Surveyor: "if defending player controls more lands than you".
+  const more = /^(an opponent|that player|defending player) controls more (.+?) than you(?: do)?$/.exec(t);
   if (more) {
     const pf = parseFilter(more[2]!, b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
-    const player = more[1] === 'that player' ? parsePlayerRef('that player', b) : null;
-    if (more[1] === 'that player' && !player) return null;
+    const player = more[1] !== 'an opponent' ? parsePlayerRef(more[1]!, b) : null;
+    if (more[1] !== 'an opponent' && !player) return null;
     return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}) };
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };

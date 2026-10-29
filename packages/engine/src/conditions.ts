@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -90,6 +90,8 @@ export interface TurnLog {
   graveyardCasts?: string[];
   /** Alliance-style "if this is the second time this ability has resolved this turn": resolutions so far, by ability (source id:zcc:text). */
   abilityResolutions?: Record<string, number>;
+  /** Rose, Cutthroat Raider: the players each player attacked with creatures this turn. */
+  playersAttackedBy?: Record<PlayerId, PlayerId[]>;
   /** Port Razer: the players each creature (as this object) attacked this turn. */
   attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
@@ -175,6 +177,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         for (const a of e.attacks) {
           const o = g.objects[a.attacker];
           if (!o || a.target.kind !== 'player') continue;
+          const mine = ((log.playersAttackedBy ??= {})[g.active] ??= []);
+          if (!mine.includes(a.target.player)) mine.push(a.target.player);
           const rec = (log.attackedPlayers ??= {})[a.attacker];
           if (rec && rec.zcc === o.zcc) {
             if (!rec.players.includes(a.target.player)) rec.players.push(a.target.player);
@@ -427,6 +431,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'renowned':
       // CR 702.112b
       return Boolean(source?.renowned && source.zone === 'battlefield') !== Boolean(cond.not);
+    case 'attack_power':
+      // Pack tactics: the attackers' total power as they were declared this combat (only the active player attacks).
+      return g.active === controller && (g.combat?.declaredPower ?? 0) >= Number(cond.n);
     case 'spent_colors': {
       // Wistfulness: "if {G}{G} was spent to cast it"; Mythos of Snapdax: "If {B}{R} was spent to cast this spell".
       const spent = source?.cast?.spent ?? {};

@@ -2336,8 +2336,8 @@ describe('slice 189', () => {
     expect(parse("At the beginning of your end step, return target creature card with mana value less than or equal to ~'s power from your graveyard to the battlefield.", 'Creature').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { op: 'le', n: { kind: 'stat', stat: 'power' } } } }] });
     expect(parse('Exile target creature with mana value less than or equal to the number of Plains you control.', 'Instant').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { n: { kind: 'count', filter: { subtypes: ['Plains'] } } } } }] });
     expect(parse('{T}: Gain control of target creature with power less than or equal to the number of creatures you control.', 'Creature').abilities[0]).toMatchObject({ targets: [{ filter: { power: { op: 'le', n: { kind: 'count' } } } }] });
-    // Not one that depends on the event ("that spell's mana value").
-    expect(parse("Whenever you cast a spell, return up to one target nonland permanent an opponent controls with mana value less than or equal to that spell's mana value to its owner's hand.", 'Creature').unparsed).toHaveLength(1);
+    // Hammerhead Tyrant: one that depends on the event ("that spell's mana value") — the spell the trigger is about.
+    expect(parse("Whenever you cast a spell, return up to one target nonland permanent an opponent controls with mana value less than or equal to that spell's mana value to its owner's hand.", 'Creature').abilities[0]).toMatchObject({ targets: [{ filter: { manaValue: { op: 'le', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } } } }] });
     expect(parse('−10: You gain 7 life, draw seven cards, then put up to seven permanent cards from your hand onto the battlefield.', 'Legendary Planeswalker — Ugin').abilities[0]).toMatchObject({ effects: [{}, {}, { type: 'choose_from_hand', amount: 7, optional: true }] });
     expect(parse('Each opponent mills half their library, rounded up.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'mill', amount: { kind: 'cards', zone: 'library', player: { ref: 'each_player' }, half: 'up' } }] });
   });

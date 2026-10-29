@@ -95,7 +95,8 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   const colors: Color[] = [];
   let i = 0;
   for (; i < parts.length; i++) {
-    const w = parts[i]!;
+    // Sand Scout: "a 1/1 red, green, and white Sand Warrior creature token".
+    const w = parts[i]!.replace(/,$/, '');
     if (COLOR_WORDS[w]) colors.push(COLOR_WORDS[w]!);
     else if (w === 'and' && colors.length) continue;
     else if (w === 'colorless') continue;

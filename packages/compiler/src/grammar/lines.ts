@@ -510,6 +510,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   // Desert: "Activate only during the end of combat step."
   [/ Activate only during the end of combat step\.$/, (a) => andIf(a, { type: 'step', step: 'end_of_combat' })],
   [/ (?:Activate|Transmute|Transfigure) only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
+  // Invigorating Hot Spring: "Activate only as a sorcery and only once each turn."
+  [/ Activate only as a sorcery and only once each turn\.$/, (a) => ((a.timing = 'sorcery'), (a.oncePerTurn = true))],
   // Lion's Eye Diamond: matters only for a mana ability (CR 605.3a) — any other ability is activated at instant speed anyway.
   [/ Activate only as an instant\.$/, (a) => (a.timing = 'instant')],
   // CR 702.151a (reconfigure)
@@ -856,6 +858,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (chosenStep) return { trigger: { type: 'phase', step: STEP_WORDS[chosenStep[1]!]!, whose: 'chosen' }, it: { ref: 'self' }, player: { ref: 'chosen_player' } };
     // CR 511.1: "At end of combat"
     if (t === 'end of combat') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'each' }, it: { ref: 'self' }, player: null };
+    // Rose, Cutthroat Raider: "At end of combat on your turn".
+    if (t === 'end of combat on your turn') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'you' }, it: { ref: 'self' }, player: null };
     if (t === "the beginning of the upkeep of enchanted creature's controller") {
       // Apathy, Unstable Mutation: "… untap that creature", "put a -1/-1 counter on that creature" — the enchanted creature.
       b.named['that creature'] = { ref: 'attached' };
@@ -1711,7 +1715,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     }
   }
   // "Whenever a creature card leaves your graveyard" — once for each card.
-  const leavesOne = /^(a|an) (.+? card) leaves your graveyard$/.exec(t);
+  // Vash, Freelance Archaeologist: "Whenever a card leaves your graveyard".
+  const leavesOne = /^(a|an) ((?:.+? )?card) leaves your graveyard$/.exec(t);
   if (leavesOne) {
     const pf = parseFilter(`${leavesOne[2]} in your graveyard`, b);
     if (pf && !pf.plural && pf.filter.zone === 'graveyard') {
@@ -3186,6 +3191,9 @@ export const costModifierRule: GrammarRule = {
     if (duringYours) rest = rest.replace(/^During your turn, /, '').replace(/^\w/, (c) => c.toUpperCase());
     const perEach = / to cast for each (.+)$/.exec(rest);
     if (perEach) rest = `${rest.slice(0, perEach.index)} to cast`;
+    // Paladin Class: "Spells your opponents cast during your turn cost {1} more to cast."
+    const theirsDuringYours = /^Spells your opponents cast during your turn cost /.test(rest);
+    if (theirsDuringYours) rest = rest.replace(/ during your turn cost /, ' cost ');
     // Morophon: "Spells of the chosen type you cast" — the same as "Spells you cast of the chosen type".
     rest = rest.replace(/^((?:[A-Z][a-z]+ )?[Ss]pells) of the chosen type you cast /, '$1 you cast of the chosen type ');
     // Warden of Evos Isle: "Creature spells with flying you cast cost {1} less to cast." — the quality before "you cast".
@@ -3217,7 +3225,7 @@ export const costModifierRule: GrammarRule = {
         if (!each || typeof a.amount !== 'number') return null;
         node.amount = { ...each, times: (each.times ?? 1) * a.amount };
       }
-      if (duringYours) node.condition = { type: 'your_turn', value: true };
+      if (duringYours || theirsDuringYours) node.condition = { type: 'your_turn', value: true };
       const ability: StaticAbility = { kind: 'static', text: original, effect: node };
       return ability;
     }
@@ -3843,10 +3851,11 @@ export const entersWithCountersRule: GrammarRule = {
       if (!expr) return null;
       return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: counted[1]!.replace(/−/g, '-'), amount: 1, perEach: expr } } satisfies StaticAbility;
     }
-    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
+    const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (twice X|\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);
     if (m) m.splice(2, 1);
-    const amount = m && parseAmount(m[2]!);
+    // Banquet Guests: "This creature enters with twice X +1/+1 counters on it."
+    const amount = m && (m[2] === 'twice X' ? { kind: 'x' as const, times: 2 } : parseAmount(m[2]!));
     // X is the value paid as it was cast (CR 107.3m).
     if (!m || amount === null || amount === undefined) return null;
     // CR 702.54a (bloodthirst): "If an opponent was dealt damage this turn, …"; "If ~ was kicked, …";

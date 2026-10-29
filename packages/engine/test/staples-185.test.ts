@@ -767,6 +767,16 @@ const CARDS = [
   makeCard({ name: 'Incarnation Lite', type_line: 'Creature — Elemental', mana_cost: '{2}', cmc: 2, power: '1', toughness: '1', oracle_text: 'When this creature enters, if {G}{G} was spent to cast it, draw a card.' }),
   makeCard({ name: 'Defang Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nPrevent all damage that would be dealt by enchanted creature.' }),
   makeCard({ name: 'Ophidian Lite', type_line: 'Creature — Snake', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: "Whenever this creature attacks and isn't blocked, you may draw a card. If you do, this creature assigns no combat damage this turn." }),
+  makeCard({ name: 'Void Lord Lite', type_line: 'Creature — Demon', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Whenever this creature deals combat damage to a player, exile the top seven cards of that player's library, then put a creature card from among them onto the battlefield under your control." }),
+  makeCard({ name: 'Extract Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player mills two cards. Then you put a creature card from a graveyard onto the battlefield under your control.' }),
+  makeCard({ name: 'Berserk Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target creature gains trample and gets +X/+0 until end of turn, where X is its power. At the beginning of the next end step, destroy that creature if it attacked this turn.' }),
+  makeCard({ name: 'Command Bridge Lite', type_line: 'Land', mana_cost: '', oracle_text: 'This land enters tapped.\nWhen this land enters, sacrifice it unless you tap an untapped permanent you control.\n{T}: Add one mana of any color.' }),
+  makeCard({ name: 'Hammerhead Lite', type_line: 'Creature — Dragon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "Whenever you cast a spell, return up to one target nonland permanent an opponent controls with mana value less than or equal to that spell's mana value to its owner's hand." }),
+  makeCard({ name: 'Fireball Evenly Lite', type_line: 'Sorcery', mana_cost: '{X}', cmc: 0, oracle_text: 'This spell costs {1} more to cast for each target beyond the first.\nFireball Evenly Lite deals X damage divided evenly, rounded down, among any number of targets.' }),
+  makeCard({ name: 'Progenitus Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Target player exiles a card from their graveyard.' }),
+  makeCard({ name: 'Knuckles Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +4/+2.\nEquipped creature has double strike as long as two or more Equipment are attached to it.\nEquip {1}' }),
+  makeCard({ name: 'Pack Leader Lite', type_line: 'Creature — Werewolf', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Pack tactics — Whenever this creature attacks, if you attacked with creatures with total power 6 or greater this combat, draw a card.' }),
+  makeCard({ name: 'Kroxa Lite', type_line: 'Creature — Giant', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "When this creature enters, each opponent discards a card, then each opponent who didn't discard a nonland card this way loses 3 life." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -6470,6 +6480,124 @@ describe('Sieges', () => {
     expect(g.zones.hand.alice!.length).toBe(hand + 1);
     expect(g.players.bob!.life).toBe(20);
   });
+  it("Lord of the Void: a creature card from among the exiled ones, under your control", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lord = give(g, 'alice', 'Void Lord Lite', 'battlefield');
+    const z = give(g, 'bob', 'Zombie', 'library');
+    g.zones.library.bob = [z, ...g.zones.library.bob!.filter((id) => id !== z)];
+    g = attackWith(g, [lord]);
+    for (let i = 0; i < 30 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending?.kind === 'choose_objects') {
+        expect((g.pending as { candidates: string[] }).candidates).toContain(z);
+        g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [z] } });
+      } else if (g.pending) throw new Error(`pending ${g.pending.kind}`);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.objects[z]).toMatchObject({ zone: 'battlefield', controller: 'alice', owner: 'bob' });
+  });
+  it('Extract from Darkness: a creature card from any graveyard, under your control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const z = give(g, 'bob', 'Zombie', 'graveyard');
+    const four = give(g, 'alice', 'Four Drop', 'graveyard');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Extract Lite', 'hand') }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'alice' });
+    expect((g.pending as { candidates: string[] }).candidates).toEqual(expect.arrayContaining([z, four]));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [z] } }));
+    expect(g.objects[z]).toMatchObject({ zone: 'battlefield', controller: 'alice' });
+  });
+  for (const attacked of [false, true]) {
+    it(`Berserk: doubles its power; destroyed at the end step ${attacked ? 'since it attacked' : '— not, since it didn\'t attack'}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const z = give(g, 'alice', 'Zombie', 'battlefield');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Berserk Lite', 'hand'), targets: [[{ kind: 'object', object: z }]] } as never));
+      expect(chars(g, g.objects[z]!).power).toBe(4);
+      if (attacked) g = attackWith(g, [z]);
+      g = settle(toStep(g, 'end', 'alice'));
+      expect(g.objects[z]!.zone).toBe(attacked ? 'graveyard' : 'battlefield');
+    });
+  }
+  for (const tap of [false, true]) {
+    it(`Command Bridge: sacrificed unless you tap an untapped permanent (${tap ? 'tapped one' : 'declined'})`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const z = give(g, 'alice', 'Zombie', 'battlefield');
+      const bridge = give(g, 'alice', 'Command Bridge Lite', 'hand');
+      g = act(g, { type: 'play_land', player: 'alice', object: bridge });
+      g = drive(g, (g) => {
+        const p = g.pending as { kind: string; player: string; options?: string[]; candidates?: string[] };
+        if (p.kind === 'pay') return act(g, { type: 'choose', player: p.player, answer: { kind: 'pay', pay: tap } });
+        if (p.kind === 'choose_objects') return act(g, { type: 'choose', player: p.player, answer: { kind: 'choose_objects', objects: [p.candidates![0]!] } });
+        return null;
+      }, 20);
+      g = settle(g);
+      expect(g.objects[bridge]!.zone).toBe(tap ? 'battlefield' : 'graveyard');
+      expect(g.objects[z]!.tapped).toBe(tap);
+    });
+  }
+  it("Hammerhead Tyrant: only a permanent with mana value at most that spell's", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Hammerhead Lite', 'battlefield');
+    const four = give(g, 'bob', 'Four Drop', 'battlefield');
+    const big = give(g, 'bob', 'Big Eldrazi', 'battlefield');
+    g.players.alice!.pool.C = 4;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Four Drop', 'hand'), autoTap: true } as never);
+    expect(g.pending).toMatchObject({ kind: 'trigger_targets' });
+    expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: big }]] } })).toBeTruthy();
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: four }]] } }));
+    expect(g.objects[four]!.zone).toBe('hand');
+    expect(g.objects[big]!.zone).toBe('battlefield');
+  });
+  it('Fireball: X damage divided evenly, rounded down, among the targets', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const big = give(g, 'bob', 'Big Eldrazi', 'battlefield');
+    g.players.alice!.pool.C = 8;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Fireball Evenly Lite', 'hand'), x: 7, autoTap: true, targets: [[{ kind: 'player', player: 'bob' }, { kind: 'object', object: big }]] } as never));
+    expect(g.players.bob!.life).toBe(17);
+    expect(g.objects[big]!.damage).toBe(3);
+    expect(g.players.alice!.pool.C ?? 0).toBe(0);
+  });
+  it('Relic of Progenitus: the target player chooses a card from their graveyard to exile', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const relic = give(g, 'alice', 'Progenitus Lite', 'battlefield');
+    const a = give(g, 'bob', 'Zombie', 'graveyard');
+    const b2 = give(g, 'bob', 'Four Drop', 'graveyard');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: relic, ability: 0, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'bob' });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [b2] } }));
+    expect(g.objects[b2]!.zone).toBe('exile');
+    expect(g.objects[a]!.zone).toBe('graveyard');
+  });
+  it('Brass Knuckles: double strike only with two or more Equipment attached', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const z = give(g, 'alice', 'Zombie', 'battlefield');
+    const k = give(g, 'alice', 'Knuckles Lite', 'battlefield');
+    g.objects[k]!.attachedTo = { id: z, zcc: g.objects[z]!.zcc };
+    expect(chars(g, g.objects[z]!).keywords.some((x) => x.id === 'double_strike')).toBe(false);
+    const sword = give(g, 'alice', 'Sword Lite', 'battlefield');
+    g.objects[sword]!.attachedTo = { id: z, zcc: g.objects[z]!.zcc };
+    expect(chars(g, g.objects[z]!).keywords.some((x) => x.id === 'double_strike')).toBe(true);
+  });
+  for (const big of [false, true]) {
+    it(`Pack tactics: ${big ? 'total power 6 — draws' : 'total power 4 — no card'}`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const leader = give(g, 'alice', 'Pack Leader Lite', 'battlefield');
+      const other = give(g, 'alice', big ? 'Four Drop' : 'Zombie', 'battlefield');
+      const hand = g.zones.hand.alice!.length;
+      g = attackWith(g, [leader, other]);
+      g = settle(g);
+      expect(g.zones.hand.alice!.length).toBe(hand + (big ? 1 : 0));
+    });
+  }
+  for (const land of [true, false]) {
+    it(`Kroxa: an opponent who ${land ? 'discards a land' : 'discards a nonland card'} ${land ? 'loses' : "doesn't lose"} 3 life`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      for (const id of g.zones.hand.bob!.splice(0)) g.objects[id]!.zone = 'exile';
+      give(g, 'bob', land ? 'Forest' : 'Zombie', 'hand');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Kroxa Lite', 'hand') }));
+      expect(g.zones.hand.bob!.length).toBe(0);
+      expect(g.players.bob!.life).toBe(land ? 17 : 20);
+    });
+  }
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const bomb = give(g, 'alice', 'Blazing Bomb Lite', 'battlefield');

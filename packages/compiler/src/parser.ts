@@ -571,6 +571,19 @@ export class ParserRegistry {
       }
 
       let node = this.parseBlock(block, env);
+      // Elenda, Saint of Dusk: "As long as …, Elenda gets +1/+1 and has menace. Elenda gets an additional +5/+5 as long as …"
+      // — two static abilities on one line, each naming what it's about (no pronoun reaching back to the other).
+      if (!node && !gate && block.length === 1 && !/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine) && !/:/.test(line) && !/^(?:When|Whenever|At) /.test(line) && !/"/.test(line)) {
+        const parts = line.match(/[^.]+\./g)?.map((x) => x.trim()) ?? [];
+        const pronoun = /\b(?:it|its|it's|they|them|their|that creature|those creatures)\b/i;
+        if (parts.length > 1 && parts.join(' ') === line.trim() && parts.slice(1).every((p) => !pronoun.test(p))) {
+          const each = parts.map((p) => this.parseBlock([p], env, p));
+          if (each.every((n) => n?.kind === 'static')) {
+            for (const n of each) result.abilities.push(n!);
+            continue;
+          }
+        }
+      }
       if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
@@ -804,6 +817,8 @@ export class ParserRegistry {
       .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
       // Saw in Half: "… half that creature's toughness. Round up each time." — the rounding belongs to the exception.
       .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
+      // Elenda, Saint of Dusk: "~ gets an additional +5/+5 as long as …" — more of the same, added on.
+      .map((l) => l.replace(/\b(gets?) an additional ([+-]\d+\/[+-]\d+)/g, '$1 $2'))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {

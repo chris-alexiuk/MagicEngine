@@ -306,9 +306,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Price of Progress: "deals damage to each player equal to twice the number of nonbasic lands that player controls" —
     // counted for each of them (Ref 'each_player').
     const perPlayer = JSON.stringify(node.amount ?? null).includes('"each_player"');
+    // Fireball: "divided evenly, rounded down, among any number of targets" — by how many were chosen as it was cast.
+    const evenlyBy = node.evenly ? Math.max(1, (ctx.resolution?.entry.targets[(node.to as { index?: number }).index ?? 0] ?? []).length) : 1;
     for (const to of refRecipients(ctx, ref(node, 'to'))) {
       const o = to.kind === 'permanent' ? ctx.g.objects[to.object] : undefined;
-      const n = perPlayer ? Math.max(0, amountOf({ ...ctx, eachPlayer: to.kind === 'player' ? to.player : o?.controller }, node.amount)) : nAll;
+      const n = perPlayer ? Math.max(0, amountOf({ ...ctx, eachPlayer: to.kind === 'player' ? to.player : o?.controller }, node.amount)) : Math.floor(nAll / evenlyBy);
       const before = o && o.zone === 'battlefield' ? damageBeforeExcess(ctx.g, source, o) : Infinity;
       // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
       // instead." (CR 120.4a: the damage event is modified first)
@@ -4287,8 +4289,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Party Thrasher: "exile the top two cards of your library, then choose one of them" — among those.
     const among = node.among ? refObjects(ctx, ref(node, 'among')).map((o) => o.id) : null;
     // Hellkite Courser: "a commander you own from the command zone".
-    const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : filter.zone === 'command' ? g.zones.command : g.zones.battlefield);
-    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' || filter.zone === 'command' || among ? { anyZone: true } : {}) }));
+    // Extract from Darkness: "a creature card from a graveyard" — any of them.
+    const graveyards = () => g.order.flatMap((p) => zoneList(g, 'graveyard', p));
+    const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : filter.zone === 'command' ? g.zones.command : filter.zone === 'graveyard' ? graveyards() : g.zones.battlefield);
+    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone && filter.zone !== 'battlefield' || among ? { anyZone: true } : {}) }));
     if (!candidates.length || !ctx.resolution) return true;
     let pick = candidates.length === 1 ? candidates[0] : undefined;
     if (!pick) {
@@ -4596,6 +4600,8 @@ function lifeExchange(ctx: EffectContext, node: EffectNode): [PlayerId, number][
 
 function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
+  // Gravestorm: "target opponent may exile a card from their graveyard" — what each of them would do, as themselves.
+  if (e.type === 'players_do') return refPlayers(ctx, ref(e, 'players')).every((p) => (e.effects as EffectNode[]).every((x) => feasible(x, { ...ctx, controller: p }, p)));
   // "Exchange control of this creature and target creature an opponent controls. If you do, …" (CR 701.12a).
   if (e.type === 'exchange_control') return exchangePair(ctx, e) !== null;
   if (e.type === 'exchange_life') return lifeExchange(ctx, e) !== null;
@@ -5697,7 +5703,9 @@ export const corePlugin: MechanicPlugin = {
       // "This land enters tapped with two charge counters on it."
       if (node.tapped) o.tapped = true;
       // CR 107.3m: X is the X paid for the spell that became this permanent.
-      const per = node.amount === 'X' ? (o.x ?? 0) : typeof node.amount === 'number' ? node.amount : 0;
+      // Banquet Guests: "with twice X +1/+1 counters".
+      const xAmount = node.amount && typeof node.amount === 'object' && (node.amount as { kind?: string }).kind === 'x' ? (node.amount as { times?: number }) : undefined;
+      const per = node.amount === 'X' ? (o.x ?? 0) : xAmount ? (o.x ?? 0) * (xAmount.times ?? 1) : typeof node.amount === 'number' ? node.amount : 0;
       // Converge: "… for each color of mana spent to cast it"
       if (node.perColor) {
         const n = replaceQuantity(g, 'counters', per * (o.cast?.colors ?? 0), { player: o.controller, object: o, counter: String(node.counter) });

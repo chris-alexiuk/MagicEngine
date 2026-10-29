@@ -359,6 +359,8 @@ export function declareAttackers(
   g.combat!.attackersDeclared = true;
   // CR 508.1: the creatures declared as attackers — the ones that "attacked" this combat, wherever they are now.
   g.combat!.declared = attacks.flatMap(({ attacker }) => (g.objects[attacker] ? [{ id: attacker, zcc: g.objects[attacker]!.zcc }] : []));
+  // Pack tactics: "if you attacked with creatures with total power 6 or greater this combat" — as they were declared.
+  g.combat!.declaredPower = attacks.reduce((n, { attacker }) => n + (g.objects[attacker] ? Math.max(0, power(g, g.objects[attacker]!)) : 0), 0);
   // CR 702.154a: "When you do, this creature gets +X/+0 until end of turn, where X is the tapped creature's power."
   for (const { attacker, tap } of enlist) {
     const x = power(g, g.objects[tap]!);

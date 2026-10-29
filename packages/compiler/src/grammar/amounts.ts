@@ -204,6 +204,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
   // CR 702.121a (melee): "for each opponent you attacked with a creature this combat"
   if (t === 'opponent you attacked with a creature this combat') return { kind: 'opponents_attacked' };
+  // Rose, Cutthroat Raider: "for each opponent you attacked" — this turn.
+  if (t === 'opponent you attacked' || t === 'opponent you attacked this turn') return { kind: 'opponents_attacked', thisTurn: true };
   // CR 702.44a / converge: "for each color of mana spent to cast it"
   if (/^color of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
   // CR 700.8: "for each creature in your party"

@@ -598,6 +598,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // CR 702.101a: the life lost so far as this resolves.
       return ctx.resolution?.lifeLost ?? 0;
     case 'opponents_attacked': {
+      // Rose, Cutthroat Raider: "for each opponent you attacked" (this turn).
+      if (e.thisTurn) return (g.turnLog.playersAttackedBy?.[ctx.controller] ?? []).filter((p) => p !== ctx.controller).length;
       // CR 702.121a: opponents (not planeswalkers or battles) you attacked with a creature this combat.
       const attacked = new Set<string>();
       for (const [id, a] of Object.entries(g.combat?.attackers ?? {})) {
@@ -739,7 +741,9 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
               ? m.to === 'graveyard'
               : how === 'returned'
                 ? m.to === 'hand' && m.from === 'battlefield'
-                : m.effect === 'mill' && m.from === 'library';
+                : how === 'discarded'
+                  ? m.effect === 'discard' && m.from === 'hand'
+                  : m.effect === 'mill' && m.from === 'library';
     // Arid Archway: "If another Desert was returned this way" — not the source itself.
     if (e.other && ctx.source && m.id === ctx.source.id) return false;
     if (e.subtypes && !e.subtypes.some((t) => (m.subtypes ?? []).includes(t))) return false;
