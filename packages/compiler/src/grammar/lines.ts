@@ -1170,6 +1170,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       b.named['they'] = b.named['those creatures'];
       b.named['them'] = b.named['those creatures'];
     }
+    // Rabble Rousing: "Whenever you attack with one or more creatures, create that many …" — how many attack.
+    b.eventAmount = true;
     return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
   }
   // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures"; Mangara: "Whenever an opponent
@@ -1216,6 +1218,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Angelic Guardian: "Whenever one or more creatures you control attack, they gain indestructible until end of turn."
     b.named['they'] = b.named['those creatures'];
     b.named['them'] = b.named['those creatures'];
+    // Poetic Ingenuity: "Whenever one or more Dinosaurs you control attack, create that many Treasure tokens."
+    b.eventAmount = true;
     return { trigger: { type: 'you_attack', filter }, it: { ref: 'self' }, player: null };
   }
   // Duelist's Heritage: "Whenever one or more creatures attack" — whoever attacks (once per declaration, CR 508.3d).
@@ -1267,6 +1271,17 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // "Whenever one or more creatures you control deal combat damage to a player": once for each player.
   // Kutzil: "one or more creatures you control each with power greater than its base power deals combat damage …"
   // Contaminant Grafter: "… deal combat damage to one or more players" — once, however many players.
+  // Starscream, Norn's Decree: "Whenever one or more creatures [an opponent controls] deal combat damage to you" — once for
+  // each player whose creatures did; "that opponent" is that player.
+  const batchHitsYou = /^one or more (.+?) deal combat damage to you$/.exec(t);
+  if (batchHitsYou) {
+    const pf = parseFilter(batchHitsYou[1]!, b);
+    if (!pf || !pf.plural || (pf.filter.controller && pf.filter.controller !== 'opponent')) return null;
+    b.eventAmount = true;
+    b.named['that opponent'] = { ref: 'trigger_player' };
+    b.named['that player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'combat_damage_batch', filter: pf.filter, toYou: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   const batchHits =
     /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents|one or more players)$/.exec(t) ??
     /^one or more (.+? each with .+?) deals combat damage to (a player|an opponent|one of your opponents)$/.exec(t);
@@ -1439,6 +1454,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!parsed.every(Boolean)) return null;
     return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: { ref: 'self' }, player: null };
   }
+  // Staff of the Sun Magus: "Whenever you cast a white spell or a Plains you control enters"; Necklace of Girion: "Whenever
+  // you cast a green spell and whenever a Forest you control enters" (CR 603.2).
+  const castOrEnters = /^(you cast an? .+? spell) (?:or|and whenever) (an? .+? you control enters)$/.exec(t);
+  if (castOrEnters) {
+    const one = parseTrigger(word, castOrEnters[1]!, b.clone());
+    const two = one ? parseTrigger(word, castOrEnters[2]!, b.clone()) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: null };
+  }
   // Minsc & Boo: "When Minsc & Boo enters and at the beginning of your upkeep" (CR 603.2).
   const entersAt = /^~ enters and at (the beginning of .+)$/.exec(t);
   if (entersAt) {
@@ -1540,7 +1564,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['them'] = { ref: 'created' };
     return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
-  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
+  const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your|an opponent's) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
     if (!pf || pf.plural) return null;
@@ -1553,6 +1577,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (/your graveyard/.test(other[2]!)) {
       if (pf.filter.owner) return null;
       pf.filter.owner = 'you';
+    }
+    // Viridian Revel: "Whenever an artifact is put into an opponent's graveyard from the battlefield" — one an opponent owns.
+    if (/an opponent's graveyard/.test(other[2]!)) {
+      if (pf.filter.owner) return null;
+      pf.filter.owner = 'opponent';
     }
     // Great Train Heist: "Choose target opponent. Whenever a creature you control deals combat damage to that player this
     // turn, …" — the player the spell targeted.
@@ -1961,6 +1990,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       player: { ref: 'trigger_player' },
     };
   }
+  // Arcbound Tracker: "Whenever you cast a spell other than your first spell each turn" — the second and later.
+  if (t === 'you cast a spell other than your first spell each turn') {
+    b.named['that spell'] ??= { ref: 'trigger_object' };
+    return { trigger: { type: 'cast', who: 'you', filter: {}, nthAtLeast: 2 }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
+  }
   // Esper Sentinel: "Whenever an opponent casts their first noncreature spell each turn"
   const nthKind = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) (.+?) spell each turn$/.exec(t);
   if (nthKind) {
@@ -2004,12 +2038,16 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       extra.opponentsTurn = true;
     }
     if (/or cop/.test(cast[2]!)) extra.orCopy = true;
+    // Questing Druid: "a spell that's white, blue, black, or red".
+    what = what.replace(/^spell that's ((?:white|blue|black|red|green)(?:,? (?:or )?(?:white|blue|black|red|green))*)$/, '$1 spell');
     const spell = what === 'spell' ? { filter: {}, plural: false } : parseFilter(what, b);
     if (!spell || spell.plural || (what !== 'spell' && spell.filter.zone !== 'stack')) return null;
     delete spell.filter.zone;
     const who = cast[1] === 'you' ? 'you' : cast[1] === 'an opponent' ? 'opponent' : cast[1] === 'enchanted player' ? 'enchanted' : cast[1] === 'the chosen player' ? 'chosen' : 'any';
     // "that player" is whoever cast the spell; Scytheclaw Raptor's "deals 4 damage to them" too (one spell is never "them").
     if (who !== 'you') b.named['them'] = { ref: 'trigger_player' };
+    // Manaform Hellkite: "the amount of mana spent to cast that spell".
+    b.named['that spell'] ??= { ref: 'trigger_object' };
     return { trigger: { type: 'cast', who, filter: spell.filter, ...extra }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   return null;
@@ -2017,7 +2055,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
 
 function eventType(verb: string): string {
   if (verb.startsWith('enters')) return 'enters';
-  if (verb === 'dies' || /^is put into (?:a|your) graveyard from the battlefield$/.test(verb)) return 'dies';
+  if (verb === 'dies' || /^is put into (?:a|your|an opponent's) graveyard from the battlefield$/.test(verb)) return 'dies';
   if (verb === 'leaves the battlefield') return 'leaves';
   if (verb === 'attacks' || verb === 'attacks alone') return 'attacks';
   if (verb === 'blocks') return 'blocks';
@@ -2094,6 +2132,9 @@ export const triggeredRule: GrammarRule = {
           // counters on it, put a charge counter on it." — a spell can't have counters, so "it" is this permanent.
           if (trig.trigger.type === 'cast' && /^~ has .+ counters? on it$/.test(iff[1]!)) b.it = { ref: 'self' };
           if (!condition) return null;
+          // Lurking Skirge: "When a creature is put into an opponent's graveyard …, if this permanent is an enchantment, it
+          // becomes a 3/2 Phyrexian Imp creature" — "it" is this permanent.
+          if (condition.type === 'is' && JSON.stringify((condition as unknown as { of: Ref }).of) === '{"ref":"self"}' && /^it becomes /.test(iff[2]!)) b.it = { ref: 'self' };
           // Howl of the Hunt: "When this Aura enters, if enchanted creature is a Wolf or Werewolf, untap that creature." —
           // "that creature" is the one the condition is about.
           if (/^(?:enchanted|equipped) creature is /.test(iff[1]!) && condition.type === 'is') b.named['that creature'] = (condition as unknown as { of: Ref }).of;

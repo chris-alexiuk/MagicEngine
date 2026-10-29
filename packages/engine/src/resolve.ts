@@ -190,9 +190,11 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       return ctx.eachPlayer && live.includes(ctx.eachPlayer) ? [ctx.eachPlayer] : [];
     case 'players': {
       const not = ref.except ? refPlayers(ctx, ref.except) : [];
+      // Heartwood Storyteller: "each of that player's opponents".
+      const of = ref.opponentsOf ? (refPlayers(ctx, ref.opponentsOf)[0] ?? '\u0000') : ctx.controller;
       const all = apnap(g).filter(
         (p) =>
-          (ref.who === 'each' || p !== ctx.controller) &&
+          (ref.who === 'each' || p !== of) &&
           !not.includes(p) &&
           (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
           // Thornbow Archer: "each opponent who doesn't control an Elf".
@@ -358,8 +360,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'stat':
       return statOf(ctx, e.of, e.stat);
-    case 'mana_spent':
-      return refObjects(ctx, e.of)[0]?.cast?.manaSpent ?? 0;
+    case 'mana_spent': {
+      const o = refObjects(ctx, e.of)[0];
+      // Grandmother Goby: the spell a cast trigger is about, after it's countered — as it was cast.
+      if (!o?.cast && e.of.ref === 'trigger_object' && ctx.trigger?.manaSpent !== undefined) return ctx.trigger.manaSpent;
+      return o?.cast?.manaSpent ?? 0;
+    }
     case 'convoked':
       return refObjects(ctx, e.of)[0]?.cast?.convoked?.length ?? 0;
     case 'sacrificed_to_cast':
@@ -480,6 +486,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
         (d) =>
           (e.types ?? ['Creature']).some((t) => d.types.includes(t)) &&
           (!e.subtypes || e.subtypes.some((t) => d.subtypes.includes(t))) &&
+          // Cult Conscript: "a non-Skeleton creature".
+          !e.notSubtypes?.some((t) => d.subtypes.includes(t)) &&
           !(e.nontoken && d.token) &&
           (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller)),
       ).length;

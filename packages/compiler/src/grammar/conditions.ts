@@ -47,7 +47,8 @@ function stateFilter(text: string, b: Binder): ObjectFilter | null {
 }
 
 export function parseCondition(text: string, b: Binder): ConditionNode | null {
-  const t = text.trim();
+  // Catapult Fodder: "if you control three or more creatures that each have toughness greater than their power".
+  const t = text.trim().replace(/ that each have toughness greater than their power$/, ' with toughness greater than its power');
   // Urza's Tower: "you control an Urza's Mine and an Urza's Power-Plant" — both.
   const both = /^you control (an? [^,]+?) and (an? .+)$/.exec(t.replace(/\bUrza's (Mine|Tower|Power-Plant)\b/g, '$1'));
   if (both) {
@@ -166,7 +167,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Saw in Half: "If that creature dies this way" — put into a graveyard from the battlefield by this (CR 700.4).
   if (/^(?:that creature|it) dies this way$/.test(t)) return { type: 'amount', amount: { kind: 'moved_this_way', how: 'graveyard' }, op: 'ge', n: 1 };
   // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
-  const movedOne = /^(?:a|an) (.+?) (?:is|was) (destroyed|exiled|sacrificed|returned) this way$/.exec(t) ?? /^(another .+?) (?:is|was) (returned) this way$/.exec(t);
+  // Renegade Reaper: "If at least one Angel card is milled this way".
+  const movedOne = /^(?:a|an|at least one) (.+?) (?:is|was) (destroyed|exiled|sacrificed|returned|milled) this way$/.exec(t) ?? /^(another .+?) (?:is|was) (returned) this way$/.exec(t);
   if (movedOne) {
     const amount = movedThisWay(`${movedOne[1]} ${movedOne[2]} this way`, b);
     if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
@@ -176,6 +178,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (hasMV) {
     const of = b.named[hasMV[1]!] ?? (hasMV[1] === 'it' ? b.it : null);
     if (of) return { type: 'is', of, filter: { manaValue: { op: hasMV[3] === 'less' ? 'le' : 'ge', n: Number(hasMV[2]) } } };
+  }
+  // Ringwraiths: "If that creature is legendary, its controller loses 3 life." — the target, now.
+  if (/^(?:that creature|it) is legendary$/.test(t)) {
+    const of = b.named['that creature'] ?? (b.it && b.it.ref !== 'self' ? b.it : null);
+    if (of) return { type: 'is', of, filter: { supertypes: ['Legendary'] } };
   }
   // Emeria Shepherd: "If that land is a Plains" — the land that entered.
   const thatIs = /^that (land|creature|permanent) is an? ([A-Z][a-z]+)$/.exec(t);
@@ -562,6 +569,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseCount(statVs[4]!, b);
     return n ? { type: 'amount', amount, op: statVs[3] === 'less' ? 'le' : 'ge', n } : null;
   }
+  // Prismari Pianist: "If that spell's mana value is 5 or greater"; Herald of Ilharg: "If that spell has mana value 5 or
+  // greater" — the spell a cast trigger is about.
+  const spellMV = /^that spell(?:'s mana value is| has mana value) (\d+) or (greater|less)$/.exec(t);
+  const thatSpell = b.named['that spell'] ?? (b.it?.ref === 'trigger_object' ? b.it : undefined);
+  if (spellMV && thatSpell) {
+    return { type: 'amount', amount: { kind: 'stat', stat: 'mana_value', of: thatSpell }, op: spellMV[2] === 'greater' ? 'ge' : 'le', n: Number(spellMV[1]) };
+  }
   // CR 702.156a (ravenous): "if X is 5 or more"
   const xIs = /^X is (\w+ or (?:more|greater|less|fewer))$/.exec(t);
   if (xIs) {
@@ -646,10 +660,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (colors.every(Boolean) && typeof n === 'number') return { type: 'amount', amount: { kind: 'devotion', colors: colors as never }, ...(devotion[4] ? { op: 'le', n: n - 1 } : { op: 'ge', n }) };
   }
   // "if two or more creatures died this turn", "if three or more Zubera died this turn"
-  const died = /^(\w+ or more) (.+?) died this turn$/.exec(t);
+  // Gimli: "two or more creatures died under your control this turn".
+  const died = /^(\w+ or more) (.+?) died ((?:under (?:your|an opponent's) control )?)this turn$/.exec(t);
   if (died) {
     const c = compare(died[1]!);
-    const amount = c ? parseCount(`the number of ${died[2]} that died this turn`, b) : null;
+    const amount = c ? parseCount(`the number of ${died[2]} that died ${died[3]}this turn`, b) : null;
     if (c && amount) return { type: 'amount', amount, ...c };
   }
   // Things that happened this turn.
@@ -676,6 +691,31 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'a creature you controlled died this turn': 'your_creature_died',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
+  // CR 700.8: "if you have a full party" — four creatures, one each of Cleric, Rogue, Warrior and Wizard.
+  if (t === 'you have a full party') return { type: 'amount', amount: { kind: 'party' }, op: 'ge', n: 4 };
+  if (t === "you don't have a full party") return { type: 'amount', amount: { kind: 'party' }, op: 'le', n: 3 };
+  // Eshki Dragonclaw: "if you've cast both a creature spell and a noncreature spell this turn".
+  if (t === "you've cast both a creature spell and a noncreature spell this turn") {
+    return { type: 'and', all: [{ type: 'this_turn', event: 'you_cast', filter: { types: ['Creature'] }, min: 1 }, { type: 'this_turn', event: 'you_cast', filter: { notTypes: ['Creature'] }, min: 1 }] };
+  }
+  // White Glove Gourmand: "if another Human died under your control this turn"; Cult Conscript: "a non-Skeleton
+  // creature"; Sidequest: Hunt the Mark: "a creature died under an opponent's control this turn".
+  const diedOne = /^(?:another|an?) (.+?) died under (your|an opponent's) control this turn$/.exec(t);
+  if (diedOne) {
+    const amount = parseCount(`the number of ${diedOne[1]}s that died under ${diedOne[2]} control this turn`, b);
+    if (amount && amount.kind === 'died_this_turn') return { type: 'amount', amount, op: 'ge', n: 1 };
+  }
+  // Gau, Feral Youth: "if a card left your graveyard this turn"; Syrix: "a creature card"; Bonecache Overseer: "three
+  // or more cards".
+  const leftGy = /^(a|one or more|two or more|three or more) (card|creature card)s? left your graveyard this turn$/.exec(t);
+  if (leftGy) {
+    const min = { a: 1, 'one or more': 1, 'two or more': 2, 'three or more': 3 }[leftGy[1] as 'a'];
+    return { type: 'left_graveyard', min, ...(leftGy[2] === 'creature card' ? { filter: { types: ['Creature'] } } : {}) };
+  }
+  // Ennis, Debate Moderator: "if one or more cards were put into exile this turn".
+  if (/^(?:a card was|one or more cards were) put into exile this turn$/.test(t)) return { type: 'this_turn', event: 'card_exiled' };
+  // Canyon Crab: "if you haven't cast a spell from your hand this turn".
+  if (/^you (?:haven't|have not|didn't) cast a spell from your hand this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_cast', from: 'hand', min: 1 } };
   // Curious Obsession: "if you didn't attack with a creature this turn".
   if (/^you didn't attack(?: with a creature)? this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_attacked' } };
   // Starlit Soothsayer: "if you gained or lost life this turn".
@@ -877,13 +917,16 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // "~ has a +1/+1 counter on it", "~ has three or more +1/+1 counters on it", "~ has a counter on it".
   const has =
-    /^(?:~|it) has (a|an|one or more|\w+ or more) (?:(\S+) )?counters? on (?:it|him|her|them)$/.exec(t) ??
+    /^(?:~|it|that creature) has (a|an|one or more|\w+ or more) (?:(\S+) )?counters? on (?:it|him|her|them)$/.exec(t) ??
     // Twenty-Toed Toad: "there are twenty or more counters on it" — any kind.
     /^there are (\w+ or more) (?:(\S+) )?counters on (?:~|it)$/.exec(t);
   if (has) {
     const n = /^(?:a|an|one or more)$/.test(has[1]!) ? 1 : parseAmount(has[1]!.replace(/ or more$/, ''));
     if (typeof n !== 'number') return null;
-    const of: Ref = /^it |^there are .+ on it$/.test(t) ? (b.it ?? { ref: 'self' }) : { ref: 'self' };
+    // Hadana's Climb: "Then if that creature has three or more +1/+1 counters on it" — the target named before.
+    const that = b.named['that creature'] ?? (b.it?.ref === 'target' ? b.it : undefined);
+    if (/^that creature /.test(t) && !that) return null;
+    const of: Ref = /^that creature /.test(t) ? that! : /^it |^there are .+ on it$/.test(t) ? (b.it ?? { ref: 'self' }) : { ref: 'self' };
     return { type: 'counters', of, ...(has[2] ? { counter: has[2] } : {}), min: n };
   }
   return null;

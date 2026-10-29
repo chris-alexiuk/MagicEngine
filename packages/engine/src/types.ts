@@ -356,6 +356,8 @@ export interface TriggerInfo {
   lki?: { counters: Record<string, number> };
   /** How much happened ("that much life", "that many +1/+1 counters"): damage dealt, life gained or lost. */
   amount?: number;
+  /** A cast trigger: the mana spent to cast the spell (CR 601.2h), as it was cast — if it's countered, still known. */
+  manaSpent?: number;
   /** CR 400.7f: a trigger on the enchanted permanent leaving — the Aura can be found in its owner's graveyard. */
   auraFind?: true;
   /** The Skullspore Nexus: the total power of the creatures that died together (as they last existed, CR 603.10a). */

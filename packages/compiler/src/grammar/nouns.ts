@@ -94,6 +94,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
   // Bedrock Tortoise: "Each creature you control with toughness greater than its power".
   [/ with toughness greater than its power$/, (f) => !f.toughnessAbovePower && ((f.toughnessAbovePower = true), true)],
+  // Edgewall Innkeeper: "a creature spell that has an Adventure" (CR 715).
+  [/ that has an Adventure$/, (f) => !f.hasAdventure && ((f.hasAdventure = true), true)],
   // Frontline Medic, Zaxara: "a spell with {X} in its mana cost" (CR 107.3); Titans' Nest: "without {X} in its mana cost".
   [/ with \{X\} in (?:its|their) mana costs?$/, (f) => f.xInCost === undefined && ((f.xInCost = true), true)],
   [/ without \{X\} in (?:its|their) mana costs?$/, (f) => f.xInCost === undefined && ((f.xInCost = false), true)],
@@ -834,6 +836,9 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     const pf = parseFilter(lacking[2]!, b.clone());
     if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { ref: 'players', who: lacking[1]!.toLowerCase() === 'player' ? 'each' : 'opponents', controlsNone: pf.filter };
   }
+  // Heartwood Storyteller: "Whenever a player casts a noncreature spell, each of that player's opponents may draw a card."
+  const thatPlayer = b.named['that player'] ?? (b.player?.ref === 'trigger_player' ? b.player : null);
+  if ((t === "each of that player's opponents" || t === "that player's opponents") && thatPlayer) return { ref: 'players', who: 'opponents', opponentsOf: thatPlayer };
   // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
   // Call the Coppercoats: "Choose any number of target opponents. … those opponents control" — the players chosen.

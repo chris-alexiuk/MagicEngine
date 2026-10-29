@@ -63,7 +63,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   }
   const pf = parseFilter(t, b);
   // "the number of Plains you control": a word whose plural is the same.
-  const same = /^(?:basic )?(?:Plains|Sheep|Fish|Elk)\b/.test(t);
+  // Eldrazi Linebreaker: "the number of Eldrazi you control" (Merfolk, Kor, Myr, … too).
+  const same = /^(?:basic )?(?:Plains|Sheep|Fish|Elk)\b/.test(t) || Boolean(pf?.invariant);
   if (!pf || (pf.plural !== plural && !same) || (pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;
   // Rowdy Research: "for each creature that attacked this turn" counts ones that have since left too.
   if (pf.filter.attackedThisTurn) return null;
@@ -92,16 +93,20 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
 
 /** "creature that died this turn", "nontoken creatures that died this turn", "Zubera that died this turn". */
 function diedThisTurn(text: string, b: Binder): AmountExpr | null {
-  const m = /^(.+?) that died this turn$/.exec(text.trim());
+  // Body Count: "each creature that died under your control this turn".
+  const m = /^(.+?) that died (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
   if (!m) return null;
   const pf = parseFilter(m[1]!, b.clone());
   if (!pf) return null;
-  const { types, subtypes, token, controller, ...rest } = pf.filter;
-  if (Object.keys(rest).length || token === true || (controller && controller !== 'you' && controller !== 'opponent')) return null;
+  const under = m[2] === 'your' ? 'you' : m[2] ? 'opponent' : undefined;
+  const { types, subtypes, notSubtypes, token, controller: ctl, ...rest } = pf.filter;
+  const controller = ctl ?? under;
+  if (Object.keys(rest).length || token === true || (controller && controller !== 'you' && controller !== 'opponent') || (ctl && under)) return null;
   return {
     kind: 'died_this_turn',
     ...(types && !(types.length === 1 && types[0] === 'Creature') ? { types } : {}),
     ...(subtypes ? { subtypes } : {}),
+    ...(notSubtypes ? { notSubtypes } : {}),
     ...(token === false ? { nontoken: true as const } : {}),
     ...(controller ? { controller: controller as 'you' | 'opponent' } : {}),
   };
@@ -347,6 +352,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (/^the number of colors in your commanders?'s? color identity$/.test(t)) return { kind: 'commander_colors' };
   // Mockingbird: "the amount of mana spent to cast this creature" (CR 601.2h) — the mana paid for it.
   if (/^the amount of mana spent to cast (?:~|this creature|this spell|it)$/.test(t) && (t.endsWith(' it') ? !b.it || b.it.ref === 'self' : true)) return { kind: 'mana_spent', of: { ref: 'self' } };
+  // Manaform Hellkite: "the amount of mana spent to cast that spell" — the spell a cast trigger is about (CR 601.2h).
+  if (t === 'the amount of mana spent to cast that spell' && b.named['that spell']?.ref === 'trigger_object') return { kind: 'mana_spent', of: { ref: 'trigger_object' } };
+  // Crystal, Inhuman Princess: "the number of colors that spell is" (CR 105.2).
+  if (t === 'the number of colors that spell is' && b.named['that spell']) return { kind: 'stat', stat: 'colors', of: b.named['that spell']! };
   const twice = /^twice (.+)$/.exec(t);
   if (twice) {
     const inner = parseCount(twice[1]!, b);

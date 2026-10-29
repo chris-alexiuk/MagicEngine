@@ -694,6 +694,27 @@ const CARDS = [
   makeCard({ name: 'Shandalar Lite', type_line: 'Creature — Avatar', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "{0}: This creature deals 3 damage to target player or planeswalker and 3 damage to up to one target creature that player or that planeswalker's controller controls." }),
   makeCard({ name: 'Wasps Lite', type_line: 'Creature — Insect', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever this creature deals combat damage to a player, destroy target artifact that player controls.' }),
   makeCard({ name: 'Mutiny Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Target creature an opponent controls deals damage equal to its power to another target creature that player controls.' }),
+  makeCard({ name: 'Regrowth Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return target card from your graveyard to your hand.' }),
+  makeCard({ name: 'Banish Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Exile target creature.' }),
+  makeCard({ name: 'Research Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your end step, if a card left your graveyard this turn, draw a card.' }),
+  makeCard({ name: 'Gourmand Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'At the beginning of your end step, if another Human died under your control this turn, you gain 3 life.' }),
+  makeCard({ name: 'Human Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Crab Lite', type_line: 'Creature — Crab', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "At the beginning of your end step, if you haven't cast a spell from your hand this turn, draw a card." }),
+  makeCard({ name: 'Ennis Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'At the beginning of your end step, if one or more cards were put into exile this turn, put a +1/+1 counter on this creature.' }),
+  makeCard({ name: 'Incinerate Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Incinerate Lite deals 3 damage to any target. A creature dealt damage this way can't be regenerated this turn." }),
+  makeCard({ name: 'Regen Lite', type_line: 'Creature — Troll', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{0}: Regenerate this creature.' }),
+  makeCard({ name: 'Ringwraiths Lite', type_line: 'Creature — Wraith Knight', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'When this creature enters, target creature an opponent controls gets -3/-3 until end of turn. If that creature is legendary, its controller loses 3 life.' }),
+  makeCard({ name: 'Big Legend Lite', type_line: 'Legendary Creature — Human', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: '' }),
+  makeCard({ name: 'Goby Lite', type_line: 'Legendary Creature — Frog', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever you cast a noncreature spell, counter that spell. Create a number of 1/1 blue Merfolk creature tokens equal to the amount of mana spent to cast that spell.' }),
+  makeCard({ name: 'Growth Lite', type_line: 'Sorcery', mana_cost: '{1}{G}', oracle_text: 'Draw a card.' }),
+  makeCard({ name: 'Rabble Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever you attack with one or more creatures, create that many 1/1 green and white Citizen creature tokens.' }),
+  makeCard({ name: 'Decree Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Whenever one or more creatures an opponent controls deal combat damage to you, that opponent gets a poison counter." }),
+  makeCard({ name: 'Tracker Lite', type_line: 'Artifact Creature — Ferret', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever you cast a spell other than your first spell each turn, put a +1/+1 counter on this creature.' }),
+  makeCard({ name: 'Pulse Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Destroy target nonland permanent and all other permanents with the same name as that permanent.' }),
+  makeCard({ name: 'Blight Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target creature and all other creatures with the same name as that creature get -3/-3 until end of turn.' }),
+  makeCard({ name: 'Exhume Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player puts a creature card from their graveyard onto the battlefield.' }),
+  makeCard({ name: 'Storyteller Lite', type_line: 'Creature — Treefolk', mana_cost: '{0}', power: '0', toughness: '5', oracle_text: "Whenever a player casts a noncreature spell, each of that player's opponents may draw a card." }),
+  makeCard({ name: 'Opal Angel Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'When an opponent casts a creature spell, if this enchantment is an enchantment, it becomes a 5/5 Angel creature with flying and vigilance.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5682,7 +5703,7 @@ describe('Sieges', () => {
     expect([g.objects[z]!.zone, lib[lib.length - 1], g.zones.hand.alice!.length]).toEqual(['graveyard', keep, hand]);
   });
   it('Soul of Shandalar: the creature must be controlled by the targeted player', () => {
-    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
     const soul = give(g, 'alice', 'Shandalar Lite', 'battlefield');
     const [bobs, carols] = [give(g, 'bob', 'Big Bear', 'battlefield'), give(g, 'carol', 'Big Bear', 'battlefield')];
     const ability = legalActions(g, 'alice').find((a) => a.type === 'activate' && a.object === soul)! as { ability: number };
@@ -5692,7 +5713,7 @@ describe('Sieges', () => {
     expect([g.objects[bobs]!.damage, g.objects[carols]!.damage, g.players.bob!.life]).toEqual([3, 0, 17]);
   });
   it('Caustic Wasps: "target artifact that player controls" — only the damaged player\'s', () => {
-    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
     const wasps = give(g, 'alice', 'Wasps Lite', 'battlefield');
     const [bobs, carols] = [give(g, 'bob', 'Trinket', 'battlefield'), give(g, 'carol', 'Trinket', 'battlefield')];
     give(g, 'bob', 'Trinket', 'battlefield');
@@ -5712,13 +5733,145 @@ describe('Sieges', () => {
     expect([g.objects[bobs]!.zone, g.objects[carols]!.zone]).toEqual(['graveyard', 'battlefield']);
   });
   it('Mutiny: "another target creature that player controls" — the first target\'s controller', () => {
-    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
     const [big, zombie, carols] = [give(g, 'bob', 'Big Bear', 'battlefield'), give(g, 'bob', 'Zombie', 'battlefield'), give(g, 'carol', 'Zombie', 'battlefield')];
     const mutiny = give(g, 'alice', 'Mutiny Lite', 'hand');
     expect(illegal(g, { type: 'cast', player: 'alice', object: mutiny, targets: [[{ kind: 'object', object: big }], [{ kind: 'object', object: carols }]] })).toMatch(/legal target/);
     g = settle(act(g, { type: 'cast', player: 'alice', object: mutiny, targets: [[{ kind: 'object', object: big }], [{ kind: 'object', object: zombie }]] }));
     g = drive(g, () => null);
     expect([g.objects[zombie]!.zone, g.objects[carols]!.zone]).toEqual(['graveyard', 'battlefield']);
+  });
+  it('Primary Research, White Glove Gourmand, Canyon Crab, Ennis: what happened this turn', () => {
+    const run = (setup: (g: GameState) => GameState) => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      for (const n of ['Research Lite', 'Gourmand Lite', 'Crab Lite']) give(g, 'alice', n, 'battlefield');
+      const ennis = give(g, 'alice', 'Ennis Lite', 'battlefield');
+      g = setup(g);
+      const [hand, life] = [g.zones.hand.alice!.length, g.players.alice!.life];
+      g = settle(toStep(g, 'end', 'alice'));
+      return { drew: g.zones.hand.alice!.length - hand, gained: g.players.alice!.life - life, counters: g.objects[ennis]!.counters['+1/+1'] ?? 0 };
+    };
+    // Nothing happened: only the crab draws.
+    expect(run((g) => g)).toMatchObject({ drew: 1, gained: 0, counters: 0 });
+    // A card returned from the graveyard (a spell cast from the hand): research draws, the crab doesn't.
+    expect(
+      run((g) => {
+        const card = give(g, 'alice', 'Zombie', 'graveyard');
+        return drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Regrowth Lite', 'hand'), targets: [[{ kind: 'object', object: card }]] })), () => null);
+      }),
+    ).toMatchObject({ drew: 1, gained: 0, counters: 0 });
+    // Another Human of mine died, and a creature was exiled.
+    expect(
+      run((g) => {
+        const human = give(g, 'alice', 'Human Lite', 'battlefield');
+        const z = give(g, 'bob', 'Zombie', 'battlefield');
+        g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: human }]] })), () => null);
+        return drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Banish Lite', 'hand'), targets: [[{ kind: 'object', object: z }]] })), () => null);
+      }),
+    ).toMatchObject({ drew: 0, gained: 3, counters: 1 });
+  });
+  it('Incinerate: a creature dealt damage this way can\'t be regenerated this turn (CR 701.19c)', () => {
+    for (const card of ['Bolt', 'Incinerate Lite']) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const troll = give(g, 'bob', 'Regen Lite', 'battlefield');
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', card, 'hand'), targets: [[{ kind: 'object', object: troll }]] });
+      // Bob regenerates in response.
+      g = act(g, { type: 'pass', player: 'alice' });
+      const ability = legalActions(g, 'bob').find((a) => a.type === 'activate' && a.object === troll) as { ability: number };
+      g = settle(act(g, { type: 'activate', player: 'bob', object: troll, ability: ability.ability }));
+      g = drive(g, () => null);
+      expect([card, g.objects[troll]!.zone]).toEqual([card, card === 'Bolt' ? 'battlefield' : 'graveyard']);
+    }
+  });
+  it('Ringwraiths: "If that creature is legendary, its controller loses 3 life"', () => {
+    for (const name of ['Big Bear', 'Big Legend Lite']) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const victim = give(g, 'bob', name, 'battlefield');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ringwraiths Lite', 'hand') }));
+      g = drive(g, (g) => (g.pending?.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: victim }]] } }) : null));
+      expect([name, g.players.bob!.life]).toEqual([name, name === 'Big Legend Lite' ? 17 : 20]);
+    }
+  });
+  it('Grandmother Goby: the mana spent to cast the countered spell, as it was cast', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Goby Lite', 'battlefield');
+    g.players.alice!.pool.G = 2;
+    const spell = give(g, 'alice', 'Growth Lite', 'hand');
+    const hand = g.zones.hand.alice!.length;
+    g = drive(settle(act(g, { type: 'cast', player: 'alice', object: spell })), () => null);
+    const merfolk = g.zones.battlefield.filter((id) => g.cards[g.objects[id]!.card]!.name === 'Merfolk Token');
+    expect([g.objects[spell]!.zone, merfolk.length, g.zones.hand.alice!.length]).toEqual(['graveyard', 2, hand - 1]);
+  });
+  it('Rabble Rousing: "create that many" — how many creatures attack', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Rabble Lite', 'battlefield');
+    const attackers = [give(g, 'alice', 'Zombie', 'battlefield'), give(g, 'alice', 'Zombie', 'battlefield')];
+    g = drive(attackWith(g, attackers), () => null);
+    const citizens = g.zones.battlefield.filter((id) => g.cards[g.objects[id]!.card]!.name === 'Citizen Token');
+    expect(citizens.length).toBe(2);
+  });
+  it("Norn's Decree: an opponent's creatures deal combat damage to you — that opponent gets a poison counter", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Decree Lite', 'battlefield');
+    const [a, b] = [give(g, 'bob', 'Zombie', 'battlefield'), give(g, 'bob', 'Zombie', 'battlefield')];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [a, b].map((attacker) => ({ attacker, target: { kind: 'player' as const, player: 'alice' } })) } });
+    for (let i = 0; i < 40 && g.step !== 'main2'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.pending) break;
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect([g.players.alice!.life, g.players.bob!.poison ?? 0]).toEqual([16, 1]);
+  });
+  it('Arcbound Tracker: only spells after the first each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const tracker = give(g, 'alice', 'Tracker Lite', 'battlefield');
+    for (let i = 0; i < 3; i++) g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') })), () => null);
+    expect(g.objects[tracker]!.counters['+1/+1'] ?? 0).toBe(2);
+  });
+  it('Maelstrom Pulse and Bile Blight: the target and all others with its name', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const zombies = [give(g, 'bob', 'Zombie', 'battlefield'), give(g, 'alice', 'Zombie', 'battlefield'), give(g, 'carol', 'Zombie', 'battlefield')];
+    const bear = give(g, 'bob', 'Big Bear', 'battlefield');
+    g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Pulse Lite', 'hand'), targets: [[{ kind: 'object', object: zombies[0]! }]] })), () => null);
+    expect([...zombies, bear].map((id) => g.objects[id]!.zone)).toEqual(['graveyard', 'graveyard', 'graveyard', 'battlefield']);
+    const bears = [bear, give(g, 'alice', 'Big Bear', 'battlefield')];
+    g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Blight Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]] })), () => null);
+    expect(bears.map((id) => chars(g, g.objects[id]!).power)).toEqual([2, 2]);
+  });
+  it('Exhume: each player chooses a creature card from their own graveyard; it enters under its owner\'s control', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [mine, other] = [give(g, 'alice', 'Zombie', 'graveyard'), give(g, 'alice', 'Big Bear', 'graveyard')];
+    const bobs = give(g, 'bob', 'Zombie', 'graveyard');
+    let asked = '';
+    g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Exhume Lite', 'hand') })), (g) => {
+      if (g.pending?.kind !== 'choose_objects') return null;
+      asked = g.pending.player;
+      return act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'choose_objects', objects: [mine] } });
+    });
+    expect([asked, g.objects[mine]!.zone, g.objects[other]!.zone, g.objects[bobs]!.zone, g.objects[bobs]!.controller]).toEqual(['alice', 'battlefield', 'graveyard', 'battlefield', 'bob']);
+  });
+  it("Heartwood Storyteller: each of that player's opponents may draw — not the caster", () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    give(g, 'bob', 'Storyteller Lite', 'battlefield');
+    const hands = () => ['alice', 'bob', 'carol'].map((p) => g.zones.hand[p]?.length ?? 0);
+    const before = hands();
+    const asked: string[] = [];
+    g = drive(settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') })), (g) => {
+      if (g.pending?.kind !== 'may') return null;
+      asked.push(g.pending.player);
+      return act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'may', yes: true } });
+    }, 20);
+    expect(asked).toEqual(['bob', 'carol']);
+    expect(hands().map((n, i) => n - before[i]!)).toEqual([0, 1, 1]);
+  });
+  it('Opal Archangel: "it becomes a 5/5 Angel creature" — this enchantment, not the spell', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const opal = give(g, 'alice', 'Opal Angel Lite', 'battlefield');
+    const zombie = give(g, 'bob', 'Zombie', 'hand');
+    g = drive(settle(act(g, { type: 'cast', player: 'bob', object: zombie })), () => null);
+    const [o, z] = [chars(g, g.objects[opal]!), chars(g, g.objects[zombie]!)];
+    expect([o.types, o.subtypes, o.power, z.subtypes, z.power]).toEqual([['Creature'], ['Angel'], 5, ['Zombie'], 2]);
   });
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');

@@ -1071,7 +1071,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const topFirstFx = thenTop ? attempt(b, (b) => parseSentence(capitalise(thenTop[1]!), b)) : null;
       const topCard = /^([Ll]ook at|[Rr]eveal) the top card of your library$/.exec(thenTop && topFirstFx ? capitalise(thenTop[2]!) : s);
       // Herald's Horn: "If it's a creature card of the chosen type, you may reveal it and put it into your hand."
-      const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card(?: of the chosen type)?, (you may )?(?:reveal it and )?put it (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
+      // Momir Vig: "If it's a creature card, put that card into your hand."
+      const ifIts = topCard && sentences[i + 1] ? /^If it's (?:a|an) (.+?) card(?: of the chosen type)?, (you may )?(?:reveal it and )?put (?:it|that card) (onto the battlefield( tapped)?|into your hand|into your graveyard)$/.exec(sentences[i + 1]!) : null;
       const ofChosen = Boolean(ifIts && / card of the chosen type, /.test(sentences[i + 1]!));
       // Chaos Warp: "The owner of target permanent shuffles it into their library, then reveals the top card of their
       // library. If it's a permanent card, they put it onto the battlefield."
@@ -1644,7 +1645,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         last.retainTypes = true;
         continue;
       }
-      if (/^(?:It|They|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
+      // Nekrataal: "Destroy target nonartifact, nonblack creature. That creature can't be regenerated."
+      if (/^(?:It|They|That creature|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
         // The destroy effects of the sentence before ("Destroy target creature and all others with the same name").
         const destroys: EffectNode[] = [];
         const find = (list: EffectNode[]) => {
@@ -2092,6 +2094,38 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       { type: 'choose_object', filter: {}, among: { ref: 'moved_onto' } },
     ];
   }
+  // Maelstrom Pulse: "Destroy target nonland permanent and all other permanents with the same name as that permanent" —
+  // every permanent with its name, at once (CR 608.2h: its name as the spell resolves).
+  // Echoing Truth: "Return target nonland permanent and all other permanents with the same name as that permanent to their
+  // owners' hands"; Bile Blight: "Target creature and all other creatures with the same name as that creature get -3/-3".
+  const andSameName = /^(.*?)\b([Tt]arget [^,]+?) and all other (permanents|creatures) with the same name(?: as that (?:permanent|creature))?\b(.*)$/.exec(s);
+  if (andSameName) {
+    const out = attempt(b, (b) => {
+      const fx = parseSentence(`${andSameName[1]}${andSameName[2]}${andSameName[4]}`, b);
+      const index = b.targets.length - 1;
+      if (!fx || index < 0) return null;
+      const all: Ref = { ref: 'all', filter: { sameNameAs: { ref: 'target', index }, ...(andSameName[3] === 'creatures' ? { types: ['Creature'] } : {}) } };
+      const me = JSON.stringify({ ref: 'target', index });
+      // The one effect on the target, and nothing else about it.
+      if (JSON.stringify(fx).split(me).length !== 2) return null;
+      const swapped = fx.map((e) => {
+        const k = ['what', 'to'].find((key) => JSON.stringify(e[key]) === me);
+        return k ? { ...e, [k]: all } : e;
+      });
+      return JSON.stringify(swapped).includes('"ref":"all","filter":{"sameNameAs"') ? swapped : null;
+    });
+    if (out) return out;
+  }
+  // Exhume: "Each player puts a creature card from their graveyard onto the battlefield" — each chooses their own, and
+  // they enter at once under their owners' control.
+  const exhume = /^[Ee]ach player (?:puts|returns) (?:a|an) (.+? card(?: with .+?)?) from their graveyard (?:onto|to) the battlefield$/.exec(s);
+  if (exhume) {
+    const pf = parseFilter(`${exhume[1]} in a graveyard`, b);
+    if (!pf || pf.plural) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    b.it = { ref: 'moved_onto' };
+    return [{ type: 'return_from_each_graveyard', filter, ownChoice: true }];
+  }
   // Gisa, Glorious Resurrector: "put all creature cards exiled with Gisa onto the battlefield under your control".
   const putExiled = /^[Pp]ut (all (?:[a-z]+ )?cards exiled with ~) onto the battlefield under your control$/.exec(s);
   if (putExiled) return parseSentence(`Return ${putExiled[1]} to the battlefield under your control`, b);
@@ -2181,7 +2215,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Will of the Jeskai: "Each player may discard their hand and draw five cards." — each in turn chooses (CR 101.4).
-  const eachMay = /^Each (player|opponent) may (.+)$/.exec(s);
+  // Heartwood Storyteller: "each of that player's opponents may draw a card".
+  const thatPlayer = b.named['that player'] ?? (b.player?.ref === 'trigger_player' ? b.player : null);
+  const eachMay = /^Each (player|opponent) may (.+)$/.exec(s) ?? (thatPlayer ? /^Each of that player's (opponents) may (.+)$/.exec(s) : null);
   if (eachMay) {
     const r = attempt(b, (b) => {
       const asThem = capitalise(eachMay[2]!.replace(/ of their choice\b/g, '').replace(/\btheir\b/g, 'your').replace(/\bthey (control|own)\b/g, 'you $1'));
@@ -2189,7 +2225,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const before = b.targets.length;
       const theirs = parseSentence(asThem, b);
       if (!theirs || b.targets.length !== before || JSON.stringify(theirs).includes('"ref":"target"')) return null;
-      return [{ type: 'opponents_may', effects: theirs, ...(eachMay[1] === 'player' ? { everyone: true } : {}) }];
+      return [{ type: 'opponents_may', effects: theirs, ...(eachMay[1] === 'player' ? { everyone: true } : {}), ...(eachMay[1] === 'opponents' ? { opponentsOf: thatPlayer! } : {}) }];
     });
     if (r) return r;
   }
@@ -4444,7 +4480,8 @@ const VERBS: Record<string, VerbHandler> = {
   attach(args, who, b, imperative) {
     // Codsworth: "Attach target Aura or Equipment you control to target creature you control." (CR 701.3)
     // Blacksmith's Talent: "attach target Equipment you control to up to one target creature you control".
-    const both = imperative ? /^(target (?:Aura|Equipment|Aura or Equipment) you control) to ((?:up to one )?target .+)$/.exec(args) : null;
+    // Barret: "attach up to one target Equipment you control to target Rebel you control"; Sokka: "… to ~".
+    const both = imperative ? /^((?:up to one )?target (?:Aura|Equipment|Aura or Equipment) you control) to ((?:up to one )?target .+|~)$/.exec(args) : null;
     if (both) {
       const what = parseObjectRef(both[1]!, b);
       const to = what && !what.plural ? parseObjectRef(both[2]!, b) : null;
@@ -4500,6 +4537,11 @@ const WITH_SUBJECT = new RegExp(`^(.+?) (${VERB_ALT}) (.+)$`);
 
 /** Replacement and prevention effects created by a resolving spell (CR 614, CR 615). */
 function parseReplacement(c: string, b: Binder): EffectNode[] | null {
+  // Incinerate: "A creature dealt damage this way can't be regenerated this turn." (CR 701.19c) — what the damage was
+  // dealt to.
+  if (/^(?:A creature|Creatures) dealt damage this way can't be regenerated this turn$/.test(c)) {
+    return b.damaged ? [{ type: 'modify', what: b.damaged, rules: ['cant_be_regenerated'], until: 'eot' }] : null;
+  }
   // CR 614.1a: "If that creature would die this turn, exile it instead."
   const dies = /^If (.+?) would die this turn, exile it instead$/.exec(c);
   if (dies) {

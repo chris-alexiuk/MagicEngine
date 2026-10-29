@@ -430,6 +430,8 @@ export interface ObjectFilter {
   ownerPlayer?: string;
   /** The player who controls it (controlledBy, bound as a target is checked). */
   controllerPlayer?: string;
+  /** Edgewall Innkeeper: "a creature spell that has an Adventure" (CR 715). */
+  hasAdventure?: true;
   /** "creatures that aren't of the chosen type" (Kindred Dominance). */
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
@@ -537,7 +539,7 @@ export type Ref =
   /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
   /** `except`: Kediss's "each other opponent" — not the player the trigger was about. */
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
-  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter }
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref }
   | { ref: 'controller_of'; of: Ref }
   /** Blightning, Bonfire of the Damned: "that player or that planeswalker's controller" — a target player, or the controller of a
    * target permanent. */
@@ -666,7 +668,7 @@ export type AmountExpr = (
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
   | { kind: 'excess_this_way' }
   /** "for each creature that died this turn", "the number of Zubera that died this turn" (as they last existed). */
-  | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent' }
+  | { kind: 'died_this_turn'; types?: string[]; subtypes?: string[]; notSubtypes?: string[]; nontoken?: true; controller?: 'you' | 'opponent' }
   /** "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard" (0 if none). */
   | { kind: 'greatest'; stat: 'power' | 'toughness' | 'mana_value'; filter: ObjectFilter }
   /** CR 702.23a (rampage): "for each creature blocking it beyond the first" — creatures blocking it, less `beyond`. */
@@ -727,6 +729,8 @@ export const RULE_FLAGS = [
   'loyalty_instant',
   /** Pilot tokens: "This token saddles Mounts and crews Vehicles as though its power were 2 greater." (CR 702.122a, 702.171a) */
   'crews_plus_2',
+  /** Incinerate: "A creature dealt damage this way can't be regenerated this turn." (CR 701.19c) */
+  'cant_be_regenerated',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -1320,7 +1324,7 @@ export const CORE_NODES = {
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',

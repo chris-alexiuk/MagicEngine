@@ -2189,7 +2189,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   opponents_may(node, ctx) {
     const g = ctx.g;
     // Will of the Jeskai: "Each player may …" — you too.
-    const opponents = apnap(g).filter((p) => (node.everyone || p !== ctx.controller) && livePlayers(g).includes(p));
+    // Heartwood Storyteller: "each of that player's opponents may …".
+    const base = node.opponentsOf ? (refPlayers(ctx, node.opponentsOf as Ref)[0] ?? '\u0000') : ctx.controller;
+    const opponents = apnap(g).filter((p) => (node.everyone || p !== base) && livePlayers(g).includes(p));
     const memo = ctx.memo as { i?: number; asking?: PlayerId; out?: EffectNode[] };
     memo.i ??= 0;
     memo.out ??= [];
@@ -2609,13 +2611,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const memo = ctx.memo as { picked?: ObjectId[]; i?: number };
     const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
-    const players = g.order.filter((p) => !g.players[p]!.lost);
+    const seats = g.order.filter((p) => !g.players[p]!.lost);
+    // Exhume: the players choose in turn order, starting with the active player (CR 101.4).
+    const start = node.ownChoice ? Math.max(0, seats.indexOf(g.active)) : 0;
+    const players = [...seats.slice(start), ...seats.slice(0, start)];
     memo.picked ??= [];
     let answer = answerOf(ctx, 'choose_objects');
     for (let i = memo.i ?? 0; i < players.length; i++) {
       const candidates = zoneList(g, 'graveyard', players[i]!).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
       memo.i = i;
-      if (candidates.length > 1 && !answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: `Choose a card in ${g.players[players[i]!]!.name}'s graveyard.` } };
+      // Exhume: each player chooses from their own graveyard (APNAP order, CR 101.4).
+      const chooser = node.ownChoice ? players[i]! : ctx.controller;
+      if (candidates.length > 1 && !answer) return { ask: { kind: 'choose_objects', player: chooser, candidates, min: 1, max: 1, text: node.ownChoice ? 'Choose a card in your graveyard to put onto the battlefield.' : `Choose a card in ${g.players[players[i]!]!.name}'s graveyard.` } };
       if (candidates.length > 1) {
         if (answer!.objects.length !== 1 || !candidates.includes(answer!.objects[0]!)) throw new RulesError('Choose one of those cards.');
         memo.picked.push(answer!.objects[0]!);
@@ -2626,7 +2633,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const moved: ObjectRef[] = [];
     for (const id of memo.picked) {
       if (g.objects[id]?.zone !== 'graveyard') continue;
-      moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller });
+      moveObject(g, id, 'battlefield', ctx.events, { controller: node.ownChoice ? g.objects[id]!.owner : ctx.controller });
       const now = g.objects[id]!;
       if ((now.zone as string) === 'battlefield') moved.push({ id, zcc: now.zcc });
     }
@@ -5173,8 +5180,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       return [...count].filter(([, n]) => n >= Number(t.min ?? 1)).map(([player]) => ({ player }));
     }
     if (typeof t.min === 'number' && attacks.length < t.min) return [];
-    // "Whenever a player attacks …": that player is the attacker.
-    return t.anyone ? [{ player: check.g.active }] : [{}];
+    // "Whenever a player attacks …": that player is the attacker. Rabble Rousing: "create that many …" — how many attack.
+    return t.anyone ? [{ player: check.g.active, amount: attacks.length }] : [{ amount: attacks.length }];
   },
   // CR 509.3g: "Whenever ~ attacks and isn't blocked" — once blockers have been declared.
   unblocked(t, check) {
@@ -5204,9 +5211,21 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const src = check.g.objects[x.source];
       return Boolean(src && matchesFilter(check.g, src, t.filter as ObjectFilter, { controller: check.controller, source: check.source, anyZone: true }));
     };
+    // Norn's Decree: "Whenever one or more creatures an opponent controls deal combat damage to you, that opponent …" —
+    // once for each player whose creatures did (in practice the attacking player).
+    if (t.toYou && to !== check.controller) return [];
     const batch = (check.batch ?? [e]).filter(matches);
     if (batch[0] !== e) return [];
     if (t.anyPlayers) return [{}];
+    if (t.toYou) {
+      const by = new Map<PlayerId, number>();
+      for (const x of batch) {
+        if (x.type !== 'damage') continue;
+        const c = check.g.objects[x.source]?.controller;
+        if (c) by.set(c, (by.get(c) ?? 0) + x.amount);
+      }
+      return [...by].map(([player, amount]) => ({ player, amount }));
+    }
     return [{ player: to, amount: batch.reduce((n, x) => n + (x.type === 'damage' ? x.amount : 0), 0) }];
   },
   // "Whenever one or more cards leave your graveyard": once per batch.
@@ -5505,6 +5524,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const before = (check.g.turnLog.castSpells ?? []).filter((c) => c.player === e.player && c.id !== e.object && check.g.objects[c.id] && matchesFilter(check.g, check.g.objects[c.id]!, filter, ctxF)).length;
       if (before !== t.nth - 1) return [];
     } else if (typeof t.nth === 'number' && e.nth !== t.nth) return [];
+    // Arcbound Tracker: "a spell other than your first spell each turn".
+    if (typeof t.nthAtLeast === 'number' && (e.nth ?? 0) < t.nthAtLeast) return [];
     // CR 702.191a (increment): more mana spent on it than this creature's power or toughness.
     if (t.increment) {
       const src = check.source;
@@ -5551,7 +5572,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (!hit) return [];
     }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
-    return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player }] : [];
+    // Grandmother Goby: "counter that spell. Create … equal to the amount of mana spent to cast that spell" — remembered.
+    return matchesFilter(check.g, spell, filter, { controller: check.controller, source: check.source }) ? [{ object: refTo(spell), player: e.player, ...(e.manaSpent !== undefined ? { manaSpent: e.manaSpent } : {}) }] : [];
   },
 };
 

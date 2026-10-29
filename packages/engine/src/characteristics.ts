@@ -879,6 +879,8 @@ export function matchesFilter(
   if (f.notCopy && o.spellCopy) return false;
   if (f.castFromZone && !(o.zone === 'stack' && o.cast?.from === f.castFromZone)) return false;
   if (f.ownerPlayer !== undefined && o.owner !== f.ownerPlayer) return false;
+  // CR 715: "a creature spell that has an Adventure".
+  if (f.hasAdventure && g.cards[o.card]?.layout !== 'adventure') return false;
   // "target creature that player controls" — off the battlefield, its owner (CR 108.4a).
   if (f.controllerPlayer !== undefined && (o.zone === 'battlefield' ? controller : o.owner) !== f.controllerPlayer) return false;
   // Avenging Arrow: "target creature that dealt damage this turn".

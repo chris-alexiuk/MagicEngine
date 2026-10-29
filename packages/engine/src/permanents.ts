@@ -35,7 +35,8 @@ export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: 
   if (hasKeyword(g, o, 'indestructible')) return false;
   // CR 122.1c: "If a permanent with a shield counter on it would be … destroyed, instead remove a shield counter from it."
   if (removeShield(o, events)) return false;
-  if (!opts.noRegen && (o.regenShields ?? 0) > 0) {
+  // CR 701.19c: "can't be regenerated" — the shield doesn't apply.
+  if (!opts.noRegen && (o.regenShields ?? 0) > 0 && !chars(g, o).rules.has('cant_be_regenerated')) {
     // CR 701.19a: instead remove all damage from it, tap it, and remove it from combat.
     o.regenShields!--;
     o.damage = 0;

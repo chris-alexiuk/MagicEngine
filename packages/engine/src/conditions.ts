@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -56,6 +56,10 @@ export interface TurnLog {
   left?: PlayerId[];
   /** A nonland permanent left the battlefield this turn (void). */
   nonlandLeft?: boolean;
+  /** Gau, Feral Youth: "if a card left your graveyard this turn" — each card, by owner, with its card types. */
+  leftGraveyard?: { owner: PlayerId; types: string[] }[];
+  /** Ennis: "if one or more cards were put into exile this turn" (tokens aren't cards). */
+  cardExiled?: boolean;
   /** Permanents that entered the battlefield this turn, by controller (celebration). */
   entered?: Record<PlayerId, ObjectId[]>;
   /** Elanor Gardner: what each player sacrificed this turn, as it last existed. */
@@ -134,6 +138,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           if (was.includes('Creature') || types.includes('Creature')) log.creatureDied = true;
           (log.died ??= []).push({ controller: e.controller, types: [...was], subtypes: [...(lk?.subtypes ?? [])], token: Boolean(g.objects[e.object]?.token) });
         }
+        if (e.from === 'graveyard' && g.objects[e.object]) (log.leftGraveyard ??= []).push({ owner: g.objects[e.object]!.owner, types: [...types] });
+        if (e.to === 'exile' && !e.token) log.cardExiled = true;
         if (e.from === 'battlefield') {
           if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
           if (!types.includes('Land')) log.nonlandLeft = true;
@@ -537,6 +543,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const n = (g.turnLog.sacrificedBy?.[controller] ?? []).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
       return cmp(n, cond);
     }
+    // Gau, Feral Youth: "if a card left your graveyard this turn"; Bonecache Overseer: "three or more cards".
+    case 'left_graveyard': {
+      const types = ((cond.filter ?? {}) as ObjectFilter).types;
+      const n = (g.turnLog.leftGraveyard ?? []).filter((l) => l.owner === controller && (!types || types.some((t) => l.types.includes(t)))).length;
+      return cmp(n, cond);
+    }
     case 'entered_this_turn':
       // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
       return cmp(enteredThisTurn(g, controller, (cond.filter ?? {}) as ObjectFilter, source ?? undefined), cond);
@@ -627,8 +639,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           // Surge (CR 702.117a): "if you … have cast another spell this turn".
           return (log.spellsCast[controller] ?? 0) > 0;
         // Lyse Hext: "if you've cast two or more noncreature spells this turn"
+        // Canyon Crab: "if you haven't cast a spell from your hand this turn" (`from`).
         case 'you_cast':
-          return (log.castSpells ?? []).filter((c) => c.player === controller && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.from || c.from === cond.from) && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
         case 'you_lost_life':
           return log.lostLife.includes(controller);
         case 'you_played_land':
@@ -649,6 +662,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(log.nonlandLeft);
         case 'warped':
           return Boolean(log.warped);
+        case 'card_exiled':
+          return Boolean(log.cardExiled);
         case 'you_committed_crime':
           return (log.crimes ?? []).includes(controller);
         // CR 700.11
