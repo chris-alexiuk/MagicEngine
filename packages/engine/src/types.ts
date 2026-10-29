@@ -300,6 +300,8 @@ export interface CombatState {
   damageQueue?: { player: PlayerId; choices: DamageChoice[] }[];
   assigned?: Record<ObjectId, DamageAssignment[]>;
   attackersDeclared: boolean;
+  /** Kytheon: the creatures declared as attackers this combat (CR 508.1). */
+  declared?: { id: ObjectId; zcc: number }[];
   /** Defending players still to declare blockers, in APNAP order (CR 802.4). */
   toDeclareBlockers: PlayerId[];
   /** Creatures that had first strike or double strike when a first-strike damage step began (CR 510.4). */
@@ -934,7 +936,7 @@ export type GameEvent =
   | { type: 'manual'; player: PlayerId; op: ManualOp }
   | { type: 'attacks_declared'; attacks: { attacker: ObjectId; target: AttackTarget }[] }
   | { type: 'blocks_declared'; player: PlayerId; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
-  | { type: 'damage'; source: ObjectId; to: DamageRecipient; amount: number; combat: boolean }
+  | { type: 'damage'; source: ObjectId; /** CR 400.7: the object it was as it dealt the damage. */ sourceZcc?: number; to: DamageRecipient; amount: number; combat: boolean }
   | { type: 'player_lost'; player: PlayerId; reason: string }
   | { type: 'game_over'; winner: PlayerId | null };
 

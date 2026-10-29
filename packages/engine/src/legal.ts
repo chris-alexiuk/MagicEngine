@@ -8,7 +8,7 @@ import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
-import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
+import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { bonusManaChoices, craftCandidates, crewCandidates, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets } from './targets.js';
@@ -142,7 +142,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     for (const kind of ['foretell', 'plot', 'suspend'] as const) {
       const costText = exileActionCost(face, kind);
       if (!costText || !exileActionTiming(g, player, face, kind)) continue;
-      if (planAutoTap(g, player, parseManaCost(costText))) out.push({ type: kind, player, object: id, autoTap: true });
+      if (planAutoTap(g, player, exileActionMana(g, player, costText, kind))) out.push({ type: kind, player, object: id, autoTap: true });
     }
   }
   // Foretold and plotted cards in exile, on a later turn.
@@ -150,15 +150,26 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
     const o = g.objects[id]!;
     if (o.owner !== player || (o.foretold === undefined && o.plotted === undefined)) continue;
     const face = g.cards[o.card]!.faces[0]!;
-    const opt = castOptions(face).find((x) => x.id === (o.foretold !== undefined ? 'foretell' : 'plot'));
+    const options = castOptionsFor(g, player, o, face);
+    const opt = options.find((x) => x.id === (o.foretold !== undefined ? 'foretell' : 'plot'));
     if (!opt || (o.foretold ?? o.plotted)! >= g.turn) continue;
     if (opt.id === 'plot' && !mainPhaseEmptyStack) continue;
     const instant = face.types.includes('Instant') || face.keywords.some((k) => k.id === 'flash');
     if (opt.id === 'foretell' && !instant && !mainPhaseEmptyStack) continue;
     if (castRestrictionProblem(g, player, face, o)) continue;
-    if (!planAutoTap(g, player, parseManaCost(opt.cost.mana ?? ''))) continue;
-    const choice = defaultSpellChoice(g, player, o, face);
-    if (choice) out.push({ type: 'cast', player, object: id, autoTap: true, alt: opt.id, ...choice });
+    // Lys Alana Dignitary: "As an additional cost to cast this spell, behold an Elf or pay {2}." — one of them, plotted or not.
+    const required = options.filter((x) => x.required);
+    for (const req of required.length ? required.map((r) => [r]) : [[]]) {
+      // Aven Interrupter: "Spells your opponents cast from graveyards or from exile cost {2} more to cast."
+      const exileCost = parseManaCost(`${opt.cost.mana ?? ''}${req.map((r) => r.cost.mana ?? '').join('')}`);
+      applyCostModifiers(g, player, o, face, exileCost);
+      if (exileCost.unsupported.length || !planAutoTap(g, player, exileCost)) continue;
+      const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...req.flatMap((r) => r.cost.other ?? [])]);
+      const choice = costs ? defaultSpellChoice(g, player, o, face) : null;
+      if (!choice) continue;
+      out.push({ type: 'cast', player, object: id, autoTap: true, alt: opt.id, ...(req.length ? { extras: req.map((r) => r.id) } : {}), ...choice, ...withCosts(costs!) });
+      break;
+    }
   }
 
   // CR 709.5e: unlocking a locked door of a Room you control (a special action, at sorcery timing).
@@ -322,7 +333,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const mana = parseManaCost(freeEquip ? '' : (cost.mana ?? ''));
       if (mana.unsupported.length || mana.x > 0) return;
       applyPowerUp(g, o, ab, mana, player);
-      let costs = defaultCostChoices(g, player, o, cost.other ?? []);
+      // Ruthless Technomancer: "Sacrifice X artifacts: … X can't be 0." — the least X allowed.
+      const xLeast = ab.xMin !== undefined && cost.other?.some((c) => c.amount === 'X') ? ab.xMin : undefined;
+      let costs = defaultCostChoices(g, player, o, xLeast === undefined ? (cost.other ?? []) : cost.other!.map((c) => (c.amount === 'X' ? { ...c, amount: xLeast } : c)));
       if (!costs) return;
       if (freeEquip) costs = { ...costs, freeEquip: true };
       const leaving = [...(cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(costs.sacrifice ?? [])];
@@ -350,7 +363,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         for (const x of [...new Set([1, most])]) if (x >= 1) out.push({ type: 'activate', player, object: id, ability, autoTap: true, x, ...choice, ...withCosts(costs) });
         return;
       }
-      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
+      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...(xLeast !== undefined ? { x: xLeast } : {}), ...choice, ...withCosts(costs) });
     });
     if (mine) faceOf(g, o).unparsed.forEach((line, i) => {
       if (line.includes(': ')) out.push({ type: 'activate_manual', player, object: id, line: i, autoTap: true });

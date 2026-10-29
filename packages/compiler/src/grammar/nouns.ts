@@ -101,8 +101,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Braids, Arisen Nightmare: "a permanent … that shares a card type with it" — what was sacrificed.
   [/ that shares a card type with the sacrificed permanent$/, (f) => !f.sharesCardTypeWithSacrificed && ((f.sharesCardTypeWithSacrificed = true), true)],
+  [/ that shares? a card type with the exiled card$/, (f) => !f.sharesCardTypeWithExiled && ((f.sharesCardTypeWithExiled = true), true)],
   // Relentless Assault: "Untap all creatures that attacked this turn."
   [/ that attacked this turn$/, (f) => !f.attackedThisTurn && ((f.attackedThisTurn = true), true)],
+  // Avenging Arrow: "target creature that dealt damage this turn"; Death-Rattle Oni: "creatures that were dealt damage this
+  // turn"; Inflame: "each creature dealt damage this turn".
+  [/ that dealt damage this turn$/, (f) => !f.dealtDamageThisTurn && ((f.dealtDamageThisTurn = true), true)],
+  [/(?<! that)(?: that (?:was|were|has been|have been))? dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
   // Steel Hellkite: "each nonland permanent with mana value X whose controller was dealt combat damage by this creature
   // this turn"
   [/ whose controller was dealt combat damage by (?:~|this creature) this turn$/, (f) => !f.controllerHitBySource && ((f.controllerHitBySource = true), true)],
@@ -613,6 +618,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // Ao, the Dawn Sky: "each permanent you control that's a creature or Vehicle".
     const thatsA = /^(each|all) permanents? (you control|your opponents control|an opponent controls) that(?:'s| is| are) (?:an? )?(.+)$/i.exec(t);
     if (thatsA && !/\b(?:that|with|without)\b/.test(thatsA[3]!)) return parseObjectRef(`${thatsA[1]} ${thatsA[3]} ${thatsA[2]}`, b, mode);
+    // Chandra, Fire of Kaladesh: "Chandra deals 1 damage to target player or planeswalker. If …, exile her" — a character
+    // card calls itself "him" or "her"; anything else it mentions is "it" or "that player".
+    if (/^(?:him|her)$/i.test(t)) return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     if (PRONOUNS.test(t)) {
       const it = demonstrative(t, b);
       // An instant or sorcery is never "that creature" (Code of Constraint's addendum, read apart from its target), nor is a

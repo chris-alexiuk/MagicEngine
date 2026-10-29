@@ -247,6 +247,19 @@ export function exileActionCost(face: FaceDef, kind: 'foretell' | 'plot' | 'susp
   return kind === 'foretell' ? '{2}' : kw.cost!;
 }
 
+/** Doc Aurlock: "Plotting cards from your hand costs {2} less." — off the generic part (CR 601.2f via 116.2k). */
+export function exileActionMana(g: GameState, player: PlayerId, costText: string, kind: 'foretell' | 'plot' | 'suspend'): ManaCost {
+  const cost = parseManaCost(costText);
+  for (const id of abilitySources(g)) {
+    const o = g.objects[id]!;
+    if (o.controller !== player) continue;
+    for (const a of objectAbilities(g, o)) {
+      if (a.kind === 'static' && a.effect.type === 'special_action_discount' && a.effect.action === kind) cost.generic = Math.max(0, cost.generic - Number(a.effect.amount ?? 0));
+    }
+  }
+  return cost;
+}
+
 /** Whether the special action is allowed now (CR 702.143a: your turn; 702.170a: main phase, empty stack; 702.62a: when you could cast it). */
 export function exileActionTiming(g: GameState, player: PlayerId, face: FaceDef, kind: 'foretell' | 'plot' | 'suspend'): boolean {
   const sorcery = g.active === player && (g.step === 'main1' || g.step === 'main2') && g.stack.length === 0;
@@ -264,7 +277,7 @@ function exileToCastLater(g: GameState, player: PlayerId, id: ObjectId, kind: 'f
   const costText = exileActionCost(face, kind);
   if (!costText) throw new RulesError(`${face.name} can’t be ${kind === 'suspend' ? 'suspended' : `${kind}ted`.replace('tt', 't')}.`);
   if (!exileActionTiming(g, player, face, kind)) throw new RulesError(`You can’t ${kind} ${face.name} now.`);
-  const cost = parseManaCost(costText);
+  const cost = exileActionMana(g, player, costText, kind);
   if (wantsAutoTap) autoTap(g, player, cost, 0, events);
   if (!payMana(g, player, cost, 0, OTHER_PURPOSE)) throw new RulesError(`Not enough mana to pay ${costText}.`);
   moveObject(g, id, 'exile', events);
@@ -466,6 +479,10 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
       base.push({ type: 'cast_option', id: 'retrace', kind: 'alternative', zone: 'graveyard', withManaCost: true, cost: { other: [{ type: 'discard', amount: 1, filter: { types: ['Land'] } }] } });
       break;
     }
+  }
+  // CR 702.170d: Aven Interrupter, Jace Reawakened — a card plotted by an effect is cast the same way, plot or not.
+  if (o.zone === 'exile' && o.plotted !== undefined && !face.types.includes('Land') && !base.some((x) => x.id === 'plot')) {
+    base.push({ type: 'cast_option', id: 'plot', kind: 'alternative', cost: {}, zone: 'exile' });
   }
   // CR 702.102a: fuse — both halves of a split card from your hand, paying both mana costs (CR 702.102c).
   const def = g.cards[o.card];

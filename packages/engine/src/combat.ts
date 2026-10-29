@@ -352,6 +352,8 @@ export function declareAttackers(
     }
   }
   g.combat!.attackersDeclared = true;
+  // CR 508.1: the creatures declared as attackers — the ones that "attacked" this combat, wherever they are now.
+  g.combat!.declared = attacks.flatMap(({ attacker }) => (g.objects[attacker] ? [{ id: attacker, zcc: g.objects[attacker]!.zcc }] : []));
   // CR 702.154a: "When you do, this creature gets +X/+0 until end of turn, where X is the tapped creature's power."
   for (const { attacker, tap } of enlist) {
     const x = power(g, g.objects[tap]!);
@@ -936,7 +938,7 @@ export function dealDamage(
   if (to.kind === 'player') {
     const ps = g.players[to.player];
     if (!ps || ps.lost) return 0;
-    events.push({ type: 'damage', source: source.id, to, amount, combat });
+    events.push({ type: 'damage', source: source.id, sourceZcc: source.zcc, to, amount, combat });
     if (infect) {
       // CR 120.3b: damage from a source with infect gives poison counters instead — its controller puts them (Vorinclex).
       putPlayerCounters(g, source.controller, to.player, 'poison', amount, events);
@@ -968,7 +970,7 @@ export function dealDamage(
   if (!unpreventable && hasProtectionFrom(g, o, source)) return 0;
   // CR 122.1c: a shield counter is removed instead (a replacement, not prevention — it works even when damage can't be prevented).
   if (removeShield(o, events)) return 0;
-  events.push({ type: 'damage', source: source.id, to, amount, combat });
+  events.push({ type: 'damage', source: source.id, sourceZcc: source.zcc, to, amount, combat });
   o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
     // CR 120.3c: damage to a planeswalker removes that many loyalty counters.

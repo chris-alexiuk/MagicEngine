@@ -539,7 +539,7 @@ export const activatedRule: GrammarRule = {
       andIf(node, { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } });
     }
     // Lair of the Hydra: "X can't be 0." — announced as 1 or more (CR 107.3, 601.2b).
-    if (/ X can't be 0\.$/.test(effectText) && /\{X\}/.test(cost.mana ?? '')) {
+    if (/ X can't be 0\.$/.test(effectText) && (/\{X\}/.test(cost.mana ?? '') || cost.other?.some((c) => c.amount === 'X'))) {
       effectText = effectText.replace(/ X can't be 0\.$/, '');
       node.xMin = 1;
     }
@@ -711,7 +711,8 @@ export const activatedRule: GrammarRule = {
     const b = new Binder(env);
     b.it = { ref: 'self' };
     // "{X}, {T}: Tap target creature with power X or less."; "−X: Return target creature card with mana value X …".
-    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X'));
+    // Ruthless Technomancer: "Sacrifice X artifacts: Return target creature card with power X or less …" — X announced first.
+    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X' || (c.type === 'sacrifice' && c.amount === 'X')));
     // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
     // (its power as it was, CR 608.2h).
     const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));
@@ -1277,7 +1278,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Dark Depths: "When Dark Depths has no ice counters on it, …"
   // Endrek Sahr: "When you control seven or more Thrulls, sacrifice Endrek Sahr."
   // Darksteel Reactor: "When this artifact has twenty or more charge counters on it, you win the game."
-  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t) || /^~ has (?:\w+) or more \S+ counters on it$/.test(t))) {
+  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t) || /^~ has (?:\w+) or (?:more|fewer) \S+ counters on (?:it|him|her)$/.test(t))) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
   }
@@ -1323,6 +1324,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const parsed = three.slice(1).map((e) => parseTrigger(word, `~ ${e}`, b));
     if (!parsed.every(Boolean)) return null;
     return { trigger: { type: 'either', of: parsed.map((p) => p!.trigger) }, it: { ref: 'self' }, player: null };
+  }
+  // Cityscape Leveler: "When you cast this spell and whenever this creature attacks" (CR 603.2) — from the stack, then from
+  // the battlefield.
+  const castAnd = /^you cast ~ and whenever (?:it|~) (attacks|blocks|dies)$/.exec(t);
+  if (castAnd) {
+    const one = parseTrigger(word, 'you cast ~', b);
+    const two = one ? parseTrigger('Whenever', `~ ${castAnd[1]}`, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'self' }, player: null };
   }
   // Up the Beanstalk: "When this enchantment enters and whenever you cast a spell with mana value 5 or greater" — two
   // unrelated events (CR 603.2), so there's no "it" or "that player" to speak of.
@@ -1670,10 +1680,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
   // "Whenever you draw your second card each turn"
-  const nth = /^(you|an opponent) draws? (?:your|their) (first|second|third) card each turn$/.exec(t);
+  // Alandra: "your fifth card each turn"; Tamiyo, Inquisitive Student: "When you draw your third card in a turn"; King T'Challa:
+  // "Whenever a player draws their second card each turn" (that player's own count).
+  const nth = /^(you|an opponent|a player) draws? (?:your|their) (first|second|third|fourth|fifth) card (each turn|in a turn|during their turn)$/.exec(t);
   if (nth) {
-    const opp = nth[1] !== 'you';
-    return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', nth: ['first', 'second', 'third'].indexOf(nth[2]!) + 1 }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
+    const who = nth[1] === 'you' ? 'you' : nth[1] === 'a player' ? 'any' : 'opponent';
+    return { trigger: { type: 'draw', who, nth: ['first', 'second', 'third', 'fourth', 'fifth'].indexOf(nth[2]!) + 1, ...(nth[3] === 'during their turn' ? { ownTurn: true } : {}) }, it: { ref: 'self' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
   }
   if (t === 'an opponent draws a card') return { trigger: { type: 'draw', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // Spiteful Visions, Kami of the Crescent Moon: "Whenever a player draws a card"
@@ -1792,12 +1804,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const heroic = /^you cast a spell that targets ~$/.exec(t);
   if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targetsSource: true }, it: { ref: 'self' }, player: { ref: 'you' } };
   // "Whenever you cast your second spell each turn", "… your first spell during each opponent's turn"
-  const nthSpell = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) spell (each turn|during each opponent's turn|during each of your opponents' turns)$/.exec(t);
+  const nthSpell = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) spell (each turn|during each opponent's turn|during each of your opponents' turns|during their turn)$/.exec(t);
   if (nthSpell) {
     const who = nthSpell[1] === 'you' ? 'you' : nthSpell[1] === 'an opponent' ? 'opponent' : 'any';
     const nth = ['first', 'second', 'third'].indexOf(nthSpell[2]!) + 1;
+    const when = nthSpell[3] === 'each turn' ? {} : nthSpell[3] === 'during their turn' ? { ownTurn: true } : { opponentsTurn: true };
     return {
-      trigger: { type: 'cast', who, filter: {}, nth, ...(nthSpell[3] !== 'each turn' ? { opponentsTurn: true } : {}) },
+      trigger: { type: 'cast', who, filter: {}, nth, ...when },
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -1884,6 +1897,11 @@ export const triggeredRule: GrammarRule = {
         if (!trig) return null;
         b.it = trig.it;
         b.player = trig.player;
+        // God-Eternal Bontu: "When ~ dies or is put into exile from the battlefield, you may put her into her owner's library"
+        // — the card where it went (CR 603.10a), as "it" would be.
+        const leavesSelf = (t: TriggerNode): boolean =>
+          t.type === 'either' ? (t.of as TriggerNode[]).some(leavesSelf) : ['dies', 'leaves'].includes(t.type) && (t.subject as Ref | undefined)?.ref === 'self';
+        if (trig.it?.ref === 'trigger_object' && leavesSelf(trig.trigger)) b.named['him'] = b.named['her'] = trig.it;
         // Razorkin Needlehead: "Whenever an opponent draws a card, this creature deals 1 damage to them." — that player (a
         // trigger about a player's own action, with nothing else "them" could be).
         if (trig.player?.ref === 'trigger_player' && ['draw', 'gain_life', 'lose_life'].includes(trig.trigger.type) && (trig.trigger as { who?: string }).who !== 'you') b.named['them'] ??= trig.player;
@@ -2723,6 +2741,16 @@ export const asUnblockedRule: GrammarRule = {
   },
 };
 
+/** Doc Aurlock: "Plotting cards from your hand costs {2} less." (CR 116.2k: plotting is a special action.) */
+export const specialActionDiscountRule: GrammarRule = {
+  id: 'special_action_discount',
+  parse(line, original) {
+    const m = /^(Plotting|Foretelling) cards from your hand costs \{(\d+)\} less\.$/.exec(line);
+    if (!m) return null;
+    return { kind: 'static', text: original, effect: { type: 'special_action_discount', action: m[1] === 'Plotting' ? 'plot' : 'foretell', amount: Number(m[2]) } };
+  },
+};
+
 /** CR 502.3: "You may choose not to untap ~ during your untap step." */
 export const optionalUntapRule: GrammarRule = {
   id: 'optional_untap',
@@ -2881,12 +2909,23 @@ export const costModifierRule: GrammarRule = {
     }
     // Emet-Selch: "Spells you cast from your graveyard cost {2} less to cast."; Fortune Teller's Talent: "Spells you cast from
     // anywhere other than your hand cost {2} less to cast."; Doc Aurlock: "… from your graveyard or from exile …".
-    const fromZone = /^Spells you cast from (your graveyard|exile|your graveyard or from exile|anywhere other than your hand) cost (\{\d+\}) less to cast$/.exec(body);
-    if (fromZone) {
-      const a = amountOf(fromZone[2]!);
+    // Semblance Anvil: "Spells you cast that share a card type with the exiled card cost {2} less to cast." (imprint)
+    const sharesExiled = /^Spells you cast that share a card type with the exiled card cost (\{\d+\}) less to cast$/.exec(body);
+    if (sharesExiled) {
+      const a = amountOf(sharesExiled[1]!);
       if (!a) return null;
-      const zones = fromZone[1] === 'anywhere other than your hand' ? undefined : fromZone[1] === 'exile' ? ['exile'] : fromZone[1] === 'your graveyard' ? ['graveyard'] : ['graveyard', 'exile'];
-      const node: CostModifierNode = { type: 'cost_modifier', who: 'you', change: 'less', ...a, ...(zones ? { castFrom: zones as ('graveyard' | 'exile')[] } : { notFromHand: true }) };
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter: { sharesCardTypeWithExiled: true }, change: 'less', ...a } as CostModifierNode };
+    }
+    // Aven Interrupter: "Spells your opponents cast from graveyards or from exile cost {2} more to cast."
+    const fromZone =
+      /^Spells (you|your opponents) cast from (your graveyard|graveyards|exile|(?:your graveyard|graveyards) or from exile|anywhere other than (?:your hand|their hands)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
+    if (fromZone && (fromZone[1] === 'you' ? !/their hands|^graveyards/.test(fromZone[2]!) : !/\byour\b/.test(fromZone[2]!))) {
+      const a = amountOf(fromZone[3]!);
+      if (!a) return null;
+      const where = fromZone[2]!;
+      const zones = /^anywhere other/.test(where) ? undefined : where === 'exile' ? ['exile'] : / or from exile$/.test(where) ? ['graveyard', 'exile'] : ['graveyard'];
+      const who = fromZone[1] === 'you' ? 'you' : 'opponents';
+      const node: CostModifierNode = { type: 'cost_modifier', who, change: fromZone[4] as 'less' | 'more', ...a, ...(zones ? { castFrom: zones as ('graveyard' | 'exile')[] } : { notFromHand: true }) };
       return { kind: 'static', text: original, effect: node };
     }
     // Conduit of Ruin: "The first creature spell you cast each turn costs {2} less to cast."
@@ -3329,6 +3368,15 @@ export const asEntersRule: GrammarRule = {
       if (!pf || pf.plural) return null;
       node = { type: 'as_enters', choice: 'reveal', filter: pf.filter };
     }
+    // Temple of the Dragon Queen: "you may reveal a Dragon card from your hand. This land enters tapped unless you revealed a
+    // Dragon card this way or you control a Dragon."
+    const revealOr = /^you may reveal (?:a|an) (.+?) card from your hand\. (?:~|[Tt]his land) enters tapped unless you revealed (?:a|an) \1 card this way or you control (?:a|an) (.+)$/.exec(what);
+    if (revealOr) {
+      const pf = parseFilter(`${revealOr[1]} card in your hand`, new Binder(env));
+      const ctl = parseFilter(revealOr[2]!, new Binder(env));
+      if (!pf || pf.plural || !ctl || ctl.plural || ctl.filter.zone) return null;
+      node = { type: 'as_enters', choice: 'reveal', filter: pf.filter, unlessControl: ctl.filter };
+    }
     const color = /^choose a color(?: other than (\w+))?$/.exec(what);
     if (color) {
       node = { type: 'as_enters', choice: 'color' };
@@ -3370,7 +3418,7 @@ export const asEntersRule: GrammarRule = {
       else if (kind === 'noncreature') node.filter = { notTypes: ['Creature'] };
       else if (kind) node.filter = { types: [kind === 'creature' ? 'Creature' : 'Artifact'] };
     }
-    if (!node || (orTapped.test(what) !== (node.choice === 'pay_life' || node.choice === 'reveal'))) return null;
+    if (!node || (orTapped.test(what) !== (node.choice === 'pay_life' || (node.choice === 'reveal' && !node.unlessControl)))) return null;
     if (m[1]) {
       if (node.choice === 'pay_life' || node.choice === 'reveal') return null;
       node.tapped = true;
@@ -3814,7 +3862,8 @@ export const manaTriggerRule: GrammarRule = {
     }
     const enchanted = /^Whenever enchanted (?:land|Forest|Plains|Island|Swamp|Mountain) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line);
     // Forsaken Monument: "Whenever you tap a permanent for {C}, add an additional {C}."
-    const yours = /^Whenever you tap (?:a|an) (.+?) for (?:mana|\{([WUBRGC])\}), add (?:an additional )?(.+)\.$/.exec(line);
+    // Regal Behemoth: "Whenever you tap a land for mana while you're the monarch, add an additional one mana of any color."
+    const yours = /^Whenever you tap (?:a|an) (.+?) for (?:mana|\{([WUBRGC])\})( while you're the monarch)?, add (?:an additional )?(.+)\.$/.exec(line);
     const anyone =
       /^Whenever (?:a|an) (.+?) is tapped for mana, its controller adds (?:an additional )?(.+)\.$/.exec(line) ??
       /^Whenever a player taps (?:a|an) (.+?) for mana, that player adds (?:an additional )?(.+)\.$/.exec(line);
@@ -3834,7 +3883,7 @@ export const manaTriggerRule: GrammarRule = {
     const m = enchanted ?? yours ?? anyone;
     if (!m) return null;
     const producedColor = yours?.[2];
-    const manaText = enchanted ? enchanted[1]! : yours ? yours[3]! : m[2]!;
+    const manaText = enchanted ? enchanted[1]! : yours ? yours[4]! : m[2]!;
     let subject: Ref = { ref: 'attached' };
     if (!enchanted) {
       const pf = parseFilter(`${m[1]!}${yours ? ' you control' : ''}`, new Binder(env));
@@ -3849,7 +3898,7 @@ export const manaTriggerRule: GrammarRule = {
     // mana ability resolves, CR 605.3b).
     else if (/^(?:one mana of any color|two mana in any combination of colors)$/.test(manaText)) effect = parseManaProduction(manaText) as AddManaEffect | null;
     if (!effect) return null;
-    return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }), ...(producedColor ? { producedColor } : {}) }, effects: [effect] } as TriggeredAbility;
+    return { kind: 'triggered', text: original, trigger: { type: 'tapped_for_mana', subject, ...(yours ? {} : { its: true }), ...(producedColor ? { producedColor } : {}), ...(yours?.[3] ? { while: { type: 'monarch' } } : {}) }, effects: [effect] } as TriggeredAbility;
   },
 };
 
@@ -4120,6 +4169,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   optionalUntapRule,
   prototypeRule,
   asUnblockedRule,
+  specialActionDiscountRule,
   castRestrictionRule,
   spellKeywordRule,
   costModifierRule,

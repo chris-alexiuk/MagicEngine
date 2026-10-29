@@ -101,7 +101,12 @@ const pool = db.cards.filter((c) => {
 const DUNGEONS: Record<string, CardDef> = Object.fromEntries(
   [...db.cards, ...db.tokens].filter((c) => c.faces[0]!.types.includes('Dungeon')).map((c) => [c.name, c]),
 );
-const focusPool = FOCUS ? pool.filter((c) => c.faces.some((f) => FOCUS.test(f.oracle))) : [];
+// A card's name or any face's name or text; lands can be focused on too (the random part of a deck has none).
+const focusable = (c: CardDef) => FOCUS!.test(c.name) || c.faces.some((f) => FOCUS!.test(f.name) || FOCUS!.test(f.oracle));
+const focusPool = FOCUS
+  ? db.cards.filter((c) => (pool.includes(c) || (c.faces[0]!.types.includes('Land') && c.automation !== 'manual' && !c.faces[0]!.types.includes('Creature'))) && focusable(c))
+  : [];
+if (FOCUS) console.log(`focus: ${focusPool.length} cards`);
 
 function makeDeck(colors: Color[]): string[] {
   const fits = (c: CardDef) => c.colorIdentity.every((x) => colors.includes(x));

@@ -92,6 +92,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const stat = lifeN[2] === 'dealt' ? 'damage' : lifeN[2] === 'lost' ? 'lost' : null;
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : lifeN[1] === 'a player' ? 'a_player' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
+  // Chandra, Fire of Kaladesh: "If Chandra has dealt 3 or more damage this turn".
+  const srcDealt = /^(?:~|it|this creature) has dealt (\w+) or more damage this turn$/.exec(t);
+  if (srcDealt) {
+    const n = parseAmount(srcDealt[1]!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'source_damage_this_turn' }, op: 'ge', n };
+  }
   // Proft's Eidetic Memory: "if you've drawn more than one card this turn"; "… two or more cards this turn".
   const drewN = /^you(?:'ve| have)? drawn (?:(more than one) card|(\w+) or more cards) this turn$/.exec(t);
   if (drewN) {
@@ -246,6 +252,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^~ is on the battlefield$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: {} };
   // "if ~ attacked this turn" (as this object, CR 400.7).
   if (/^~ attacked this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
+  // Wall of Resistance: "if this creature was dealt damage this turn" (as this object, CR 400.7).
+  if (/^~ was dealt damage this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { damagedThisTurn: true } };
   // Agent Frank Horrigan: "~ has indestructible as long as it attacked this turn" — "it" being this object.
   if (/^it attacked this turn$/.test(t) && (!b.it || b.it.ref === 'self')) return { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } };
   // Vaultborn Tyrant: "When this creature dies, if it's not a token, …" — a token that died has ceased to exist.
@@ -566,6 +574,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
 
   // Starting Town: "it's your first, second, or third turn of the game"
   if (t === "it's your first, second, or third turn of the game") return { type: 'early_turn', max: 3 };
+  if (t === "it isn't your first, second, or third turn of the game") return { type: 'not', cond: { type: 'early_turn', max: 3 } };
   // The Theros Gods: "your devotion to red is less than five", "your devotion to white and black is less than seven"
   const devotion = /^your devotion to (\w+)(?: and (\w+))? is less than (\w+)$/.exec(t);
   if (devotion) {
@@ -657,6 +666,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(attackedWith[1]!);
     return typeof n === 'number' ? { type: 'attacked_with', n } : null;
   }
+  // Kytheon, Hero of Akros: "if Kytheon and at least two other creatures attacked this combat".
+  const withSelf = /^~ and at least (\w+) other creatures attacked this combat$/.exec(t);
+  if (withSelf) {
+    const n = parseAmount(withSelf[1]!);
+    return typeof n === 'number' ? { type: 'attacked_with', n, withSelf: true } : null;
+  }
   // Land Tax: "if an opponent controls more lands than you"
   // Archaeomancer's Map: "if that player controls more lands than you"
   const more = /^(an opponent|that player) controls more (.+?) than you(?: do)?$/.exec(t);
@@ -719,6 +734,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
   const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t);
   if (none) return { type: 'counters', of: { ref: 'self' }, counter: none[1] ?? none[2]!, max: 0 };
+  // Garruk Relentless: "When Garruk has two or fewer loyalty counters on him, transform him."
+  const orFewer = /^~ has (\w+) or fewer (\S+) counters on (?:it|him|her)$/.exec(t);
+  if (orFewer) {
+    const n = parseAmount(orFewer[1]!);
+    return typeof n === 'number' ? { type: 'counters', of: { ref: 'self' }, counter: orFewer[2]!, max: n } : null;
+  }
   // Runaway Steam-Kin: "if this creature has fewer than three +1/+1 counters on it".
   const fewer = /^(?:~|it) has fewer than (\w+) (\S+) counters on (?:it|him|her)$/.exec(t);
   if (fewer) {

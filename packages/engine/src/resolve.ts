@@ -1,5 +1,6 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
+import { loggedUpTo } from './conditions.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { isLegalTarget, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -262,7 +263,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -416,6 +417,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.resolution?.tappedThisWay ?? 0;
     case 'damage_this_way':
       return ctx.resolution?.damageDealt ?? 0;
+    case 'source_damage_this_turn': {
+      // Chandra, Fire of Kaladesh: "If Chandra has dealt 3 or more damage this turn" — counting what this ability just dealt.
+      const s = ctx.source;
+      if (!s) return 0;
+      const zcc = ctx.sourceZcc ?? s.zcc;
+      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
+      return (g.turnLog.dealtDamage?.[`${s.id}:${zcc}`] ?? 0) + fresh.reduce((n, ev) => n + (ev.type === 'damage' && ev.source === s.id && (ev.sourceZcc ?? s.zcc) === zcc ? ev.amount : 0), 0);
+    }
     case 'discover_shortfall': {
       // Hit the Mother Lode: "If the discovered card's mana value is less than 10, … equal to the difference."
       const mv = ctx.resolution?.discoveredMv;

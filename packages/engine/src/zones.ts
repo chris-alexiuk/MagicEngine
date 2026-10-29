@@ -274,6 +274,8 @@ export function moveObject(
   if (to === 'battlefield') o.arrived = o.timestamp;
   delete o.loyaltyActivatedTurn;
   delete o.loyaltyActivations;
+  // CR 400.7: a new object hasn't been dealt damage this turn.
+  delete o.damagedTurn;
   delete o.attachedTo;
   delete o.attachedToPlayer;
   delete o.copyOf;

@@ -66,6 +66,8 @@ export interface TurnLog {
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
   damagedBy?: Record<ObjectId, ObjectId[]>;
+  /** Damage dealt this turn by each source, keyed "id:zcc". */
+  dealtDamage?: Record<string, number>;
   /** How many times each creature has been declared as an attacker this turn. */
   attacks?: Record<ObjectId, number>;
   /** The object each attacking creature was as it attacked (CR 400.7: "that attacked this turn"). */
@@ -89,6 +91,9 @@ export function newTurnLog(): TurnLog {
 }
 
 /** Records the events of one batch in the turn log. */
+/** How far into each event list the turn log has recorded (the rest happened during the resolution still under way). */
+export const loggedUpTo = new WeakMap<GameEvent[], number>();
+
 export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
   for (const e of events) {
@@ -172,6 +177,10 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to.kind === 'permanent') {
           const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
           if (!by.includes(e.source)) by.push(e.source);
+        }
+        if (g.objects[e.source]) {
+          const key = `${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;
+          (log.dealtDamage ??= {})[key] = (log.dealtDamage[key] ?? 0) + e.amount;
         }
         break;
       case 'crime':
@@ -305,6 +314,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return cmp(n, cond);
     }
     case 'attacked_with': {
+      // Kytheon, Hero of Akros: "if Kytheon and at least two other creatures attacked this combat".
+      if (cond.withSelf) {
+        const declared = g.combat?.declared ?? [];
+        const self = source && declared.some((d) => d.id === source.id && d.zcc === (ctx.sourceZcc ?? source.zcc));
+        return Boolean(self) && declared.filter((d) => d.id !== source!.id).length >= Number(cond.n ?? 1);
+      }
       const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => g.objects[id]?.controller === controller).length;
       return n >= Number(cond.n ?? 1);
     }

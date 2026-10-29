@@ -848,6 +848,8 @@ export function matchesFilter(
   // "a creature dealt damage by ~ this turn"
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
   if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
+  // Avenging Arrow: "target creature that dealt damage this turn".
+  if (f.dealtDamageThisTurn && !((g.turnLog.dealtDamage ?? {})[`${o.id}:${o.zcc}`] ?? 0)) return false;
   // Vengeful Ancestor: "a goaded creature" (CR 701.15) — by an effect, or a static "is goaded".
   if (f.goaded && !(o.goadedBy?.length || c.combat.some((r) => r.goaded))) return false;
   if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
@@ -947,6 +949,12 @@ export function matchesFilter(
   }
   // "exiled with ~" (CR 607.2a): what this object's abilities exiled while it was on the battlefield (or on its way).
   if (f.exiledWithSource && !(o.zone === 'exile' && ctx.source && o.exiledBy?.id === ctx.source.id && o.exiledBy.zcc === battlefieldZcc(g, ctx.source))) return false;
+  // Semblance Anvil: "Spells you cast that share a card type with the exiled card" (imprint, CR 607.2a).
+  if (f.sharesCardTypeWithExiled) {
+    const src = ctx.source;
+    const exiled = src ? g.zones.exile.filter((id) => g.objects[id]!.exiledBy?.id === src.id && g.objects[id]!.exiledBy!.zcc === battlefieldZcc(g, src)) : [];
+    if (!exiled.some((id) => chars(g, g.objects[id]!).types.some((t) => c.types.includes(t)))) return false;
+  }
   if (f.powerAboveOthers && g.zones.battlefield.some((id) => id !== o.id && chars(g, g.objects[id]!).types.includes('Creature') && chars(g, g.objects[id]!).power >= c.power)) return false;
   if (f.modified && !(then ? then.modified : isModified(g, o))) return false;
   if (f.attached && !(o.attachedTo && g.objects[o.attachedTo.id]?.zcc === o.attachedTo.zcc)) return false;

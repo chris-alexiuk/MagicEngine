@@ -118,6 +118,8 @@ export class ParserRegistry {
         // Rakdos, Lord of Riots: "You can't cast Rakdos unless an opponent lost life this turn." — cast it only if that holds.
         const castUnless = new RegExp(`^You can't cast (?:~|this spell|${names}) unless (.+)\\.$`).exec(l);
         if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
+        // Jace Reawakened: "You can't cast Jace Reawakened during your first, second, or third turns of the game."
+        if (new RegExp(`^You can't cast (?:~|this spell|${names}) during your first, second, or third turns of the game\\.$`).test(l)) return ["Cast this spell only if it isn't your first, second, or third turn of the game."];
         // Aettir and Priwen: "… has base power and toughness X/X, where X is your life total." — each equal to that.
         const baseX = /^(.+ ha(?:s|ve) base power and toughness) X\/X, where X is (.+)\.$/.exec(l);
         if (baseX) return [`${baseX[1]} each equal to ${baseX[2]}.`];

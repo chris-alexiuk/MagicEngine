@@ -54,6 +54,14 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
       continue;
     }
     const { node } = next;
+    // Temple of the Dragon Queen: "This land enters tapped unless you revealed a Dragon card this way or you control a Dragon."
+    if (node.choice === 'reveal' && node.unlessControl) {
+      const f = node.unlessControl;
+      if (g.zones.battlefield.some((id) => id !== o.id && g.objects[id]!.controller === o.controller && matchesFilter(g, g.objects[id]!, f, { controller: o.controller, source: o }))) {
+        g.asEnters.shift();
+        continue;
+      }
+    }
     const base = { kind: 'as_enters' as const, player: o.controller, object: o.id, sourceName: nameOf(g, o), choice: node.choice };
     switch (node.choice) {
       case 'pay_life':

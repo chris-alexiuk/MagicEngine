@@ -1295,9 +1295,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       else discardCard(g, id, ctx.events);
     }
-    // Through the Breach: "That creature gains haste." — the permanent put onto the battlefield this way.
-    if (node.then === 'battlefield' && ctx.resolution) {
-      ctx.resolution.created = chosen.filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
+    // Through the Breach: "That creature gains haste." — the permanent put onto the battlefield this way; Kellan Joins Up:
+    // "If you do, it becomes plotted." — the card exiled.
+    if ((node.then === 'battlefield' || node.then === 'exile') && ctx.resolution) {
+      ctx.resolution.created = chosen.filter((id) => g.objects[id]?.zone === node.then).map((id) => ({ id, zcc: g.objects[id]!.zcc }));
     }
     return true;
   },
@@ -2610,6 +2611,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // CR 701.54a: "The Ring tempts you" — choose a creature you control as your Ring-bearer (getting the emblem first).
+  // CR 702.170: "It becomes plotted." — its owner may cast it on a later turn as a sorcery without paying its mana cost.
+  plot(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'exile') o.plotted = ctx.g.turn;
+    return true;
+  },
+
   ring_tempts(node, ctx) {
     const g = ctx.g;
     const p = ctx.controller;
@@ -4428,6 +4435,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
   }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // Liliana, Heretical Healer: "exile ~, then return her …. If you do, …" — not once she has left (CR 400.7).
+  if (e.type === 'move' && ['self', 'target', 'trigger_object'].includes(String((e.what as { ref?: string } | undefined)?.ref))) return refObjects(ctx, ref(e, 'what')).length > 0;
   // Coral Atoll: "unless you return an untapped Island you control to its owner's hand".
   if (e.type === 'move_chosen') return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null })).length >= amountOf(ctx, e.amount ?? 1);
   // CR 701.68b, 701.61a
@@ -4997,6 +5006,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'any' ? false : t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     // "Whenever you draw your second card each turn"
     if (t.nth && e.nth !== t.nth) return [];
+    // The Council of Four: "Whenever a player draws their second card during their turn".
+    if (t.ownTurn && check.g.active !== e.player) return [];
     // Orcish Bowmasters: "except the first one they draw in each of their draw steps"
     if (t.exceptFirstInDrawStep && e.firstInDrawStep) return [];
     return [{ player: e.player }];
@@ -5358,6 +5369,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     // "… during an opponent's turn"
     if (t.opponentsTurn && check.g.active === e.player) return [];
+    // The Council of Four: "Whenever a player casts their second spell during their turn".
+    if (t.ownTurn && check.g.active !== e.player) return [];
     // Boromir: "if no mana was spent to cast it"
     if (t.noManaSpent && (e.manaSpent ?? 0) > 0) return [];
     // "… from your hand", "… from exile", "… from anywhere other than your hand"
@@ -5407,7 +5420,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

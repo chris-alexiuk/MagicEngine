@@ -1,7 +1,7 @@
 import { activationProhibited } from './cast-bans.js';
 import { evalCondition } from './conditions.js';
 import { playerRule } from './player-rules.js';
-import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
+import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planManaOnly } from './autotap.js';
 import { canActivateTapAbilities, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
@@ -515,6 +515,9 @@ function manaTriggersOf(g: GameState, tapped: GameObject): { src: GameObject; a:
     if (!src || src.zone !== 'battlefield') continue;
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'triggered' || a.trigger.type !== 'tapped_for_mana') continue;
+      // Regal Behemoth: "Whenever you tap a land for mana while you're the monarch".
+      const during = a.trigger.while as ConditionNode | undefined;
+      if (during && !evalCondition(during, { g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} })) continue;
       const subject = a.trigger.subject as Ref;
       const hit =
         subject.ref === 'attached'

@@ -1,7 +1,7 @@
 import { copyChoicePending } from './as-enters.js';
 import type { Amount, ConditionNode, KeywordInstance, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, chars, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
-import { evalCondition, logTurnEvents } from './conditions.js';
+import { evalCondition, loggedUpTo, logTurnEvents } from './conditions.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns, recordModes, usedModes } from './program.js';
 import { matchTrigger } from './registry.js';
@@ -43,7 +43,7 @@ const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
 /** CR 603.10a: leaves-the-battlefield abilities "look back in time" ("When ~ enters or dies" too). */
 const looksBack = (t: TriggerNode): boolean => LOOK_BACK.has(t.type) || (t.type === 'either' && ((t.of as TriggerNode[] | undefined) ?? []).some(looksBack));
 
-const cursors = new WeakMap<GameEvent[], number>();
+const cursors = loggedUpTo;
 
 interface Candidate {
   o: GameObject;
@@ -134,8 +134,11 @@ function collect(g: GameState, events: GameEvent[]): void {
       const face = c.face;
       c.abilities.forEach((ability, index) => {
         if (ability.kind !== 'triggered') return;
-        // Each ability triggers only from the zone it works in.
-        if ((ability.zone ?? 'battlefield') !== (c.left || c.o.emblem ? 'battlefield' : c.o.zone)) return;
+        // Each ability triggers only from the zone it works in. Cityscape Leveler: "When you cast this spell and whenever this
+        // creature attacks" — from the stack too.
+        const here = c.left || c.o.emblem ? 'battlefield' : c.o.zone;
+        const castSelf = here === 'stack' && ability.trigger.type === 'either' && (ability.trigger.of as TriggerNode[]).some((t) => t.type === 'cast' && t.self);
+        if ((ability.zone ?? 'battlefield') !== here && !castSelf) return;
         if (c.left && !looksBack(ability.trigger)) return;
         if (!programRuns(ability)) return;
         if (ability.oncePerTurn && c.o.triggeredTurn?.[index] === g.turn) return;
@@ -160,11 +163,15 @@ function collect(g: GameState, events: GameEvent[]): void {
           // CR 603.2d: Panharmonicon & co. — it may trigger additional times (or, under Torpor Orb, not at all).
           const times = extras.length && !info.state ? triggerTimes(g, extras, event, info, c) : 1;
           // CR 603.3a: controlled by whoever controlled the source when it triggered.
+          // CR 400.7: Liliana, Heretical Healer dying with another creature — "exile Liliana" can't find the new object in
+          // her owner's graveyard (an ability triggering on her own leaving can, CR 603.10a).
+          const excludesSelf = (ability.trigger as { subject?: { filter?: { other?: boolean } } }).subject?.filter?.other === true;
+          const zcc = c.left && excludesSelf ? (g.lastKnown?.[c.o.id]?.zcc ?? c.o.zcc) : c.o.zcc;
           for (let k = 0; k < times; k++) {
             g.triggers.push({
               id: `t${g.nextId++}`,
               controller: c.controller,
-              source: { id: c.o.id, zcc: c.o.zcc },
+              source: { id: c.o.id, zcc },
               sourceName: face.name,
               ability,
               info,

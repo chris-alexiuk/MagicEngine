@@ -83,6 +83,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Alandra, Sky Dreamer: "Alandra and Drakes you control each get +X/+X until end of turn, where X is …" — it, and the others.
+  text = text.replace(/^~ and (\w+) you control each get ([+-]\w+\/[+-]\w+ until end of turn)(, where X is [^.]+)?\.$/, (_m, kind: string, pt: string, where?: string) => `~ gets ${pt}${where ?? ''}. Other ${kind} you control get ${pt}${where ?? ''}.`);
   // Sephiroth, One-Winged Angel: "you may sacrifice any number of other creatures. If you do, draw that many cards." — choosing
   // none is not doing it, and draws none.
   text = text.replace(/\b[Yy]ou may sacrifice any number of ([^.]+)\. If you do, draw that many cards\./, 'sacrifice any number of $1, then draw that many cards.');
@@ -458,9 +460,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (turnTrig && (turnTrig[1] || turnTrig[3]) && !/\bthis turn\b/.test(turnTrig[2]!)) {
         // Dalkovan Encampment: "… create two … tokens that are tapped and attacking. Sacrifice them at the beginning of the
         // next end step." — what follows may belong to the ability; only a last sentence is read this way.
-        if (i !== sentences.length - 1) return null;
+        // Jace Reawakened: "… whenever you cast a spell, copy it. You may choose new targets for the copy." — one ability.
+        const newTargets = i === sentences.length - 2 && /^You may choose new targets for (?:the|that) copy$/.test(sentences[i + 1]!);
+        if (i !== sentences.length - 1 && !newTargets) return null;
         let cond = turnTrig[2]!;
-        let effect = turnTrig[4]!;
+        let effect = newTargets ? `${turnTrig[4]!}. ${sentences[i + 1]!}` : turnTrig[4]!;
+        if (newTargets) i++;
         if (b.player?.ref === 'target' && / to that player$/.test(cond)) cond = cond.replace(/ to that player$/, ` to TARGETPLAYER${b.player.index}`);
         if (b.it?.ref === 'target') {
           cond = cond.replace(/^(?:that creature|that permanent|it)(?= )/, `TARGETREF${b.it.index}`);
@@ -499,6 +504,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         // "Then each player who searched a library this way shuffles." — searching shuffles anyway.
         if (/^Then each player who searched a library this way shuffles$/.test(sentences[i + 1] ?? '')) i++;
+        continue;
+      }
+      // Minas Morgul: "Put a shadow counter on target creature. For as long as that creature has a shadow counter on it, it's a
+      // Wraith in addition to its other types."; Cyclopean Tomb: "That land is a Swamp for as long as it has a mire counter on it."
+      const whileCounter =
+        /^For as long as (?:that creature|that land|that permanent|it) has an? (\S+) counter on it, (?:it's|it is) (an? .+)$/.exec(s) ??
+        (() => {
+          const m = /^(?:That creature|That land|That permanent|It) is (an? .+?) for as long as it has an? (\S+) counter on it$/.exec(s);
+          return m ? ([m[0], m[2], m[1]] as unknown as RegExpExecArray) : null;
+        })();
+      if (whileCounter && b.it && b.it.ref !== 'self') {
+        const made = parseSentence(`It becomes ${whileCounter[2]} until end of turn`, b);
+        if (!made || made.length !== 1 || made[0]!.type !== 'modify' || made[0]!.until !== 'eot') return null;
+        out.push({ ...made[0]!, until: 'game', whileCounter: whileCounter[1]! });
         continue;
       }
       // Plaguecrafter: "Each player sacrifices a creature or planeswalker of their choice. Each player who can't discards a card."
@@ -546,7 +565,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // Volatile Stormdrake: "Exchange control of this creature and target creature …. If you do, …" (CR 701.12a).
-      if (ifDone && /^(?:Sacrifice|Exchange control of) /.test(s)) {
+      // Liliana, Heretical Healer: "exile ~, then return her to the battlefield transformed …. If you do, create …" — only
+      // if she was still there to exile.
+      if (ifDone && (/^(?:Sacrifice|Exchange control of) /.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -3963,6 +3984,8 @@ const VERBS: Record<string, VerbHandler> = {
       const pf = parseFilter(`${fromHand[2]!} in your hand`, b);
       if (!pf || pf.plural) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;
+      // Kellan Joins Up: "If you do, it becomes plotted." — the exiled card.
+      b.it = { ref: 'created' };
       return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter, amount: 1, then: 'exile' }];
     }
     // CR 610.3: "exile target creature until ~ leaves the battlefield" (Banishing Light).
@@ -4031,7 +4054,7 @@ const VERBS: Record<string, VerbHandler> = {
       if (r) return r;
     }
     // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
-    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on it)?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters? on (?:it|him|her))?$/.exec(args);
     if (field) {
       const what = parseObjectRef(field[1]!, b);
       if (!what) return null;
@@ -4500,9 +4523,11 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   if (extraCombats) return Array.from({ length: extraCombats[1] === 'two' ? 2 : 3 }, () => ({ type: 'extra_combat' }));
   // CR 701.54a: "The Ring tempts you."
   if (/^the ring tempts you$/i.test(c)) return [{ type: 'ring_tempts' }];
+  // Aven Interrupter: "Exile target spell. It becomes plotted." (CR 702.170: cast on a later turn without paying its mana cost.)
+  if (/^(?:it|that card) becomes plotted$/i.test(c) && b.it && b.it.ref !== 'self') return [{ type: 'plot', what: b.it }];
   // CR 701.27a: transforming turns a double-faced permanent over.
-  const transform = /^transform (~|it)$/i.exec(c);
-  if (transform && (transform[1] === '~' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
+  const transform = /^transform (~|it|him|her)$/i.exec(c);
+  if (transform && (transform[1] !== 'it' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
   // CR 106.4: "Add {R}{R}{R}." as an instruction (rituals, triggered mana); "Add one mana of any color."
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;
