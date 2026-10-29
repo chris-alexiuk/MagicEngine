@@ -121,6 +121,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const of = parsePlayerRef(noMore[1]!, b);
     return of ? { type: 'life', mostAmongOpponents: true, of } : null;
   }
+  // Battle Angels of Tyr: "that player has more cards in hand than each other player", "… controls more lands than each
+  // other player", "… has more life than each other player" — strictly the most.
+  const most = /^(that player|you) (has|have|controls?) more (cards in hand|lands|life) than each other player$/.exec(t);
+  if (most) {
+    const of = parsePlayerRef(most[1]!, b);
+    return of ? { type: 'most_of', of, what: most[3] === 'cards in hand' ? 'hand' : most[3] === 'lands' ? 'lands' : 'life' } : null;
+  }
   // Preacher of the Schism: "you have the most life or are tied for most life"
   if (/^you have the most life or are tied for (?:the )?most life$/.test(t)) return { type: 'life', most: true };
   // Righteous Valkyrie: "you have at least 7 life more than your starting life total"

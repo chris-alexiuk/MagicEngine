@@ -40,6 +40,21 @@ const WHOLE_TEXTS: [RegExp, EffectNode[]][] = [
 
 export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   for (const [re, effects] of WHOLE_TEXTS) if (re.test(text.trim())) return structuredClone(effects);
+  // Shatterskull Smashing: "~ deals X damage divided as you choose among up to two target creatures and/or planeswalkers. If X
+  // is 6 or more, ~ deals twice X damage divided as you choose among them instead." — the total is known as it's cast (CR 601.2d).
+  const smash = /^(~ deals X damage divided as you choose among [^.]+)\. If X is (\d+) or more, ~ deals twice X damage divided as you choose among them instead\.$/.exec(text.trim());
+  if (smash) {
+    const made = parseEffectText(`${smash[1]}.`, b);
+    const node = made?.length === 1 && made[0]!.type === 'deal_damage' && made[0]!.amount === 'X' && made[0]!.divided ? made[0]! : null;
+    return node ? [{ ...node, amount: { kind: 'x', doubledAtLeast: Number(smash[2]) } }] : null;
+  }
+  // Comet Storm: "Choose any target, then choose another target for each time this spell was kicked. Comet Storm deals X damage
+  // to each of them." — one target, and one more for each kick (CR 601.2c, 702.33c).
+  const comet = /^Choose any target, then choose another target for each time (?:this spell|~) was kicked\. (?:~|This spell) deals (X|\d+) damage to each of them\.$/.exec(text.trim());
+  if (comet) {
+    const to = b.addTarget({ what: 'any', filter: { types: ['Creature', 'Planeswalker', 'Battle'] }, plusKicks: true, text: 'any target' });
+    return [{ type: 'deal_damage', amount: comet[1] === 'X' ? 'X' : Number(comet[1]), to }];
+  }
   // Scroll Rack: "Exile any number of cards from your hand face down. Put that many cards from the top of your library into your
   // hand. Then look at the exiled cards and put them on top of your library in any order."
   if (/^Exile any number of cards from your hand face down\. Put that many cards from the top of your library into your hand\. Then look at the exiled cards and put them on top of your library in any order\.$/.test(text.trim())) {
@@ -68,6 +83,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /(Search your library for [^.]+?)(, where X is [^.]+)?\. Put (that card|it|those cards|them) (onto the battlefield(?: tapped)?|into your hand), then shuffle\./,
     (_m, search: string, where: string | undefined, it: string, to: string) => `${search}, put ${/^(?:those cards|them)$/.test(it) ? 'them' : 'it'} ${to}, then shuffle${where ?? ''}.`,
   );
+  // Sephiroth, One-Winged Angel: "you may sacrifice any number of other creatures. If you do, draw that many cards." — choosing
+  // none is not doing it, and draws none.
+  text = text.replace(/\b[Yy]ou may sacrifice any number of ([^.]+)\. If you do, draw that many cards\./, 'sacrifice any number of $1, then draw that many cards.');
   // Sword of Hearth and Home: "exile up to one target creature you own, then search your library for a basic land card. Put
   // both cards onto the battlefield under your control, then shuffle." — the exiled card returns; the land is put there.
   text = text.replace(
@@ -1583,6 +1601,8 @@ function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] 
     .replace(/\bhalf X\b/g, () => (kinds.push('x'), 'X'))
     .replace(/\b(loses?) half (?:their|his or her|your) life\b/, (_m, v: string) => (kinds.push('life'), `${v} X life`))
     .replace(/\b(mills?) half (?:their|your) library\b/, (_m, v: string) => (kinds.push('library'), `${v} X cards`))
+    // Ulamog, the Defiler: "target opponent exiles the top half of their library, rounded up".
+    .replace(/\b(exiles?) the top half of (their|your) library\b/, (_m, v: string, w: string) => (kinds.push('library'), `${v} the top X cards of ${w} library`))
     .replace(/\b(discards?) half the cards in (?:their|your) hand\b/, (_m, v: string) => (kinds.push('hand'), `${v} X cards`));
   const halfCount = /\bhalf the number of\b/.test(t);
   // Hydroid Krasis: "gain half X life and draw half X cards" — any number of X; one of the others.

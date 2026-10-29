@@ -619,6 +619,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       // noncreature permanent "that creature" (Jaya's "… to that creature" is what she targeted).
       if (it?.ref === 'self' && /^(?:that|those|the) (?:creatures?|permanents?|artifact|enchantment|land|planeswalker)$/i.test(t) && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
       if (it?.ref === 'self' && /^(?:that|those) creatures?$/i.test(t) && !/\b(?:Creature|Vehicle)\b/.test(b.env.typeLine)) return null;
+      // Rivalry: "… this enchantment deals 2 damage to them" — one permanent is never "them" (that player is, when named).
+      if (it?.ref === 'self' && /^(?:them|they)$/i.test(t)) return null;
       return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.

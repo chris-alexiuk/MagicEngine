@@ -386,6 +386,14 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // "the greatest power among creatures you control", "the greatest mana value among cards in your graveyard"
   // Prime Speaker Zegana, Arbor Adherent: "… among other creatures you control" — other than the source.
   const greatest = /^the greatest (power|toughness|mana value) among (other )?(.+)$/.exec(t);
+  // Ulamog, the Defiler: "the greatest mana value among cards in exile" — everyone's exiled cards.
+  const inExile = greatest && !greatest[2] ? /^(?:(.+?) )?cards in exile$/.exec(greatest[3]!) : null;
+  if (greatest && inExile) {
+    const pf = inExile[1] ? parseFilter(`${inExile[1]} cards in your graveyard`, b) : { filter: {}, plural: true };
+    if (!pf || !pf.plural) return null;
+    const { zone: _z, owner: _o, ...rest } = pf.filter as ObjectFilter;
+    return { kind: 'greatest', stat: greatest[1] === 'mana value' ? 'mana_value' : (greatest[1] as 'power' | 'toughness'), filter: { ...rest, zone: 'exile' } };
+  }
   if (greatest) {
     const pf = parseFilter(greatest[3]!.replace(/ or an? /g, ' or '), b);
     if (!pf || !pf.plural || (greatest[2] && pf.filter.zone && pf.filter.zone !== 'battlefield')) return null;

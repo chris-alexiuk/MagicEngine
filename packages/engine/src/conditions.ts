@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -211,6 +211,14 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // CR 702.33d: the spell (or the permanent it became) was kicked.
       return Boolean(source?.cast?.kicked);
     // Necromancy: "If you cast it any time a sorcery couldn't have been cast" (CR 307.5).
+    case 'most_of': {
+      // Battle Angels of Tyr: more than each other player (still in the game, CR 800.4a).
+      const [p] = refPlayers(ctx, cond.of as Ref);
+      if (!p) return false;
+      const value = (q: PlayerId) => (cond.what === 'hand' ? zoneList(g, 'hand', q).length : cond.what === 'lands' ? g.zones.battlefield.filter((id) => g.objects[id]!.controller === q && chars(g, g.objects[id]!).types.includes('Land')).length : g.players[q]!.life);
+      const v = value(p);
+      return livePlayers(g).filter((q) => q !== p).every((q) => v > value(q));
+    }
     case 'chosen_word':
       // The Sieges: "• Khans — …" — while "Khans" is what was chosen as it entered (CR 614.12).
       return source?.chosen?.word === cond.word;

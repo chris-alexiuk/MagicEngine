@@ -489,7 +489,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return new Set(whose.flatMap((p) => zoneList(g, 'graveyard', p)).flatMap((id) => faceOf(g, g.objects[id]!).types)).size;
     }
     case 'x':
-      return ctx.x;
+      return e.doubledAtLeast !== undefined && ctx.x >= e.doubledAtLeast ? 2 * ctx.x : ctx.x;
     case 'event':
       // "that much", "that many": how much the trigger event was.
       return e.stat === 'power' ? (ctx.trigger?.power ?? 0) : (ctx.trigger?.amount ?? 0);

@@ -1,4 +1,5 @@
-import type { ContinuousEffectNode, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
+import type { ConditionNode, ContinuousEffectNode, PlayerRule, PlayerRuleNode, StaticAbility } from '@mtg/schema';
+import { evalCondition } from './conditions.js';
 import { matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
@@ -21,6 +22,12 @@ function rulesFor(who: string, source: GameObject, player: PlayerId): boolean {
  * flash", or only some ("You may cast Aura and Equipment spells as though they had flash", Sigarda's Aid).
  */
 export function flashPermission(g: GameState, player: PlayerId, card: GameObject): boolean {
+  // Bard's Company: "You may cast this spell as though it had flash if you control a Human." (its own ability, CR 113.6e)
+  for (const a of faceOf(g, card).abilities) {
+    if (a.kind !== 'static' || a.effect.type !== 'flash_if') continue;
+    const e = a.effect as unknown as { condition?: ConditionNode; ifTargets?: unknown };
+    if (!e.ifTargets && e.condition && evalCondition(e.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} })) return true;
+  }
   for (const e of g.playerEffects ?? []) {
     if (e.player !== player || e.rule !== 'flash' || e.lastTurn < g.turn) continue;
     if (!e.filter || matchesFilter(g, card, e.filter, { controller: player, anyZone: true })) return true;

@@ -471,6 +471,27 @@ const CARDS = [
   makeCard({ name: 'Scroll Rack Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Exile any number of cards from your hand face down. Put that many cards from the top of your library into your hand. Then look at the exiled cards and put them on top of your library in any order.' }),
   makeCard({ name: 'Forge Anew Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'During your turn, you may activate equip abilities any time you could cast an instant.\nYou may pay {0} rather than pay the equip cost of the first equip ability you activate during each of your turns.' }),
   makeCard({ name: 'Bruenor Lite', type_line: 'Legendary Creature — Dwarf Warrior', mana_cost: '{0}', power: '5', toughness: '4', oracle_text: 'Each creature you control gets +2/+0 for each Equipment attached to it.\nYou may pay {0} rather than pay the equip cost of the first equip ability you activate each turn.' }),
+  makeCard({ name: 'Comet Lite', type_line: 'Instant', mana_cost: '{X}{R}{R}', cmc: 2, colors: ['R'], oracle_text: 'Multikicker {1}\nChoose any target, then choose another target for each time this spell was kicked. Comet Lite deals X damage to each of them.' }),
+  makeCard({ name: 'Smashing Lite', type_line: 'Sorcery', mana_cost: '{X}{R}{R}', cmc: 2, colors: ['R'], oracle_text: 'Smashing Lite deals X damage divided as you choose among up to two target creatures and/or planeswalkers. If X is 6 or more, Smashing Lite deals twice X damage divided as you choose among them instead.' }),
+  makeCard({ name: 'Defiler Lite', type_line: 'Legendary Creature — Eldrazi', mana_cost: '{0}', power: '7', toughness: '7', oracle_text: 'When you cast this spell, target opponent exiles the top half of their library, rounded up.\nDefiler Lite enters with a number of +1/+1 counters on it equal to the greatest mana value among cards in exile.\nDefiler Lite has annihilator X, where X is the number of +1/+1 counters on it.' }),
+  makeCard({
+    name: 'Soldier Lite // Angel Lite',
+    layout: 'transform',
+    type_line: 'Creature — Human Soldier // Creature — Angel',
+    oracle_text: '',
+    mana_cost: '{0}',
+    card_faces: [
+      { object: 'card_face', name: 'Soldier Lite', type_line: 'Creature — Human Soldier', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{0}: Transform this creature.' },
+      { object: 'card_face', name: 'Angel Lite', type_line: 'Creature — Angel', mana_cost: '', power: '4', toughness: '4', oracle_text: 'Super Nova — As this creature transforms into Angel Lite, you get an emblem with "Whenever a creature dies, you gain 1 life."\nWhenever Angel Lite attacks, you may sacrifice any number of other creatures. If you do, draw that many cards.' },
+    ],
+  } as never),
+  makeCard({ name: 'Timely Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'You may cast this spell as though it had flash if it targets a commander.\nEnchant creature\nEnchanted creature has indestructible.' }),
+  makeCard({ name: 'Spinners Lite', type_line: 'Creature — Faerie Wizard', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'You may cast this spell as though it had flash if you control a Faerie.' }),
+  makeCard({ name: 'Faerie Friend', type_line: 'Creature — Faerie', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Yuriko Commander Lite', type_line: 'Legendary Creature — Human Ninja', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Tyr Lite', type_line: 'Creature — Angel Knight', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever this creature deals combat damage to a player, draw a card if that player has more cards in hand than each other player. Then you gain 3 life if that player has more life than each other player.' }),
+  makeCard({ name: 'Needlehead Lite', type_line: 'Creature — Human Assassin', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever an opponent draws a card, this creature deals 1 damage to them.' }),
+  makeCard({ name: 'Guardian Angel Lite', type_line: 'Creature — Angel', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever one or more creatures you control attack, they gain indestructible until end of turn.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5283,6 +5304,104 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it('Razorkin Needlehead: damage to the opponent who drew (not to itself)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const needle = give(g, 'alice', 'Needlehead Lite', 'battlefield');
+    g = settle(toStep(g, 'main1', 'bob'));
+    expect([g.players.bob!.life, g.objects[needle]!.damage ?? 0]).toEqual([19, 0]);
+  });
+  it('Angelic Guardian: the attacking creatures gain indestructible', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Guardian Angel Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'bob' } }] } }));
+    expect(chars(g, g.objects[bear]!).keywords.some((k) => k.id === 'indestructible')).toBe(true);
+  });
+  it('Battle Angels of Tyr: "more … than each other player"', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const angel = give(g, 'alice', 'Tyr Lite', 'battlefield');
+    for (let i = 0; i < 9; i++) give(g, 'bob', 'Bear', 'hand');
+    g.players.bob!.life = 30;
+    const hand = g.zones.hand.alice!.length;
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: angel, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 30 && g.step !== 'end_of_combat'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } });
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect([g.zones.hand.alice!.length, g.players.alice!.life]).toEqual([hand + 1, 23]);
+  });
+  it('Timely Ward: flash only if it targets a commander; Illusion Spinners: flash if you control a Faerie', () => {
+    let g = toStep(start({ format: 'commander', extra: CARDS, decks: { alice: [...Array(94).fill('Bear'), 'Timely Lite', 'Spinners Lite', 'Faerie Friend', 'Bolt', 'Yuriko Commander Lite'], bob: [...Array(98).fill('Bear'), 'Bolt'] }, commanders: { alice: ['Yuriko Commander Lite'] } }), 'main1', 'alice');
+    const cmdr = Object.values(g.objects).find((o) => o.commander && o.owner === 'alice')!.id;
+    g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: cmdr, to: 'battlefield' } });
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = toStep(g, 'main1', 'bob');
+    const [w1, w2] = [give(g, 'alice', 'Timely Lite', 'hand'), give(g, 'alice', 'Timely Lite', 'hand')];
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] });
+    expect(illegal(g, { type: 'cast', player: 'alice', object: w1, targets: [[{ kind: 'object', object: bear }]] })).toBeTruthy();
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'cast', player: 'alice', object: w2, targets: [[{ kind: 'object', object: cmdr }]] });
+    expect(g.stack.length).toBe(2);
+    const spinners = give(g, 'alice', 'Spinners Lite', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spinners })).toBeTruthy();
+    give(g, 'alice', 'Faerie Friend', 'battlefield');
+    g = act(g, { type: 'cast', player: 'alice', object: spinners });
+    expect(g.stack.length).toBe(3);
+  });
+  it('Sephiroth: "As this creature transforms into …, you get an emblem" — no trigger, it just happens', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const seph = give(g, 'alice', 'Soldier Lite // Angel Lite', 'battlefield');
+    g = act(g, { type: 'activate', player: 'alice', object: seph, ability: 0 });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'pass', player: 'bob' });
+    expect([g.objects[seph]!.face, g.zones.command.filter((id) => g.objects[id]!.emblem).length, g.stack.length]).toEqual([1, 1, 0]);
+    const life = g.players.alice!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: give(g, 'bob', 'Bear', 'battlefield') }]] }));
+    expect(g.players.alice!.life).toBe(life + 1);
+  });
+  it('Ulamog, the Defiler: half their library exiled, counters from exile, annihilator X', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Bear', 'exile');
+    const lib = g.zones.library.bob!.length;
+    const ulamog = give(g, 'alice', 'Defiler Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: ulamog }));
+    const most = Math.max(...g.zones.exile.map((id) => g.cards[g.objects[id]!.card]!.cmc ?? 0));
+    expect([g.zones.library.bob!.length, g.objects[ulamog]!.counters['+1/+1'], most >= 2]).toEqual([lib - Math.ceil(lib / 2), most, true]);
+    g.objects[ulamog]!.counters['+1/+1'] = 2;
+    g.objects[ulamog]!.sick = false;
+    const bobs = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: ulamog, target: { kind: 'player', player: 'bob' } }] } });
+    g = settle(g);
+    expect(g.pending).toMatchObject({ kind: 'sacrifice', player: 'bob', count: 2 });
+    g = settle(act(g, { type: 'choose', player: 'bob', answer: { kind: 'sacrifice', objects: bobs.slice(0, 2) } }));
+    expect(bobs.map((b) => g.objects[b]!.zone)).toEqual(['graveyard', 'graveyard', 'battlefield']);
+  });
+  it('Shatterskull Smashing: twice X divided when X is 6 or more', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b] = [give(g, 'bob', 'Bear', 'battlefield'), give(g, 'bob', 'Bear', 'battlefield')];
+    const smash = give(g, 'alice', 'Smashing Lite', 'hand');
+    g.players.alice!.pool.R = 2;
+    g.players.alice!.pool.C = 6;
+    const targets = [[{ kind: 'object' as const, object: a }, { kind: 'object' as const, object: b }]];
+    expect(illegal(g, { type: 'cast', player: 'alice', object: smash, x: 6, targets, divide: [3, 3] })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: smash, x: 6, targets, divide: [10, 2] }));
+    expect([g.objects[a]!.zone, g.objects[b]!.zone]).toEqual(['graveyard', 'graveyard']);
+  });
+  it('Comet Storm: one target, and another for each time it was kicked', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const comet = give(g, 'alice', 'Comet Lite', 'hand');
+    g.players.alice!.pool.R = 2;
+    g.players.alice!.pool.C = 3;
+    const two = [[{ kind: 'player' as const, player: 'bob' }, { kind: 'object' as const, object: bear }]];
+    expect(illegal(g, { type: 'cast', player: 'alice', object: comet, x: 2, targets: two })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: comet, x: 2, kicked: 1, targets: two }));
+    expect([g.players.bob!.life, g.objects[bear]!.zone]).toEqual([18, 'graveyard']);
+  });
   it('Bruenor Battlehammer: +2/+0 for each Equipment on each creature; a free equip on any turn', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     give(g, 'alice', 'Bruenor Lite', 'battlefield');

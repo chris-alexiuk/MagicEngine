@@ -32,6 +32,18 @@ export function withTriggerInfo<T>(info: TriggerInfo | undefined, fn: () => T): 
  * CR 601.2b–c: X is announced before targets are chosen, so "target creature with mana value X or less" is checked with
  * that X (and again as it resolves, CR 608.2b).
  */
+/** Comet Storm: "then choose another target for each time this spell was kicked" — the kicks announced (CR 601.2b–c). */
+let targetKicks = 0;
+export function withTargetKicks<T>(kicks: number, fn: () => T): T {
+  const before = targetKicks;
+  targetKicks = kicks;
+  try {
+    return fn();
+  } finally {
+    targetKicks = before;
+  }
+}
+
 let targetX: number | undefined;
 export function withTargetX<T>(x: number | undefined, fn: () => T): T {
   const before = targetX;
@@ -198,6 +210,7 @@ function whoseTarget(g: GameState, t: Target): PlayerId | undefined {
 /** How many targets a spec takes at most (CR 601.2c). */
 export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec, x = 0): number {
   if (spec.countX) return Math.max(0, x);
+  if (spec.plusKicks) return (spec.count ?? 1) + targetKicks;
   return spec.perPlayer ? perPlayerSet(g, controller, spec).length : (spec.count ?? 1);
 }
 
@@ -208,6 +221,7 @@ export function targetCount(g: GameState, controller: PlayerId, spec: TargetSpec
 export function targetsRequired(g: GameState, controller: PlayerId, spec: TargetSpec, candidates: readonly Target[], x = 0): number {
   if (spec.upTo) return spec.min ?? 0;
   if (spec.countX) return Math.max(0, x);
+  if (spec.plusKicks) return (spec.count ?? 1) + targetKicks;
   if (spec.perPlayer) {
     const players = new Set(candidates.map((t) => whoseTarget(g, t)));
     return Math.max(1, perPlayerSet(g, controller, spec).filter((p) => players.has(p)).length);

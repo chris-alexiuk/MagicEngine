@@ -31,7 +31,7 @@ import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, pay
 import { settlePhyrexian } from './autotap.js';
 import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
-import { chooseTargets, divisionFor } from './targets.js';
+import { chooseTargets, divisionFor, withTargetKicks } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
 import {
   RulesError,
@@ -672,9 +672,13 @@ function cast(
   const restricted = during ? castProhibition(g, player, castFace, o) : castRestrictionProblem(g, player, castFace, o);
   if (restricted) throw new RulesError(restricted);
   // CR 608.2g: casting as an effect resolves ignores timing.
+  // Timely Ward: "You may cast this spell as though it had flash if it targets a commander." — checked once targets are chosen.
+  const flashIfTargets = castFace.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'flash_if' && (a.effect as unknown as { ifTargets?: ObjectFilter }).ifTargets ? [(a.effect as unknown as { ifTargets: ObjectFilter }).ifTargets] : []));
+  let needFlashTarget = false;
   if (!instantSpeed && !during) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
-      throw new RulesError(`${faceDown ? 'A face-down creature' : face.name} can only be cast during your main phase while the stack is empty.`);
+      if (!flashIfTargets.length) throw new RulesError(`${faceDown ? 'A face-down creature' : face.name} can only be cast during your main phase while the stack is empty.`);
+      needFlashTarget = true;
     }
   }
 
@@ -697,12 +701,16 @@ function cast(
     program = appendProgram(program, s.program);
   }
   const targets = program
-    ? chooseTargets(g, player, program.specs, chosenTargets, o, x)
+    ? withTargetKicks(kicks, () => chooseTargets(g, player, program!.specs, chosenTargets, o, x))
     : chosenTargets?.some((t) => t.length)
       ? (() => {
           throw new RulesError(`${face.name} is resolved by hand; it doesn’t take targets here.`);
         })()
       : [];
+  if (needFlashTarget) {
+    const ok = targets.flat().some((t) => t.kind === 'object' && g.objects[t.id] && flashIfTargets.some((f) => matchesFilter(g, g.objects[t.id]!, f, { controller: player, source: o })));
+    if (!ok) throw new RulesError(`${face.name} can be cast at instant speed only if it targets ${flashIfTargets.length ? 'what its ability says' : 'that'}.`);
+  }
 
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).

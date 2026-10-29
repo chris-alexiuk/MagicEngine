@@ -303,6 +303,29 @@ export class ParserRegistry {
         } else result.unparsed.push(line);
         continue;
       }
+      // Sephiroth, One-Winged Angel: "Super Nova — As this creature transforms into Sephiroth, One-Winged Angel, you get an
+      // emblem with "…"" — done as it transforms (not a trigger, CR 701.27).
+      const asTransforms = /^(?:[A-Z][\w' ]+ — )?As (?:this creature|this permanent|~) transforms into ([^,]+(?:, [^,]+)?), (you get an emblem with .+)$/.exec(line);
+      if (asTransforms && (asTransforms[1] === '~' || asTransforms[1] === ctx.faceName || asTransforms[1] === ctx.faceName.split(',')[0])) {
+        const node = this.parseBlock([`When this creature transforms into ~, ${asTransforms[2]}`], env, line);
+        if (node?.kind === 'triggered' && node.effects.length && node.effects.every((e) => e.type === 'emblem') && !node.targets?.length) {
+          result.abilities.push({ kind: 'static', text: line, effect: { type: 'as_transforms', effects: node.effects } } as AbilityNode);
+        } else result.unparsed.push(line);
+        continue;
+      }
+      // Ulamog, the Defiler: "Ulamog has annihilator X, where X is the number of +1/+1 counters on it." — CR 702.86a's
+      // trigger, with that many permanents.
+      const annihilatorX = /^(.+?) has annihilator X, where X is the number of (\S+) counters on it\.$/.exec(line);
+      const selfName = (n: string) => n === '~' || n === 'This creature' || n === ctx.faceName || n === ctx.faceName.split(',')[0];
+      if (annihilatorX && selfName(annihilatorX[1]!)) {
+        const node = this.parseBlock(['Whenever ~ attacks, defending player sacrifices two permanents of their choice.'], env, line);
+        const sac = node?.kind === 'triggered' && node.effects.length === 1 && node.effects[0]!.type === 'sacrifice_choice' ? node.effects[0]! : null;
+        if (node && sac) {
+          sac.amount = { kind: 'counters', of: { ref: 'self' }, counter: annihilatorX[2]! };
+          result.abilities.push(node);
+        } else result.unparsed.push(line);
+        continue;
+      }
       // The Sieges, Mirrodin Besieged: "As this enchantment enters, choose Khans or Dragons." then "• Khans — [ability]" and
       // "• Dragons — [ability]" — each ability is the permanent's only while that word is the one chosen (CR 614.12).
       const words = /^As (?:this enchantment|this permanent|~) enters, choose ([A-Z][A-Za-z]+) or ([A-Z][A-Za-z]+)\.$/.exec(line);

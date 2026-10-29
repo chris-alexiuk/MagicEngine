@@ -819,7 +819,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!m) return null;
     if (m[2] === 'combat' ? (m[3] ? m[1] !== undefined : m[1] !== 'each') : !m[1] || m[3]) return null;
     const whose = m[3] === " on each opponent's turn" ? 'opponent' : m[1] === 'your' || m[3] ? 'you' : m[1] === "each opponent's" ? 'opponent' : 'each';
-    // "At the beginning of each player's upkeep, that player …": the player whose turn it is.
+    // "At the beginning of each player's upkeep, that player …": the player whose turn it is (Rivalry: "… to them").
+    if (whose !== 'you') b.named['them'] ??= { ref: 'trigger_player' };
     return { trigger: { type: 'phase', step: STEP_WORDS[m[2]!]!, whose }, it: { ref: 'self' }, player: whose === 'you' ? null : { ref: 'trigger_player' } };
   }
 
@@ -1075,6 +1076,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (youAttack[1] && !min) return null;
     // Champions from Beyond: "Whenever you attack with eight or more creatures, those creatures get +4/+4" — the attackers.
     b.named['those creatures'] = { ref: 'all', filter: { types: ['Creature'], controller: 'you', combat: 'attacking' } };
+    // Angelic Guardian: "Whenever one or more creatures you control attack, they gain indestructible until end of turn."
+    if (/^one or more/.test(t)) {
+      b.named['they'] = b.named['those creatures'];
+      b.named['them'] = b.named['those creatures'];
+    }
     return { trigger: { type: 'you_attack', ...(min ? { min } : {}) }, it: { ref: 'self' }, player: null };
   }
   // Trouble in Pairs: "Whenever an opponent attacks you with two or more creatures"; Mangara: "Whenever an opponent
@@ -1101,6 +1107,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!pf || !(pf.plural || pf.invariant) || pf.filter.controller !== 'you') return null;
     const { controller: _c, ...filter } = pf.filter;
     b.named['those creatures'] = { ref: 'all', filter: { ...filter, types: [...new Set([...(filter.types ?? []), 'Creature'])], controller: 'you', combat: 'attacking' } };
+    // Angelic Guardian: "Whenever one or more creatures you control attack, they gain indestructible until end of turn."
+    b.named['they'] = b.named['those creatures'];
+    b.named['them'] = b.named['those creatures'];
     return { trigger: { type: 'you_attack', filter }, it: { ref: 'self' }, player: null };
   }
   // Duelist's Heritage: "Whenever one or more creatures attack" — whoever attacks (once per declaration, CR 508.3d).
@@ -1875,6 +1884,9 @@ export const triggeredRule: GrammarRule = {
         if (!trig) return null;
         b.it = trig.it;
         b.player = trig.player;
+        // Razorkin Needlehead: "Whenever an opponent draws a card, this creature deals 1 damage to them." — that player (a
+        // trigger about a player's own action, with nothing else "them" could be).
+        if (trig.player?.ref === 'trigger_player' && ['draw', 'gain_life', 'lose_life'].includes(trig.trigger.type) && (trig.trigger as { who?: string }).who !== 'you') b.named['them'] ??= trig.player;
         // Dragon Tempest: "Whenever a Dragon you control enters, it deals X damage to any target" — that Dragon deals it.
         // Saskia: "Whenever a creature you control deals combat damage to a player, it deals that much damage to …"
         if (['enters', 'attacks', 'blocks', 'deals_combat_damage'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
@@ -3560,6 +3572,20 @@ export const castOptionRule: GrammarRule = {
     }
     const additional = /^You may pay an additional (.+?) as you cast ~$/.exec(t);
     if (additional) return make('additional', additional[1]!);
+    // Timely Ward: "You may cast this spell as though it had flash if it targets a commander."; Bard's Company: "… if you control
+    // a Human." (CR 702.8a)
+    const flashIf = /^You may cast ~ as though it had flash if (?!you pay )(.+)$/.exec(t);
+    if (flashIf) {
+      const targets = /^it targets (?:a|an) (.+)$/.exec(flashIf[1]!);
+      if (targets) {
+        const pf = parseFilter(targets[1]!, b);
+        return pf && !pf.plural ? { kind: 'static', text: original, effect: { type: 'flash_if', ifTargets: pf.filter } as never } : null;
+      }
+      const condition = parseCondition(flashIf[1]!, b);
+      // Silver Scrutiny: "if X is 3 or less" — X isn't chosen yet when timing is checked here.
+      if (!condition || /"kind":"x"|"X"/.test(JSON.stringify(condition))) return null;
+      return { kind: 'static', text: original, effect: { type: 'flash_if', condition } as never };
+    }
     // Rout, Saproling Symbiosis: "You may cast this spell as though it had flash if you pay {2} more to cast it." (CR 702.8a)
     const flashTax = /^You may cast ~ as though it had flash if you pay ((?:\{\d+\})+) more to cast it$/.exec(t);
     if (flashTax) return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'flash', kind: 'additional', cost: { mana: flashTax[1]! }, flash: true } as CastOptionNode };
