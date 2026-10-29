@@ -3140,6 +3140,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const times = entry.kind === 'spell' && n > 0 ? replaceQuantity(g, 'copies', n, { player: ctx.controller }) : n;
         for (let i = 0; i < times; i++) {
           const id = entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events) : copyAbility(g, entry, ctx.controller, ctx.events);
+          // Storm of Saruman: "except the copy isn't legendary" (CR 707.9b).
+          if (entry.kind === 'spell' && node.except && g.objects[id] && g.objects[entry.object]) g.objects[id]!.copyOf = withExceptions(g, copiable(g.objects[entry.object]!), node.except as CopyExcept);
           made.push(id);
           if (i >= n) extra.push(id);
         }
@@ -4909,7 +4911,10 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat && x.to.kind === 'player' && x.to.player === to);
       if (hits[0] !== e) return [];
       const src = check.g.objects[e.source];
-      return src && subjectMatches(check, t.subject as Ref, src, { anyZone: true }) ? [{ object: refTo(src), player: to, amount: hits.reduce((n, x) => n + x.amount, 0) }] : [];
+      const amount = hits.reduce((n, x) => n + x.amount, 0);
+      // Dragonborn Champion: "deals 5 or more damage to a player".
+      if (typeof t.atLeast === 'number' && amount < t.atLeast) return [];
+      return src && subjectMatches(check, t.subject as Ref, src, { anyZone: true }) ? [{ object: refTo(src), player: to, amount }] : [];
     }
     const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.combat === e.combat);
     if (together[0] !== e) return [];

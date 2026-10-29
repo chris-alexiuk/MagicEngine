@@ -939,12 +939,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // Niv-Mizzet, Visionary: "Whenever a source you control deals noncombat damage to an opponent" — once for each source
   // and player; "that player" is the one dealt damage.
-  const sourceHits = /^a source you control deals (noncombat |combat )?damage to (an opponent|a player)$/.exec(t);
+  // Dragonborn Champion: "Whenever a source you control deals 5 or more damage to a player".
+  const sourceHits = /^a source you control deals (noncombat |combat )?(?:(\w+) or more )?damage to (an opponent|a player)$/.exec(t);
   if (sourceHits) {
     b.eventAmount = true;
     const kind = sourceHits[1]?.trim();
+    const least = sourceHits[2] ? parseAmount(sourceHits[2]) : null;
+    if (sourceHits[2] && typeof least !== 'number') return null;
     return {
-      trigger: { type: 'deals_damage', subject: { ref: 'all', filter: { controller: 'you' } }, to: sourceHits[2] === 'a player' ? 'player' : 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) },
+      trigger: { type: 'deals_damage', subject: { ref: 'all', filter: { controller: 'you' } }, to: sourceHits[3] === 'a player' ? 'player' : 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}), ...(typeof least === 'number' ? { atLeast: least } : {}) },
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -3187,7 +3190,7 @@ export const quantityReplacementRule: GrammarRule = {
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
     // Gisela, Blade of Goldnight: "… that source deals double that damage to that player or permanent instead."
-    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target), (?:it|that source) deals (.+?) (?:to that (?:permanent or player|player or permanent) )?instead\.$/.exec(line);
+    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target|an opponent), (?:it|that source) deals (.+?) (?:to that (?:permanent or player|player or permanent|player) )?instead\.$/.exec(line);
     if (damage) {
       const creature = Boolean(damage.splice(3, 1)[0]);
       const op = quantityOp(damage[6]!);
@@ -3207,6 +3210,8 @@ export const quantityReplacementRule: GrammarRule = {
         ...op,
         ...(damage[4] ? { noncombat: true as const } : {}),
         ...(damage[5]!.startsWith('an opponent') ? { toOpponents: true as const } : {}),
+        // Fiendish Duo: "If a source would deal damage to an opponent" — the player, not their permanents.
+        ...(damage[5] === 'an opponent' ? { toPlayersOnly: true as const } : {}),
         // Sawhorn Nemesis: "… to the chosen player or a permanent they control"
         ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });

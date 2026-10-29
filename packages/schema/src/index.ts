@@ -482,6 +482,8 @@ export interface ObjectFilter {
   goaded?: true;
   /** Relentless Assault: it was declared as an attacker this turn (as this object, CR 400.7). */
   attackedThisTurn?: true;
+  /** Wildsear, Scouring Maw: "Enchantment spells you cast from your hand" — a spell cast from that zone. */
+  castFromZone?: 'hand' | 'exile' | 'graveyard';
   /** Domri, Anarch of Bolas: "Creature spells you cast" — not a copy of a spell (CR 707.10). */
   notCopy?: true;
   /** Avenging Arrow: "that dealt damage this turn" */
@@ -1188,6 +1190,8 @@ export interface QuantityReplacementNode extends EffectNode {
   toOpponents?: true;
   /** Sawhorn Nemesis: "to the chosen player or a permanent they control" (chosen as the source entered). */
   toChosen?: true;
+  /** Fiendish Duo: "would deal damage to an opponent" — players only, not their permanents. */
+  toPlayersOnly?: true;
   noncombat?: true;
   /** The Sound of Drums, Mjölnir: damage the enchanted or equipped creature would deal; `combatOnly`: combat damage. */
   fromAttached?: true;

@@ -312,7 +312,10 @@ export class ParserRegistry {
       // exile each turn has cascade."; Thrumming Stone-like grants: "Spells you cast have cascade." — layer 6 on spells (CR
       // 613.1f), so the cast trigger is there as it's cast (CR 702.85a).
       // Imoti, Celebrant of Bounty: "Spells you cast with mana value 6 or greater have cascade."
-      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm)\.$/i.exec(line);
+      // Wildsear, Scouring Maw: "Enchantment spells you cast from your hand have cascade."
+      const fromHand = / from your hand have (?:cascade|storm)\.$/.test(line) ? line.replace(/ from your hand have /, ' have ') : line;
+      const kind = /^(Enchantment|Artifact|Creature) spells you cast/.exec(fromHand)?.[1];
+      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
       if (spellGrant) {
         const kws = this.keywords.parseLine(spellGrant[4]!);
         if (kws?.length === 1) {
@@ -320,7 +323,7 @@ export class ParserRegistry {
           if (abilities) kws[0]!.abilities = abilities;
         }
         if (kws?.length === 1 && keywordSupported(kws[0]!)) {
-          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
+          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kind ? { types: [kind] } : {}), ...(fromHand !== line ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
           result.abilities.push({ kind: 'static', text: line, effect: { type: 'continuous', affected: { ref: 'all', filter }, keywords: kws } } as AbilityNode);
         } else result.unparsed.push(line);
         continue;

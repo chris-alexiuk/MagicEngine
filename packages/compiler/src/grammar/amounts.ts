@@ -327,6 +327,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     // Meren: "the number of experience counters you have" (CR 122.1: counters on a player).
     const playerCounters = /^(\w+) counters you have$/.exec(what);
     if (playerCounters) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounters[1]! };
+    // Unlicensed Hearse: "the number of cards exiled with it" — whoever owns them (CR 607.2a).
+    if (/^cards exiled with (?:~|it|this \w+)$/.test(what)) return { kind: 'cards', zone: 'exile', who: 'each', filter: { exiledWithSource: true } };
     const counters = /^(?:(\S+) )?counters on (.+)$/.exec(what);
     if (counters) {
       const of = parseObjectRef(counters[2]!, b.clone(), 'static');

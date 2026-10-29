@@ -278,7 +278,8 @@ export function moveObject(
   delete o.damagedTurn;
   delete o.attachedTo;
   delete o.attachedToPlayer;
-  delete o.copyOf;
+  // CR 707.10f: a copy of a permanent spell enters as a token with the copy's values (Storm of Saruman's "isn't legendary").
+  if (!(from === 'stack' && to === 'battlefield' && o.token)) delete o.copyOf;
   // CR 708.9: a face-down permanent or spell that leaves is revealed; a face-down spell resolves face down.
   const faceDown = opts.faceDown ?? (from === 'stack' && to === 'battlefield' ? o.faceDown : undefined);
   if (faceDown) o.faceDown = faceDown;

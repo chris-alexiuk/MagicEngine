@@ -636,6 +636,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
   const enteredYours = /^an? (\w+) entered the battlefield under your control this turn$/.exec(t);
   if (enteredYours && TYPE_NOUNS[enteredYours[1]!]) return { type: 'this_turn', event: 'entered_yours', filter: { types: [TYPE_NOUNS[enteredYours[1]!]!] } };
+  // Lilypad Village: "a Bird, Frog, Otter, or Rat entered the battlefield under your control this turn".
+  const enteredKinds = /^an? ((?:[A-Z][a-z]+, )+(?:or )?[A-Z][a-z]+|[A-Z][a-z]+ or [A-Z][a-z]+|[A-Z][a-z]+) entered the battlefield under your control this turn$/.exec(t);
+  if (enteredKinds) {
+    const pf = parseFilter(enteredKinds[1]!, b);
+    if (pf && !pf.plural && pf.filter.subtypes?.length && Object.keys(pf.filter).length === 1) return { type: 'this_turn', event: 'entered_yours', filter: { subtypes: pf.filter.subtypes } };
+  }
   if (t === 'an opponent gained life this turn') return { type: 'this_turn', event: 'opponent_gained_life' };
   // The Enduring cycle: "it was a creature" (a leaves-the-battlefield trigger looks back, CR 603.10a)
   // Scavenging Ooze: "Exile target card from a graveyard. If it was a creature card, …" — the card, now in exile.
@@ -650,6 +656,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
   // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
+  // Vohar, Vodalian Desecrator: "If you discarded an instant or sorcery card this way" — the same as "the discarded card was".
+  const discardedThisWay = /^you discarded (an? .+? card) this way$/.exec(t);
+  if (discardedThisWay) return parseCondition(`the discarded card was ${discardedThisWay[1]}`, b);
   const lkiWas = /^the (discarded|sacrificed) (?:card|creature|permanent|artifact) (was|wasn't) (an? )?(.+)$/.exec(t);
   if (lkiWas) {
     const quality = lkiWas[4]!;

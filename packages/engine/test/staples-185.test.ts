@@ -581,6 +581,15 @@ const CARDS = [
   makeCard({ name: 'Betor Lite', type_line: 'Legendary Creature — Spirit Dragon', mana_cost: '{0}', power: '5', toughness: '7', oracle_text: 'At the beginning of your end step, if creatures you control have total toughness 10 or greater, draw a card. Then if creatures you control have total toughness 20 or greater, untap each creature you control. Then if creatures you control have total toughness 40 or greater, each opponent loses half their life, rounded up.' }),
   makeCard({ name: 'Thick Wall Lite', type_line: 'Creature — Wall', mana_cost: '{0}', power: '0', toughness: '33', oracle_text: '' }),
   makeCard({ name: 'Bonded Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "This creature attacks each combat if able.\nThis creature can't attack alone." }),
+  makeCard({ name: 'Thryx Lite', type_line: 'Legendary Creature — Elemental Giraffe', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: "Spells you cast with mana value 5 or greater cost {1} less to cast and can't be countered." }),
+  makeCard({ name: 'Big Spell Lite', type_line: 'Sorcery', mana_cost: '{5}', cmc: 5, oracle_text: 'You gain 5 life.' }),
+  makeCard({ name: 'Negate Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Counter target spell.' }),
+  makeCard({ name: 'Golem Lite', type_line: 'Artifact Creature — Golem', mana_cost: '{0}', power: '4', toughness: '5', oracle_text: 'Artifact creature spells you cast have affinity for artifacts.' }),
+  makeCard({ name: 'Affinity Construct Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{3}', cmc: 3, power: '3', toughness: '3', oracle_text: '' }),
+  makeCard({ name: 'Lulu Lite', type_line: 'Legendary Creature — Moogle', mana_cost: '{0}', power: '0', toughness: '3', oracle_text: 'Whenever an opponent attacks you, choose target creature attacking you. Put a stun counter on that creature.' }),
+  makeCard({ name: 'Saruman Storm Lite', type_line: 'Legendary Enchantment', mana_cost: '{0}', oracle_text: "Whenever you cast your second spell each turn, copy it, except the copy isn't legendary. You may choose new targets for the copy." }),
+  makeCard({ name: 'Legend Lite', type_line: 'Legendary Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Wildsear Lite', type_line: 'Legendary Creature — Dragon', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: 'Enchantment spells you cast from your hand have cascade.' }),
   makeCard({ name: 'Stone Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: "{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." }),
   makeCard({ name: 'Morph Lite', type_line: 'Creature — Human Wizard', mana_cost: '{5}{U}', cmc: 6, power: '1', toughness: '1', oracle_text: 'Morph {3}' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
@@ -5406,6 +5415,64 @@ describe('Sieges', () => {
     g.objects[stone]!.tapped = true;
     give(g, 'alice', 'Island', 'battlefield');
     expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === morph && (a as { alt?: string }).alt === 'morph')).toBe(true);
+  });
+  it("Storm of Saruman: the copy of the second spell isn't legendary", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Saruman Storm Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+    const legend = give(g, 'alice', 'Legend Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: legend });
+    for (let i = 0; i < 10 && (g.pending || g.stack.length); i++) {
+      if (g.pending?.kind === 'copy_targets') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'copy_targets' } } as never);
+      else if (g.pending) throw new Error(`pending ${g.pending.kind}`);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    const mine = g.zones.battlefield.filter((id) => chars(g, g.objects[id]!).name === 'Legend Lite');
+    expect(mine.length).toBe(2);
+    expect(mine.filter((id) => chars(g, g.objects[id]!).supertypes.includes('Legendary')).length).toBe(1);
+  });
+  it('Wildsear: enchantment spells cast from your hand have cascade', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Wildsear Lite', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Kellan Lite', 'hand') }));
+    expect(g.pending?.kind === 'cast_free' || g.stack.length > 0 || g.zones.exile.length > 0).toBe(true);
+  });
+  it("Thryx: big spells cost {1} less and can't be countered", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Thryx Lite', 'battlefield');
+    for (const id of g.zones.battlefield) if (g.objects[id]!.controller === 'alice') g.objects[id]!.tapped = true;
+    g.players.alice!.pool.C = 4;
+    const big = give(g, 'alice', 'Big Spell Lite', 'hand');
+    const life = g.players.alice!.life;
+    g = act(g, { type: 'cast', player: 'alice', object: big });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Negate Lite', 'hand'), targets: [[{ kind: 'object', object: big }]] });
+    g = settle(g);
+    for (let i = 0; i < 6 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    expect(g.players.alice!.life).toBe(life + 5);
+  });
+  it('Mycosynth Golem: artifact creature spells have affinity for artifacts', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Golem Lite', 'battlefield');
+    give(g, 'alice', 'Trinket', 'battlefield');
+    for (const id of g.zones.battlefield) if (g.objects[id]!.controller === 'alice') g.objects[id]!.tapped = true;
+    g.players.alice!.pool.C = 1;
+    const c = give(g, 'alice', 'Affinity Construct Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: c }));
+    expect(g.objects[c]!.zone).toBe('battlefield');
+  });
+  it('Lulu, Stern Guardian: a stun counter on a creature attacking you', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Lulu Lite', 'battlefield');
+    const bear = give(g, 'bob', 'Bear', 'battlefield', { sick: false });
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'alice' } }] } });
+    for (let i = 0; i < 10 && !(g.objects[bear]!.counters.stun); i++) {
+      if (g.pending?.kind === 'trigger_targets') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: bear }]] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect(g.objects[bear]!.counters.stun).toBe(1);
   });
   for (const friend of [false, true]) {
     it(`a creature that must attack but can't attack alone: ${friend ? 'brings a friend' : 'stays home with no one to go with'} (CR 508.1d)`, () => {

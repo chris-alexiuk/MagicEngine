@@ -569,7 +569,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Volatile Stormdrake: "Exchange control of this creature and target creature …. If you do, …" (CR 701.12a).
       // Liliana, Heretical Healer: "exile ~, then return her to the battlefield transformed …. If you do, create …" — only
       // if she was still there to exile.
-      if (ifDone && (/^(?:Sacrifice|Exchange control of) /.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
+      // Shadow of the Goblin: "discard a card. If you do, draw a card." — only with a card to discard.
+      if (ifDone && (/^(?:Sacrifice|Exchange control of|Discard a card$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -2442,8 +2443,10 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …",
   // "Copy target activated or triggered ability you control", "copy that ability".
-  const copy = /^[Cc]opy (.+?)(?: (twice|three times)| for each (.+))?$/.exec(s);
-  if (copy && (!/ ability$/.test(copy[1]!) || /^(?:target .+|that) ability$/.test(copy[1]!))) {
+  // Storm of Saruman: "copy it, except the copy isn't legendary" (CR 707.9b).
+  const nonlegendary = /, except the copy isn't legendary$/.test(s);
+  const copy = /^[Cc]opy (.+?)(?: (twice|three times)| for each (.+))?$/.exec(s.replace(/, except the copy isn't legendary$/, ''));
+  if (copy && (!/ ability$/.test(copy[1]!) || /^(?:target .+|that) ability$/.test(copy[1]!)) && !(nonlegendary && / ability$/.test(copy[1]!))) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(copy[1]!, b);
       if (!what || what.plural) return null;
@@ -2453,7 +2456,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       if (!['target', 'trigger_object', 'self'].includes(what.ref.ref)) return null;
       const amount = copy[2] ? (copy[2] === 'twice' ? 2 : 3) : copy[3] ? parseForEach(copy[3], b) : 1;
       if (!amount) return null;
-      return [{ type: 'copy_spell', what: what.ref, ...(amount !== 1 ? { amount } : {}) }];
+      return [{ type: 'copy_spell', what: what.ref, ...(amount !== 1 ? { amount } : {}), ...(nonlegendary ? { except: { nonlegendary: true } } : {}) }];
     });
     if (r) return r;
   }
@@ -4272,7 +4275,8 @@ const VERBS: Record<string, VerbHandler> = {
   },
   attach(args, who, b, imperative) {
     // Codsworth: "Attach target Aura or Equipment you control to target creature you control." (CR 701.3)
-    const both = imperative ? /^(target (?:Aura|Equipment|Aura or Equipment) you control) to (target .+)$/.exec(args) : null;
+    // Blacksmith's Talent: "attach target Equipment you control to up to one target creature you control".
+    const both = imperative ? /^(target (?:Aura|Equipment|Aura or Equipment) you control) to ((?:up to one )?target .+)$/.exec(args) : null;
     if (both) {
       const what = parseObjectRef(both[1]!, b);
       const to = what && !what.plural ? parseObjectRef(both[2]!, b) : null;
