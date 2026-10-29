@@ -94,6 +94,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /\b([Pp])ut ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+?) and ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+)\./,
     (_m, p: string, one: string, two: string) => `${p}ut ${one}. Put ${two}.`,
   );
+  // Viewpoint Synchronization: "Search your library for up to three basic land cards and reveal them. Put two of them onto
+  // the battlefield tapped and the other into your hand, then shuffle." — one instruction.
+  text = text.replace(/\b(Search your library for up to \w+ [^.]+?) and reveal them\. Put (\w+) of them onto the battlefield( tapped)? and the (other|rest) into your hand, then shuffle\./, '$1, reveal them, put $2 onto the battlefield$3 and the $4 into your hand, then shuffle.');
+  // Horrid Shadowspinner: "you may draw cards equal to its power. If you do, discard that many cards." — the same number.
+  text = text.replace(/\b([Yy]ou may draw cards equal to ([^.]+))\. If you do, discard that many cards\./, '$1. If you do, discard cards equal to $2.');
+  // Marcus, Mutant Mayor: "draw a card if that creature has a +1/+1 counter on it. If it doesn't, put a +1/+1 counter on it."
+  text = text.replace(/^([Dd]raw a card) if (that creature has an? \S+ counter on it)\. If it doesn't, ([^.]+)\./, (_m, a: string, c: string, o: string) => `If ${c}, ${a[0]!.toLowerCase()}${a.slice(1)}. Otherwise, ${o}.`);
   // Zurgo Stormrender: "draw a card if it was attacking. Otherwise, each opponent loses 1 life."
   text = text.replace(/^([Dd]raw a card|[^.]+?) if (it was attacking)\. Otherwise, ([^.]+)\./, (_m, a: string, c: string, o: string) => `If ${c}, ${a[0]!.toLowerCase()}${a.slice(1)}. Otherwise, ${o}.`);
   // Eumidian Hatchery: "for each hatchling counter on it, create a 1/1 black Insect creature token with flying".
@@ -641,7 +648,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // "…, reveal it, and put it into your hand. Then shuffle your library." (CR 702.29e wording).
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
-        s = `${s.replace(/, reveal that card, and put it /, ', reveal it, put it ').replace(/, and put /, ', put ')}, then shuffle`;
+        // Spoils of Victory: "Search your library for a … card and put that card onto the battlefield. Then shuffle."
+        s = `${s.replace(/, reveal that card, and put it /, ', reveal it, put it ').replace(/, and put /, ', put ').replace(/ card and put that card (onto|into) /, ' card, put it $1 ')}, then shuffle`;
         i++;
       }
       // Killer Service: "you may pay {2} and sacrifice a token. If you do, create …"; Conspiracy Theorist: "you may pay {1} and
@@ -871,6 +879,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const what = parseObjectRef(copyCard[1]!, b);
         if (!what || what.plural) return null;
         out.push({ type: 'cast_copy_of', what: what.ref });
+        i++;
+        continue;
+      }
+      // Raff, Weatherlight Stalwart: "you may tap two untapped creatures you control. If you do, draw a card." — only with that
+      // many to tap (CR 118.12).
+      // Tidal Terror: "you may tap two other untapped creatures you control".
+      const tapN = /^You may tap (two|three|four|five) (other )?untapped (.+? you control)$/.exec(s);
+      const tapNThen = tapN && sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (tapN && tapNThen) {
+        const r = attempt(b, (b) => {
+          const pf = parseFilter(tapN[3]!, b);
+          if (!pf || !pf.plural || pf.filter.zone) return null;
+          if (tapN[2]) pf.filter.other = true;
+          const inner = parseSentence(capitalise(tapNThen[1]!), b);
+          return inner ? [{ type: 'may_do', effects: [{ type: 'tap_choice', filter: pf.filter, amount: parseAmount(tapN[1]!) as number }], then: inner } as EffectNode] : null;
+        });
+        if (!r) return null;
+        out.push(...r);
         i++;
         continue;
       }
@@ -1200,6 +1226,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // Wedding Announcement: "create a 1/1 … token. Then if this enchantment has three or more invitation counters on
         // it, transform it." — "it" is what the condition is about, not the token.
         if (/^(?:this (?:enchantment|artifact|creature|permanent|land)|~) (?:has|is) /.test(iff[1]!) && JSON.stringify((cond as { of?: Ref }).of) === '{"ref":"self"}') b.it = { ref: 'self' };
+        // Taborax: "If that creature was a Cleric, you may draw a card. If you do, you lose 1 life." — both under the condition.
+        if (/^you may /.test(iff[2]!) && /^If you do, /.test(sentences[i + 1] ?? '')) {
+          const both = attempt(b, (b) => parseEffectText(`${capitalise(iff[2]!)}. ${sentences[i + 1]}.`, b));
+          if (both) {
+            out.push({ type: 'if', cond, effects: both });
+            i++;
+            continue;
+          }
+        }
         let yes = parseSentence(capitalise(iff[2]!), b);
         // Nissa, Resurgent Animist: "Then if this is the second time …, reveal cards from the top of your library until you
         // reveal an Elf or Elemental card. Put that card into your hand and the rest on the bottom …" — an instruction that
@@ -1259,7 +1294,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // …" — the same as exiling the top two cards of that player's library.
       const theyExile = /^(that player|target player|target opponent|defending player|each opponent|each player) exiles the top (card|\w+ cards) of their library$/i.exec(s);
       const sTop = theyExile && /you may (?:play|cast) /i.test(sentences[i + 1] ?? '') ? `Exile the top ${theyExile[2]} of ${theyExile[1]!.toLowerCase()}'s library` : s;
-      const topAny = /^(?:(.+?)(?: and|, then) )?[Ee]xile the top (card|(\w+) cards)(?: of (your|that player's|target opponent's|target player's|defending player's|each opponent's|each player's) library)?$/.exec(sTop);
+      // Dream Pillager: "exile that many cards from the top of your library" — how much damage the trigger event was.
+      const topThatMany = b.eventAmount ? /^[Ee]xile that many cards from the top of your library$/.test(sTop) : false;
+      const topAny = /^(?:(.+?)(?: and|, then) )?[Ee]xile the top (card|(\w+) cards)(?: of (your|that player's|target opponent's|target player's|defending player's|each opponent's|each player's) library)?$/.exec(topThatMany ? 'Exile the top that cards of your library' : sTop);
       if (topAny && !topAny[4]) topAny[4] = 'your';
       const top = topAny ? [topAny[0], topAny[2], topAny[3]] as const : null;
       let topWho: Ref | null = topAny && topAny[4] !== 'your' ? null : { ref: 'you' };
@@ -1309,7 +1346,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Cunning Rhetoric: "You may play that card for as long as it remains exiled" — until it leaves exile (CR 400.7).
       const thisTurn = /^You may (play|cast) (?:that card|those cards|them|it|cards exiled this way) (this turn|until the end of your next turn|until end of turn|until your next end step|for as long as (?:it remains|they remain) exiled)$/.exec(next.replace(freeSuffix, ''));
       if (top && (untilPlay || thisTurn)) {
-        const amount = top[2] ? parseAmount(top[2]) : 1;
+        const amount = topThatMany ? { kind: 'event' as const } : top[2] ? parseAmount(top[2]) : 1;
         if (amount === null) return null;
         // Wiccan, Inti: "until your next end step" — it ends as that step begins (this turn's, if it's still to come).
         const until = untilPlay
@@ -3426,6 +3463,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 119.5: "Your life total becomes 10"; The Endstone: "your life total becomes half your starting life total, rounded
   // up"; Oketra's Last Mercy: "… becomes equal to your starting life total"; Sorin Markov: "Target opponent's life total
   // becomes 10."
+  // Resolute Archangel: "if your life total is less than your starting life total, it becomes equal to your starting life
+  // total" — "it" is your life total (nothing else becomes a life total).
+  if (/^It becomes equal to your starting life total$/.test(s)) return [{ type: 'set_life', who: { ref: 'you' }, value: 'starting' }];
   const lifeBecomes = /^(.+?)(?:'s?)? life totals? becomes? (\d+|half (?:your|their) starting life total, rounded (up|down)|equal to (?:your|their) starting life total)$/.exec(s);
   if (lifeBecomes) {
     const who = attempt(b, (b) => parsePlayerRef(lifeBecomes[1]!.replace(/^Your$|^your$/, 'you').replace(/^Each player$/i, 'each player'), b));
@@ -3988,6 +4028,8 @@ const VERBS: Record<string, VerbHandler> = {
       });
       if (r) return r;
     }
+    // CR 122.1b: "a double strike counter", "a first strike counter" (Avenging Huntbonder) — keyword counters.
+    args = args.replace(/\b(first|double) strike (counters?)\b/g, '$1_strike $2');
     // "Put a number of +1/+1 counters equal to the power of the card you exiled on target creature." (scavenge)
     const counted = /^a number of (\S+) counters equal to (.+?) on (.+)$/.exec(args);
     if (counted) {
@@ -4243,11 +4285,15 @@ const VERBS: Record<string, VerbHandler> = {
       if (!/, then shuffle$/.test(args)) args += ', then shuffle';
     }
     // Cultivate: "…, reveal those cards, put one onto the battlefield tapped and the other into your hand, then shuffle."
-    const split = /^your library for (up to two .+?), reveal (?:them|those cards), put one onto the battlefield( tapped)? and the other into your hand, then shuffle$/.exec(args);
+    // Nissa's Pilgrimage: "… and put one onto the battlefield tapped and the rest into your hand"; Viewpoint Synchronization:
+    // "up to three basic land cards …. Put two of them onto the battlefield tapped and the other into your hand".
+    const split = /^your library for up to (two|three|four) (.+?), reveal (?:them|those cards), (?:and )?put (one|two|three)(?: of them)? onto the battlefield( tapped)? and the (?:other|rest) into your hand, then shuffle$/.exec(args);
     if (split) {
-      const pf = parseFilter(`${split[1]!.replace(/^up to two /, '')} in your library`, b);
+      const amount = parseAmount(split[1]!) as number;
+      const onto = parseAmount(split[3]!) as number;
+      const pf = onto < amount ? parseFilter(`${split[2]} in your library`, b) : null;
       if (!pf || !pf.plural) return null;
-      return [{ type: 'search', filter: pf.filter, amount: 2, upTo: true, to: 'hand', split: { to: 'battlefield', ...(split[2] ? { tapped: true } : {}) } }];
+      return [{ type: 'search', filter: pf.filter, amount, upTo: true, to: 'hand', split: { to: 'battlefield', ...(onto > 1 ? { count: onto } : {}), ...(split[4] ? { tapped: true } : {}) } }];
     }
     // Gamble: "Search your library for a card, put that card into your hand, discard a card at random, then shuffle."
     const gamble = /^your library for a card, put that card into your hand, discard a card at random, then shuffle$/.test(args);
@@ -4262,7 +4308,9 @@ const VERBS: Record<string, VerbHandler> = {
     if (exiling) args = `${args.slice(0, exiling.index)}, put them into exile, then shuffle`;
     const m =
       /^your library for (.+?), (?:reveal (?:it|them|those cards|that card), )?put (?:it|them|that card|those cards) (into your hand|onto the battlefield( tapped)?(?: with an additional (\+1\/\+1) counter on it)?|into your graveyard|into exile), then shuffle$/.exec(args) ??
-      /^your library for (.+?), (?:reveal (?:it|that card), )?then shuffle and put (?:that card|it|the card) (on top)$/.exec(args);
+      // Congregation at Dawn: "up to three creature cards, reveal them, then shuffle and put those cards on top in any order"
+      // — in the order they're chosen.
+      /^your library for (.+?), (?:reveal (?:it|that card|them|those cards), )?then shuffle and put (?:that card|it|the card|those cards|them) (on top)(?: in any order)?$/.exec(args);
     if (!m) return null;
     // Krosan Verge: "a Forest card and a Plains card" — one of each.
     const pair = /^(?:a|an) (.+? card) and (?:a|an) (.+? card)$/.exec(m[1]!);
@@ -4486,6 +4534,13 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
 function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 702.112a: "… and it becomes renowned".
   if (/^(?:it|~) becomes renowned$/i.test(c)) return [{ type: 'become_renowned' }];
+  // CR 701.53a: "Incubate 4", "incubate X, where X is …"; Excise the Imperfect: "Its controller incubates X".
+  const incubate = /^(?:(.+?) )?incubates? (\d+|X)$/i.exec(c);
+  if (incubate) {
+    const who = incubate[1] ? parsePlayerRef(incubate[1], b) : { ref: 'you' as const };
+    const amount = incubate[2] === 'X' ? 'X' : Number(incubate[2]);
+    if (who) return [{ type: 'incubate', amount, ...(who.ref === 'you' ? {} : { who }) }];
+  }
   // CR 701.16a: "Investigate" means "Create a Clue token."
   if (/^investigate$/i.test(c)) {
     const clue = parseTokenPhrase('a Clue token', b);
@@ -4544,6 +4599,15 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     return what && (!what.plural || what.ref.ref === 'all') ? [{ type: 'explore', what: what.ref }] : null;
   }
   // CR 107.14 / CR 122.1: "you get {E}{E}", "you get an experience counter" — counters on a player.
+  // Aethertide Whale: "you get six {E}"; Robobrain War Mind: "you get an amount of {E} equal to the number of artifact
+  // creatures you control".
+  const energyWords = /^(.+?) gets? (two|three|four|five|six|seven|eight|nine|ten) \{E\}$/i.exec(c) ?? /^(.+?) gets? an amount of \{E\} equal to (.+)$/i.exec(c);
+  if (energyWords) {
+    const who = parsePlayerRef(energyWords[1]!, b);
+    const n = parseAmount(energyWords[2]!);
+    const amount = typeof n === 'number' ? n : who ? parseCount(energyWords[2]!, b) : null;
+    return who && amount !== null ? [{ type: 'get_counters', who, counter: 'energy', amount }] : null;
+  }
   const energy = /^(.+?) gets? ((?:\{E\})+)$/i.exec(c);
   const experience = /^(.+?) gets? (an?|one|two|three|four|five|six|seven|eight|nine|ten|that many) (experience|rad|poison) counters?$/i.exec(c);
   // Feral Ghoul: "each opponent gets a number of rad counters equal to its power".
@@ -4552,6 +4616,12 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const who = parsePlayerRef(numberOf[1]!, b);
     const amount = who ? parseCount(numberOf[3]!, b) : null;
     return who && amount ? [{ type: 'get_counters', who, counter: numberOf[2]!.toLowerCase(), amount }] : null;
+  }
+  // Peema Trailblazer: "you get that many {E}" — how much damage the trigger event was.
+  const thatManyEnergy = /^(.+?) gets? that many \{E\}$/i.exec(c);
+  if (thatManyEnergy && b.eventAmount) {
+    const who = parsePlayerRef(thatManyEnergy[1]!, b);
+    return who ? [{ type: 'get_counters', who, counter: 'energy', amount: { kind: 'event' } }] : null;
   }
   if (energy || experience) {
     const who = parsePlayerRef((energy ?? experience)![1]!, b);

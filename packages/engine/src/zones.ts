@@ -270,6 +270,7 @@ export function moveObject(
   o.tapped = false;
   o.damage = 0;
   o.counters = {};
+  delete o.counterStamps;
   // Dauthi Voidwalker: "instead exile it with a void counter on it".
   if (instead?.node.withCounter) o.counters[instead.node.withCounter] = 1;
   o.sick = to === 'battlefield';

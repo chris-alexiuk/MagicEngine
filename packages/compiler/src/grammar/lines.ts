@@ -378,7 +378,7 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     return { type: 'exile_cards', amount: 1, from: 'battlefield', filter: { ...pf.filter, ...(exileOwn[1] === 'another' ? { other: true } : {}) } };
   }
   // "Exile a creature card from your graveyard", "Exile two cards from your graveyard" (CR 118.3).
-  const exile = /^[Ee]xile (a|an|one|two|three|four|five) (.+?) from your graveyard$/.exec(item);
+  const exile = /^[Ee]xile (a|an|one|two|three|four|five|six|seven|eight|nine|ten) (.+?) from your graveyard$/.exec(item);
   if (exile && b) {
     const amount = parseAmount(exile[1]!);
     if (typeof amount !== 'number') return null;
@@ -979,7 +979,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'deals_damage', subject: { ref: 'all', filter: pf.filter }, ...(othersDeal[3] ? { combat: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
   }
   // Wrathful Red Dragon: "Whenever a Dragon you control is dealt damage, it deals that much damage to …".
-  const othersDealt = /^(a|an|another) (.+?) is dealt damage$/.exec(t);
+  const othersDealt = t === 'an opponent is dealt damage' ? null : /^(a|an|another) (.+?) is dealt damage$/.exec(t);
   if (othersDealt) {
     const pf = parseFilter(othersDealt[2]!, b);
     if (!pf || pf.plural || pf.filter.zone) return null;
@@ -1086,15 +1086,23 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const cursed = t.startsWith('enchanted');
     return { trigger: { type: 'player_dealt_damage', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
-  // Valgavoth, Harrower of Souls: "Whenever an opponent loses life for the first time during each of their turns".
-  const loses = /^(an opponent|you) loses? life( for the first time each turn| for the first time during each of their turns| during their turn)?$/.exec(t);
+  // War Elemental: "Whenever an opponent is dealt damage"; Chandra's Spitfire: "… is dealt noncombat damage".
+  const oppDealt = /^an opponent is dealt (combat |noncombat )?damage$/.exec(t);
+  if (oppDealt) {
+    b.eventAmount = true;
+    const kind = oppDealt[1]?.trim();
+    return { trigger: { type: 'player_dealt_damage', who: 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
+  // Valgavoth, Harrower of Souls: "Whenever an opponent loses life for the first time during each of their turns"; The Master
+  // of Lake-town: "Whenever a player loses life".
+  const loses = /^(an opponent|you|a player) loses? life( for the first time each turn| for the first time during each of their turns| during their turn)?$/.exec(t);
   if (loses) {
     b.eventAmount = true;
     const first = /first time/.test(loses[2] ?? '');
     const theirTurn = /their turn/.test(loses[2] ?? '');
     if (theirTurn && loses[1] === 'you') return null;
     return {
-      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { theirTurn: true } : {}) },
+      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : loses[1] === 'a player' ? 'any' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { theirTurn: true } : {}) },
       it: { ref: 'self' },
       player: { ref: 'trigger_player' },
     };
@@ -1177,6 +1185,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (oppAttacks) {
     const min = NUMBER_WORDS[oppAttacks[1]!] ?? Number(oppAttacks[1]);
     if (!min) return null;
+    // Tomik, Wielder of Law: "that opponent loses 3 life" — the attacking player.
+    b.named['that opponent'] = { ref: 'trigger_player' };
     return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacks[2] ? 'or_planeswalkers' : 'you', min }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // General Kreat: "Whenever one or more Goblins you control attack" — once per declaration, if any of them attack.
@@ -1184,6 +1194,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Ainok Strike Leader: "Whenever you attack with this creature and/or your commander" — once, if either attacks (CR 903.3).
   if (/^you attack with (?:~|this creature) and\/or your commander$/.test(t)) {
     return { trigger: { type: 'you_attack', filter: { anyOf: [{ isSource: true }, { commander: true, owner: 'you' }] } }, it: { ref: 'self' }, player: null };
+  }
+  // Tide Skimmer: "Whenever you attack with two or more creatures with flying"; Harbin: "with five or more Soldiers".
+  const attackWithN = /^you attack with (two|three|four|five|six|seven|eight) or more (.+)$/.exec(t);
+  if (attackWithN && attackWithN[2] !== 'creatures') {
+    const pf = parseFilter(attackWithN[2]!, b);
+    if (!pf || !pf.plural || pf.filter.controller || pf.filter.zone) return null;
+    const filter = { ...pf.filter, types: [...new Set([...(pf.filter.types ?? []), 'Creature'])] };
+    b.named['those creatures'] = { ref: 'all', filter: { ...filter, controller: 'you', combat: 'attacking' } };
+    return { trigger: { type: 'you_attack', filter, min: NUMBER_WORDS[attackWithN[1]!]! }, it: { ref: 'self' }, player: null };
   }
   const attackWith = /^you attack with one or more (.+)$/.exec(t);
   if (attackWith && !/ you control$/.test(attackWith[1]!) && attackWith[1] !== 'creatures') return parseTrigger(word, `one or more ${attackWith[1]} you control attack`, b);
@@ -1486,11 +1505,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return inner;
   }
   // "Whenever ~ deals combat damage to a creature" — "that creature" is the creature dealt damage.
-  const hitsCreature = /^~ deals combat damage to a creature$/.exec(t);
+  // Giant's Skewer: "Whenever equipped creature deals combat damage to a creature".
+  const hitsCreature = /^(~|equipped creature|enchanted creature) deals combat damage to a creature$/.exec(t);
   if (hitsCreature) {
     b.eventAmount = true;
     b.named['that creature'] = { ref: 'trigger_object' };
-    return { trigger: { type: 'deals_combat_damage', subject: { ref: 'self' }, to: 'creature' }, it: { ref: 'self' }, player: null };
+    const subject: Ref = hitsCreature[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    return { trigger: { type: 'deals_combat_damage', subject, to: 'creature' }, it: subject, player: null };
   }
   // "Whenever a creature you control becomes blocked", "Whenever a permanent you control is turned face up"
   const otherEvent = /^(?:a|an|another) (.+?) (becomes blocked|is turned face up)$/.exec(t);
@@ -1537,6 +1558,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const toTarget = / to TARGETPLAYER(\d+)$/.exec(other[2]!);
     const type = eventType(other[2]!.replace(/ under your control$/, '').replace(/ alone$/, '').replace(/ you$/, '').replace(/ to (?:an opponent|one of your opponents|TARGETPLAYER\d+)$/, ' to a player'));
     if (type === 'attacks' && / you$/.test(other[2]!)) b.named['that creature'] = { ref: 'trigger_object' };
+    // Brutal Hordechief: "Whenever a creature you control attacks, defending player loses 1 life" — the player it's attacking
+    // (CR 506.2), or the controller of the planeswalker it's attacking.
+    if (type === 'attacks' && !/ you$/.test(other[2]!)) b.named['defending player'] = { ref: 'trigger_player' };
+    // Taborax: "Whenever another nontoken creature you control dies, put a +1/+1 counter on Taborax. If that creature was a
+    // Cleric, …" — the creature that died, whatever "it" has become since.
+    if (type === 'dies' && (pf.filter.types ?? []).includes('Creature')) b.named['that creature'] = { ref: 'trigger_object' };
     // Old Gnawbone: "Whenever a creature you control deals combat damage to a player, create that many Treasure tokens."
     if (type === 'deals_combat_damage') b.eventAmount = true;
     return {
@@ -2987,6 +3014,14 @@ export const costModifierRule: GrammarRule = {
     }
     // Drag to the Roots: "This spell costs {2} less to cast as long as there are four or more card types among cards in your
     // graveyard." — the same as "if" (it's checked as the cost is determined, CR 601.2f).
+    // Mental Modulation: "This spell costs {1} less to cast during your turn."; Closing Statement: "during your end step".
+    const during = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast during your (turn|end step)$/.exec(body);
+    if (during) {
+      const a = amountOf(during[1]!);
+      if (!a || a.amount === 'X') return null;
+      const condition = during[3] === 'turn' ? { type: 'your_turn', value: true } : { type: 'step', step: 'end', yours: true };
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', self: true, change: during[2] as 'less' | 'more', ...a, condition } as CostModifierNode };
+    }
     const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| (?:if|as long as) (.+?)|, where X is (.+?))?$/.exec(body);
     if (own) {
       const a = amountOf(own[1]!);

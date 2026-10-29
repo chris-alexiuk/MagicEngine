@@ -937,8 +937,8 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   // "Acererak the Archlich" → "Acererak", "Ajani Vengeant" → "Ajani" (not a title or a type word).
   const legendary = /\bLegendary\b/.test(ctx.typeLine);
   const ofName = legendary ? firstName(ctx.faceName) : undefined;
-  // "Rosie Cotton of South Lane" → "Rosie Cotton".
-  const beforeOf = legendary && !ctx.faceName.includes(',') ? /^([A-Z][\p{L}'’-]+ [A-Z][\p{L}'’-]+) of [A-Z]/u.exec(ctx.faceName)?.[1] : undefined;
+  // "Rosie Cotton of South Lane" → "Rosie Cotton"; "Tor Wauki the Younger" → "Tor Wauki".
+  const beforeOf = legendary && !ctx.faceName.includes(',') ? /^([A-Z][\p{L}'’-]+ [A-Z][\p{L}'’-]+) (?:of|the) [A-Z]/u.exec(ctx.faceName)?.[1] : undefined;
   const names = new Set([ctx.faceName, ctx.cardName, shortName(ctx.faceName), ...(ofName ? [ofName] : []), ...(beforeOf ? [beforeOf] : [])].filter((n) => n.length > 1));
   // Longest first so "Kinnan, Bonder Prodigy" is replaced before "Kinnan".
   for (const name of [...names].sort((a, b) => b.length - a.length)) {

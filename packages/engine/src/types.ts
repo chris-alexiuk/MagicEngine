@@ -120,6 +120,7 @@ export interface LKIStats {
   subtypes?: string[];
   supertypes?: string[];
   colors?: string[];
+  token?: true;
 }
 
 export interface CostLKI {
@@ -162,6 +163,8 @@ export interface GameObject {
   loyaltyActivations?: number;
   /** CR 613.7d: set when it enters a zone; orders continuous effects from its static abilities. */
   timestamp: number;
+  /** CR 613.7: when each keyword counter (CR 122.1b) was first put on it, for effects that came before. */
+  counterStamps?: Record<string, number>;
   /** The object an Aura or Equipment is attached to (CR 701.3). */
   attachedTo?: ObjectRef;
   /** CR 114.1: an emblem in the command zone (not a card or a permanent). */

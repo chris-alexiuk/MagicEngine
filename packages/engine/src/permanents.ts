@@ -223,7 +223,7 @@ export function createEmblem(g: GameState, face: FaceDef, player: PlayerId): Gam
 }
 
 /** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
-export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number> } = {}): GameObject {
+export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number>; replace?: boolean } = {}): GameObject {
   // Divine Visitation: a token copy of a creature is a creature token too — an Angel is created instead.
   const swap = tokenSwap(g, controller, g.cards[of.card]?.faces[of.face]);
   if (swap) return createToken(g, swap, controller, events, { tapped: opts.tapped, swapped: true });
@@ -232,8 +232,12 @@ export function createTokenCopy(g: GameState, of: { card: string; face: number }
   o.token = true;
   o.sick = true;
   if (opts.tapped) o.tapped = true;
-  // Littjara Mirrorlake: "… except it enters with an additional +1/+1 counter on it" (CR 614.1c).
-  for (const [counter, n] of Object.entries(opts.counters ?? {})) if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+  // Littjara Mirrorlake: "… except it enters with an additional +1/+1 counter on it" (CR 614.1c). Incubate: counters it
+  // enters with are put on it (CR 122.6), so Doubling Season doubles them (`replace`).
+  for (const [counter, n0] of Object.entries(opts.counters ?? {})) {
+    const n = opts.replace ? replaceQuantity(g, 'counters', n0, { player: controller, object: o, counter }) : n0;
+    if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+  }
   intrinsicCounters(g, o);
   onEnterBattlefield(g, o, events);
   events.push({ type: 'created', object: o.id, controller });

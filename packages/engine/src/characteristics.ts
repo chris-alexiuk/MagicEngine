@@ -88,7 +88,8 @@ export interface Characteristics {
 }
 
 /** CR 122.1b: keyword counters the engine applies (each a keyword it knows). */
-const KEYWORD_COUNTERS = new Set(['flying', 'deathtouch', 'haste', 'hexproof', 'indestructible', 'lifelink', 'menace', 'reach', 'shadow', 'trample', 'vigilance']);
+const KEYWORD_COUNTERS = new Set(['flying', 'first_strike', 'double_strike', 'deathtouch', 'haste', 'hexproof', 'indestructible', 'lifelink', 'menace', 'reach', 'shadow', 'trample', 'vigilance']);
+export const isKeywordCounter = (k: string): boolean => KEYWORD_COUNTERS.has(k);
 
 /** One continuous effect that might apply, with what's needed to order and scope it. */
 interface ActiveEffect {
@@ -637,13 +638,20 @@ function layered(g: GameState, o: GameObject): Characteristics {
     if (e.colors && e.applies(o, c)) c.colors = [...e.colors];
     else if (e.addColors && e.applies(o, c)) c.colors = (['W', 'U', 'B', 'R', 'G'] as Color[]).filter((x) => c.colors.includes(x) || e.addColors!.includes(x));
   }
-  // CR 122.1b: keyword counters ("a flying counter") — it has that keyword (layer 6; here before other layer-6 effects).
-  if (o.zone === 'battlefield') {
-    for (const [k, n] of Object.entries(o.counters)) if (n > 0 && KEYWORD_COUNTERS.has(k)) c.keywords.push({ id: k });
-  }
+  // CR 122.1b: keyword counters ("a flying counter") — it has that keyword (layer 6). A counter put on it later than an
+  // effect has a later timestamp (CR 613.7): Abigale, Eloquent First-Year — "loses all abilities. Put a flying counter,
+  // a first strike counter, and a lifelink counter on that creature." keeps the three.
+  const keywordCounters = o.zone === 'battlefield' ? Object.entries(o.counters).filter(([k, n]) => n > 0 && KEYWORD_COUNTERS.has(k)) : [];
+  const stampOf = (k: string) => o.counterStamps?.[k] ?? -Infinity;
+  let counted = 0;
+  const sortedCounters = [...keywordCounters].sort((a, b) => stampOf(a[0]) - stampOf(b[0]));
+  const countersUpTo = (t: number) => {
+    while (counted < sortedCounters.length && stampOf(sortedCounters[counted]![0]) < t) c.keywords.push({ id: sortedCounters[counted++]![0] });
+  };
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
   const inLayer6 = effects.filter((e) => !e.ptGated && (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
   for (const e of inLayer6) {
+    countersUpTo(e.timestamp);
     // "loses all abilities": what it has so far goes (its own static abilities aren't applying, see lostAbilities);
     // later effects can still grant it more (CR 613.7).
     if (e.loseAbilities) c.keywords = [];
@@ -653,6 +661,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     for (const r of e.rules ?? []) c.rules.add(r);
     if (e.combat) c.combat.push(e.combat);
   }
+  countersUpTo(Infinity);
   // Granted static abilities about the object itself ('gains "This creature can't block."'): their
   // effects apply along with the grant (layer 6; +N/+N in 7c).
   const grantedPT = applyGrantedStatics(c);
@@ -973,7 +982,12 @@ export function matchesFilter(
   if (f.xInCost !== undefined && faceOf(g, o).manaCost.includes('{X}') !== f.xInCost) return false;
   // CR 605.1a: "with a mana ability" — the abilities it has where it is (printed ones off the battlefield).
   if (f.manaAbility !== undefined) {
-    const abilities = o.zone === 'battlefield' ? abilitiesOf(g, o) : printedAbilities(faceOf(g, o));
+    // Raggadragga: "Each creature you control with a mana ability gets +2/+2." — read from the characteristics being worked
+    // out (layer 6 is done before 7c), not by working them out again.
+    const abilities =
+      o.zone === 'battlefield'
+        ? [...(lostAbilities(g).has(o.id) ? [] : faceOf(g, o).abilities.filter((a) => gateOpen(g, o, a))), ...keywordAbilities(c.keywords)]
+        : printedAbilities(faceOf(g, o));
     if (abilities.some((a) => a.kind === 'activated' && Boolean((a as { mana?: boolean }).mana)) !== f.manaAbility) return false;
   }
   // "exiled with ~" (CR 607.2a): what this object's abilities exiled while it was on the battlefield (or on its way).
@@ -1168,7 +1182,7 @@ const COLOR_NAMES: Record<Color, string> = { W: 'white', U: 'blue', B: 'black', 
 /** CR 608.2h: an object's characteristics as it is now, remembered for after it's sacrificed or discarded. */
 export function lkiStats(g: GameState, o: GameObject): LKIStats {
   const c = chars(g, o);
-  return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors] };
+  return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors], ...(o.token ? { token: true as const } : {}) };
 }
 
 /** CR 702.16g: "protection from A and from B" is two protection abilities. */

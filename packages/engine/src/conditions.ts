@@ -515,7 +515,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'poison': {
       // Corrupted: "an opponent has three or more poison counters"
-      const players = cond.who === 'any_opponent' ? livePlayers(g).filter((p) => p !== controller) : [controller];
+      // Septic Rats: "if defending player is poisoned".
+      const players = cond.player ? refPlayers(ctx, cond.player as Ref) : cond.who === 'any_opponent' ? livePlayers(g).filter((p) => p !== controller) : [controller];
       return players.some((p) => cmp(g.players[p]!.poison, cond));
     }
     case 'different_powers': {
@@ -537,7 +538,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'entered_this_turn':
       // Celebration: "two or more nonland permanents entered the battlefield under your control this turn"
-      return cmp(enteredThisTurn(g, controller, (cond.filter ?? {}) as ObjectFilter), cond);
+      return cmp(enteredThisTurn(g, controller, (cond.filter ?? {}) as ObjectFilter, source ?? undefined), cond);
     case 'or':
       return (cond.any as ConditionNode[]).some((c) => evalCondition(c, ctx));
     // Field of the Dead: "you control seven or more lands with different names" (CR 201.2)
@@ -728,15 +729,17 @@ function recordEnteredAs(g: GameState, log: TurnLog, o: GameObject): void {
  * How many permanents matching a filter entered the battlefield under a player's control this turn (celebration, Hobgoblin
  * Bandit Lord) — counting a token that has since left the battlefield as it was when it entered.
  */
-export function enteredThisTurn(g: GameState, controller: PlayerId, f: ObjectFilter): number {
+export function enteredThisTurn(g: GameState, controller: PlayerId, f: ObjectFilter, source?: GameObject): number {
   const ids = g.turnLog.entered?.[controller] ?? [];
   return ids.filter((id) => {
     const o = g.objects[id];
-    if (o) return matchesFilter(g, o, f, { controller, anyZone: true });
+    // Waterspout Warden: "another creature" — not the source.
+    if (o) return matchesFilter(g, o, f, { controller, anyZone: true, ...(source ? { source } : {}) });
     const was = g.turnLog.enteredAs?.[id];
-    const simple = Object.keys(f).every((k) => ['types', 'subtypes', 'supertypes', 'token', 'notTypes'].includes(k));
+    const simple = Object.keys(f).every((k) => ['types', 'subtypes', 'supertypes', 'token', 'notTypes', 'other'].includes(k));
     if (!was || !simple) return false;
     return (
+      (!f.other || !source || id !== source.id) &&
       (!f.types || f.types.some((t) => was.types.includes(t))) &&
       (!f.subtypes || f.subtypes.some((t) => was.subtypes.includes(t))) &&
       (!f.supertypes || f.supertypes.every((t) => was.supertypes.includes(t))) &&

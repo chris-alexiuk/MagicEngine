@@ -35,7 +35,8 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   const t = text.trim();
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
-  const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player)'s|their) (hand|graveyard|library)$/.exec(t);
+  // Animus of Night's Reach: "the number of creature cards in defending player's graveyard".
+  const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player|defending player)'s|their) (hand|graveyard|library)$/.exec(t);
   if (theirs) {
     const head = theirs[1]!;
     let filter: ObjectFilter | undefined;
@@ -430,6 +431,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // CR 306.5c: "~'s loyalty" (Nissa, Ascended Animist) — the loyalty counters on it.
   if (t === "~'s loyalty") return { kind: 'counters', of: { ref: 'self' }, counter: 'loyalty' };
+  // Death's Presence: "the power of the creature that died" — the trigger's creature, as it last existed (CR 608.2h).
+  const diedStat = /^the (power|toughness) of the creature that died$/.exec(t);
+  if (diedStat && b.named['that creature']?.ref === 'trigger_object') return { kind: 'stat', stat: diedStat[1] as 'power' | 'toughness', of: { ref: 'trigger_object' } };
   // "its power", "~'s toughness", "that creature's power", "the sacrificed creature's power".
   const stat = /^(.+?)(?:'s?)? (power|toughness|mana value)$/.exec(t);
   if (stat) {

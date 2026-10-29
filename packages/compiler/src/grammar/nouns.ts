@@ -184,8 +184,18 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Winds of Rath: "all creatures that aren't enchanted"
   [/ (?:that aren't|that isn't|that's not) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = false), true)],
   [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
+  // Long-Lost Lances: "creatures you control that are equipped".
+  [/ (?:that are|that's) equipped$/, (f) => f.equipped === undefined && ((f.equipped = true), true)],
   // Halvar, God of Battle: "Creatures you control that are enchanted or equipped"
   [/ (?:that are|that's) enchanted or equipped$/, (f) => !f.anyOf && ((f.anyOf = [{ enchanted: true }, { equipped: true }]), true)],
+  // Sarkhan's Unsealing: "a creature spell with power 4, 5, or 6"; Kozilek's Unsealing: "with mana value 4, 5, or 6" — any of them.
+  // Transit Mage: "an artifact card with mana value 4 or 5".
+  [/ with (power|toughness|mana value) (\d+)(?:, (\d+),?)? or (\d+)$/, (f, m) => {
+    const key = m[1] === 'power' ? 'power' : m[1] === 'toughness' ? 'toughness' : 'manaValue';
+    if (f.anyOf || f[key]) return false;
+    f.anyOf = [m[2], m[3], m[4]].filter(Boolean).map((n) => ({ [key]: { op: 'eq' as const, n: Number(n) } }));
+    return true;
+  }],
   // Hollowhenge Overlord: "each creature you control that's a Wolf or a Werewolf"; "… that are Wolves or Werewolves".
   [/ (?:that's an? ([A-Z][\w-]*) or an? ([A-Z][\w-]*)|that are ([A-Z][\w-]*) or ([A-Z][\w-]*))$/, (f, m) => {
     const one = subtypeOf((m[1] ?? m[3])!);
@@ -211,8 +221,6 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'lt', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
   // Kodama of the East Tree: "a permanent card with equal or lesser mana value".
   [/ with equal or lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'le', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
-  // Kozilek's Unsealing: "a creature spell with mana value 4, 5, or 6" — any of them.
-  [/ with mana value (\d+), (\d+),? or (\d+)$/, (f, m) => !f.anyOf && !f.manaValue && ((f.anyOf = [m[1], m[2], m[3]].map((n) => ({ manaValue: { op: 'eq' as const, n: Number(n) } }))), true)],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?!a |an )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
@@ -428,6 +436,9 @@ function addAlternative(f: ObjectFilter, cat: Category, alt: string, replaced: s
   }
 }
 
+/** CR 700.12: the outlaw creature types. */
+const OUTLAW_TYPES = ['Assassin', 'Mercenary', 'Pirate', 'Rogue', 'Warlock'];
+
 /** Adjectives + head noun: "tapped nonblack Zombie creature". */
 function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; invariant?: boolean } | null {
   const words = text.trim().split(/\s+/);
@@ -457,6 +468,11 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
   } else if (/^tokens?$/.test(lower)) {
     f.token = true;
     plural = lower.endsWith('s');
+  } else if (/^outlaws?$/.test(lower)) {
+    // CR 700.12: "outlaws you control" — permanents with any of the outlaw creature types.
+    if (f.subtypes) return null;
+    f.subtypes = [...OUTLAW_TYPES];
+    plural = lower.endsWith('s');
   } else if (subtypeOf(headWord)) {
     f.subtypes = [subtypeOf(headWord)!];
     plural = subtypeOf(headWord) !== headWord;
@@ -475,6 +491,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
       if (TYPE_NOUNS[xl]) (f.notTypes ??= []).push(TYPE_NOUNS[xl]!);
       else if (COLOR_WORDS[xl]) (f.notColors ??= []).push(COLOR_WORDS[xl]!);
       else if (xl === 'token') f.token = false;
+      // Shoot the Sheriff: "target non-outlaw creature" (CR 700.12).
+      else if (xl === 'outlaw') (f.notSubtypes ??= []).push(...OUTLAW_TYPES);
       else if (SUPERTYPE_WORDS[xl]) (f.notSupertypes ??= []).push(SUPERTYPE_WORDS[xl]!);
       else if (subtypeOf(capitalise(x))) (f.notSubtypes ??= []).push(subtypeOf(capitalise(x))!);
       else return null;
@@ -486,6 +504,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
     else if (w === 'monocolored') f.monocolored = true;
     // CR 700.6
     else if (w === 'historic') f.historic = true;
+    // CR 700.12: "outlaw creature cards", "an outlaw spell".
+    else if (w === 'outlaw' && !f.subtypes) f.subtypes = [...OUTLAW_TYPES];
     // CR 700.9: equipped, enchanted by an Aura its controller controls, or with a counter on it.
     else if (w === 'modified') f.modified = true;
     else if (w === 'tapped') f.tapped = true;
@@ -802,6 +822,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // Papalymo Totolymo: "each opponent who lost life this turn"
   const lost = /^each (opponent|player) who lost life this turn$/.exec(t);
   if (lost) return { ref: 'players', who: lost[1] === 'player' ? 'each' : 'opponents', lostLife: true };
+  // Thornbow Archer: "each opponent who doesn't control an Elf".
+  const lacking = /^each (opponent|player) who doesn't control (?:a|an) (.+)$/i.exec(text.trim());
+  if (lacking) {
+    const pf = parseFilter(lacking[2]!, b.clone());
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { ref: 'players', who: lacking[1]!.toLowerCase() === 'player' ? 'each' : 'opponents', controlsNone: pf.filter };
+  }
   // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
   // Call the Coppercoats: "Choose any number of target opponents. … those opponents control" — the players chosen.

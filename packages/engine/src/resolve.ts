@@ -190,7 +190,14 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       return ctx.eachPlayer && live.includes(ctx.eachPlayer) ? [ctx.eachPlayer] : [];
     case 'players': {
       const not = ref.except ? refPlayers(ctx, ref.except) : [];
-      const all = apnap(g).filter((p) => (ref.who === 'each' || p !== ctx.controller) && !not.includes(p) && (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0));
+      const all = apnap(g).filter(
+        (p) =>
+          (ref.who === 'each' || p !== ctx.controller) &&
+          !not.includes(p) &&
+          (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
+          // Thornbow Archer: "each opponent who doesn't control an Elf".
+          (!ref.controlsNone || controlledCount(ctx, p, ref.controlsNone as ObjectFilter) === 0),
+      );
       if (!ref.attacking) return all;
       // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
       const defenders = refPlayers(ctx, ref.attacking);
@@ -679,7 +686,10 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
 export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean; yours?: boolean }): NonNullable<Resolution['moves']> {
   const how = e.how;
-  return (ctx.resolution?.moves ?? []).filter((m) => {
+  // Thallid Omnivore: "Sacrifice another creature: … If a Saproling was sacrificed this way, …" — what the cost sacrificed.
+  const paid = how === 'sacrificed' ? (ctx.resolution?.entry.costLKI?.sacrificed ?? []) : [];
+  const fromCost = paid.map((s) => ({ id: '', effect: 'sacrifice', from: 'battlefield' as const, to: 'graveyard' as const, types: s.types ?? [], subtypes: s.subtypes ?? [], controller: ctx.controller, ...(s.token ? { token: true as const } : {}) }));
+  return [...fromCost, ...(ctx.resolution?.moves ?? [])].filter((m) => {
     // Rise of the Witch-king: "If you sacrificed a creature this way" — only what this player sacrificed.
     if (e.yours && m.controller !== ctx.controller) return false;
     const right =

@@ -119,6 +119,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
   if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Elderscale Wurm: "if your life total is less than 7".
+  const vsN = /^your life total is (greater|less) than (\d+)$/.exec(t);
+  if (vsN) return { type: 'life', op: vsN[1] === 'greater' ? 'gt' : 'lt', n: Number(vsN[2]) };
   // Scourge of the Throne: "if it's attacking the player with the most life or tied for most life".
   if (/^(?:it's|~ is) attacking the player with the most life or tied for most life$/.test(t)) return { type: 'life', attackingMost: true };
   // Guild Artisan: "if no opponent has more life than that player" — that player has the most life among opponents.
@@ -421,6 +424,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Betor, Kin to All: "creatures you control have total toughness 10 or greater".
   const total = /^creatures you control have total (power|toughness) (\d+) or greater$/.exec(t);
   if (total) return { type: 'total_power', op: 'ge', n: Number(total[2]), ...(total[1] === 'toughness' ? { stat: 'toughness' } : {}) };
+  // Septic Rats: "if defending player is poisoned" (one or more poison counters).
+  if (t === 'defending player is poisoned' && b.named['defending player']) return { type: 'poison', player: b.named['defending player'], min: 1 };
+  // Fear of the Dark: "if defending player controls no Glimmer creatures" — the player this creature is attacking.
+  const defNone = /^defending player controls no (.+)$/.exec(t);
+  if (defNone && b.it?.ref === 'self' && b.named['defending player']) {
+    const pf = parseFilter(defNone[1]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'count', who: 'all', filter: { ...pf.filter, controller: 'defending' }, max: 0 };
+  }
+  // Waterspout Warden: "if another creature entered the battlefield under your control this turn".
+  const anotherEntered = /^another (creature|artifact|land|permanent) entered the battlefield under your control this turn$/.exec(t);
+  if (anotherEntered) return { type: 'entered_this_turn', filter: { ...(anotherEntered[1] === 'permanent' ? {} : { types: [capitalise(anotherEntered[1]!)] }), other: true }, min: 1 };
   // Corrupted: "an opponent has three or more poison counters"
   const poison = /^(an opponent|you) ha(?:s|ve) (\w+ or more) poison counters$/.exec(t);
   if (poison) {
@@ -534,6 +548,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const spent: AmountExpr = { kind: 'mana_spent', of: b.it };
     b.difference = spentVs[1] === 'greater' ? { kind: 'sum', parts: [spent, { ...n, times: -1 } as AmountExpr] } : { kind: 'sum', parts: [n, { ...spent, times: -1 }] };
     return { type: 'amount', amount: spent, op: spentVs[1] === 'greater' ? 'gt' : 'lt', n };
+  }
+  // Blazing Bomb: "if at least four mana was spent to cast it"; Tellah: "If four or more mana was spent to cast that spell".
+  const spentAtLeast = /^(?:at least (\w+)|(\w+) or more) mana was spent to cast (?:that spell|it)$/.exec(t);
+  if (spentAtLeast && b.it?.ref === 'trigger_object') {
+    const n = parseAmount((spentAtLeast[1] ?? spentAtLeast[2])!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'mana_spent', of: b.it }, op: 'ge', n };
   }
   const statVs = /^(that card|that creature|it)(?:'s|s) (mana value|power|toughness) is (less|greater) than or equal to (.+)$/.exec(t);
   if (statVs && b.it && b.it.ref !== 'self') {
@@ -662,6 +682,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you(?:'ve)? lost life this turn$/.test(t)) return { type: 'this_turn', event: 'you_lost_life' };
   // Luminarch Ascension: "if you didn't lose life this turn".
   if (/^you didn't lose life this turn$|^you haven't lost life this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_lost_life' } };
+  // Stormwing Entity: "if you've cast an instant or sorcery spell this turn".
+  const castOne = /^you(?:'ve)? cast an? (.+?) spell this turn$/.exec(t);
+  if (castOne) {
+    const pf = parseFilter(`${castOne[1]} spell`, b.clone());
+    if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
+      const { zone: _z, ...filter } = pf.filter;
+      return { type: 'this_turn', event: 'you_cast', filter, min: 1 };
+    }
+  }
+  // Heroic Return: "if a creature is attacking you".
+  if (t === 'a creature is attacking you') return { type: 'attacking_you', min: 1 };
   // Lyse Hext: "you've cast two or more noncreature spells this turn"
   const castN = /^you(?:'ve)? cast (two|three|four|five) or more (.+?) spells this turn$/.exec(t);
   if (castN) {
@@ -712,7 +743,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Endless Evil: "When enchanted creature dies, if that creature was a Horror" — as it last existed.
   const wasSub = /^(?:that creature|it) was an? ([A-Z][a-z]+)$/.exec(t);
-  if (wasSub && isSubtype(wasSub[1]!) && b.it?.ref === 'trigger_object') return { type: 'was_type', subtype: wasSub[1]! };
+  if (wasSub && isSubtype(wasSub[1]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object'))) return { type: 'was_type', subtype: wasSub[1]! };
+  // Uglúk of the White Hand: "If that creature was a Goblin or Orc".
+  const wasEither = /^(?:that creature|it) was an? ([A-Z][a-z]+) or (?:an? )?([A-Z][a-z]+)$/.exec(t);
+  if (wasEither && isSubtype(wasEither[1]!) && isSubtype(wasEither[2]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object')))
+    return { type: 'or', any: [{ type: 'was_type', subtype: wasEither[1]! }, { type: 'was_type', subtype: wasEither[2]! }] };
+  // Samut, Vizier of Naktamun: "if that creature entered this turn".
+  if (/^(?:that creature|it) entered (?:the battlefield )?this turn$/.test(t) && b.it?.ref === 'trigger_object') return { type: 'is', of: { ref: 'trigger_object' }, filter: { enteredThisTurn: true } };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
   // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
   // Vohar, Vodalian Desecrator: "If you discarded an instant or sorcery card this way" — the same as "the discarded card was".
@@ -764,7 +801,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'this_turn', event: 'opponent_cast', min: c.min, ...(pf ? { filter: (({ zone: _z, ...f }) => f)(pf.filter) } : {}) };
   }
   // "If an opponent drew three or more cards this turn"
-  const oppDrew = /^an opponent drew (\w+ or more) cards this turn$/.exec(t);
+  // Even the Score: "if an opponent has drawn four or more cards this turn".
+  const oppDrew = /^an opponent (?:drew|has drawn) (\w+ or more) cards this turn$/.exec(t);
   if (oppDrew) {
     const c = count(oppDrew[1]!);
     return c?.min ? { type: 'this_turn', event: 'opponent_drew', min: c.min } : null;
@@ -801,10 +839,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const hadOne = /^it had (?:an?|one or more) (\S+) counters? on it$/.exec(t);
   if (hadOne && b.it) return { type: 'counters', of: b.it, counter: hadOne[1]!, min: 1 };
   // The Ozolith: "if it had counters on it" (as it last existed), "if ~ has counters on it".
-  if (t === 'it had counters on it' && b.it) return { type: 'counters', of: b.it, min: 1 };
+  // Nikara, Lair Scavenger: "if it had one or more counters on it".
+  if ((t === 'it had counters on it' || t === 'it had one or more counters on it') && b.it) return { type: 'counters', of: b.it, min: 1 };
   // Unstoppable Slasher: "if it had no counters on it" — any kind.
   if (t === 'it had no counters on it' && b.it) return { type: 'counters', of: b.it, max: 0 };
   if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };
+  // Marcus, Mutant Mayor: "if that creature has a +1/+1 counter on it" — the creature the trigger is about, now.
+  const thatHas = /^(?:that creature|it) has (?:an?|one or more) (\S+) counters? on it$/.exec(t);
+  if (thatHas && b.it?.ref === 'trigger_object') return { type: 'counters', of: b.it, counter: thatHas[1]!, min: 1 };
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"
   // Temple of Cyclical Time: "Activate only if it has no time counters on it" — this land.
   const none = /^(?:there are no (\S+) counters on ~|~ has no (\S+) counters on it)$/.exec(t) ?? (!b.it || b.it.ref === 'self' ? /^it has no ()(\S+) counters on it$/.exec(t) : null);

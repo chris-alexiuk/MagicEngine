@@ -8,7 +8,7 @@ import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } 
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { extraTokens, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
-import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong } from './characteristics.js';
+import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong, isKeywordCounter } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -153,6 +153,8 @@ function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: numb
   // CR 614.1a: "that many plus one +1/+1 counters are put on it instead", counter doublers.
   n = replaceQuantity(ctx.g, 'counters', n, { player: ctx.controller, object: o, counter });
   if (n <= 0) return;
+  // CR 613.7: a keyword counter's ability has the timestamp of when it was put on (see characteristics).
+  if (!o.counters[counter] && isKeywordCounter(counter)) o.counterStamps = { ...o.counterStamps, [counter]: ++ctx.g.clock };
   o.counters[counter] = (o.counters[counter] ?? 0) + n;
   ctx.events.push({ type: 'counters', object: o.id, counter, delta: n, by: ctx.controller });
 }
@@ -410,10 +412,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return o.controller === ctx.controller && !o.tapped && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
     });
     let chosen: string[] = [];
-    if (candidates.length) {
+    // Raff, Weatherlight Stalwart: "tap two untapped creatures you control" — exactly that many, if there are that many.
+    const exactly = node.amount !== undefined ? Math.max(0, amountOf(ctx, node.amount)) : undefined;
+    if (exactly !== undefined && candidates.length < exactly) return true;
+    if (candidates.length && exactly !== 0) {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: candidates.length, text: 'Choose any number of them to tap.' } };
+      if (!answer) {
+        const [min, max] = exactly !== undefined ? [exactly, exactly] : [0, candidates.length];
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: exactly !== undefined ? `Choose ${exactly} of them to tap.` : 'Choose any number of them to tap.' } };
+      }
       if (new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose untapped permanents among those.');
+      if (exactly !== undefined && answer.objects.length !== exactly) throw new RulesError(`Choose exactly ${exactly}.`);
       chosen = answer.objects;
     }
     for (const id of chosen) setTapped(g, id, true, ctx.events);
@@ -1195,6 +1204,29 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (a.kind !== 'static' || a.effect.type !== 'as_transforms') continue;
         for (const effect of (a.effect as unknown as { effects: EffectNode[] }).effects) runEffect(effect, { g: ctx.g, controller: o.controller, source: o, events: ctx.events, targets: [], x: 0, memo: {} });
       }
+    }
+    return true;
+  },
+
+  // CR 701.53a: "Incubate N" — an Incubator token that enters with N +1/+1 counters; CR 701.53b: it's double-faced, its
+  // front an Incubator artifact with "{2}: Transform this token.", its back a 0/0 Phyrexian artifact creature.
+  incubate(node, ctx) {
+    const g = ctx.g;
+    const n = Math.max(0, amountOf(ctx, node.amount));
+    const key = 'token:Incubator:incubate';
+    if (!g.cards[key]) {
+      const front: FaceDef = {
+        name: 'Incubator', manaCost: '', typeLine: 'Token Artifact — Incubator', supertypes: [], types: ['Artifact'], subtypes: ['Incubator'],
+        oracle: '{2}: Transform this token.', colors: [], keywords: [], unparsed: [],
+        abilities: [{ kind: 'activated', text: '{2}: Transform this token.', cost: { mana: '{2}' }, effects: [{ type: 'transform', what: { ref: 'self' } }] } as AbilityNode],
+      };
+      const back: FaceDef = { name: 'Phyrexian Token', manaCost: '', typeLine: 'Token Artifact Creature — Phyrexian', supertypes: [], types: ['Artifact', 'Creature'], subtypes: ['Phyrexian'], oracle: '', colors: [], keywords: [], abilities: [], unparsed: [], power: '0', toughness: '0' };
+      g.cards[key] = { id: key, name: 'Incubator', layout: 'transform', cmc: 0, colorIdentity: [], faces: [front, back], legal: {}, set: '', rarity: 'token', automation: 'full' };
+    }
+    const who = node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller];
+    for (const p of who) {
+      const o = createTokenCopy(g, { card: key, face: 0 }, p, ctx.events, { counters: { '+1/+1': n }, replace: true });
+      if (ctx.resolution) (ctx.resolution.created ??= []).push({ id: o.id, zcc: o.zcc });
     }
     return true;
   },
@@ -2846,7 +2878,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');
     const mustFind = !quality && !node.upTo;
     const memo = ctx.memo as { found?: ObjectId[] };
-    const split = node.split as { to: 'battlefield'; tapped?: true } | undefined;
+    const split = node.split as { to: 'battlefield'; tapped?: true; count?: number } | undefined;
     // Opposition Agent: "You control your opponents while they're searching their libraries. While an opponent is
     // searching their library, they exile each card they find." (CR 722: controlling another player.)
     const hijack = owner === player ? searchHijack(g, player) : {};
@@ -2915,17 +2947,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       // Cultivate: revealed, then the player picks which one goes onto the battlefield.
       if (split && chosen.length) ctx.events.push({ type: 'revealed', player, objects: [...chosen] });
-      if (split && chosen.length > 1) {
+      // Viewpoint Synchronization: two of them onto the battlefield.
+      const onto = split?.count ?? 1;
+      if (split && chosen.length > onto) {
         memo.found = chosen;
-        return { ask: { kind: 'choose_objects', player, candidates: chosen, min: 1, max: 1, text: `Choose the card to put onto the battlefield${split.tapped ? ' tapped' : ''} (the other goes into your hand).` } };
+        return { ask: { kind: 'choose_objects', player, candidates: chosen, min: onto, max: onto, text: `Choose ${onto === 1 ? 'the card' : `${onto} cards`} to put onto the battlefield${split.tapped ? ' tapped' : ''} (the rest go into your hand).` } };
       }
     }
     if (split) {
+      const onto = split.count ?? 1;
       const pickAnswer = memo.found ? answerOf(ctx, 'choose_objects') : null;
-      if (memo.found && (!pickAnswer || pickAnswer.objects.length !== 1 || !chosen.includes(pickAnswer.objects[0]!))) throw new RulesError('Choose one of the revealed cards.');
-      const first = pickAnswer?.objects[0] ?? chosen[0];
+      if (memo.found && (!pickAnswer || pickAnswer.objects.length !== onto || new Set(pickAnswer.objects).size !== onto || !pickAnswer.objects.every((id) => chosen.includes(id)))) throw new RulesError(`Choose ${onto} of the revealed cards.`);
+      const picked = pickAnswer?.objects ?? chosen.slice(0, onto);
       for (const id of chosen) {
-        if (id === first) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(split.tapped ? { tapped: true } : {}) });
+        if (picked.includes(id)) moveObject(g, id, 'battlefield', ctx.events, { controller: player, ...(split.tapped ? { tapped: true } : {}) });
         else moveObject(g, id, 'hand', ctx.events);
       }
       shuffleInPlace(g, zoneList(g, 'library', owner));
@@ -4489,6 +4524,15 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
   }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // Raff, Weatherlight Stalwart: "you may tap two untapped creatures you control. If you do, …"
+  if (e.type === 'tap_choice' && e.amount !== undefined) {
+    const filter = bindFilter(ctx, (e.filter ?? {}) as ObjectFilter);
+    const n = g.zones.battlefield.filter((id) => {
+      const o = g.objects[id]!;
+      return o.controller === chooser && !o.tapped && matchesFilter(g, o, filter, { controller: ctx.controller, source: ctx.source ?? null });
+    }).length;
+    return n >= amountOf(ctx, e.amount);
+  }
   // Liliana, Heretical Healer: "exile ~, then return her …. If you do, …" — not once she has left (CR 400.7).
   if (e.type === 'move' && ['self', 'target', 'trigger_object'].includes(String((e.what as { ref?: string } | undefined)?.ref))) return refObjects(ctx, ref(e, 'what')).length > 0;
   // Coral Atoll: "unless you return an untapped Island you control to its owner's hand".
@@ -5010,9 +5054,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   player_dealt_damage(t, check) {
     const e = check.event;
     if (e.type !== 'damage' || e.to.kind !== 'player' || check.sourceLeft) return [];
-    if (e.to.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
+    // War Elemental: "Whenever an opponent is dealt damage"; Chandra's Spitfire: "… noncombat damage".
+    if (t.who === 'opponent' ? e.to.player === check.controller : e.to.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
+    if ((t.combat && !e.combat) || (t.noncombat && e.combat)) return [];
     const player = e.to.player;
-    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player);
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player && (!t.combat || x.combat) && (!t.noncombat || !x.combat));
     if (together[0] !== e) return [];
     return [{ player, amount: together.reduce((n, x) => n + x.amount, 0) }];
   },
@@ -5020,7 +5066,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   lose_life(t, check) {
     const e = check.event;
     if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
-    if (t.who === 'you' ? e.player !== check.controller : e.player === check.controller) return [];
+    if (t.who === 'you' ? e.player !== check.controller : t.who !== 'any' && e.player === check.controller) return [];
     // Valgavoth: "for the first time during each of their turns" — the first loss this turn, on that player's turn.
     if (t.first && !e.firstLoss) return [];
     if (t.theirTurn && check.g.active !== e.player) return [];
