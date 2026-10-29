@@ -200,7 +200,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     } else if (c.type === 'pay_life') {
       // CR 119.4: a player can pay life only if their life total is at least that much; CR 119.8: not if it can't change.
       const life = lifeCost(g, player, o, c);
-      if (g.players[player]!.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
+      if (life > 0 && g.players[player]!.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
       if (life > 0 && playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
       if (life > 0 && cantLoseLife(g, player)) throw new RulesError('You can’t lose life this turn, so you can’t pay life.');
     } else if (c.type === 'discard_self') {

@@ -804,7 +804,8 @@ function cast(
   checkOtherCosts(g, player, o, additional, costChoices);
   // CR 119.4: all the life it costs at once.
   const lifeTotal = (additional.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
-  if (lifeTotal > g.players[player]!.life) throw new RulesError(`You don’t have ${lifeTotal} life to pay.`);
+  // CR 119.4: paying 0 life is always possible (Angel's Grace: below 0 life and still playing).
+  if (lifeTotal > 0 && lifeTotal > g.players[player]!.life) throw new RulesError(`You don’t have ${lifeTotal} life to pay.`);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
   // Creatures tapped for a cost (teamwork, conspire, harmonize) can't also tap for mana.
   if (wantsAutoTap) autoTap(g, player, cost, x, events, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });

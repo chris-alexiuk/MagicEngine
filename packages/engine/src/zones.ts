@@ -224,6 +224,8 @@ export function moveObject(
       zcc: o.zcc,
       power: c.power,
       toughness: c.toughness,
+      // Essence Sliver: "its controller gains that much life" after the Sliver died in that combat.
+      controller: o.controller,
       // CR 603.10a: "Whenever a creature with a +1/+1 counter on it dies", "a modified creature" — as it last existed.
       ...(Object.keys(o.counters).length ? { counters: { ...o.counters } } : {}),
       ...(isModified(g, o) ? { modified: true } : {}),

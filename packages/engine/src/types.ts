@@ -906,6 +906,8 @@ export type GameEvent =
   | { type: 'crime'; player: PlayerId }
   /** CR 701.21a: a permanent was sacrificed (by its controller). */
   | { type: 'sacrificed'; object: ObjectId; player: PlayerId; exploitedBy?: ObjectId }
+  /** CR 701.17a: cards a player milled at once (Mirelurk Queen, Glowing One). */
+  | { type: 'milled'; player: PlayerId; objects: ObjectId[] }
   /** CR 701.37a: a permanent became monstrous; `amount` is its N (CR 701.37c). */
   | { type: 'became_monstrous'; object: ObjectId; amount: number }
   /** CR 701.54a: the Ring tempted a player, who chose `object` (if they had a creature) as their Ring-bearer. */
@@ -1017,7 +1019,7 @@ export interface GameState {
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; controller?: PlayerId; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */

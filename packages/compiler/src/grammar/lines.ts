@@ -501,6 +501,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only during your turn\.$/, (a) => andIf(a, { type: 'your_turn', value: true })],
   [/ Activate only during your upkeep\.$/, (a) => andIf(a, { type: 'step', step: 'upkeep', yours: true })],
   [/ Activate only during combat\.$/, (a) => andIf(a, { type: 'step', combat: true })],
+  // Desert: "Activate only during the end of combat step."
+  [/ Activate only during the end of combat step\.$/, (a) => andIf(a, { type: 'step', step: 'end_of_combat' })],
   [/ (?:Activate|Transmute|Transfigure) only as a sorcery\.$/, (a) => (a.timing = 'sorcery')],
   // Lion's Eye Diamond: matters only for a mana ability (CR 605.3a) — any other ability is activated at instant speed anyway.
   [/ Activate only as an instant\.$/, (a) => (a.timing = 'instant')],
@@ -955,6 +957,27 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     return { trigger, it: subject, player: null };
   }
+  // CR 701.17a: Mirelurk Queen: "Whenever one or more nonland cards are milled"; Zellix: "Whenever a player mills one or
+  // more creature cards"; Glowing One: "Whenever a player mills a nonland card" (once for each).
+  const milled = /^one or more (nonland |creature )?cards are milled$/.exec(t) ?? /^(?:a player|an opponent|you) mills? (?:one or more|a|an) (nonland |creature )?cards?$/.exec(t);
+  if (milled) {
+    const batch = /one or more/.test(t);
+    const who = /^an opponent/.test(t) ? 'opponent' : /^you /.test(t) ? 'you' : 'any';
+    const filter: ObjectFilter | undefined = milled[1] === 'nonland ' ? { notTypes: ['Land'] } : milled[1] === 'creature ' ? { types: ['Creature'] } : undefined;
+    b.eventAmount = batch;
+    return { trigger: { type: 'milled', who, ...(batch ? { batch: true } : {}), ...(filter ? { filter } : {}) }, it: batch ? null : { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
+  }
+  // Quilled Greatwurm: "Whenever a creature you control deals combat damage during your turn, put that many +1/+1
+  // counters on it." — once for all the damage it dealt at once.
+  const othersDeal = /^(a|an|another) (.+?) deals (combat )?damage$/.exec(t);
+  if (othersDeal) {
+    const pf = parseFilter(othersDeal[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    if (othersDeal[1] === 'another') pf.filter.other = true;
+    b.eventAmount = true;
+    b.itOnField = true;
+    return { trigger: { type: 'deals_damage', subject: { ref: 'all', filter: pf.filter }, ...(othersDeal[3] ? { combat: true } : {}) }, it: { ref: 'trigger_object' }, player: null };
+  }
   // Wrathful Red Dragon: "Whenever a Dragon you control is dealt damage, it deals that much damage to …".
   const othersDealt = /^(a|an|another) (.+?) is dealt damage$/.exec(t);
   if (othersDealt) {
@@ -1092,6 +1115,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 702.149a (training): "Whenever ~ and at least one other creature with power greater than ~'s power attack"
   if (t === "~ and at least one other creature with power greater than ~'s power attack") {
     return { trigger: { type: 'attacks', subject: { ref: 'self' }, withGreaterPower: true }, it: { ref: 'self' }, player: null };
+  }
+  // Merry, Esquire of Rohan: "Whenever you attack with Merry and another legendary creature".
+  const withAnother = /^you attack with ~ and (?:another|at least one other) (.+)$/.exec(t);
+  if (withAnother) {
+    const pf = parseFilter(withAnother[1]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, withOther: pf.filter }, it: { ref: 'self' }, player: null };
   }
   // "Whenever ~ and at least two other creatures attack"
   const withOthers = /^~ and at least (\w+) other creatures? attack$/.exec(t);
@@ -2955,7 +2985,9 @@ export const costModifierRule: GrammarRule = {
       const colors = [...colored[2]!.matchAll(/\{([WUBRG])\}/g)].map((m) => m[1] as Color);
       return { kind: 'static', text: original, effect: { ...e, colors, coloredOnly: true } as CostModifierNode };
     }
-    const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| if (.+?)|, where X is (.+?))?$/.exec(body);
+    // Drag to the Roots: "This spell costs {2} less to cast as long as there are four or more card types among cards in your
+    // graveyard." — the same as "if" (it's checked as the cost is determined, CR 601.2f).
+    const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| (?:if|as long as) (.+?)|, where X is (.+?))?$/.exec(body);
     if (own) {
       const a = amountOf(own[1]!);
       if (!a) return null;

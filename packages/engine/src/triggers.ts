@@ -36,7 +36,7 @@ const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
   'sacrificed', 'blockers_done', 'scried', 'surveilled', 'foraged', 'copied', 'became_monstrous', 'ring_tempted',
   'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked', 'die_rolled', 'land_played', 'searched', 'countered', 'proliferated', 'coin_flip',
-  'prevented', 'player_counters',
+  'prevented', 'player_counters', 'milled',
 ]);
 /** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
 const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
@@ -74,6 +74,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   collectDelayed(g, batch);
   collectTurnTriggers(g, batch);
   collectMonarch(g, batch);
+  collectRadiation(g, batch);
   collectSpeed(g, batch);
   collectDungeonTriggers(g, batch);
   collectExileKeywords(g, batch);
@@ -296,6 +297,25 @@ const SPEED_UP: TriggeredAbility = {
   trigger: { type: 'lose_life', who: 'opponent' },
   effects: [{ type: 'increase_speed' }],
 };
+
+/**
+ * CR 728.1: the inherent triggered ability of rad counters. It has no source and is controlled by the active player:
+ * "At the beginning of each player's precombat main phase, if that player has one or more rad counters, that player mills a
+ * number of cards equal to the number of rad counters they have. For each nonland card milled this way, that player loses
+ * 1 life and removes one rad counter from themselves."
+ */
+const RADIATION: TriggeredAbility = {
+  kind: 'triggered',
+  text: "At the beginning of each player's precombat main phase, if that player has one or more rad counters, that player mills a number of cards equal to the number of rad counters they have. For each nonland card milled this way, that player loses 1 life and removes one rad counter from themselves.",
+  trigger: { type: 'phase', step: 'main1', whose: 'you' },
+  effects: [{ type: 'radiation' }],
+};
+
+function collectRadiation(g: GameState, batch: GameEvent[]): void {
+  // CR 603.4: the intervening "if" — checked again as it resolves (the effect then does nothing without rad counters).
+  if (!batch.some((e) => e.type === 'step' && e.step === 'main1') || !(g.players[g.active]?.counters?.rad ?? 0)) return;
+  g.triggers.push({ id: `t${g.nextId++}`, controller: g.active, source: { id: 'radiation', zcc: 0 }, sourceName: 'Rad counters', ability: RADIATION, info: {} });
+}
 
 function collectSpeed(g: GameState, batch: GameEvent[]): void {
   const ps = g.players[g.active];

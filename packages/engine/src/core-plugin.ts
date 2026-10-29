@@ -777,8 +777,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const candidates = g.zones.battlefield.filter((id) => g.objects[id]!.tapped && matchesFilter(g, g.objects[id]!, node.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null }));
     if (!candidates.length || n <= 0) return true;
     const answer = answerOf(ctx, 'choose_objects');
-    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max: Math.min(n, candidates.length), text: `Untap up to ${n}.` } };
-    if (answer.objects.length > n || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose up to ${n} to untap.`);
+    // White Plume Adventurer: "untap a creature you control" — one (a tapped one, if any: untapping an untapped one does nothing).
+    const min = node.exactly ? Math.min(n, candidates.length) : 0;
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max: Math.min(n, candidates.length), text: node.exactly ? `Untap ${n}.` : `Untap up to ${n}.` } };
+    if (answer.objects.length > n || answer.objects.length < min || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose up to ${n} to untap.`);
     for (const id of answer.objects) setTapped(g, id, false, ctx.events);
     return true;
   },
@@ -1034,7 +1036,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const [i, p] of players.entries()) {
       // The Water Crystal: "they mill that many cards plus four instead" (CR 614.1a).
       const k = replaceQuantity(ctx.g, 'mill', each[i]!, { player: p });
-      for (const id of zoneList(ctx.g, 'library', p).slice(0, k)) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      const milled = zoneList(ctx.g, 'library', p).slice(0, k);
+      for (const id of milled) moveObject(ctx.g, id, 'graveyard', ctx.events);
+      if (milled.length) ctx.events.push({ type: 'milled', player: p, objects: milled });
     }
     return true;
   },
@@ -2280,6 +2284,25 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 728.1: rad counters — mill that many; for each nonland card milled this way, lose 1 life and remove a rad counter.
+  radiation(_node, ctx) {
+    const g = ctx.g;
+    const p = ctx.controller;
+    const ps = g.players[p];
+    const n = ps?.counters?.rad ?? 0;
+    if (!ps || n <= 0) return true;
+    const k = replaceQuantity(g, 'mill', n, { player: p });
+    const milled = zoneList(g, 'library', p).slice(0, k);
+    for (const id of milled) moveObject(g, id, 'graveyard', ctx.events);
+    if (milled.length) ctx.events.push({ type: 'milled', player: p, objects: milled });
+    const nonland = milled.filter((id) => g.objects[id] && !faceOf(g, g.objects[id]!).types.includes('Land')).length;
+    if (!nonland) return true;
+    ps.counters!.rad = Math.max(0, (ps.counters!.rad ?? 0) - nonland);
+    if (!ps.counters!.rad) delete ps.counters!.rad;
+    ctx.events.push({ type: 'player_counters', player: p, counter: 'rad', delta: -nonland, by: p });
+    return { expand: [{ type: 'lose_life', amount: nonland, who: { ref: 'you' } }] };
+  },
+
   get_counters(node, ctx) {
     // CR 122.1: counters on a player ("you get {E}{E}").
     const n = amountOf(ctx, node.amount);
@@ -2680,12 +2703,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Dance of the Dead: "that player may pay {1}{B}" — someone other than the ability's controller.
     const payer = node.payer ? refPlayers(ctx, ref(node, 'payer'))[0] : ctx.controller;
     if (!payer) return { expand: otherwise };
+    // Killer Service: "you may pay {2} and sacrifice a token" — the action is part of the cost: only when it can be done.
+    const extra = (node.with as EffectNode[] | undefined) ?? [];
+    if (!extra.every((e) => feasible(e, ctx, payer))) return { expand: otherwise };
     // "You may pay {X}. If you do, draw X cards." — the payer chooses X as they pay (CR 107.1c); "where X is less than or
     // equal to the amount of life you gained" bounds it.
     const hasX = cost.includes('{X}') || chosenLife;
     const maxX = chosenLife ? ctx.g.players[payer]!.life : hasX && node.maxX !== undefined ? Math.max(0, amountOf(ctx, node.maxX as Amount)) : undefined;
     if (!answer) {
-      const price = [cost, chosenLife ? 'X life' : life ? `${life} life` : ''].filter(Boolean).join(' and ');
+      const price = [cost, chosenLife ? 'X life' : life ? `${life} life` : '', extra.length ? describeEffects(extra) : ''].filter(Boolean).join(' and ');
       const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
       return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx), ...(hasX ? { x: maxX !== undefined ? { max: Math.max(0, maxX) } : {} } : {}) } };
     }
@@ -2702,7 +2728,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ps.life -= lost;
       ctx.events.push({ type: 'life', player: payer, delta: -lost, life: ps.life });
     }
-    return { expand: hasX || fixedX !== undefined ? bindX(node.effects as EffectNode[], fixedX ?? x) : (node.effects as EffectNode[]) };
+    const effects = hasX || fixedX !== undefined ? bindX(node.effects as EffectNode[], fixedX ?? x) : (node.effects as EffectNode[]);
+    return { expand: [...extra, ...effects] };
   },
 
 
@@ -4694,6 +4721,20 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     }
     return [{ object: refTo(o), player: o.controller }];
   },
+  // CR 701.17a: "Whenever one or more nonland cards are milled" (once for them all); "Whenever a player mills a nonland
+  // card" (once for each).
+  milled(t, check) {
+    const e = check.event;
+    if (e.type !== 'milled') return [];
+    if (t.who === 'opponent' && e.player === check.controller) return [];
+    if (t.who === 'you' && e.player !== check.controller) return [];
+    const cards = e.objects.flatMap((id) => {
+      const o = check.g.objects[id];
+      return o && o.zone === 'graveyard' && (!t.filter || matchesFilter(check.g, o, t.filter as ObjectFilter, { controller: check.controller, anyZone: true })) ? [o] : [];
+    });
+    if (!cards.length) return [];
+    return t.batch ? [{ player: e.player, amount: cards.length }] : cards.map((o) => ({ object: refTo(o), player: e.player }));
+  },
   // CR 700.4: "dies" means put into a graveyard from the battlefield. CR 603.10a: these look back in time.
   dies(t, check) {
     const e = check.event;
@@ -4760,6 +4801,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (t.withGreaterPower && !e.attacks.some((x) => x.attacker !== o.id && check.g.objects[x.attacker] && power(check.g, check.g.objects[x.attacker]!) > power(check.g, o))) return [];
       // "Whenever ~ and at least two other creatures attack"
       if (typeof t.withOthers === 'number' && e.attacks.length < t.withOthers + 1) return [];
+      // Merry: "Whenever you attack with Merry and another legendary creature".
+      if (t.withOther && !e.attacks.some((x) => x.attacker !== o.id && check.g.objects[x.attacker] && matchesFilter(check.g, check.g.objects[x.attacker]!, t.withOther as ObjectFilter, { controller: check.controller, source: check.source }))) return [];
       // "Whenever a creature attacks you or a planeswalker you control"
       if (t.defender === 'you' && (target.kind === 'player' ? target.player !== check.controller : check.g.objects[target.object]?.controller !== check.controller)) return [];
       // "Whenever a creature attacks you"

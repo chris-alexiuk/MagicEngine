@@ -11,6 +11,13 @@ import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, z
 // ---------------------------------------------------------------------------
 
 /** Players in APNAP order (CR 101.4), starting with the active player. */
+
+/** How many battlefield permanents player `p` controls that match `f` (Land Tax, Heidegger: "controls more … than you"). */
+function controlledCount(ctx: EffectContext, p: PlayerId, f: ObjectFilter): number {
+  const g = ctx.g;
+  return g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && matchesFilter(g, g.objects[id]!, f, { controller: p, source: sourceOf(ctx) ?? null })).length;
+}
+
 export function apnap(g: GameState): PlayerId[] {
   const live = livePlayers(g);
   const out: PlayerId[] = [];
@@ -225,11 +232,14 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
           ? (ctx.targets[of.index] ?? []).flatMap((t) => (t.kind === 'object' ? [t] : []))
           : attachedTo
             ? [{ kind: 'object' as const, id: attachedTo.id, zcc: attachedTo.zcc }]
-            : refObjects(ctx, of).map((o) => ({ kind: 'object' as const, id: o.id, zcc: o.zcc }));
+            : of.ref === 'trigger_object' && ctx.trigger?.object && !ctx.trigger.entry
+              ? [{ kind: 'object' as const, id: ctx.trigger.object.id, zcc: ctx.trigger.object.zcc }]
+              : refObjects(ctx, of).map((o) => ({ kind: 'object' as const, id: o.id, zcc: o.zcc }));
       for (const t of objects) {
         const o = g.objects[t.id];
         if (!o) continue;
-        const p = ref.ref === 'owner_of' ? o.owner : o.zcc === t.zcc ? o.controller : (ctx.resolution?.lki[o.id] ?? o.owner);
+        const last = g.lastKnown?.[o.id];
+        const p = ref.ref === 'owner_of' ? o.owner : o.zcc === t.zcc ? o.controller : (ctx.resolution?.lki[o.id] ?? (last?.zcc === t.zcc ? last.controller : undefined) ?? o.owner);
         if (live.includes(p) && !out.includes(p)) out.push(p);
       }
       return out;
@@ -349,6 +359,13 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // "the number of experience counters you have": counters on a player (CR 122.1).
       // Vraska, Betrayal's Sting: "… they get a number of poison counters equal to the difference" — a target player's.
       const playerTarget = e.of.ref === 'target' ? ctx.targets[e.of.index]?.[0] : undefined;
+      // Phyrexian Swarmlord: "for each poison counter your opponents have".
+      if (e.of.ref === 'players') {
+        return refPlayers(ctx, e.of).reduce((n, p) => {
+          const ps = g.players[p];
+          return n + (e.counter === 'poison' ? (ps?.poison ?? 0) : e.counter ? (ps?.counters?.[e.counter] ?? 0) : 0);
+        }, 0);
+      }
       if (e.of.ref === 'you' || playerTarget?.kind === 'player') {
         const ps = g.players[playerTarget?.kind === 'player' ? playerTarget.player : ctx.controller];
         const pc = ps?.counters ?? {};
@@ -388,6 +405,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
           (!e.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
           // Bandit's Talent: "for each opponent who has one or fewer cards in hand".
           (e.handAtMost === undefined || zoneList(g, 'hand', p).length <= e.handAtMost) &&
+          // Wolfcaller's Howl: "your opponents with four or more cards in hand"; Wojek Investigator: "more cards in hand than you".
+          (e.handAtLeast === undefined || zoneList(g, 'hand', p).length >= e.handAtLeast) &&
+          (!e.handMoreThanYou || zoneList(g, 'hand', p).length > zoneList(g, 'hand', ctx.controller).length) &&
+          // Heidegger, Shinra Executive: "the number of opponents who control more creatures than you".
+          (!e.controlsMore || controlledCount(ctx, p, e.controlsMore as ObjectFilter) > controlledCount(ctx, ctx.controller, e.controlsMore as ObjectFilter)) &&
           // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
           (!e.combatDamaged || (g.turnLog.combatDamagers ?? []).some((d) => d.player === p)),
       ).length;

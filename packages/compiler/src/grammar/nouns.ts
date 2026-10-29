@@ -186,6 +186,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:that are|that's) enchanted$/, (f) => f.enchanted === undefined && ((f.enchanted = true), true)],
   // Halvar, God of Battle: "Creatures you control that are enchanted or equipped"
   [/ (?:that are|that's) enchanted or equipped$/, (f) => !f.anyOf && ((f.anyOf = [{ enchanted: true }, { equipped: true }]), true)],
+  // Hollowhenge Overlord: "each creature you control that's a Wolf or a Werewolf"; "… that are Wolves or Werewolves".
+  [/ (?:that's an? ([A-Z][\w-]*) or an? ([A-Z][\w-]*)|that are ([A-Z][\w-]*) or ([A-Z][\w-]*))$/, (f, m) => {
+    const one = subtypeOf((m[1] ?? m[3])!);
+    const two = subtypeOf((m[2] ?? m[4])!);
+    return Boolean(one && two && !f.subtypes && ((f.subtypes = [one, two]), true));
+  }],
   // On Wings of Gold: "Creatures you control that are Zombies and/or tokens".
   [/ that are ([A-Z][\w-]*s) and\/or tokens$/, (f, m) => {
     const st = subtypeOf(m[1]!);

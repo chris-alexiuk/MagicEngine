@@ -2,7 +2,7 @@ import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
-import { capitalise, COLOR_WORDS, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
+import { capitalise, COLOR_WORDS, isSubtype, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
  * Conditions in "if" clauses: intervening "if" on triggers (CR 603.4) and
@@ -141,6 +141,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (moreThanStart && typeof parseAmount(moreThanStart[1]!) === 'number') return { type: 'life', op: 'ge', starting: true, plus: parseAmount(moreThanStart[1]!) as number };
   // Thickest in the Thicket: "if you control the creature with the greatest power or tied for the greatest power".
   if (t === 'you control the creature with the greatest power or tied for the greatest power') return { type: 'greatest_power', filter: { types: ['Creature'] } };
+  // Abzan Beastmaster: "if you control the creature with the greatest toughness or tied for the greatest toughness".
+  if (t === 'you control the creature with the greatest toughness or tied for the greatest toughness') return { type: 'greatest_power', filter: { types: ['Creature'] }, stat: 'toughness' };
+  // High Score: "if you control a creature with the greatest power among creatures on the battlefield" (ties count).
+  if (t === 'you control a creature with the greatest power among creatures on the battlefield') return { type: 'greatest_power', filter: { types: ['Creature'] } };
   // The Chain Veil: "if you didn't activate a loyalty ability of a planeswalker this turn".
   if (t === "you didn't activate a loyalty ability of a planeswalker this turn") return { type: 'not', cond: { type: 'this_turn', event: 'you_activated_loyalty' } };
   // Ghirapur Orrery: "if that player has no cards in hand" — the player the trigger is about.
@@ -458,10 +462,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'opponents', ...c } : null;
   }
 
-  const life = /^(you|an opponent|a player) ha(?:ve|s) (\w+ or (?:more|less|fewer)) life$/.exec(t);
+  const life = /^(you|an opponent|a player|each player) ha(?:ve|s) (\w+ or (?:more|less|fewer)) life$/.exec(t);
   if (life) {
     const c = compare(life[2]!);
-    return c ? { type: 'life', ...c, ...(life[1] === 'you' ? {} : { who: life[1] === 'a player' ? 'any_player' : 'any_opponent' }) } : null;
+    // Cryptolith Fragment: "if each player has 10 or less life".
+    const who = { you: undefined, 'a player': 'any_player', 'an opponent': 'any_opponent', 'each player': 'each_player' }[life[1] as 'you'];
+    return c ? { type: 'life', ...c, ...(who ? { who } : {}) } : null;
   }
   // Resonating Lute: "… cards in your hand" means the same.
   if (/^you have /.test(t)) t = t.replace(/ cards in your hand( than|$)/, ' cards in hand$1');
@@ -603,11 +609,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "it's your first, second, or third turn of the game") return { type: 'early_turn', max: 3 };
   if (t === "it isn't your first, second, or third turn of the game") return { type: 'not', cond: { type: 'early_turn', max: 3 } };
   // The Theros Gods: "your devotion to red is less than five", "your devotion to white and black is less than seven"
-  const devotion = /^your devotion to (\w+)(?: and (\w+))? is less than (\w+)$/.exec(t);
+  const devotion = /^your devotion to (\w+)(?: and (\w+))? is (less than (\w+)|(\w+) or greater)$/.exec(t);
   if (devotion) {
     const colors = [devotion[1], devotion[2]].filter(Boolean).map((c) => COLOR_WORDS[c!]);
-    const n = parseAmount(devotion[3]!);
-    if (colors.every(Boolean) && typeof n === 'number') return { type: 'amount', amount: { kind: 'devotion', colors: colors as never }, op: 'le', n: n - 1 };
+    const n = parseAmount((devotion[4] ?? devotion[5])!);
+    // March of the Canonized: "if your devotion to white and black is seven or greater".
+    if (colors.every(Boolean) && typeof n === 'number') return { type: 'amount', amount: { kind: 'devotion', colors: colors as never }, ...(devotion[4] ? { op: 'le', n: n - 1 } : { op: 'ge', n }) };
   }
   // "if two or more creatures died this turn", "if three or more Zubera died this turn"
   const died = /^(\w+ or more) (.+?) died this turn$/.exec(t);
@@ -640,6 +647,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     'a creature you controlled died this turn': 'your_creature_died',
   };
   if (events[t]) return { type: 'this_turn', event: events[t] };
+  // Curious Obsession: "if you didn't attack with a creature this turn".
+  if (/^you didn't attack(?: with a creature)? this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_attacked' } };
+  // Starlit Soothsayer: "if you gained or lost life this turn".
+  if (t === 'you gained or lost life this turn') return { type: 'or', any: [{ type: 'this_turn', event: 'you_gained_life' }, { type: 'this_turn', event: 'you_lost_life' }] };
   // River of Tears: "If you played a land this turn" (CR 305.1: played, not just put onto the battlefield).
   if (/^you(?:'ve)? played a land this turn$/.test(t)) return { type: 'this_turn', event: 'you_played_land' };
   // Mirrex: "Activate only if this land entered this turn."
@@ -699,6 +710,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking' } } : { type: 'was_attacking' };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
+  // Endless Evil: "When enchanted creature dies, if that creature was a Horror" — as it last existed.
+  const wasSub = /^(?:that creature|it) was an? ([A-Z][a-z]+)$/.exec(t);
+  if (wasSub && isSubtype(wasSub[1]!) && b.it?.ref === 'trigger_object') return { type: 'was_type', subtype: wasSub[1]! };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
   // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
   // Vohar, Vodalian Desecrator: "If you discarded an instant or sorcery card this way" — the same as "the discarded card was".

@@ -347,7 +347,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'was_type': {
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;
-      return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && last.types?.includes(String(cond.cardType)));
+      return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && (cond.subtype ? last.subtypes?.includes(String(cond.subtype)) : last.types?.includes(String(cond.cardType))));
     }
     // Minas Tirith: "if you attacked with two or more creatures this turn"
     // Firemane Commando: "if none of those creatures attacked you" — the creatures attacking you (not your planeswalkers).
@@ -455,6 +455,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // "an opponent has 10 or less life"
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
+      if (cond.who === 'each_player') return livePlayers(g).every((p) => cmp(g.players[p]!.life, cond));
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
       // Scourge of the Throne: "if it's attacking the player with the most life or tied for most life" (CR 702.105a's test).
       if (cond.attackingMost) {
@@ -555,8 +556,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // "the creature with the greatest power or tied for the greatest power"
       const all = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));
       if (!all.length) return false;
-      const most = Math.max(...all.map((o) => power(g, o)));
-      return all.some((o) => o.controller === controller && power(g, o) === most);
+      const stat = (o: GameObject) => (cond.stat === 'toughness' ? toughness(g, o) : power(g, o));
+      const most = Math.max(...all.map(stat));
+      return all.some((o) => o.controller === controller && stat(o) === most);
     }
     case 'greatest_mv': {
       const all = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => matchesFilter(g, o, cond.filter as ObjectFilter, { controller, source: source ?? null }));

@@ -88,6 +88,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/\b([Dd])estroy ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
     list.split(/,? and |, /).map((one, i) => `${i === 0 ? `${d}estroy` : 'Destroy'} ${one}.`).join(' '),
   );
+  // Evolutionary Escalation: "put three +1/+1 counters on target creature you control and three +1/+1 counters on target
+  // creature an opponent controls"; Claim the Kingdom: "… and a plan counter on this enchantment" — two placements.
+  text = text.replace(
+    /\b([Pp])ut ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+?) and ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+)\./,
+    (_m, p: string, one: string, two: string) => `${p}ut ${one}. Put ${two}.`,
+  );
   // Zurgo Stormrender: "draw a card if it was attacking. Otherwise, each opponent loses 1 life."
   text = text.replace(/^([Dd]raw a card|[^.]+?) if (it was attacking)\. Otherwise, ([^.]+)\./, (_m, a: string, c: string, o: string) => `If ${c}, ${a[0]!.toLowerCase()}${a.slice(1)}. Otherwise, ${o}.`);
   // Eumidian Hatchery: "for each hatchling counter on it, create a 1/1 black Insect creature token with flying".
@@ -432,7 +438,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (i > 0) s = s.replace(/^(?!Choose\b)[A-Z][A-Za-z']+(?: [A-Za-z']+){0,2} — (?=[A-Z])/, '');
       s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
       // Electro: "When you do, he deals X damage to target player." — a character card calling itself "he" or "she".
-      if (/\bCreature\b/.test(b.env.typeLine)) s = s.replace(/^(?:He|She) (?=(?:deals|gains|gets|fights) )/, '~ ');
+      // Kaito Shizuki: "If Kaito entered this turn, he phases out."
+      if (/\b(?:Creature|Planeswalker)\b/.test(b.env.typeLine)) s = s.replace(/^((?:If [^,]+, )?)(?:[Hh]e|[Ss]he) (?=(?:deals|gains|gets|fights|phases) )/, '$1~ ');
       // Dawn's Truce: "If the gift was promised, permanents you control also gain indestructible until end of turn."
       s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Finale of Glory: "If X is 10 or more, also create X 4/4 white Angel creature tokens …"
@@ -584,7 +591,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Liliana, Heretical Healer: "exile ~, then return her to the battlefield transformed …. If you do, create …" — only
       // if she was still there to exile.
       // Shadow of the Goblin: "discard a card. If you do, draw a card." — only with a card to discard.
-      if (ifDone && (/^(?:Sacrifice|Exchange control of|Discard a card$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
+      // Dawn of a New Age: "remove a hope counter from this enchantment. If you do, draw a card." — only with one there.
+      if (ifDone && (/^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from ~$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -635,6 +643,25 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (/^Search /.test(s) && /^Then shuffle(?: your library)?$/.test(sentences[i + 1] ?? '')) {
         s = `${s.replace(/, reveal that card, and put it /, ', reveal it, put it ').replace(/, and put /, ', put ')}, then shuffle`;
         i++;
+      }
+      // Killer Service: "you may pay {2} and sacrifice a token. If you do, create …"; Conspiracy Theorist: "you may pay {1} and
+      // discard a card" — the action is part of the cost, offered only when it can be done (CR 118.12).
+      const payAnd = /^(?:Then )?[Yy]ou may pay ((?:\{(?:\d+|[WUBRGC]|[WUBRG2]\/[WUBRG])\})+) and ((?:sacrifice|discard|exile) .+)$/.exec(s);
+      const payAndDo = payAnd && sentences[i + 1] ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      if (payAnd && payAndDo) {
+        const action = parseSentence(capitalise(payAnd[2]!), b);
+        const a = action?.length === 1 ? action[0]! : null;
+        const checked =
+          a &&
+          (a.type === 'sacrifice_choice' ||
+            a.type === 'sacrifice' ||
+            (a.type === 'discard' && !a.all && !a.random) ||
+            (a.type === 'move' && ['self', 'trigger_object', 'target'].includes(String((a.what as { ref?: string } | undefined)?.ref))));
+        const inner = checked ? parseSentence(capitalise(payAndDo[1]!), b) : null;
+        if (!inner) return null;
+        out.push({ type: 'may_pay', cost: payAnd[1]!, with: action!, effects: inner });
+        i++;
+        continue;
       }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
       // Mana the engine can pay as a resolution-time cost (no {X}, snow or Phyrexian symbols), or energy (CR 107.14).
@@ -891,10 +918,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const first = mayFirst(mayDo[1]!);
         // Cultivator Colossus: "If you do, draw a card and repeat this process." — the choice comes again (CR 608.2c).
         const repeat = / and repeat this process$/.exec(then[1]!);
-        const rest = first ? parseSentence(capitalise(then[1]!.replace(/ and repeat this process$/, '')), b) : null;
+        // Redcap Gutter-Dweller: "If you do, put a +1/+1 counter on this creature and exile the top card of your library. You
+        // may play that card this turn." — an instruction that takes two sentences, both only if you did.
+        let both = 0;
+        let rest: EffectNode[] | null = null;
+        if (first && !repeat && /\bexile the top /.test(then[1]!) && /^(?:You may (?:play|cast) (?:that card|it|them|those cards)|Until )/.test(sentences[i + 2] ?? '')) {
+          rest = attempt(b, (b) => parseEffectText(`${capitalise(then[1]!)}. ${sentences[i + 2]}.`, b));
+          if (rest) both = 1;
+        }
+        if (first && !rest) rest = parseSentence(capitalise(then[1]!.replace(/ and repeat this process$/, '')), b);
         if (!first || !rest) return null;
         out.push({ type: 'may_do', effects: first, then: rest, ...(repeat ? { repeat: true } : {}) });
-        i++;
+        i += 1 + both;
         continue;
       }
       // Curses: "Create a Gold token. Each opponent attacking that player does the same." — each of
@@ -1162,6 +1197,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       if (iff && cond) {
+        // Wedding Announcement: "create a 1/1 … token. Then if this enchantment has three or more invitation counters on
+        // it, transform it." — "it" is what the condition is about, not the token.
+        if (/^(?:this (?:enchantment|artifact|creature|permanent|land)|~) (?:has|is) /.test(iff[1]!) && JSON.stringify((cond as { of?: Ref }).of) === '{"ref":"self"}') b.it = { ref: 'self' };
         let yes = parseSentence(capitalise(iff[2]!), b);
         // Nissa, Resurgent Animist: "Then if this is the second time …, reveal cards from the top of your library until you
         // reveal an Elf or Elemental card. Put that card into your hand and the rest on the bottom …" — an instruction that
@@ -2530,6 +2568,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const once = parseSentence(again[1]!, b);
     if (once) return Array.from({ length: again[2] === 'twice' ? 2 : 3 }, () => structuredClone(once)).flat();
   }
+  // Wojek Investigator: "investigate once for each opponent who has more cards in hand than you".
+  const onceEach = /^([Ii]nvestigate|[Pp]roliferate|[Pp]opulate|[Ee]xplore|[Cc]onnive) once for each (.+)$/.exec(s);
+  if (onceEach) {
+    const once = parseSentence(onceEach[1]!, b);
+    const times = once ? parseForEach(onceEach[2]!, b) : null;
+    if (once && times) return [{ type: 'repeat', times, effects: once }];
+  }
   // Ethereal Investigator: "investigate X times, where X is the number of opponents you have".
   const xTimes = /^([Ii]nvestigate|[Pp]roliferate|[Pp]opulate|[Ee]xplore|[Cc]onnive) X times$/.exec(s);
   if (xTimes) {
@@ -2665,6 +2710,24 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (shuffleWheel) {
     const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
     if (who) return [{ type: 'wheel', who, mode: 'all', to: 'shuffle' }];
+  }
+  // Steel Seraph: "target creature you control gains your choice of flying, vigilance, or lifelink until end of turn" —
+  // chosen as it resolves (CR 608.2d); the same object whichever is chosen.
+  const choiceOf = /^(.*?\b(?:gains?|has|have)) your choice of ((?:[a-z][\w ]*?, )*[a-z][\w ]*?,? or [a-z][\w ]*?)( until end of turn)?$/.exec(s);
+  if (choiceOf) {
+    const options = choiceOf[2]!.split(/,? or |, /);
+    const r = attempt(b, (b) => {
+      const before = b.clone();
+      const first = parseSentence(`${choiceOf[1]} ${options[0]}${choiceOf[3] ?? ''}`, b);
+      if (!first) return null;
+      const rest = options.slice(1).map((o) => {
+        const c = before.clone();
+        const one = parseSentence(`${choiceOf[1]} ${o}${choiceOf[3] ?? ''}`, c);
+        return one && JSON.stringify(c.targets) === JSON.stringify(b.targets) ? one : null;
+      });
+      return rest.every(Boolean) ? [{ type: 'choose_one', labels: options, options: [first, ...(rest as EffectNode[][])] }] : null;
+    });
+    if (r) return r;
   }
   // Pemmin's Aura: "Enchanted creature gets +1/-1 or -1/+1 until end of turn." — chosen as it resolves (CR 608.2d).
   const ptOr = /^(.+?) gets? ([+-]\d+\/[+-]\d+) or ([+-]\d+\/[+-]\d+) until end of turn$/.exec(s);
@@ -4132,6 +4195,13 @@ const VERBS: Record<string, VerbHandler> = {
       const pf = typeof n === 'number' ? parseFilter(upTo[2]!, b) : null;
       if (!pf || !pf.plural || pf.filter.zone || typeof n !== 'number') return null;
       return [{ type: 'untap_chosen', filter: pf.filter, amount: n }];
+    }
+    // White Plume Adventurer: "untap a creature you control" — one you choose (no target).
+    const one = imperative ? /^(a|an|one|two) ((?!target )(?:creature|land|permanent|artifact)s? you control)$/.exec(args) : null;
+    if (one) {
+      const n = /^an?$/.test(one[1]!) ? 1 : parseAmount(one[1]!);
+      const pf = typeof n === 'number' ? parseFilter(one[2]!, b) : null;
+      if (pf && !pf.filter.zone && typeof n === 'number' && pf.plural === n > 1) return [{ type: 'untap_chosen', filter: pf.filter, amount: n, exactly: true }];
     }
     return objectVerb('untap')(args, who, b, imperative);
   },

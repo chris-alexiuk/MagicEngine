@@ -641,6 +641,24 @@ const CARDS = [
   makeCard({ name: 'Jenova Lite', type_line: 'Legendary Creature — Alien', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever a Zombie you control dies during your turn, you draw cards equal to its power.' }),
   makeCard({ name: 'Eidolon Lite', type_line: 'Enchantment Creature — Spirit', mana_cost: '{0}', power: '0', toughness: '0', oracle_text: 'Bestow {2}{W}{W}\nThis creature and enchanted creature each get +1/+1 for each creature you control and +1/+1 for each Aura you control.' }),
   makeCard({ name: 'Aura Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature' }),
+  makeCard({ name: 'Murmuration Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "At the beginning of your end step, for each spell you've cast this turn, create a 1/2 blue Bird creature token with flying named Storm Crow." }),
+  makeCard({ name: 'Red Bolt Lite', type_line: 'Instant', mana_cost: '{0}', colors: ['R'], oracle_text: 'Red Bolt Lite deals 3 damage to any target.' }),
+  makeCard({ name: 'Mechanized Warfare Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If a red or artifact source you control would deal damage to an opponent or a permanent an opponent controls, it deals that much damage plus 1 instead.' }),
+  makeCard({ name: 'White Plume Lite', type_line: 'Creature — Orc Cleric', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "At the beginning of each opponent's upkeep, untap a creature you control." }),
+  makeCard({ name: 'Autogenerator Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '{T}: Put a charge counter on this artifact. Add X mana of any one color, where X is the number of charge counters on this artifact.' }),
+  makeCard({ name: 'Glowing One Lite', type_line: 'Creature — Zombie Mutant', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever a player mills a nonland card, you gain 1 life.' }),
+  makeCard({ name: 'Collar Lite', type_line: 'Artifact — Equipment', mana_cost: '{1}', oracle_text: 'Equipped creature gets +1/+0 and has vigilance.\nWhenever equipped creature dies, if it was a Human, create a 1/1 white Spirit creature token with flying.\nEquip {2}' }),
+  makeCard({ name: 'Villager Lite', type_line: 'Creature — Human Peasant', mana_cost: '{1}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Essence Sliver Lite', type_line: 'Creature — Sliver', mana_cost: '{3}{W}', power: '3', toughness: '3', oracle_text: 'Whenever a Sliver deals damage, its controller gains that much life.' }),
+  makeCard({ name: 'Plain Sliver Lite', type_line: 'Creature — Sliver', mana_cost: '{1}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Killer Service Lite', type_line: 'Enchantment', mana_cost: '{2}', oracle_text: 'At the beginning of your end step, you may pay {2} and sacrifice a token. If you do, create a 4/4 green Rhino Warrior creature token.' }),
+  makeCard({ name: 'Heidegger Lite', type_line: 'Creature — Human Soldier', mana_cost: '{1}', power: '1', toughness: '1', oracle_text: 'At the beginning of your end step, create a number of 1/1 white Soldier creature tokens equal to the number of opponents who control more creatures than you.' }),
+  makeCard({ name: 'Dawn Lite', type_line: 'Enchantment', mana_cost: '{1}', oracle_text: 'At the beginning of your end step, remove a hope counter from this enchantment. If you do, draw a card. Then if this enchantment has no hope counters on it, sacrifice it and you gain 4 life.' }),
+  makeCard({ name: 'Soothsayer Lite', type_line: 'Creature — Bat Cleric', mana_cost: '{1}', power: '1', toughness: '1', oracle_text: 'At the beginning of your end step, if you gained or lost life this turn, surveil 1.' }),
+  makeCard({ name: 'Seraph Lite', type_line: 'Creature — Angel', mana_cost: '{1}', power: '3', toughness: '3', oracle_text: 'At the beginning of combat on your turn, target creature you control gains your choice of flying, vigilance, or lifelink until end of turn.' }),
+  makeCard({ name: 'Wojek Lite', type_line: 'Creature — Angel Detective', mana_cost: '{1}', power: '1', toughness: '1', oracle_text: 'At the beginning of your upkeep, investigate once for each opponent who has more cards in hand than you.' }),
+  makeCard({ name: 'Beastmaster Lite', type_line: 'Creature — Dog Shaman', mana_cost: '{1}', power: '1', toughness: '5', oracle_text: 'At the beginning of your upkeep, draw a card if you control the creature with the greatest toughness or tied for the greatest toughness.' }),
+  makeCard({ name: 'Swarmlord Lite', type_line: 'Creature — Phyrexian Insect Horror', mana_cost: '{1}', power: '1', toughness: '1', oracle_text: 'At the beginning of your upkeep, create a 1/1 green Phyrexian Insect creature token with infect for each poison counter your opponents have.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5453,6 +5471,191 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  const drive = (g: GameState, answer: (g: GameState) => GameState | null, limit = 12): GameState => {
+    for (let i = 0; i < limit; i++) {
+      if (g.pending) {
+        const next = answer(g);
+        if (!next) break;
+        g = next;
+      } else if (g.stack.length && g.priority) g = settle(act(g, { type: 'pass', player: g.priority }));
+      else break;
+    }
+    return g;
+  };
+  it('Killer Service: "pay {2} and sacrifice a token" — not offered without a token; with one, both are paid', () => {
+    for (const withToken of [false, true]) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      give(g, 'alice', 'Killer Service Lite', 'battlefield');
+      const tok = give(g, 'alice', 'Zombie', 'battlefield');
+      if (withToken) g.objects[tok]!.token = true;
+      for (const o of Object.values(g.objects)) if (o.controller === 'alice' && o.zone === 'battlefield' && chars(g, o).types.includes('Land')) o.tapped = true;
+      give(g, 'alice', 'Forest', 'battlefield');
+      give(g, 'alice', 'Forest', 'battlefield');
+      g = toStep(g, 'end', 'alice');
+      let asked = false;
+      g = drive(g, (g) => (g.pending?.kind === 'pay' ? ((asked = true), act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } })) : g.pending?.kind === 'choose_objects' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [tok] } }) : null));
+      const rhinos = g.zones.battlefield.filter((id) => chars(g, g.objects[id]!).subtypes.includes('Rhino'));
+      expect([asked, rhinos.length, g.objects[tok]?.zone === 'battlefield']).toEqual(withToken ? [true, 1, false] : [false, 0, true]);
+    }
+  });
+  it('Heidegger: a Soldier for each opponent who controls more creatures than you', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 } as never), 'main1', 'alice');
+    give(g, 'alice', 'Heidegger Lite', 'battlefield');
+    for (let k = 0; k < 2; k++) give(g, 'bob', 'Zombie', 'battlefield');
+    const others = Object.keys(g.players).filter((p) => p !== 'alice' && p !== 'bob');
+    if (others[0]) give(g, others[0], 'Zombie', 'battlefield');
+    const before = g.zones.battlefield.filter((id) => g.objects[id]!.token).length;
+    g = toStep(g, 'end', 'alice');
+    g = drive(g, () => null);
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length - before).toBe(1);
+  });
+  it('Dawn of a New Age: a hope counter off and a card; the last one off, sacrifice it and gain 4', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dawn = give(g, 'alice', 'Dawn Lite', 'battlefield');
+    g.objects[dawn]!.counters.hope = 2;
+    const hand = g.zones.hand.alice!.length;
+    g = drive(toStep(g, 'end', 'alice'), () => null);
+    expect([g.objects[dawn]!.counters.hope, g.zones.hand.alice!.length - hand, g.objects[dawn]!.zone]).toEqual([1, 1, 'battlefield']);
+    g = toStep(g, 'main1', 'alice');
+    const life = g.players.alice!.life;
+    g = drive(toStep(g, 'end', 'alice'), () => null);
+    expect([g.objects[dawn]!.zone, g.players.alice!.life - life]).toEqual(['graveyard', 4]);
+  });
+  it('Starlit Soothsayer: "if you gained or lost life this turn"', () => {
+    for (const lose of [false, true]) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      give(g, 'alice', 'Soothsayer Lite', 'battlefield');
+      if (lose) g.turnLog.lostLife.push('alice');
+      g = toStep(g, 'end', 'alice');
+      let surveiled = false;
+      g = drive(g, (g) => {
+        surveiled = true;
+        return null;
+      });
+      expect(surveiled).toBe(lose);
+    }
+  });
+  it('Steel Seraph: the controller picks which keyword as it resolves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const seraph = give(g, 'alice', 'Seraph Lite', 'battlefield');
+    g = toStep(g, 'beginning_of_combat', 'alice');
+    g = drive(g, (g) => (g.pending?.kind === 'choose_option' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: 'lifelink' } }) : null));
+    expect(chars(g, g.objects[seraph]!).keywords.map((k) => k.id)).toEqual(['lifelink']);
+  });
+  it('Wojek Investigator: a Clue for each opponent with more cards in hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Wojek Lite', 'battlefield');
+    while (g.zones.hand.alice!.length > 1) g.zones.hand.alice!.pop();
+    g = drive(toStep(g, 'upkeep', 'alice'), () => null);
+    expect(g.zones.battlefield.filter((id) => chars(g, g.objects[id]!).name === 'Clue').length).toBe(g.zones.hand.bob!.length > 1 ? 1 : 0);
+  });
+  it('Abzan Beastmaster: the greatest toughness, ties included', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Beastmaster Lite', 'battlefield');
+    const wall = give(g, 'bob', 'Zombie', 'battlefield');
+    g.objects[wall]!.counters['+1/+1'] = 3;
+    const hand = g.zones.hand.alice!.length;
+    g = drive(toStep(g, 'upkeep', 'alice'), () => null);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+  it("Phyrexian Swarmlord: an Insect for each poison counter your opponents have", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'alice', 'Swarmlord Lite', 'battlefield');
+    g.players.bob!.poison = 3;
+    g.players.alice!.poison = 5;
+    g = drive(toStep(g, 'upkeep', 'alice'), () => null);
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token).length).toBe(3);
+  });
+  it("Avacyn's Collar: a Spirit only when the equipped creature was a Human", () => {
+    for (const [name, expected] of [['Villager Lite', 1], ['Zombie', 0]] as const) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const collar = give(g, 'alice', 'Collar Lite', 'battlefield');
+      const victim = give(g, 'alice', name, 'battlefield');
+      g.objects[collar]!.attachedTo = { id: victim, zcc: g.objects[victim]!.zcc };
+      g.players.alice!.pool.R = 1;
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: victim }]] }));
+      for (let i = 0; i < 6 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+      const spirits = g.zones.battlefield.filter((id) => g.objects[id]!.token && chars(g, g.objects[id]!).subtypes.includes('Spirit'));
+      expect([g.objects[victim]!.zone, spirits.length]).toEqual(['graveyard', expected]);
+    }
+  });
+  it('Essence Sliver: each Sliver\'s controller gains the damage it dealt', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ess = give(g, 'alice', 'Essence Sliver Lite', 'battlefield', { sick: false });
+    const theirs = give(g, 'bob', 'Plain Sliver Lite', 'battlefield');
+    const [a, b] = [g.players.alice!.life, g.players.bob!.life];
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [{ attacker: ess, target: { kind: 'player', player: 'bob' } }] } });
+    for (let i = 0; i < 30 && g.step !== 'end'; i++) {
+      if (g.pending?.kind === 'declare_blockers') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: theirs, attacker: ess }] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect([g.players.alice!.life - a, g.players.bob!.life - b]).toEqual([3, 2]);
+  });
+  it('CR 728: rad counters — mill that many at your precombat main phase; 1 life and a counter for each nonland card', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(g, 'bob', 'Glowing One Lite', 'battlefield');
+    g.players.alice!.counters = { rad: 3 };
+    g = toStep(g, 'draw', 'alice');
+    const top = [give(g, 'alice', 'Bolt', 'library'), give(g, 'alice', 'Forest', 'library'), give(g, 'alice', 'Bear', 'library')];
+    g.zones.library.alice = [...top, ...g.zones.library.alice!.filter((id) => !top.includes(id))];
+    const [life, bob] = [g.players.alice!.life, g.players.bob!.life];
+    g = toStep(g, 'main1', 'alice');
+    for (let i = 0; i < 6 && (g.stack.length || g.pending); i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    expect(top.map((id) => g.objects[id]!.zone)).toEqual(['graveyard', 'graveyard', 'graveyard']);
+    // Two nonland cards: 2 life and two of the three counters; Glowing One sees each nonland card milled.
+    expect([life - g.players.alice!.life, g.players.alice!.counters?.rad ?? 0, g.players.bob!.life - bob]).toEqual([2, 1, 2]);
+  });
+  it('Empowered Autogenerator: a counter first, then that many mana of one color', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const gen = give(g, 'alice', 'Autogenerator Lite', 'battlefield');
+    g.objects[gen]!.counters.charge = 1;
+    const options = legalActions(g, 'alice').filter((a) => a.type === 'activate_mana' && a.object === gen);
+    expect(options.length).toBe(5);
+    g = act(g, options.find((a) => (a as { choice?: unknown }).choice === 'G')!);
+    expect(g.players.alice!.pool.G).toBe(2);
+  });
+  it('White Plume Adventurer: untap one creature you control in each opponent\'s upkeep', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const plume = give(g, 'alice', 'White Plume Lite', 'battlefield');
+    const [a, b] = [give(g, 'alice', 'Zombie', 'battlefield'), give(g, 'alice', 'Zombie', 'battlefield')];
+    for (const id of [plume, a, b]) g.objects[id]!.tapped = true;
+    g = toStep(g, 'upkeep', 'bob');
+    for (let i = 0; i < 6 && (g.stack.length || g.pending); i++) {
+      if (g.pending?.kind === 'choose_objects') {
+        expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [] } })).toBeTruthy();
+        g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [a] } });
+      } else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+      else break;
+    }
+    expect([plume, a, b].map((id) => g.objects[id]!.tapped)).toEqual([true, false, true]);
+  });
+  it('Murmuration: a Storm Crow for each spell you cast this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Murmuration Lite', 'battlefield');
+    for (let k = 0; k < 2; k++) {
+      g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Salve', 'hand') }));
+      for (let i = 0; i < 4 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    }
+    g = toStep(g, 'end');
+    for (let i = 0; i < 4 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    const crows = g.zones.battlefield.filter((id) => g.objects[id]!.token && chars(g, g.objects[id]!).name === 'Storm Crow');
+    expect(crows.length).toBe(2);
+  });
+  it('Mechanized Warfare: a red source you control deals 1 more to an opponent, not to you', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Mechanized Warfare Lite', 'battlefield');
+    const bolt = (p: string) => {
+      const b = give(g, 'alice', 'Red Bolt Lite', 'hand');
+      g = settle(act(g, { type: 'cast', player: 'alice', object: b, targets: [[{ kind: 'player', player: p }]] }));
+      for (let i = 0; i < 4 && g.stack.length; i++) g = settle(act(g, { type: 'pass', player: g.priority! }));
+    };
+    const [bob, alice] = [g.players.bob!.life, g.players.alice!.life];
+    bolt('bob');
+    bolt('alice');
+    expect([bob - g.players.bob!.life, alice - g.players.alice!.life]).toEqual([4, 3]);
+  });
   it('Eidolon of Countless Battles: +1/+1 for each creature and for each Aura you control', () => {
     const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const eidolon = give(g, 'alice', 'Eidolon Lite', 'battlefield');

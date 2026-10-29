@@ -178,7 +178,7 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       if (answer.pay) {
         // CR 119.4: a player can pay life only if their life total is at least that much.
         const ps = g.players[player]!;
-        if (ps.life < amount) throw new RulesError(`You don’t have ${amount} life to pay.`);
+        if (amount > 0 && ps.life < amount) throw new RulesError(`You don’t have ${amount} life to pay.`);
         const lost = lifeLoss(g, player, amount);
         ps.life -= lost;
         events.push({ type: 'life', player, delta: -lost, life: ps.life });

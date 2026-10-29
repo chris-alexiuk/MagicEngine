@@ -150,6 +150,14 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Otharri: "for each experience counter you have" (CR 122.1: counters on a player).
   const playerCounter = /^(\w+) counter you have$/.exec(t);
   if (playerCounter) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounter[1]! };
+  // Phyrexian Swarmlord: "for each poison counter your opponents have" — all of theirs together.
+  const theirCounter = /^(\w+) counter your opponents have$/.exec(t);
+  if (theirCounter) return { kind: 'counters', of: { ref: 'players', who: 'opponents' }, counter: theirCounter[1]! };
+  // Wojek Investigator: "once for each opponent who has more cards in hand than you".
+  if (/^opponent who has more cards in hand than you$/.test(t)) return { kind: 'players', who: 'opponents', handMoreThanYou: true };
+  // Wolfcaller's Howl: "the number of your opponents with four or more cards in hand".
+  const handAtLeast = /^(?:of your )?opponents? (?:with|who ha(?:s|ve)) (two|three|four|five|six|seven) or more cards in hand$/.exec(t);
+  if (handAtLeast) return { kind: 'players', who: 'opponents', handAtLeast: parseAmount(handAtLeast[1]!) as number };
   // Coalition Relic: "for each charge counter removed this way".
   if (/^(?:\S+ )?counter removed this way$/.test(t)) return { kind: 'counters_removed' };
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
@@ -173,6 +181,12 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (fewHand) return { kind: 'players', who: 'opponents', handAtMost: { no: 0, 'one or fewer': 1, 'two or fewer': 2 }[fewHand[1] as 'no'] };
   // Aclazotz, Deepest Betrayal: "Each opponent discards a card. For each opponent who can't, you draw a card."
   if (t === "opponent who didn't discard a card this way") return { kind: 'players', who: 'opponents', discardedNone: true };
+  // Heidegger, Shinra Executive: "for each opponent who controls more creatures than you".
+  const more = /^opponents? who controls? more (.+?) than you$/.exec(t);
+  if (more) {
+    const pf = parseFilter(more[1]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.other) return { kind: 'players', who: 'opponents', controlsMore: pf.filter };
+  }
   const drewN = /^(opponent|player) who drew (two|three|four) or more cards this turn$/.exec(t);
   if (drewN) return { kind: 'players', who: drewN[1] === 'player' ? 'each' : 'opponents', drew: parseAmount(drewN[2]!) as number };
   const landsN = /^(opponent|player) who had (two|three) or more lands enter the battlefield under their control this turn$/.exec(t);
@@ -264,13 +278,20 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Volcanic Torrent: "the number of spells you've cast this turn".
   if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
   // Hobgoblin Bandit Lord: "the number of Goblins that entered the battlefield under your control this turn".
-  const enteredThisTurn = /^the number of (.+?) that entered the battlefield under your control this turn$/.exec(t);
+  // Gyome, Master Chef: "the number of nontoken creatures you had enter the battlefield under your control this turn".
+  const enteredThisTurn = /^the number of (.+?) (?:that entered|you had enter) the battlefield under your control this turn$/.exec(t);
   if (enteredThisTurn) {
     const pf = parseFilter(enteredThisTurn[1]!, b);
     if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { kind: 'entered_this_turn', filter: pf.filter };
   }
   // Chandra's Incinerator: "the total amount of noncombat damage dealt to your opponents this turn".
   // Notorious Throng: "the damage dealt to your opponents this turn"; Simulacrum: "the damage dealt to you this turn".
+  // Knollspine Dragon: "the damage dealt to target opponent this turn" — that one player.
+  const dealtToOne = /^the (?:amount of )?damage dealt to (target opponent|target player|that player) this turn$/.exec(t);
+  if (dealtToOne) {
+    const who = parsePlayerRef(dealtToOne[1]!, b);
+    if (who && who.ref !== 'players' && who.ref !== 'you') return { kind: 'life_this_turn', who: 'you', player: who, stat: 'damage' };
+  }
   const dealtTo = /^the (?:total )?(?:amount of )?(noncombat )?damage dealt to (your opponents|you) this turn$/.exec(t);
   if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
@@ -299,6 +320,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
   // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
   if (/^the number of opponents (?:that were |who were )?dealt combat damage this turn$/.test(t)) return { kind: 'players', who: 'opponents', combatDamaged: true };
+  // Priest of the Blessed Graf: "the number of opponents who control more lands than you".
+  const moreThanYou = /^the number of (opponents who control more .+? than you)$/.exec(t);
+  if (moreThanYou) {
+    const e = parseForEach(moreThanYou[1]!, b.clone());
+    if (e) return e;
+  }
   // Proft's Eidetic Memory: "the number of cards you've drawn this turn"
   if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
   // Thalisse, Reverent Medium: "the number of tokens you created this turn"
@@ -362,6 +389,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     // Meren: "the number of experience counters you have" (CR 122.1: counters on a player).
     const playerCounters = /^(\w+) counters you have$/.exec(what);
     if (playerCounters) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounters[1]! };
+    const handAtLeast = /^your opponents with (two|three|four|five|six|seven) or more cards in hand$/.exec(what);
+    if (handAtLeast) return { kind: 'players', who: 'opponents', handAtLeast: parseAmount(handAtLeast[1]!) as number };
     // Within Range: "each opponent loses life equal to the number of creatures attacking them" — each their own.
     const attackingThem = /^(creatures) attacking (them|that player)$/.exec(what);
     const them = attackingThem ? (attackingThem[2] === 'that player' ? parsePlayerRef('that player', b.clone()) : b.player) : null;

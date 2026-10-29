@@ -487,6 +487,7 @@ interface Failure {
 }
 
 let dumped = false;
+let slowest = { ms: 0, game: -1, action: '' };
 const TRACE = process.env.FUZZ_TRACE ? { file: process.env.FUZZ_TRACE.split(':')[0]!, game: Number(process.env.FUZZ_TRACE.split(':')[1]) } : null;
 const failures: Failure[] = [];
 let actions = 0;
@@ -561,7 +562,11 @@ for (let game = 0; game < GAMES; game++) {
     if (TRACE && game === TRACE.game) writeFileSync(TRACE.file, JSON.stringify({ state: g, action }));
     let r;
     try {
+      const started = Date.now();
       r = apply(g, action);
+      // The slowest action of the run (an action taking seconds is a bug too: the bots' games would never end).
+      const took = Date.now() - started;
+      if (took > slowest.ms) slowest = { ms: took, game, action: label };
     } catch (err) {
       failures.push({ game, kind: 'crash', detail: (err as Error).stack?.split('\n').slice(0, 4).join(' | ') ?? String(err), action: label });
       break;
@@ -639,6 +644,7 @@ for (let game = 0; game < GAMES; game++) {
 const ms = Date.now() - t0;
 if (process.env.FUZZ_SIZES) console.log(lastSizes);
 console.log(`${GAMES} games, ${turns} turns, ${actions} actions in ${(ms / 1000).toFixed(1)} s (${(ms / Math.max(1, actions)).toFixed(2)} ms/action)`);
+console.log(`  slowest action: ${slowest.ms} ms (game ${slowest.game}) ${slowest.ms > 1000 ? slowest.action.slice(0, 200) : ''}`);
 if (TOP) for (const [k, v] of [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${v} ${k}`);
 console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto}, manual ${stats.manual}, fizzled ${stats.fizzled}, tokens ${stats.tokens}`);
 const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);
