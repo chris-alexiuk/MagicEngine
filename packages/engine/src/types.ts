@@ -589,7 +589,7 @@ export interface Resolution {
   /** Cards each player drew as this resolved (Cut a Deal: "for each opponent who drew a card this way"). */
   drew?: Record<PlayerId, number>;
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
-  chosen?: { color?: Color; creatureType?: string; landType?: string };
+  chosen?: { color?: Color; colors?: Color[]; creatureType?: string; landType?: string };
   /** Patriarch's Bidding: the creature types each player chose as this resolved ("of a type chosen this way"). */
   chosenTypes?: string[];
   /** Life lost to this resolution's effects ("the total life lost this way", CR 702.101a). */

@@ -8,7 +8,7 @@ import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
-  'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
+  'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
 ];
@@ -76,6 +76,8 @@ export interface TurnLog {
   crimes?: PlayerId[];
   /** CR 701.23: players who searched their own library this turn (Archive Trap). */
   searchedOwn?: PlayerId[];
+  /** Barrin: players who had a permanent put into their hand from the battlefield this turn. */
+  bouncedToHand?: PlayerId[];
   /** CR 700.14: mana each player has spent to cast spells this turn. */
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
@@ -150,6 +152,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         }
         if (e.from === 'graveyard' && g.objects[e.object]) (log.leftGraveyard ??= []).push({ owner: g.objects[e.object]!.owner, types: [...types] });
         if (e.to === 'exile' && !e.token) log.cardExiled = true;
+        if (e.from === 'battlefield' && e.to === 'hand' && g.objects[e.object] && !(log.bouncedToHand ??= []).includes(g.objects[e.object]!.owner)) log.bouncedToHand.push(g.objects[e.object]!.owner);
         if (e.from === 'battlefield') {
           if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
           if (!types.includes('Land')) log.nonlandLeft = true;
@@ -509,6 +512,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.who === 'any_opponent') return livePlayers(g).some((p) => p !== controller && cmp(g.players[p]!.life, cond));
       if (cond.who === 'any_player') return livePlayers(g).some((p) => cmp(g.players[p]!.life, cond));
       if (cond.who === 'each_player') return livePlayers(g).every((p) => cmp(g.players[p]!.life, cond));
+      // Sunset Revelry: "if an opponent has more life than you" / "you have more life than each opponent".
+      if (cond.than) {
+        const mine = g.players[controller]!.life;
+        const theirs = livePlayers(g).filter((p) => p !== controller).map((p) => g.players[p]!.life);
+        const beats = (n: number) => (cond.op === 'gt' ? mine > n : mine < n);
+        return cond.than === 'each_opponent' ? theirs.every(beats) : theirs.some(beats);
+      }
       // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
       // Scourge of the Throne: "if it's attacking the player with the most life or tied for most life" (CR 702.105a's test).
       if (cond.attackingMost) {
@@ -529,6 +539,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.halfStarting) return livePlayers(g).some((p) => (cond.halfStarting === 'any' || (cond.halfStarting === 'you') === (p === controller)) && g.players[p]!.life <= g.config.startingLife / 2);
       if (cond.starting) return cmp(g.players[controller]!.life, { ...cond, n: g.config.startingLife + Number(cond.plus ?? 0) });
       return cmp(g.players[controller]!.life, cond);
+    // Vampire Nocturnus: "As long as the top card of your library is black, …".
+    case 'top_card': {
+      const top = zoneList(g, 'library', controller)[0];
+      return top !== undefined && matchesFilter(g, g.objects[top]!, (cond.filter ?? {}) as ObjectFilter, { controller, source: source ?? null, anyZone: true });
+    }
     case 'hand': {
       // Temple of the Dead: "if a player has one or fewer cards in hand".
       if (cond.any) return livePlayers(g).some((p) => (cond.any === 'player' || p !== controller) && cmp(zoneList(g, 'hand', p).length, cond));
@@ -538,7 +553,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.than) {
         // "more cards in hand than each opponent" / "than an opponent"
         const theirs = livePlayers(g).filter((p) => p !== controller).map((p) => zoneList(g, 'hand', p).length);
-        const beats = (n: number) => (cond.op === 'gt' ? mine > n : mine < n);
+        // Teachings of the Archaics: "an opponent has at least four more cards in hand than you" (`by`).
+        const by = Number(cond.by ?? 1);
+        const beats = (n: number) => (cond.op === 'gt' ? mine - n >= by : n - mine >= by);
         return cond.than === 'each_opponent' ? theirs.every(beats) : theirs.some(beats);
       }
       return cmp(mine, cond);
@@ -721,6 +738,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(log.cardExiled);
         case 'you_committed_crime':
           return (log.crimes ?? []).includes(controller);
+        // Barrin, Tolarian Archmage: "if a permanent was put into your hand from the battlefield this turn".
+        case 'bounced_to_your_hand':
+          return (log.bouncedToHand ?? []).includes(controller);
         case 'opponent_searched':
           return (log.searchedOwn ?? []).some((p) => p !== controller);
         // CR 700.11

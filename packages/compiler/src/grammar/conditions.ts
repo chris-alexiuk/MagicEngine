@@ -445,7 +445,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return itsColor[1] ? { type: 'not', cond } : cond;
   }
   // Hexgold Slash: "If that creature has toxic, …".
-  const itsKeyword = /^(?:it|that creature) has (flying|toxic|trample|deathtouch|haste|lifelink|vigilance|reach|defender|menace|first strike|double strike)$/.exec(t);
+  const itsKeyword = /^(?:it|that creature) has (flying|toxic|trample|deathtouch|haste|lifelink|vigilance|reach|defender|menace|first strike|double strike|madness|flashback|cycling)$/.exec(t);
   if (itsKeyword && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { keywords: [itsKeyword[1]!.replace(' ', '_')] } };
   // Gimli's Fury: "If it's legendary, it also gains trample until end of turn."
   const itsLegendary = /^(?:it|that creature|that permanent)(?:'s| is)( not)? legendary$/.exec(t);
@@ -569,6 +569,23 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'opponents', ...c } : null;
   }
 
+  // Vampire Nocturnus: "the top card of your library is black"; Mul Daya Channelers: "… is a creature card".
+  const topIs = /^the top card of your library is (white|blue|black|red|green|an? (.+? card))$/.exec(t);
+  if (topIs) {
+    if (!topIs[2]) return { type: 'top_card', filter: { colors: [COLOR_WORDS[topIs[1]!]!] } } as ConditionNode;
+    const pf = parseFilter(`${topIs[2]} in your hand`, b.clone());
+    if (!pf || pf.plural) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'top_card', filter } as ConditionNode;
+  }
+  // Sunset Revelry: "if an opponent has more life than you"; Timely Reinforcements: "if you have less life than an
+  // opponent".
+  if (t === 'an opponent has more life than you' || t === 'you have less life than an opponent') return { type: 'life', than: 'an_opponent', op: 'lt' };
+  if (t === 'you have more life than each opponent') return { type: 'life', than: 'each_opponent', op: 'gt' };
+  // Sunset Revelry: "if an opponent has more cards in hand than you"; Teachings of the Archaics: "… at least four more
+  // cards in hand than you".
+  const oppMoreHand = /^an opponent has (?:at least (two|three|four|five) )?more cards in hand than you$/.exec(t);
+  if (oppMoreHand) return { type: 'hand', than: 'an_opponent', op: 'lt', ...(oppMoreHand[1] ? { by: parseAmount(oppMoreHand[1]) } : {}) };
   const life = /^(you|an opponent|a player|each player) ha(?:ve|s) (\w+ or (?:more|less|fewer)) life$/.exec(t);
   if (life) {
     const c = compare(life[2]!);
@@ -987,6 +1004,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Archaeomancer's Map: "if that player controls more lands than you"
   // Aerial Surveyor: "if defending player controls more lands than you".
   // Isolated Watchtower: "if an opponent controls at least two more lands than you" — by that many.
+  // Timely Reinforcements: "if you control fewer creatures than an opponent" — the same test.
+  const fewerThan = /^you control fewer (.+?) than an opponent$/.exec(t);
+  if (fewerThan) t = `an opponent controls more ${fewerThan[1]} than you`;
   const more = /^(an opponent|that player|defending player) controls (?:at least (two|three|four) )?more (.+?) than you(?: do)?$/.exec(t);
   if (more) {
     const pf = parseFilter(more[3]!, b);
@@ -996,6 +1016,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}), ...(more[2] ? { by: parseAmount(more[2]) } : {}) };
   }
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
+  if (t === 'a permanent was put into your hand from the battlefield this turn') return { type: 'this_turn', event: 'bounced_to_your_hand' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
   const oppCast = /^an opponent (?:has )?cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
   if (oppCast) {

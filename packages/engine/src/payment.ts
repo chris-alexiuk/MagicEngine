@@ -148,6 +148,8 @@ export function abilityCostReductions(g: GameState, o: GameObject, ability: { co
       // Fighter Class: "Equip abilities you activate …" (CR 702.6a).
       if (a.effect.equipOnly && !/^Equip\b/.test(ability.text ?? '')) continue;
       // Silver-Fur Master: "Ninjutsu abilities you activate …" (CR 702.49d: commander ninjutsu is one).
+      // Fluctuator: "Cycling abilities you activate …" — typecycling is cycling (CR 702.29e).
+      if (a.effect.cyclingOnly && !/^[A-Za-z ]*cycling\b/i.test(ability.text ?? '')) continue;
       if (a.effect.ninjutsuOnly && !/^(?:Commander )?[Nn]injutsu\b/.test(ability.text ?? '')) continue;
       const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.phyrexian.length + mana.x;
       if (mana.generic + others === 0) continue;

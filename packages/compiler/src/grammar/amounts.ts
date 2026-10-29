@@ -8,8 +8,10 @@ import { capitalise, COLOR_WORDS, parseAmount } from './words.js';
  * "for each card in your hand", "its power", "your devotion to black".
  */
 
-const ZONES: Record<string, { zone: 'hand' | 'graveyard' | 'library'; who: 'you' | 'opponents' | 'each' }> = {
+const ZONES: Record<string, { zone: 'hand' | 'graveyard' | 'library' | 'exile'; who: 'you' | 'opponents' | 'each' }> = {
   'in your hand': { zone: 'hand', who: 'you' },
+  // Huskburster Swarm: "each creature card you own in exile".
+  'you own in exile': { zone: 'exile', who: 'you' },
   'in your graveyard': { zone: 'graveyard', who: 'you' },
   'in your library': { zone: 'library', who: 'you' },
   'in all graveyards': { zone: 'graveyard', who: 'each' },
@@ -56,6 +58,13 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     const player = theirs[2] ? parsePlayerRef(theirs[2], b) : b.player && b.player.ref !== 'you' ? b.player : null;
     if (!player) return null;
     return { kind: 'cards', zone: theirs[3] as 'hand' | 'graveyard' | 'library', who: 'each', player, ...(filter ? { filter } : {}) };
+  }
+  // Huskburster Swarm: "each creature card you own in exile and in your graveyard" — both counts.
+  const both = /^(.+) you own in exile and in your graveyard$/.exec(t);
+  if (both) {
+    const one = objects(`${both[1]} you own in exile`, b, plural);
+    const two = one ? objects(`${both[1]} in your graveyard`, b, plural) : null;
+    if (one && two) return { kind: 'sum', parts: [one, two] };
   }
   for (const [suffix, where] of Object.entries(ZONES)) {
     if (!t.endsWith(` ${suffix}`)) continue;
@@ -557,7 +566,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // CR 118.3 / 608.2h: "the sacrificed creature's power", "the discarded card's mana value" — as the cost was paid.
   // Food Chain: "1 plus the exiled creature's mana value" (an exile cost; see the activated rule).
-  const lki = /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t) ?? /^the (exiled) (?:creature|artifact|permanent)'s (power|toughness|mana value)$/.exec(t);
+  // Morbid Curiosity: "the mana value of the sacrificed permanent" — the same.
+  const lkiOf = /^the (power|toughness|mana value) of the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)$/.exec(t);
+  const lki =
+    /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t) ??
+    /^the (exiled) (?:creature|artifact|permanent)'s (power|toughness|mana value)$/.exec(t) ??
+    (lkiOf ? ([t, lkiOf[2], lkiOf[1]] as unknown as RegExpExecArray) : null);
   if (lki) {
     // Momentous Fall: "… equal to the sacrificed creature's power, then you gain life equal to its toughness."
     if (lki[1] === 'sacrificed' && (!b.it || b.it.ref === 'self')) b.it = { ref: 'sacrificed_this_way' };

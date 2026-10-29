@@ -82,6 +82,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:that's|that are) enchanted by an Aura you control$/, (f) => !f.enchantedByYou && ((f.enchantedByYou = true), true)],
   // Don Andres, the Renegade: "each creature you control but don't own".
   [/ you control but don't own$/, (f) => !f.controller && !f.owner && ((f.controller = 'you'), (f.owner = 'opponent'), true)],
+  // Zedruu the Greathearted: "permanents you own that your opponents control".
+  [/ you own that (?:your opponents|an opponent) controls?$/, (f) => !f.controller && !f.owner && ((f.controller = 'opponent'), (f.owner = 'you'), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   // Aku Djinn: "each creature each opponent controls"
@@ -386,7 +388,28 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
     });
     if (r) return r;
   }
+  // Ajani Unrelenting: "each creature except for tokens you control"; Flame Sweep: "… except for creatures you control with
+  // flying"; Cyclone Summoner: "all permanents … except for Giants, Wizards, and lands"; Mageta: "all creatures except for ~".
+  const except = /^(.+?),? except for (.+)$/.exec(rest);
+  if (except) {
+    const r = attempt(b, (b) => {
+      const main = parseFilter(except[1]!, b);
+      if (!main || main.filter.except) return null;
+      const words = except[2]!.replace(/, and (?=[^,]+$)/, ', or ').replace(/^(\S+) and (\S+)$/, '$1 or $2');
+      const ex = words === '~' ? { filter: { isSource: true } as ObjectFilter, plural: true } : parseFilter(words, b);
+      if (!ex || !ex.plural || ex.filter.zone) return null;
+      return { ...main, filter: { ...main.filter, except: ex.filter } } as ParsedFilter;
+    });
+    if (r) return r;
+  }
   const f: ObjectFilter = {};
+  // Pendelhaven: "Target 1/1 creature"; Sword of the Meek: "a 1/1 creature you control" — that power and toughness.
+  const sized = /^(\d+)\/(\d+) (?=creatures?\b)/.exec(rest);
+  if (sized) {
+    f.power = { op: 'eq', n: Number(sized[1]) };
+    f.toughness = { op: 'eq', n: Number(sized[2]) };
+    rest = rest.slice(sized[0].length);
+  }
   for (let guard = 0; guard < 8; guard++) {
     let matched = false;
     for (const [re, apply] of SUFFIXES) {

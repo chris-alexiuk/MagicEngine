@@ -976,7 +976,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // Mirror Entity: "… and gain all creature types" (layer 4).
       ...(node.allCreatureTypes ? { types: [], subtypes: [...SUBTYPES.creature], retainTypes: true } : {}),
       // "the color of your choice", "the creature type of your choice" — chosen earlier as this resolved.
-      ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : [c as Color])) } : {}),
+      ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : c === 'chosen_colors' ? (chosen.colors ?? []) : [c as Color])) } : {}),
       ...(Array.isArray(node.addColors) ? { addColors: node.addColors as Color[] } : {}),
       ...(Array.isArray(node.creatureTypes) ? { creatureTypes: (node.creatureTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.creatureType ? [chosen.creatureType] : []) : [t])) } : {}),
       ...(Array.isArray(node.landTypes) ? { landTypes: (node.landTypes as string[]).flatMap((t) => (t === 'chosen' ? (chosen.landType ? [chosen.landType] : []) : [t])) } : {}),
@@ -1867,6 +1867,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return { expand: apnap(ctx.g).map((p) => ({ ...one, scope: 'resolution_list', asPlayer: p })) };
     }
     const answer = answerOf(ctx, 'choose_option');
+    // Quickchange: "the color or colors of your choice" — any nonempty set of colors, written as their letters ("WU").
+    if (node.choice === 'colors') {
+      const sets = Array.from({ length: 31 }, (_, i) => ['W', 'U', 'B', 'R', 'G'].filter((_, j) => (i + 1) & (1 << j)).join(''));
+      if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: sets, text: 'Choose one or more colors.', sourceName: sourceName(ctx) } };
+      if (!sets.includes(answer.choice)) throw new RulesError('Choose one of the options.');
+      if (ctx.resolution) ctx.resolution.chosen = { ...ctx.resolution.chosen, colors: [...answer.choice] as Color[] };
+      return true;
+    }
     const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : [...SUBTYPES.creature];
     const text = node.choice === 'color' ? 'Choose a color.' : node.choice === 'land_type' ? 'Choose a basic land type.' : 'Choose a creature type.';
     if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text, sourceName: sourceName(ctx) } };
@@ -4468,12 +4476,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Extract from Darkness: "a creature card from a graveyard" — any of them.
     const graveyards = () => g.order.flatMap((p) => zoneList(g, 'graveyard', p));
     const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : filter.zone === 'command' ? g.zones.command : filter.zone === 'graveyard' ? graveyards() : g.zones.battlefield);
-    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone && filter.zone !== 'battlefield' || among ? { anyZone: true } : {}) }));
+    // Imperial Edict: "Target opponent chooses a creature they control." — that player chooses, and "they control" is theirs.
+    const chooser = node.chooser ? refPlayers(ctx, ref(node, 'chooser'))[0] : ctx.controller;
+    if (chooser === undefined || g.players[chooser]?.lost) return true;
+    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: chooser, source: ctx.source ?? null, ...(filter.zone && filter.zone !== 'battlefield' || among ? { anyZone: true } : {}) }));
     if (!candidates.length || !ctx.resolution) return true;
     let pick = candidates.length === 1 ? candidates[0] : undefined;
     if (!pick) {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: 'Choose one.', sourceName: sourceName(ctx) } };
+      if (!answer) return { ask: { kind: 'choose_objects', player: chooser, candidates, min: 1, max: 1, text: 'Choose one.', sourceName: sourceName(ctx) } };
       if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of them.');
       pick = answer.objects[0]!;
     }
@@ -5320,7 +5331,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'damage' || e.to.kind !== 'permanent' || check.sourceLeft) return [];
     const to = e.to.object;
     // "Whenever a source deals damage to ~": once for each source, "that source's controller" its controller.
-    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to && (!t.perSource || x.source === e.source));
+    // Smaug the Impenetrable: "Whenever Smaug is dealt noncombat damage" (`noncombat`); "… combat damage" (`combat`).
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to && (!t.perSource || x.source === e.source) && (t.combat ? Boolean(x.combat) : t.noncombat ? !x.combat : true));
     if (together[0] !== e) return [];
     const o = check.g.objects[to];
     const amount = together.reduce((n, x) => n + x.amount, 0);

@@ -460,8 +460,11 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
 
   switch (step) {
     case 'untap': {
-      // CR 614.10: "skips their next untap step" — nothing happens in it.
-      if (takeSkip(g, 'untap')) {
+      // CR 614.10: "skips their next untap step" — nothing happens in it. Stasis: "Players skip their untap steps."
+      if (takeSkip(g, 'untap') || playerRule(g, g.active, 'skip_untap')) {
+        // CR 302.6: its permanents have still been under its control since the turn began (summoning sickness isn't the
+        // untap step's business).
+        for (const id of g.zones.battlefield) if (g.objects[id]!.controller === g.active) g.objects[id]!.sick = false;
         beginStep(g, 'upkeep', events);
         return;
       }

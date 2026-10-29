@@ -147,8 +147,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   );
   // Sword of Sinew and Steel: "destroy up to one target planeswalker and up to one target artifact" — each its own target.
   // Urgent Necropsy: "Destroy up to one target artifact, up to one target creature, … and up to one target planeswalker."
-  text = text.replace(/\b([Dd])estroy ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
-    list.split(/,? and |, /).map((one, i) => `${i === 0 ? `${d}estroy` : 'Destroy'} ${one}.`).join(' '),
+  // Pull from the Deep: "Return up to one target instant card and up to one target sorcery card from your graveyard to your
+  // hand."; Thwart the Grave: "Return target creature card and up to one target Cleric, … creature card from your graveyard to
+  // the battlefield." — each its own target, from the same graveyard.
+  text = text.replace(/\b([Rr]eturn) ((?:up to one )?target [^,.]+? card) and ((?:up to one )?target [^.]+? card) from your graveyard (to your hand|to the battlefield)\b/, (_m, r: string, one: string, two: string, to: string) =>
+    `${r} ${one} from your graveyard ${to}. Return ${two} from your graveyard ${to}`,
+  );
+  // Kiora, Master of the Depths: "Untap up to one target creature and up to one target land."
+  text = text.replace(/\b([Dd]estroy|[Uu]ntap|[Tt]ap) ((?:up to one target [^,.]+?, )*up to one target [^,.]+?,? and up to one target [^.]+?)\./, (_m, d: string, list: string) =>
+    list.split(/,? and |, /).map((one, i) => `${i === 0 ? d : capitalise(d.toLowerCase())} ${one}.`).join(' '),
   );
   // Evolutionary Escalation: "put three +1/+1 counters on target creature you control and three +1/+1 counters on target
   // creature an opponent controls"; Claim the Kingdom: "… and a plan counter on this enchantment" — two placements.
@@ -236,6 +243,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Lantern Flare: "~ deals X damage to target creature or planeswalker and you gain X life. X is the number of creatures
   // you control." — X defined in a sentence of its own.
   text = text.replace(/^([^.]*\bX\b[^.]*)\. X is (the [^.]+)\.$/, '$1, where X is $2.');
+  // Unquenchable Fury: "it deals X damage to defending player, where X is the number of cards in their hand" — that player's.
+  text = text.replace(/(\bto (defending player|that player), where X is [^.]*?)\btheir (hand|graveyard|library)\b/, "$1$2's $3");
   // Angelic Skirmisher: "choose first strike, vigilance, or lifelink. Creatures you control gain that ability until end of
   // turn." — the same as "gain your choice of …" (CR 608.2d).
   text = text.replace(/^[Cc]hoose ((?:[a-z][a-z ]*, )+)or ([a-z][a-z ]*)\. (.+?) (gains?) that ability until end of turn\.$/, '$3 $4 your choice of $1or $2 until end of turn.');
@@ -556,6 +565,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const out: EffectNode[] = [];
     // The plain effects of the last sentence, for a following "… instead".
     let previous: EffectNode[] = [];
+    // Teachings of the Archaics: "If …, draw two cards. Draw three cards instead if …" — the guarded effect, replaced inside
+    // its own condition.
+    let prevIf: (EffectNode & { effects: EffectNode[] }) | null = null;
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
       // Temur Battle Rage: "… Ferocious — That creature also gains trample …" — an ability word in mid-text has no rules
@@ -569,9 +581,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Finale of Glory: "If X is 10 or more, also create X 4/4 white Angel creature tokens …"
       s = s.replace(/^(If [^,]+), also (?=(?:gain|get|deal|draw|create|put|return|destroy|exile) )/, '$1, ');
+      // Cyclone Summoner: "return all permanents to their owners' hands except for Giants, Wizards, and lands" — the
+      // exception belongs to "all permanents".
+      s = s.replace(/^([Rr]eturn all .+?) (to their owners' hands) (except for .+)$/, '$1 $3 $2');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
       s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
+      const ifBefore = prevIf;
+      prevIf = null;
       // "Then each player draws a card." — "then" only orders what's already in order.
       if (i > 0 && /^Then (?!shuffle)/.test(s)) s = capitalise(s.slice(5));
       // The Chains: "Then that player or that permanent's controller may pay {R}{R}. If the player does, they may copy this
@@ -1382,7 +1399,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const doNode = out[out.length - 1];
       const insideDo = !previous.length && (doNode?.type === 'may_pay' || doNode?.type === 'may') && Array.isArray(doNode.effects) && (doNode.effects as EffectNode[]).length ? (doNode.effects as EffectNode[]) : null;
       if (instead && insideDo) previous = [...insideDo];
-      const container = insideDo && instead ? insideDo : out;
+      const nestIf = instead && !insideDo && !previous.length && ifBefore && out[out.length - 1] === ifBefore ? ifBefore : null;
+      if (nestIf) previous = [...nestIf.effects];
+      const container = nestIf ? nestIf.effects : insideDo && instead ? insideDo : out;
       if (instead && previous.length) {
         // New targets would be chosen whether or not the condition holds (Tear Asunder's kicker picks
         // different targets): not this shape.
@@ -1453,7 +1472,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           if (!no) return null;
           node.else = no;
           i++;
-        }
+        } else prevIf = node as EffectNode & { effects: EffectNode[] };
         out.push(node);
         continue;
       }
@@ -1871,7 +1890,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // Nekrataal: "Destroy target nonartifact, nonblack creature. That creature can't be regenerated."
-      if (/^(?:It|They|That creature|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
+      if (/^(?:It|They|Those creatures|That creature|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
         // The destroy effects of the sentence before ("Destroy target creature and all others with the same name").
         const destroys: EffectNode[] = [];
         const find = (list: EffectNode[]) => {
@@ -2595,6 +2614,22 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const theirs = parseSentence(asThem, b);
       if (!theirs || b.targets.length !== before || JSON.stringify(theirs).includes('"ref":"target"')) return null;
       return [{ type: 'opponents_may', effects: theirs, ...(eachMay[1] === 'player' ? { everyone: true } : {}), ...(eachMay[1] === 'opponents' ? { opponentsOf: thatPlayer! } : {}) }];
+    });
+    if (r) return r;
+  }
+  // Imperial Edict: "Target opponent chooses a creature they control. Destroy that creature."; Scrounge: "Target opponent
+  // chooses an artifact card in their graveyard. Put that card onto the battlefield under your control." — that player
+  // chooses as it resolves (CR 608.2d).
+  const theyChoose = /^(Target opponent|Target player) chooses (a|an) (?!card name\b|number\b)(.+?) (they control|in their graveyard)$/.exec(s);
+  if (theyChoose) {
+    const r = attempt(b, (b) => {
+      const chooser = parsePlayerRef(theyChoose[1]!.toLowerCase(), b);
+      const pf = chooser ? parseFilter(`${theyChoose[3]} ${theyChoose[4] === 'they control' ? 'you control' : 'in your graveyard'}`, b) : null;
+      if (!chooser || !pf || pf.plural || !pf.filter.types?.length) return null;
+      b.it = { ref: 'chosen_object' };
+      b.player = chooser;
+      for (const n of ['that creature', 'that permanent', 'that card', 'that artifact', 'that land']) b.named[n] = { ref: 'chosen_object' };
+      return [{ type: 'choose_object', filter: pf.filter, chooser }];
     });
     if (r) return r;
   }
@@ -3522,7 +3557,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const library = reorder[2] === 'your' ? null : parsePlayerRef(reorder[2]!.replace(/'s$/, ''), b);
     if (reorder[2] !== 'your' && !library) return null;
     if (library) b.player = library;
-    return typeof amount === 'number' ? [{ type: 'reorder_top', amount, ...(library ? { library } : {}) }] : null;
+    // Soothsaying: "{X}: Look at the top X cards of your library, then put them back in any order."
+    return typeof amount === 'number' || amount === 'X' ? [{ type: 'reorder_top', amount, ...(library ? { library } : {}) }] : null;
   }
   // Portent: "You may have that player shuffle."
   if (/^You may have that player shuffle$/.test(s) && b.player && b.player.ref === 'target') return [{ type: 'may', effects: [{ type: 'shuffle', who: b.player }] }];
@@ -3789,6 +3825,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const one = parseSentence(`${tokenOr[1]} ${tokenOr[2]} ${tokenOr[3]} token`, b);
       const two = one ? parseSentence(`${tokenOr[1]} ${tokenOr[4]} ${tokenOr[5]} token`, b) : null;
       return one && two ? [{ type: 'choose_one', labels: [tokenOr[3]!, tokenOr[5]!], options: [one, two] }] : null;
+    });
+    if (r) return r;
+  }
+  // Eladamri's Vineyard: "At the beginning of each player's first main phase, that player adds {G}{G}." — into their pool.
+  const theyAdd = /^(that player|target player) adds ((?:\{[WUBRGC]\})+)$/i.exec(s);
+  if (theyAdd) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(theyAdd[1]!, b);
+      const add = who ? parseSentence(`Add ${theyAdd[2]}`, b) : null;
+      return who && add?.length === 1 && add[0]!.type === 'add_mana' ? [{ type: 'players_do', players: who, effects: add }] : null;
     });
     if (r) return r;
   }
@@ -5247,6 +5293,12 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     ];
   }
   // CR 701.44a: "~ explores", "target creature you control explores".
+  // Over the Edge: "Target creature you control explores, then it explores again."
+  const twice = /^(.+?) explores, then it explores again$/i.exec(c);
+  if (twice) {
+    const what = parseObjectRef(twice[1]!, b);
+    return what && !what.plural ? [{ type: 'explore', what: what.ref }, { type: 'explore', what: what.ref }] : null;
+  }
   const explore = /^(.+?) explores$/i.exec(c);
   if (explore) {
     const what = parseObjectRef(explore[1]!, b);
@@ -5430,7 +5482,7 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
 }
 
 const BASIC_LAND_TYPES = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'];
-const CHOICE_OF: Record<string, 'color' | 'creature_type' | 'land_type'> = { 'color': 'color', 'creature type': 'creature_type', 'basic land type': 'land_type' };
+const CHOICE_OF: Record<string, 'color' | 'colors' | 'creature_type' | 'land_type'> = { 'color': 'color', 'color or colors': 'colors', 'creature type': 'creature_type', 'basic land type': 'land_type' };
 
 /**
  * Layers 4–6 (CR 613.1d–f): "Target creature loses all abilities until end of turn", "~ becomes blue until end of turn",
@@ -5449,13 +5501,14 @@ function parseLayerChange(c: string, b: Binder): EffectNode[] | null {
     });
   }
   // "becomes the color of your choice", "… the creature type of your choice", "… the basic land type of your choice"
-  const choice = /^(.+?) becomes? the (color|creature type|basic land type) of your choice$/.exec(body);
+  // Quickchange: "becomes the color or colors of your choice" — one or more colors.
+  const choice = /^(.+?) becomes? the (color or colors|color|creature type|basic land type) of your choice$/.exec(body);
   if (choice) {
     return attempt(b, (b) => {
       const what = parseObjectRef(choice[1]!, b);
       if (!what) return null;
       const kind = CHOICE_OF[choice[2]!]!;
-      const change = kind === 'color' ? { colors: ['chosen'] } : kind === 'creature_type' ? { creatureTypes: ['chosen'] } : { landTypes: ['chosen'] };
+      const change = kind === 'colors' ? { colors: ['chosen_colors'] } : kind === 'color' ? { colors: ['chosen'] } : kind === 'creature_type' ? { creatureTypes: ['chosen'] } : { landTypes: ['chosen'] };
       return [{ type: 'choose_value', choice: kind, scope: 'resolution' }, { type: 'modify', what: what.ref, ...change, until }];
     });
   }
@@ -5723,7 +5776,8 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     const amount = timesX ? { kind: 'x' as const, times: { twice: 2, 'three times': 3, 'four times': 4, 'five times': 5 }[timesX[1] as 'twice'] } : parseAmount(m[2]!);
     if (amount === null) return null;
     const out: EffectNode[] = [];
-    const second = /^(.+?) and (\S+) damage to (.+)$/.exec(m[3]!);
+    // Dragonspark Reactor: "… to target player and that much damage to up to one target creature" — the same amount.
+    const second = /^(.+?) and (that much|\S+) damage to (.+)$/.exec(m[3]!);
     // Stuffy Doll: "~ deals 1 damage to itself."
     const first = m[3] === 'itself' && m[1] === '~' ? [{ ref: 'self' } as Ref] : parseRecipients(second ? second[1]! : m[3]!, b);
     if (!first) return null;
@@ -5731,7 +5785,7 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
     // "If a creature dealt damage this way would die this turn, …"
     if (first.length === 1) b.damaged = first[0]!;
     if (second) {
-      const amount2 = parseAmount(second[2]!);
+      const amount2 = second[2] === 'that much' ? amount : parseAmount(second[2]!);
       const rest = amount2 !== null ? parseRecipients(second[3]!, b) : null;
       if (!rest || amount2 === null) return null;
       for (const to of rest) out.push({ type: 'deal_damage', amount: amount2, to, ...(fromIt ? { from: { ref: 'trigger_object' } } : fromAttached ? { from: { ref: 'attached' } } : {}) });
@@ -5776,8 +5830,10 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
     // An instant or sorcery is never on the battlefield to get anything ("Search … It gains indestructible": the card found).
     if (what.ref.ref === 'self' && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
     const verb = /^(.+?) (gets?|gains?|has|have) /.exec(c)?.[2] ?? '';
-    const parts = `${verb ? `${verb} ` : ''}${m[2]}`.split(/,? and (?=gets? |gains? |has |have |can attack as |assigns? combat )|, (?=can attack as |assigns? combat )/);
-    const node: EffectNode = { type: 'modify', what: what.ref, until };
+    // Nameless Inversion: "gets +3/-3 and loses all creature types until end of turn" (CR 205.1b, layer 4).
+    const loseTypes = / and loses all creature types$/.test(m[2]!);
+    const parts = `${verb ? `${verb} ` : ''}${m[2]!.replace(/ and loses all creature types$/, '')}`.split(/,? and (?=gets? |gains? |has |have |can attack as |assigns? combat )|, (?=can attack as |assigns? combat )/);
+    const node: EffectNode = { type: 'modify', what: what.ref, until, ...(loseTypes ? { creatureTypes: [] } : {}) };
     for (const part of parts) {
       const flags = PUMP_RULES[part.replace(/\bthey\b/, 'it').replace(/\btheir\b/g, 'its').replace(/^assign /, 'assigns ')];
       if (flags) {

@@ -443,7 +443,8 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.loseTypes ? { types: { types: [], subtypes: [], retain: true, lose: e.loseTypes } } : {}),
         ...(e.creatureTypes ? { creatureTypes: e.creatureTypes } : {}),
         ...(e.landTypes ? { landTypes: e.landTypes } : {}),
-        ...(e.colors ? { colors: e.colors } : {}),
+        // Shimmerwilds Growth: "the chosen color" — what was chosen for this source.
+        ...(e.colors ? { colors: e.colors.flatMap((c) => (c === ('chosen' as Color) ? (source.chosen?.color ? [source.chosen.color] : []) : [c])) } : {}),
         ...(e.addColors ? { addColors: e.addColors } : {}),
         ...(e.loseAbilities ? { loseAbilities: true as const } : {}),
         ...(e.loseKeywords ? { loseKeywords: e.loseKeywords } : {}),
@@ -965,6 +966,9 @@ export function matchesFilter(
   // Slash the Ranks: "except for commanders" (CR 903.3).
   if (f.commander === false && o.commander) return false;
   if (f.anyOf && !f.anyOf.some((alt) => matchesFilter(g, o, altZones ? { zone: 'battlefield', ...alt } : alt, { ...ctx, anyZone: altZones ? ctx.anyZone : true }, c))) return false;
+  // Ajani Unrelenting: "each creature except for tokens you control"; Cyclone Summoner: "… except for Giants, Wizards, and
+  // lands".
+  if (f.except && matchesFilter(g, o, f.except, { ...ctx, anyZone: true }, c)) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);

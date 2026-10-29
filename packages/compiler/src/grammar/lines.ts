@@ -983,11 +983,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
 
   // "Whenever ~ deals damage", "deals combat damage", "is dealt damage" — with an amount ("that much").
-  const damage = /^(~|enchanted creature|equipped creature) (deals damage|deals combat damage|is dealt damage)$/.exec(t);
+  const damage = /^(~|enchanted creature|equipped creature) (deals damage|deals combat damage|is dealt damage|is dealt (?:non)?combat damage)$/.exec(t);
   if (damage) {
     const subject: Ref = damage[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
-    const trigger: TriggerNode =
-      damage[2] === 'is dealt damage' ? { type: 'dealt_damage', subject } : { type: 'deals_damage', subject, ...(damage[2] === 'deals combat damage' ? { combat: true } : {}) };
+    const dealtKind = /^is dealt (noncombat|combat) damage$/.exec(damage[2]!)?.[1];
+    const trigger: TriggerNode = dealtKind
+      ? { type: 'dealt_damage', subject, ...(dealtKind === 'combat' ? { combat: true } : { noncombat: true }) }
+      : damage[2] === 'is dealt damage' ? { type: 'dealt_damage', subject } : { type: 'deals_damage', subject, ...(damage[2] === 'deals combat damage' ? { combat: true } : {}) };
     b.eventAmount = true;
     return { trigger, it: subject, player: null };
   }
@@ -1396,7 +1398,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Mystic Sanctuary: "When ~ enters untapped" — only if it isn't tapped as it enters.
   if (t === '~ enters untapped') return { trigger: { type: 'enters', subject: { ref: 'self' }, untapped: true }, it: { ref: 'self' }, player: null };
   // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34)
-  if (t === 'you proliferate' && word === 'Whenever') return { trigger: { type: 'proliferated' }, it: null, player: null };
+  // Voidwing Hybrid: "When you proliferate, return this card from your graveyard to your hand." — each time, as with "whenever".
+  if (t === 'you proliferate') return { trigger: { type: 'proliferated' }, it: null, player: null };
   // Archivist of Oghma: "Whenever an opponent searches their library" (CR 701.23)
   const searches = /^(an opponent|a player) searches their library$/.exec(t);
   if (searches) return { trigger: { type: 'searched', who: searches[1] === 'an opponent' ? 'opponent' : 'any' }, it: null, player: { ref: 'trigger_player' } };
@@ -2058,9 +2061,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'cast', who: 'you', filter: {}, nthAtLeast: 2 }, it: { ref: 'trigger_object' }, player: { ref: 'trigger_player' } };
   }
   // Esper Sentinel: "Whenever an opponent casts their first noncreature spell each turn"
-  const nthKind = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) (.+?) spell each turn$/.exec(t);
+  // Nev, the Practical Dean: "Whenever you cast your first spell with {X} in its mana cost each turn".
+  const nthKind = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) (.+? spell|spell with .+?) each turn$/.exec(t);
   if (nthKind) {
-    const pf = parseFilter(`${nthKind[3]} spell`, b);
+    const pf = parseFilter(nthKind[3]!, b);
     if (!pf || pf.plural) return null;
     const { zone: _z, ...filter } = pf.filter;
     const who = nthKind[1] === 'you' ? 'you' : nthKind[1] === 'an opponent' ? 'opponent' : 'any';
@@ -2404,6 +2408,13 @@ export const continuousRule: GrammarRule = {
       if (during) {
         conds.push({ type: 'your_turn', value: during[1]!.toLowerCase() === 'your turn' });
         rest = during[2]!;
+        continue;
+      }
+      // Final-Word Phantom: "During each opponent's end step, you may cast spells as though they had flash."
+      const duringStep = /^During (your|each opponent's) (upkeep|end step), (.+)$/i.exec(rest);
+      if (duringStep) {
+        conds.push({ type: 'your_turn', value: duringStep[1]!.toLowerCase() === 'your' }, { type: 'step', step: duringStep[2] === 'upkeep' ? 'upkeep' : 'end' } as ConditionNode);
+        rest = duringStep[3]!.replace(/^you /, 'You ');
         continue;
       }
       // "~ gets +2/+2 as long as there are seven or more cards in your graveyard." (the condition last)
@@ -2789,9 +2800,14 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (body === "You can't lose the game and your opponents can't win the game") return { type: 'player_rule', who: 'you', rule: 'opponents_cant_win' };
   // Archon of Coronation: "As long as you're the monarch, damage doesn't cause you to lose life."
   if (/^damage doesn't cause you to lose life$/i.test(body)) return { type: 'player_rule', who: 'you', rule: 'damage_no_life_loss' };
+  // Stasis: "Players skip their untap steps." (CR 614.10)
+  if (body === 'Players skip their untap steps') return { type: 'player_rule', who: 'each', rule: 'skip_untap' };
   // Mindlock Orb: "Players can't search libraries."; Stranglehold: "Your opponents can't search libraries."
   const noSearch = /^(Players|Your opponents) can't search libraries$/.exec(body);
   if (noSearch) return { type: 'player_rule', who: noSearch[1] === 'Players' ? 'each' : 'opponents', rule: 'cant_search' };
+  // Aggressive Mining: "You can't play lands." (CR 305.2: no land plays at all)
+  const noLands = /^(You|Players|Your opponents) can't play lands$/.exec(body);
+  if (noLands) return { type: 'player_rule', who: ({ You: 'you', Players: 'each', 'Your opponents': 'opponents' } as const)[noLands[1] as 'You'], rule: 'cant_play_lands' };
   // Tainted Remedy: "If an opponent would gain life, that player loses that much life instead."
   if (body === 'If an opponent would gain life, that player loses that much life instead') return { type: 'player_rule', who: 'opponents', rule: 'gain_becomes_loss' };
   // Abyssal Persecutor: the other way around.
@@ -2818,6 +2834,9 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   // Titania, Nature's Force: "You may play Forests from your graveyard."
   const someLands = /^You may play (Plains|Islands|Swamps|Mountains|Forests) from your graveyard$/.exec(body);
   if (someLands) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard', filter: { subtypes: [someLands[1]!.replace(/s$/, '').replace(/^Plain$/, 'Plains')] } };
+  // Hazezon, Shaper of Sand: "You may play Desert lands from your graveyard."
+  const kindOfLand = /^You may play ([A-Z][\w-]*) lands from your graveyard$/.exec(body);
+  if (kindOfLand && (SUBTYPES.land as readonly string[]).includes(kindOfLand[1]!)) return { type: 'player_rule', who: 'you', rule: 'lands_from_graveyard', filter: { subtypes: [kindOfLand[1]!] } };
   if (/^Skip your draw step$/.test(body)) return { type: 'player_rule', who: 'you', rule: 'skip_draw' };
   // Sulfuric Vortex: "If a player would gain life, that player gains no life instead." (CR 614.1a: no life is gained.)
   const noGain = /^If (a player|an opponent|you) would gain life, (?:that player gains|you gain) no life instead$/.exec(body);
@@ -2949,8 +2968,20 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const subject = parseObjectRef(lure[1]!, b, 'static');
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
+  // Sylvan Advocate: "this creature and land creatures you control get +2/+2"; Vampire Nocturnus: "this creature and other
+  // Vampire creatures you control get +2/+1 and have flying" — the source, and the others.
+  const andOthers = /^(?:~|this creature) and ((?:other )?.+? you control) (get .+|have .+)$/.exec(body);
+  if (andOthers) {
+    const pf = parseFilter(andOthers[1]!.replace(/^other /, ''), b);
+    if (!pf || !pf.plural || pf.filter.zone) return null;
+    if (/^other /.test(andOthers[1]!)) pf.filter.other = true;
+    const inner = parseContinuous(`Creatures you control ${andOthers[2]}`, b);
+    return inner && !inner.condition && JSON.stringify(inner.affected) === JSON.stringify({ ref: 'all', filter: { controller: 'you', types: ['Creature'] } })
+      ? { ...inner, affected: { ref: 'all', filter: { ...pf.filter, orSource: true } } }
+      : null;
+  }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2965,7 +2996,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     .replace(/^(is an? (?:colorless )?land) with (QUOTED_\d+)(?= and |$)/, '$1 and has $2');
   const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't |must be ))/g, ' and ').replace(/ and and /g, ' and ');
   let loseOthers = false;
-  for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? )/)) {
+  // Treefolk Umbra: "gets +0/+2 and assigns combat damage equal to its toughness rather than its power".
+  for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? |assigns? combat damage )/)) {
     // "loses all other abilities, card types, and creature types" / "… card types and abilities" — with the types this
     // effect sets (layer 4 replaces them) and the abilities it grants (layer 6, in this effect's own order).
     if (/^loses all other (?:abilities, card types, and creature types|card types and abilities)$/.test(part) && !effect.loseAbilities) {
@@ -3099,6 +3131,11 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const isColor = /^is (white|blue|black|red|green|colorless)$/.exec(part);
     if (isColor && !effect.colors) {
       effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];
+      continue;
+    }
+    // Shimmerwilds Growth: "Enchanted land is the chosen color." (layer 5)
+    if (part === 'is the chosen color' && !effect.colors) {
+      effect.colors = ['chosen' as Color];
       continue;
     }
     // Nim Deathmantle: "… and is a black Zombie" — its color and creature types replaced (layers 4 and 5).
@@ -3296,7 +3333,10 @@ export const costModifierRule: GrammarRule = {
     }
     // Gran-Gran: "Noncreature spells you cast cost {1} less to cast as long as there are three or more Lesson cards in your
     // graveyard." — checked as each spell's cost is determined (CR 601.2f).
-    const whileCond = /^(?!This spell |~ )(.+? cost \{[^}]+\} (?:less|more) to cast) as long as (.+)\.$/.exec(line) ?? /^As long as ([^,]+), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast)\.$/.exec(line)?.slice(0, 3).reverse();
+    // Geyser Drake: "During turns other than yours, spells you cast cost {1} less to cast."; "During your turn, …".
+    const duringTurn = /^During (turns other than yours|your turn), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast\.)$/.exec(line);
+    if (duringTurn) line = `As long as it's ${duringTurn[1] === 'your turn' ? '' : 'not '}your turn, ${duringTurn[2]}`;
+    const whileCond = /^(?!This spell |~ )(.+? cost \{[^}]+\} (?:less|more) to cast) as long as (.+)\.$/.exec(line) ?? /^As long as ([^,]+), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast)\.$/.exec(line)?.map((x, i, m) => (i === 1 ? m[2]! : i === 2 ? m[1]! : x));
     if (whileCond) {
       const rest = `${whileCond[1]!.replace(/^\w/, (c) => c.toUpperCase())}.`;
       const inner = costModifierRule.parse(rest, rest, ctx) as StaticAbility | null;
@@ -3645,6 +3685,9 @@ export const quantityReplacementRule: GrammarRule = {
     const counters = /^If one or more (\S+) counters would be put on (.+), ((?:that many|twice that many|three times that many)[^,]*?) \S+ counters are put on (?:it|that \w+) instead\.$/.exec(line);
     if (counters) {
       const op = quantityOp(counters[3]!);
+      // Mowu, Loyal Companion: "… would be put on Mowu, that many plus one +1/+1 counters are put on it instead." — this one,
+      // whoever puts them.
+      if (counters[2] === '~') return op ? make({ event: 'counters', who: 'each', counter: counters[1]!, filter: { isSource: true }, ...op }) : null;
       // Benevolent Hydra: "on another creature you control".
       const pf = parseFilter(counters[2]!.replace(/^(?:a|an|another) /, ''), b);
       if (pf && /^another /.test(counters[2]!)) pf.filter.other = true;
@@ -3706,6 +3749,9 @@ export const quantityReplacementRule: GrammarRule = {
         ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });
     }
+    // Curse of Bloodletting: "If a source would deal damage to enchanted player, it deals double that damage to that player instead."
+    const curse = /^If a source would deal damage to enchanted player, it deals (double|triple) that damage to that player instead\.$/.exec(line);
+    if (curse && /\bAura\b/.test(env.typeLine)) return make({ event: 'damage', toEnchantedPlayer: true, op: curse[1] as 'double' | 'triple' });
     // Uncivil Unrest: "If a creature you control with a +1/+1 counter on it would deal damage to a permanent or player, it
     // deals double that damage instead." — any description of the source.
     const described = /^If (a|an|another) (.+?) would deal (noncombat )?damage to (a permanent or player|any target), it deals (double|triple) that damage instead\.$/.exec(line);
@@ -4547,9 +4593,11 @@ export const topPermissionRule: GrammarRule = {
       const two = /^(\w+) spells and (\w+) spells$/.exec(phrase);
       if (two) phrase = `${two[1]} or ${two[2]} spells`;
       phrase = phrase.replace(/^(\w+) and (\w+) spells/, '$1 or $2 spells');
+      // Nalia de'Arnise: "Cleric, Rogue, Warrior, and Wizard spells" — any of them.
+      phrase = phrase.replace(/^((?:[A-Z]\w+, )+[A-Z]\w+,) and ([A-Z]\w+ spells)$/, '$1 or $2');
       if (phrase === 'spells') effect.spells = {};
       else {
-        const first = phrase.split(' ')[0]!;
+        const first = phrase.split(' ')[0]!.replace(/,$/, '');
         const pf = parseFilter(isSubtype(first) ? phrase : phrase.replace(/^\w/, (c) => c.toLowerCase()), new Binder(env));
         if (!pf || !pf.plural || pf.filter.zone !== 'stack') return null;
         const { zone: _z, ...filter } = pf.filter;
@@ -4605,6 +4653,9 @@ export const abilityCostReductionRule: GrammarRule = {
     const equip = /^Equip abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
     if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1]) } } as StaticAbility;
     // Silver-Fur Master: "Ninjutsu abilities you activate cost {1} less to activate." (commander ninjutsu too, CR 702.49d)
+    // Fluctuator: "Cycling abilities you activate cost {2} less to activate." (typecycling too, CR 702.29e)
+    const cycling = /^Cycling abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
+    if (cycling) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, cyclingOnly: true, amount: Number(cycling[1]) } } as StaticAbility;
     const ninjutsu = /^Ninjutsu abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
     if (ninjutsu) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, ninjutsuOnly: true, amount: Number(ninjutsu[1]) } } as StaticAbility;
     const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);

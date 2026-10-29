@@ -151,6 +151,8 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
         if (!p || p === you) return false;
       }
       if (e.toPlayersOnly && s.to?.kind !== 'player') return false;
+      // Curse of Bloodletting: "If a source would deal damage to enchanted player, …"
+      if (e.toEnchantedPlayer && !(s.to?.kind === 'player' && s.to.player === source.attachedToPlayer)) return false;
       if (e.toChosen) {
         const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
         if (!p || p !== source.chosen?.player) return false;

@@ -469,6 +469,8 @@ export interface ObjectFilter {
   damagedThisTurn?: true;
   /** Any one of these ("creature or Vehicle"). */
   anyOf?: ObjectFilter[];
+  /** "… except for tokens you control": what's left out. */
+  except?: ObjectFilter;
   /** "of the chosen type" / "of the chosen color": what was chosen as the source entered (CR 614.12). */
   chosenType?: true;
   chosenColor?: true;
@@ -1318,6 +1320,8 @@ export interface QuantityReplacementNode extends EffectNode {
   toOpponents?: true;
   /** Sawhorn Nemesis: "to the chosen player or a permanent they control" (chosen as the source entered). */
   toChosen?: true;
+  /** Curse of Bloodletting: only damage to the player this Aura enchants. */
+  toEnchantedPlayer?: true;
   /** Fiendish Duo: "would deal damage to an opponent" — players only, not their permanents. */
   toPlayersOnly?: true;
   noncombat?: true;
@@ -1397,6 +1401,10 @@ export const PLAYER_RULES = [
   'damage_no_life_loss',
   /** Mindlock Orb, Stranglehold: "Players can't search libraries." (CR 701.23) */
   'cant_search',
+  /** Aggressive Mining: "You can't play lands." (CR 305.2) */
+  'cant_play_lands',
+  /** Stasis: "Players skip their untap steps." (CR 614.10) */
+  'skip_untap',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -1442,7 +1450,7 @@ export const CORE_NODES = {
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
+    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
