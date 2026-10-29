@@ -248,6 +248,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const pf = parseFilter(among[1]!, b);
     return pf && pf.plural && !pf.filter.zone ? { kind: 'counters_among', filter: pf.filter } : null;
   }
+  // Toph, the Blind Bandit: "the number of +1/+1 counters on lands you control" — that kind, on all of them.
+  const kindOn = /^the (?:total )?number of ([+-]\d+\/[+-]\d+|\w+) counters on (.+)$/.exec(t);
+  if (kindOn && !/^(?:~|it|him|her|this \w+|that \w+|target .+|enchanted .+|equipped .+)$/.test(kindOn[2]!)) {
+    const pf = parseFilter(kindOn[2]!, b);
+    if (pf && pf.plural && !pf.filter.zone) return { kind: 'counters_among', filter: pf.filter, counter: kindOn[1]! };
+  }
   // Astarion: "Target opponent loses life equal to the amount of life they lost this turn." — that one player.
   const oneLife = /^the (?:amount of )?life (?:they|that player) (lost|gained) this turn$/.exec(t);
   if (oneLife && b.player && b.player.ref !== 'players' && b.player.ref !== 'you') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(oneLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };

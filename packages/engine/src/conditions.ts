@@ -66,6 +66,10 @@ export interface TurnLog {
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
   damagedBy?: Record<ObjectId, ObjectId[]>;
+  /** Each card or token put into a graveyard this turn, in order (with its card types then). */
+  toGraveyard?: { event: GameEvent; types: string[]; owner: PlayerId; token: boolean }[];
+  /** Danny Pink: the first counters event this turn for each object, keyed "id:zcc". */
+  firstCounters?: Record<string, GameEvent>;
   /** Damage dealt this turn by each source, keyed "id:zcc". */
   dealtDamage?: Record<string, number>;
   /** How many times each creature has been declared as an attacker this turn. */
@@ -108,6 +112,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           const owner = g.objects[e.object]?.owner;
           if (owner) (log.descended ??= {})[owner] = (log.descended[owner] ?? 0) + 1;
         }
+        // Crawling Sensation: "for the first time each turn" — each card put into a graveyard, in order.
+        if (e.to === 'graveyard' && g.objects[e.object]) (log.toGraveyard ??= []).push({ event: e, types: [...types], owner: g.objects[e.object]!.owner, token: Boolean(g.objects[e.object]!.token) });
         if (e.from === 'battlefield' && e.to === 'graveyard') {
           // CR 700.4: it died — as it last existed on the battlefield.
           const lk = g.lastKnown?.[e.object];
@@ -166,6 +172,11 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.delta > 0) (log.lifeGained ??= {})[e.player] = (log.lifeGained[e.player] ?? 0) + e.delta;
         if (e.delta < 0) (log.lifeLost ??= {})[e.player] = (log.lifeLost[e.player] ?? 0) - e.delta;
         break;
+      case 'counters': {
+        const o = g.objects[e.object];
+        if (o && e.delta > 0) (log.firstCounters ??= {})[`${o.id}:${o.zcc}`] ??= e;
+        break;
+      }
       case 'damage':
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
         if (e.to.kind === 'player') (log.damageTaken ??= {})[e.to.player] = (log.damageTaken[e.to.player] ?? 0) + e.amount;
@@ -265,7 +276,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return Boolean(ctx.resolution?.clashWon) !== Boolean(cond.not);
     case 'won_flip':
       // CR 705.2
-      return Boolean(ctx.resolution?.flipWon) !== Boolean(cond.not);
+      // Goblin Bomb: "you may flip a coin. … If you lose the flip, …" — not when no coin was flipped.
+      return cond.not ? ctx.resolution?.flipWon === false : ctx.resolution?.flipWon === true;
     case 'before_attackers':
       // CR 602.5b: "Activate only during your turn, before attackers are declared."
       return g.active === controller && ['untap', 'upkeep', 'draw', 'main1', 'beginning_of_combat'].includes(g.step) && !g.combat?.attackersDeclared;

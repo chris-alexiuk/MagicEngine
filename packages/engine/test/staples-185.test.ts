@@ -566,7 +566,18 @@ const CARDS = [
   makeCard({ name: 'Aurlock Lite', type_line: 'Legendary Creature — Human Wizard', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Plotting cards from your hand costs {2} less.' }),
   makeCard({ name: 'Plotter Lite', type_line: 'Sorcery', mana_cost: '{3}', cmc: 3, oracle_text: 'You gain 3 life.\nPlot {3}' }),
   makeCard({ name: 'Reawakened Lite', type_line: 'Legendary Planeswalker — Jace', mana_cost: '{0}', loyalty: '5', oracle_text: "You can't cast Reawakened Lite during your first, second, or third turns of the game.\n+1: Draw a card, then discard a card." }),
+  makeCard({ name: 'Fuse Bomb Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'At the beginning of your upkeep, you may flip a coin. If you win the flip, put a fuse counter on this enchantment. If you lose the flip, remove a fuse counter from this enchantment.' }),
+  makeCard({ name: 'Danny Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Creatures you control have "Whenever one or more counters are put on this creature for the first time each turn, draw a card."' }),
+  makeCard({ name: 'Counter Pump Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Put a +1/+1 counter on target creature.' }),
+  makeCard({ name: 'Twinferno Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Choose one —\n• When you cast your next instant or sorcery spell this turn, copy that spell. You may choose new targets for the copy.\n• Target creature you control gains double strike until end of turn.' }),
   makeCard({ name: 'Choosy Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'As an additional cost to cast this spell, sacrifice a creature or pay {3}.\nYou gain 1 life.' }),
+  makeCard({ name: 'Jolrael Lite', type_line: 'Legendary Creature — Human Druid', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{0}: Until end of turn, creatures you control have base power and toughness each equal to the number of cards in your hand.' }),
+  makeCard({ name: 'Crawling Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever one or more land cards are put into your graveyard from anywhere for the first time each turn, create a 1/1 green Insect creature token.' }),
+  makeCard({ name: 'Land Toss Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Discard a card.' }),
+  makeCard({ name: 'Toph Lite', type_line: 'Legendary Creature — Human Warrior', mana_cost: '{0}', power: '*', toughness: '3', oracle_text: "Toph Lite's power is equal to the number of +1/+1 counters on lands you control." }),
+  makeCard({ name: 'Tyvar Lite', type_line: 'Legendary Creature — Elf Warrior', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Tap another untapped creature you control: Tyvar Lite gains indestructible until end of turn. Tap it.' }),
+  makeCard({ name: 'Any Counter Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever a counter is put on a creature you control, draw a card.' }),
+  makeCard({ name: 'Bonded Lite', type_line: 'Artifact Creature — Construct', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "This creature attacks each combat if able.\nThis creature can't attack alone." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5379,6 +5390,102 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  for (const friend of [false, true]) {
+    it(`a creature that must attack but can't attack alone: ${friend ? 'brings a friend' : 'stays home with no one to go with'} (CR 508.1d)`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      for (const id of g.zones.battlefield) if (g.objects[id]!.controller === 'alice') g.objects[id]!.tapped = true;
+      give(g, 'alice', 'Bonded Lite', 'battlefield', { sick: false });
+      if (friend) give(g, 'alice', 'Cub', 'battlefield', { sick: false });
+      g = toAttack(toStep(g, 'beginning_of_combat'));
+      const none = { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [] } } as const;
+      if (friend) expect(illegal(g, none as never)).toMatch(/attacks each combat/);
+      else expect(() => act(g, none as never)).not.toThrow();
+    });
+  }
+  it('Jolrael: base power and toughness equal to the cards in your hand, counted as it resolves', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const jol = give(g, 'alice', 'Jolrael Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: jol, ability: 0 }));
+    const n = g.zones.hand.alice!.length;
+    expect([chars(g, g.objects[jol]!).power, chars(g, g.objects[cub]!).toughness]).toEqual([n, n]);
+    give(g, 'alice', 'Cub', 'hand');
+    expect(chars(g, g.objects[cub]!).power).toBe(n);
+  });
+  it('Crawling Sensation: only the first land cards put into your graveyard each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Crawling Lite', 'battlefield');
+    const insects = () => g.zones.battlefield.filter((id) => g.objects[id]!.token && chars(g, g.objects[id]!).subtypes.includes('Insect')).length;
+    for (let i = 0; i < 2; i++) {
+      const forest = give(g, 'alice', 'Forest', 'hand');
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Land Toss Lite', 'hand') });
+      g = settle(g);
+      if (g.pending?.kind === 'discard') g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [forest] } } as never));
+      expect(g.objects[forest]!.zone).toBe('graveyard');
+    }
+    expect(insects()).toBe(1);
+  });
+  it("Toph, the Blind Bandit: power equal to the +1/+1 counters on lands you control", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const toph = give(g, 'alice', 'Toph Lite', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g.objects[forest]!.counters['+1/+1'] = 2;
+    g.objects[cub]!.counters['+1/+1'] = 5;
+    expect(chars(g, g.objects[toph]!).power).toBe(2);
+  });
+  it('Tyvar, the Pummeler: tap another creature; then he taps himself', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const tyvar = give(g, 'alice', 'Tyvar Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: tyvar, ability: 0, costs: { crew: [cub] } } as never));
+    expect([g.objects[cub]!.tapped, g.objects[tyvar]!.tapped]).toEqual([true, true]);
+    expect(chars(g, g.objects[tyvar]!).keywords.some((k) => k.id === 'indestructible')).toBe(true);
+    expect(illegal(g, { type: 'activate', player: 'alice', object: tyvar, ability: 0, costs: { crew: [tyvar] } } as never)).toBeTruthy();
+  });
+  it('a counter of any kind put on a creature: once for each counter', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Any Counter Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Counter Pump Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+  it("Goblin Bomb: declining the flip isn't losing it", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bomb = give(g, 'alice', 'Fuse Bomb Lite', 'battlefield');
+    g.objects[bomb]!.counters.fuse = 2;
+    g = toStep(g, 'main1', 'bob');
+    for (let i = 0; i < 40 && !(g.active === 'alice' && g.step === 'upkeep' && g.pending?.kind === 'may'); i++) {
+      if (g.pending?.kind === 'discard_to_hand_size') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'discard_to_hand_size', objects: g.zones.hand[g.pending.player]!.slice(0, g.pending.count) } } as never);
+      else if (g.pending?.kind === 'declare_attackers') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'declare_attackers', attacks: [] } } as never);
+      else if (g.priority) g = act(g, { type: 'pass', player: g.priority });
+    }
+    expect(g.pending?.kind).toBe('may');
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: false } } as never));
+    expect(g.objects[bomb]!.counters.fuse).toBe(2);
+  });
+  it('Danny Pink: a card the first time counters are put on a creature each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Danny Lite', 'battlefield');
+    const cub = give(g, 'alice', 'Cub', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    for (let i = 0; i < 2; i++) g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Counter Pump Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] }));
+    expect(g.objects[cub]!.counters['+1/+1']).toBe(2);
+    expect(g.zones.hand.alice!.length).toBe(hand + 1);
+  });
+  it('Twinferno: copies your next instant or sorcery spell this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Twinferno Lite', 'hand'), modes: [0] } as never));
+    const life = g.players.bob!.life;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] });
+    for (let i = 0; i < 10 && (g.pending || g.stack.length); i++) {
+      if (g.pending?.kind === 'copy_targets') g = act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'copy_targets' } } as never);
+      else if (g.pending) throw new Error(`pending ${g.pending.kind}`);
+      else g = act(g, { type: 'pass', player: g.priority! });
+    }
+    expect(g.players.bob!.life).toBe(life - 6);
+  });
   for (const dragon of [true, false]) {
     it(`Temple of the Dragon Queen: ${dragon ? 'untapped while you control a Dragon' : 'asks for a Dragon card otherwise'}`, () => {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');

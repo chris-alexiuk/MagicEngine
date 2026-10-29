@@ -511,7 +511,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const whileCounter =
         /^For as long as (?:that creature|that land|that permanent|it) has an? (\S+) counter on it, (?:it's|it is) (an? .+)$/.exec(s) ??
         (() => {
-          const m = /^(?:That creature|That land|That permanent|It) is (an? .+?) for as long as it has an? (\S+) counter on it$/.exec(s);
+          const m = /^(?:(?:That creature|That land|That permanent|It) is|It's) (an? .+?) for as long as it has an? (\S+) counter on it$/.exec(s);
           return m ? ([m[0], m[2], m[1]] as unknown as RegExpExecArray) : null;
         })();
       if (whileCounter && b.it && b.it.ref !== 'self') {
@@ -1423,7 +1423,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // CR 603.7: "When you next cast an instant or sorcery spell this turn, copy that spell."
-      const nextCast = /^When you next cast (?:a|an) (.+?) this turn, (.+)$/.exec(s);
+      // Twinferno: "When you cast your next instant or sorcery spell this turn, copy that spell."
+      const nextCast = /^When you (?:next cast (?:a|an)|cast your next) (.+?) this turn, (.+)$/.exec(s);
       if (nextCast) {
         const spell = parseFilter(nextCast[1]!, b);
         if (!spell || spell.plural || spell.filter.zone !== 'stack') return null;
@@ -2723,11 +2724,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Veil of Summer: "Spells you control can't be countered this turn."; "Creature spells you control can't be countered
   // this turn."
-  const noCounter = /^(?:(.+?) )?[Ss]pells you control can't be countered this turn$/.exec(s);
+  // Domri, Anarch of Bolas: "Creature spells you cast this turn can't be countered." — cast ones (not copies, CR 707.10).
+  const noCounter = /^(?:(.+?) )?[Ss]pells you (control can't be countered this turn|cast this turn can't be countered)$/.exec(s);
   if (noCounter) {
     const pf = noCounter[1] ? parseFilter(`${noCounter[1].toLowerCase()} spell`, b) : null;
     if (noCounter[1] && (!pf || pf.plural)) return null;
-    const filter = pf ? (({ zone: _z, ...f }) => f)(pf.filter) : null;
+    const base = pf ? (({ zone: _z, ...f }) => f)(pf.filter) : null;
+    const filter = /^cast/.test(noCounter[2]!) ? { ...(base ?? {}), notCopy: true as const } : base;
     return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'spells_uncounterable', until: 'eot', ...(filter ? { filter } : {}) }];
   }
   // Veil of Summer: "You and permanents you control gain hexproof from blue and from black until end of turn."
@@ -4633,6 +4636,16 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     .replace(/^(.+?) (becomes? )an? ((?:[A-Za-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
     .replace(/^(.+?) become ((?:[a-z]+ )*?)creatures with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 become a $3/$4 $2creature$5')
     .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5');
+  // Jolrael, Mwonvuli Recluse: "Until end of turn, creatures you control have base power and toughness each equal to the
+  // number of cards in your hand." — counted as it resolves (CR 608.2h).
+  const baseEach = /^(.+?) ha(?:s|ve) base power and toughness each equal to (.+?) until end of turn$/.exec(c);
+  if (baseEach) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(baseEach[1]!, b);
+      const n = what ? parseCount(baseEach[2]!, b) : null;
+      return what && n ? [{ type: 'modify', what: what.ref, setPower: n, setToughness: n, until: 'eot' }] : null;
+    });
+  }
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
   const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+)\/(\d+) until end of turn$/.exec(c);
   if (base) {
@@ -4899,7 +4912,8 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   }
   // "Target creature must be blocked this turn if able." / "~ can't be blocked by more than one creature this turn."
   // Gingerbrute: "This creature can't be blocked this turn except by creatures with haste."
-  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can't be blocked this turn except by .+|can block only .+? this turn)$/.exec(c);
+  // Anzrag, the Quake-Mole: "~ must be blocked each combat this turn if able." — in every combat of the turn.
+  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can't be blocked this turn except by .+|can block only .+? this turn)$/.exec(c.replace(/ must be blocked each combat this turn if able$/, ' must be blocked this turn if able'));
   if (combat) {
     const r = attempt(b, (b) => {
       const rule = parseCombatRule(combat[2]!.replace(' this turn', ''), b);

@@ -337,7 +337,13 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         });
         attacks.length = 0;
         attacks.push(...free);
-        if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) attacks.length = 0;
+        if (attacks.length === 1 && hasRule(g, g.objects[attacks[0]!.attacker]!, 'cant_attack_alone')) {
+          // It must attack (CR 508.1d): with another creature that can attack at no cost, if there is one.
+          const lone = attacks[0]!.attacker;
+          const friend = mustAttack(g, g.objects[lone]!) ? p.attackers.find((id) => id !== lone && p.targets.some((t) => !attackRestriction(g, g.objects[id]!, t) && !attackTax(g, [{ attacker: id, target: t }]))) : undefined;
+          if (friend) attacks.push({ attacker: friend, target: pick(p.targets.filter((t) => !attackRestriction(g, g.objects[friend]!, t) && !attackTax(g, [{ attacker: friend, target: t }]))) });
+          else attacks.length = 0;
+        }
       }
       // CR 701.43d: exert some of those that can be.
       const exert = attacks.map((a) => a.attacker).filter((id) => p.exertable?.includes(id) && rnd() < 0.6);

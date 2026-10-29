@@ -5220,6 +5220,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       (x) => x.type === 'counters' && x.delta > 0 && x.object === e.object && (t.counter === undefined || x.counter === e.counter) && (!t.byYou || x.by === check.controller),
     );
     if (together[0] !== e) return [];
+    // Danny Pink: "for the first time each turn" — counters put on that object earlier this turn don't count again.
+    if (t.firstEachTurn && check.g.turnLog.firstCounters?.[`${o.id}:${o.zcc}`] !== e) return [];
     const amount = together.reduce((n, x) => n + (x.type === 'counters' ? x.delta : 0), 0);
     // Midnight Clock: "When the twelfth hour counter is put on this artifact" — these counters took it to that many.
     if (typeof t.reaches === 'number') {
@@ -5307,6 +5309,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
           return Boolean(xo && xo.zone === 'graveyard' && matchesFilter(check.g, xo, filter, { controller: check.controller, anyZone: true }));
         });
         if (matching[0] !== e) return [];
+        // Crawling Sensation: "for the first time each turn" — no such card went to that graveyard earlier this turn.
+        if (t.firstEachTurn) {
+          const first = (check.g.turnLog.toGraveyard ?? []).find(
+            (x) => (!filter.types || filter.types.some((ty) => x.types.includes(ty))) && (filter.token === undefined || x.token === filter.token) && (!filter.owner || (filter.owner === 'you' ? x.owner === check.controller : x.owner !== check.controller)),
+          );
+          if (first?.event !== e) return [];
+        }
         return [t.fromZone ? { created: matching.flatMap((x) => (x.type === 'moved' && check.g.objects[x.object] ? [refTo(check.g.objects[x.object]!)] : [])) } : {}];
       }
       return [{ object: refTo(o) }];

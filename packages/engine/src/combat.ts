@@ -331,6 +331,9 @@ export function declareAttackers(
     if (!seen.has(id) && canAttack(g, o) && mustAttack(g, o) && legalTargets.some((t) => open(t) && !attackRestriction(g, o, t) && !attackTax(g, [{ attacker: id, target: t }]))) {
       // With a limit reached, the requirement is obeyed as far as possible: no creature without one in its place (CR 508.1d).
       if (full && attacks.every((a) => mustAttack(g, g.objects[a.attacker]!))) continue;
+      // Bonded Construct: "can't attack alone" — required only if another creature could attack with it at no cost (CR 508.1d).
+      const free = (other: string) => other !== id && canAttack(g, g.objects[other]!) && legalTargets.some((t) => open(t) && !attackRestriction(g, g.objects[other]!, t) && !attackTax(g, [{ attacker: other, target: t }]));
+      if (hasRule(g, o, 'cant_attack_alone') && !attacks.length && !g.zones.battlefield.some(free)) continue;
       throw new RulesError(`${nameOf(g, o)} ${goaders(g, o).length ? 'is goaded and must attack' : 'attacks each combat'} if able.`);
     }
   }

@@ -318,7 +318,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const filter = bindFilter(ctx, e.filter);
       return g.zones.battlefield
         .filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source }))
-        .reduce((n, id) => n + Object.values(g.objects[id]!.counters).reduce((a, b) => a + (b ?? 0), 0), 0);
+        .reduce((n, id) => n + (e.counter ? (g.objects[id]!.counters[String(e.counter)] ?? 0) : Object.values(g.objects[id]!.counters).reduce((a, b) => a + (b ?? 0), 0)), 0);
     }
     case 'cards': {
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : livePlayers(g).filter((p) => e.who === 'each' || p !== ctx.controller);

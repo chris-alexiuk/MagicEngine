@@ -118,6 +118,9 @@ export class ParserRegistry {
         // Rakdos, Lord of Riots: "You can't cast Rakdos unless an opponent lost life this turn." — cast it only if that holds.
         const castUnless = new RegExp(`^You can't cast (?:~|this spell|${names}) unless (.+)\\.$`).exec(l);
         if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
+        // Khalni Heart Expedition: "Remove three quest counters from this enchantment and sacrifice it: …" — both costs.
+        const removeAndSac = /^(Remove (?:a|an|\w+) \S+ counters? from (?:this \w+|~)) and sacrifice it: (.+)$/.exec(l);
+        if (removeAndSac) return [`${removeAndSac[1]}, Sacrifice ~: ${removeAndSac[2]}`];
         // Jace Reawakened: "You can't cast Jace Reawakened during your first, second, or third turns of the game."
         if (new RegExp(`^You can't cast (?:~|this spell|${names}) during your first, second, or third turns of the game\\.$`).test(l)) return ["Cast this spell only if it isn't your first, second, or third turn of the game."];
         // Aettir and Priwen: "… has base power and toughness X/X, where X is your life total." — each equal to that.

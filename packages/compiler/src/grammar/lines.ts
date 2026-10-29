@@ -298,11 +298,13 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     return { type: 'discard', amount, filter };
   }
   // "Tap an untapped creature you control", "tap two untapped creatures you control that each share a color with it"
-  const tap = /^[Tt]ap (a|an|one|two|three|four|five|six|seven|eight|nine|ten) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
+  // Tyvar, the Pummeler: "Tap another untapped creature you control" — not this one.
+  const tap = /^[Tt]ap (a|an|another|one|two|three|four|five|six|seven|eight|nine|ten) untapped (.+?)( that each share a color with (?:it|~))?$/.exec(item);
   if (tap && b) {
-    const amount = parseAmount(tap[1]!.replace(/^an$/, 'a'));
+    const amount = parseAmount(tap[1]!.replace(/^an(?:other)?$/, 'a'));
     const pf = parseFilter(tap[2]!, b);
     if (!pf || typeof amount !== 'number' || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || pf.filter.zone) return null;
+    if (tap[1] === 'another') pf.filter.other = true;
     if (tap[3]) pf.filter.sharesColorWithSource = true;
     return { type: 'tap_creatures', amount, filter: pf.filter };
   }
@@ -1504,16 +1506,19 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // The Gitrog Monster: "Whenever one or more land cards are put into your graveyard from anywhere" — once per batch.
   // Hedge Shredder: "Whenever one or more land cards are put into your graveyard from your library, put them onto the
   // battlefield tapped." — "them" are the cards of that batch.
-  const intoYardBatch = /^one or more ((?:.+? )?cards) are put into (your|a|an opponent's) graveyard from (anywhere( other than the battlefield)?|your library)$/.exec(t);
+  // Crawling Sensation: "… from anywhere for the first time each turn".
+  const intoYardBatch = /^one or more ((?:.+? )?cards) are put into (your|a|an opponent's) graveyard from (anywhere( other than the battlefield)?|your library)( for the first time each turn)?$/.exec(t);
   if (intoYardBatch) {
     const pf = parseFilter(`${intoYardBatch[1]} in a graveyard`, b);
     if (pf && pf.plural && pf.filter.zone === 'graveyard') {
       const { zone: _z, ...filter } = pf.filter;
       filter.token = false;
       if (intoYardBatch[2] !== 'a') filter.owner = intoYardBatch[2] === 'your' ? 'you' : 'opponent';
+      // Only card types are known of the earlier cards (and only from anywhere).
+      if (intoYardBatch[5] && (intoYardBatch[3] !== 'anywhere' || Object.keys(filter).some((k) => !['types', 'token', 'owner'].includes(k)))) return null;
       const fromLibrary = intoYardBatch[3] === 'your library';
       if (fromLibrary) b.named['them'] = { ref: 'created' };
-      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, batch: true, ...(intoYardBatch[4] ? { notFromBattlefield: true } : {}), ...(fromLibrary ? { fromZone: 'library' } : {}) }, it: null, player: null };
+      return { trigger: { type: 'put_into_graveyard', subject: { ref: 'all', filter }, batch: true, ...(intoYardBatch[4] ? { notFromBattlefield: true } : {}), ...(fromLibrary ? { fromZone: 'library' } : {}), ...(intoYardBatch[5] ? { firstEachTurn: true } : {}) }, it: null, player: null };
     }
   }
   // Bloodchief Ascension: "Whenever a card is put into an opponent's graveyard from anywhere" — "that player" is its owner.
@@ -1603,7 +1608,9 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Exemplar of Light: "Whenever you put one or more +1/+1 counters on this creature" — counters you put on (CR 122.6).
   // Generous Patron: "Whenever you put one or more counters on a creature you don't control" — of any kind.
   const youPut = /^you put one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters on (~|(?:a|an|another) (.+?))$/.exec(t);
-  const countersOn = /^one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters are put on (~|(?:a|an|another) (.+?))$/.exec(t) ?? youPut;
+  // Danny Pink: "Whenever one or more counters are put on this creature for the first time each turn".
+  const firstTime = / for the first time each turn$/.test(t) && !youPut;
+  const countersOn = /^one or more (?:([+-]\d+\/[+-]\d+|\w+) )?counters are put on (~|(?:a|an|another) (.+?))$/.exec(t.replace(/^(one or more (?:\S+ )?counters are put on ~) for the first time each turn$/, '$1')) ?? youPut;
   if (countersOn) {
     let subject: Ref = { ref: 'self' };
     // All Will Be One: "Whenever you put one or more counters on a permanent or player" — players too (CR 122.1).
@@ -1621,14 +1628,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       b.named['that permanent'] = { ref: 'trigger_object' };
     }
     return {
-      trigger: { type: 'counters_put', ...(countersOn[1] ? { counter: countersOn[1] } : {}), subject, ...(youPut ? { byYou: true } : {}), ...(orPlayer ? { players: true } : {}) },
+      trigger: { type: 'counters_put', ...(countersOn[1] ? { counter: countersOn[1] } : {}), subject, ...(youPut ? { byYou: true } : {}), ...(orPlayer ? { players: true } : {}), ...(firstTime ? { firstEachTurn: true } : {}) },
       it: subject.ref === 'self' ? subject : { ref: 'trigger_object' },
       player: null,
     };
   }
   // Fathom Mage: "Whenever a +1/+1 counter is put on this creature" — once for each counter.
   // Flourishing Defenses: "Whenever a -1/-1 counter is put on a creature".
-  const aCounter = /^an? ([+-]\d+\/[+-]\d+|\w+) counter is put on (~|(?:a|an|another) (.+))$/.exec(t);
+  // Hollowmurk Siege: "Whenever a counter is put on a creature you control" — of any kind.
+  const aCounter = /^an? (?:([+-]\d+\/[+-]\d+|(?!counter\b)\w+) )?counter is put on (~|(?:a|an|another) (.+))$/.exec(t);
   if (aCounter) {
     let subject: Ref = { ref: 'self' };
     if (aCounter[3]) {
@@ -1638,7 +1646,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       subject = { ref: 'all', filter: pf.filter };
       b.named['that creature'] = { ref: 'trigger_object' };
     }
-    return { trigger: { type: 'counters_put', counter: aCounter[1]!, subject, each: true }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
+    return { trigger: { type: 'counters_put', ...(aCounter[1] ? { counter: aCounter[1] } : {}), subject, each: true }, it: subject.ref === 'self' ? subject : { ref: 'trigger_object' }, player: null };
   }
   // Midnight Clock: "When the twelfth hour counter is put on this artifact" — as its count of them reaches twelve.
   const nthCounter = /^the (first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth) ([+-]\d+\/[+-]\d+|\w+) counter is put on ~$/.exec(t);
@@ -2937,13 +2945,19 @@ export const costModifierRule: GrammarRule = {
       return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'each', filter: {}, change: 'more', exceptCastersTurn: true, ...a } as CostModifierNode };
     }
     // Alisaie Leveilleur: "The second spell you cast each turn costs {2} less to cast."
-    const firstEach = /^The (first|second) ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}) less to cast$/.exec(body);
-    if (firstEach) {
+    // Eluge, the Shoreless Sea: "The first instant or sorcery spell you cast each turn costs {U} (or {1}) less to cast for each
+    // land you control with a flood counter on it." — the "(or {1})" is gone by here (read as reminder text); a colored
+    // reduction takes generic mana when there's none of that color left, as the engine does.
+    const firstEach = /^The (first|second) ((?:[a-z]+ )*)spell you cast each turn costs (\{\d+\}|\{[WUBRG]\}) less to cast( for each (.+))?$/.exec(body);
+    if (firstEach && (!/\{[WUBRG]\}/.test(firstEach[3]!) || firstEach[4])) {
       const a = amountOf(firstEach[3]!);
       const pf = firstEach[2] ? parseFilter(`${firstEach[2]}spells`, b) : null;
       if (!a || (firstEach[2] && !pf)) return null;
       const { zone: _z, ...filter } = pf?.filter ?? {};
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...(firstEach[1] === 'second' ? { nthEachTurn: 2 } : {}), ...a } as CostModifierNode };
+      const each = firstEach[5] ? parseForEach(firstEach[5], b) : null;
+      if (firstEach[5] && (!each || typeof a.amount !== 'number')) return null;
+      const amount = each ? { amount: { ...each, times: (each.times ?? 1) * (a.amount as number) } } : {};
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: 'you', filter, change: 'less', firstEachTurn: true, ...(firstEach[1] === 'second' ? { nthEachTurn: 2 } : {}), ...a, ...amount } as CostModifierNode };
     }
     // Herald's Horn, Goreclaw: "Creature spells you cast of the chosen type / with power 4 or greater cost {1} less to cast."
     // Temur Battlecrier: "During your turn, spells you cast cost {1} less to cast for each creature you control with power
@@ -3982,6 +3996,9 @@ export const abilityCostReductionRule: GrammarRule = {
     // Fighter Class: "Equip abilities you activate cost {2} less to activate." (CR 702.6a: generic mana only, CR 601.2f)
     const equip = /^Equip abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
     if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1]) } } as StaticAbility;
+    // Silver-Fur Master: "Ninjutsu abilities you activate cost {1} less to activate." (commander ninjutsu too, CR 702.49d)
+    const ninjutsu = /^Ninjutsu abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
+    if (ninjutsu) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, ninjutsuOnly: true, amount: Number(ninjutsu[1]) } } as StaticAbility;
     const m = /^Activated abilities of (.+?) cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
     if (!env || !m) return null;
     const pf = parseFilter(m[1]!.replace(/ and /g, ' or '), new Binder(env));

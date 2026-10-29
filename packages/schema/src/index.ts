@@ -480,6 +480,8 @@ export interface ObjectFilter {
   goaded?: true;
   /** Relentless Assault: it was declared as an attacker this turn (as this object, CR 400.7). */
   attackedThisTurn?: true;
+  /** Domri, Anarch of Bolas: "Creature spells you cast" — not a copy of a spell (CR 707.10). */
+  notCopy?: true;
   /** Avenging Arrow: "that dealt damage this turn" */
   dealtDamageThisTurn?: true;
   /** Steel Hellkite: its controller was dealt combat damage by the source this turn. */
@@ -565,7 +567,7 @@ export type AmountExpr = (
   // Cavern-Hoard Dragon: `most` — the greatest number any one opponent controls.
   | { kind: 'count'; filter: ObjectFilter; most?: true }
   /** Maester Seymour, Lux Artillery: "the number of counters among creatures you control" — every counter on them. */
-  | { kind: 'counters_among'; filter: ObjectFilter }
+  | { kind: 'counters_among'; filter: ObjectFilter; /** Toph: only counters of this kind. */ counter?: string }
   // Coalition Relic: "for each charge counter removed this way" — by this resolution's remove-counters effects.
   | { kind: 'counters_removed' }
   /** Moraug: "for each time it has attacked this turn" (CR 508.1: each time it's declared as an attacker). */
