@@ -1,5 +1,6 @@
 import type { CardDef, FaceDef, TargetSpec } from '@mtg/schema';
 import { chars, hasKeyword, hasType, matchesFilter, protectedFromAttachment } from './characteristics.js';
+import { replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
 import { createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
@@ -164,9 +165,25 @@ export function createToken(g: GameState, face: FaceDef, controller: PlayerId, e
   o.token = true;
   o.sick = true;
   if (opts.tapped) o.tapped = true;
+  intrinsicCounters(g, o);
   onEnterBattlefield(g, o, events);
   events.push({ type: 'created', object: o.id, controller });
   return o;
+}
+
+/**
+ * CR 306.5b / 310.4b: a planeswalker token enters with its printed loyalty, a battle token with its defense (a token copy of
+ * Jace has Jace's loyalty, CR 707.2) — counters it enters with, so replaced like others (CR 614.1a).
+ */
+function intrinsicCounters(g: GameState, o: GameObject): void {
+  const face = faceOf(g, o);
+  const put = (counter: 'loyalty' | 'defense', printed: string | undefined) => {
+    if (printed === undefined || !/^\d+$/.test(printed) || o.counters[counter]) return;
+    const n = replaceQuantity(g, 'counters', Number(printed), { player: o.controller, object: o, counter });
+    if (n > 0) o.counters[counter] = n;
+  };
+  put('loyalty', face.loyalty);
+  put('defense', face.defense);
 }
 
 /** CR 114.1–114.2: an emblem with these abilities, put into the command zone; it's owned and controlled by `player`. */
@@ -184,12 +201,15 @@ export function createEmblem(g: GameState, face: FaceDef, player: PlayerId): Gam
 }
 
 /** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
-export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): GameObject {
+export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number> } = {}): GameObject {
   const o = createObject(g, of.card, controller, 'battlefield');
   o.face = of.face;
   o.token = true;
   o.sick = true;
   if (opts.tapped) o.tapped = true;
+  // Littjara Mirrorlake: "… except it enters with an additional +1/+1 counter on it" (CR 614.1c).
+  for (const [counter, n] of Object.entries(opts.counters ?? {})) if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+  intrinsicCounters(g, o);
   onEnterBattlefield(g, o, events);
   events.push({ type: 'created', object: o.id, controller });
   return o;

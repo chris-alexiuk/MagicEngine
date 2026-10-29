@@ -115,6 +115,12 @@ export class ParserRegistry {
         const names = [ctx.faceName, ctx.faceName.split(',')[0]!].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
         const pair = new RegExp(`^((?:[A-Z][\\w' ]+ — )?As long as [^,]+, )((?:this creature|${names}) gets? [+-]\\d+\\/[+-]\\d+) and ((?:other )?creatures you control (?:get|have) [^"]+)\\.$`).exec(l);
         if (pair) return [`${pair[1]}${pair[2]}.`, `${pair[1]}${pair[3]}.`];
+        // Multiversal Passage: "As this land enters, choose a basic land type. Then you may pay 2 life. If you don't, it enters
+        // tapped." — two replacement effects as it enters, in that order (CR 614.12).
+        const thenPay = /^(As (?:this land|~) enters), (choose a basic land type)\. Then (you may pay \d+ life\. If you don't, it enters tapped\.)$/.exec(l);
+        if (thenPay) return [`${thenPay[1]}, ${thenPay[2]}.`, `${thenPay[1]}, ${thenPay[3]}`];
+        // "This land is the chosen type." — a land with no land types of its own just has that one (CR 305.7 has nothing to replace).
+        if (/^(?:This land|~) is the chosen type\.$/.test(l) && /^Land$/.test(ctx.typeLine.trim())) return [l.replace(/\.$/, ' in addition to its other types.')];
         const both = /^(.+?) enters tapped and (doesn't untap during your untap step|with .+ counters? on it)\.$/.exec(l);
         if (!both) return [l];
         return [`${both[1]} enters tapped.`, both[2]!.startsWith('with') ? `${both[1]} enters ${both[2]}.` : `${both[1]} ${both[2]}.`];
@@ -152,6 +158,7 @@ export class ParserRegistry {
     }
     // Abilities below a class level bar (CR 716.2a) or a level symbol (CR 711.2a) exist only at that level.
     let gate: ConditionNode | undefined;
+    let wordOptions: string[] | undefined;
     const isClass = /\bClass\b/.test(ctx.typeLine);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
@@ -215,6 +222,19 @@ export class ParserRegistry {
           continue;
         }
       }
+      // March of Swirling Mist: "As an additional cost to cast this spell, you may exile any number of blue cards from your hand.
+      // This spell costs {2} less to cast for each card exiled this way." — as many as you choose (CR 601.2b, 601.2f).
+      const exileAny = /^As an additional cost to cast (?:this spell|~), you may exile any number of (.+?) cards from your hand\. (?:This spell|~) costs \{(\d+)\} less to cast for each card exiled this way\.$/.exec(line);
+      if (exileAny) {
+        const one = /^[aeiou]/i.test(exileAny[1]!) ? 'an' : 'a';
+        const base = this.parseBlock([`As an additional cost to cast this spell, exile ${one} ${exileAny[1]} card from your hand.`], env, line);
+        const cost = base?.kind === 'static' && base.effect.type === 'additional_cost' ? (base.effect as unknown as { cost: { type: string; amount?: unknown; from?: string } }).cost : null;
+        if (cost?.type === 'exile_cards' && cost.from === 'hand' && cost.amount === 1) {
+          cost.amount = 'any';
+          result.abilities.push(base!, { kind: 'static', text: line, effect: { type: 'cost_modifier', self: true, change: 'less', amount: Number(exileAny[2]), perExiled: true } } as AbilityNode);
+        } else result.unparsed.push(line);
+        continue;
+      }
       // Necromancy: "You may cast this spell as though it had flash. If you cast it any time a sorcery couldn't have been cast,
       // the controller of the permanent it becomes sacrifices it at the beginning of the next cleanup step." — flash, and (as
       // the permanent it became) a delayed trigger for the next cleanup step (CR 514.3a).
@@ -264,6 +284,34 @@ export class ParserRegistry {
             trigger: { type: 'leaves', subject: { ref: 'self' } },
             effects: [{ type: 'sacrifice_linked' }],
           } as AbilityNode);
+        } else result.unparsed.push(line);
+        continue;
+      }
+      // The Sieges, Mirrodin Besieged: "As this enchantment enters, choose Khans or Dragons." then "• Khans — [ability]" and
+      // "• Dragons — [ability]" — each ability is the permanent's only while that word is the one chosen (CR 614.12).
+      const words = /^As (?:this enchantment|this permanent|~) enters, choose ([A-Z][A-Za-z]+) or ([A-Z][A-Za-z]+)\.$/.exec(line);
+      if (words && lines.slice(i + 1).some((l) => l.startsWith(`• ${words[1]} — `) || l.startsWith(`• ${words[2]} — `))) {
+        wordOptions = [words[1]!, words[2]!];
+        result.abilities.push({ kind: 'static', text: line, effect: { type: 'as_enters', choice: 'word', options: wordOptions } } as AbilityNode);
+        continue;
+      }
+      const wordBullet = wordOptions ? /^• ([A-Z][A-Za-z]+) — (.+)$/.exec(line) : null;
+      if (wordBullet && wordOptions!.includes(wordBullet[1]!)) {
+        const wordGate: ConditionNode = { type: 'chosen_word', word: wordBullet[1]! };
+        const inner = this.keywords.parseLine(wordBullet[2]!);
+        if (inner) {
+          for (const kw of inner) {
+            const abilities = this.expandKeyword(kw, env);
+            if (abilities) kw.abilities = abilities;
+          }
+          if (!inner.every(keywordSupported)) result.manualKeywords.push(line);
+          else result.abilities.push({ kind: 'static', text: line, gate: wordGate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: inner } });
+          continue;
+        }
+        const node = this.parseBlock([wordBullet[2]!], env, line);
+        if (node) {
+          node.gate = wordGate;
+          result.abilities.push(node);
         } else result.unparsed.push(line);
         continue;
       }

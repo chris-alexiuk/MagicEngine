@@ -716,7 +716,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     const players = refPlayers(ctx, ref(node, 'who'));
     if (!players.length) return true;
-    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : g.turn;
+    // "until your next turn" ends as it begins; "until the end of your next turn" (Single Combat) with it.
+    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'end_of_your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') : g.turn;
     g.castBans = [
       ...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn),
       { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}), ...(node.fromZones ? { fromZones: node.fromZones as string[] } : {}) },
@@ -961,10 +962,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const { halfStats: _h, ...rest } = except;
       except = { ...rest, power: half('power'), toughness: half('toughness') };
     }
-    const copies = (node.copyEach ? originals : originals.slice(0, 1)).map((original) => (original ? withExceptions(ctx.g, copiable(original), except) : undefined));
+    const sources = node.copyEach ? originals : originals.slice(0, 1);
+    const copies = sources.map((original) => (original ? withExceptions(ctx.g, copiable(original), except) : undefined));
     if (!copies.length) return true;
     const created: ObjectRef[] = [];
-    for (const copy of copies) for (const p of players) {
+    for (const [ci, copy] of copies.entries()) for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
       const copiedFace = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
       const madeFace = copiedFace ?? face;
@@ -974,7 +976,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const kinds = each ? each.faces.flatMap((f) => Array.from({ length: count * each.times }, () => f)) : Array.from({ length: count }, () => face);
       for (const kind of kinds) {
         const opts = { tapped: Boolean(node.tapped) };
-        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, opts) : createToken(ctx.g, kind!, p, ctx.events, opts);
+        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, { ...opts, counters: copyEntersWith(ctx, except, copiedFace, p, sources[ci]) }) : createToken(ctx.g, kind!, p, ctx.events, opts);
         if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
         // Soaring Lightbringer: "… tapped and attacking that player" (CR 508.4).
         const at = node.attackingPlayer ? refPlayers(ctx, node.attackingPlayer as Ref)[0] : undefined;
@@ -1552,7 +1554,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // "Look at the top four cards of your library, then put them back in any order."
   reorder_top(node, ctx) {
-    return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry', true);
+    // Portent: "Look at the top three cards of target player's library, then put them back in any order."
+    const owner = node.library ? refPlayers(ctx, ref(node, 'library'))[0] : undefined;
+    return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry', true, owner);
   },
 
   // "Return a land you control to its owner's hand." — chosen as it resolves (CR 608.2d).
@@ -2704,6 +2708,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   search(node, ctx) {
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;
+    // Winds of Abandon: "For each creature exiled this way, its controller searches their library for a basic land card." —
+    // once for each of them, in turn order (CR 101.4).
+    if (node.forEachMoved) {
+      const order = apnap(g);
+      const players = movedThisWay(ctx, node.forEachMoved as { how: string; types?: string[] }).map((m) => m.controller).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      const { forEachMoved: _f, ...rest } = node;
+      return { expand: players.map((p) => ({ ...structuredClone(rest), who: { ref: 'you' }, asPlayer: p })) };
+    }
     // Field of Ruin: "Each player searches their library for a basic land card, …" — each in turn (APNAP, CR 101.4).
     // Scheming Symmetry: "Choose two target players. Each of them searches …" — likewise.
     const searchers = node.who ? refPlayers(ctx, ref(node, 'who')) : [];
@@ -3446,7 +3458,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     // Black Sun's Twilight: "a creature card with mana value X or less" — the X paid.
     const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
-    const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
+    // Rise of the Witch-king: "return another permanent card" — not one this resolution sacrificed.
+    const notMoved = node.notMoved ? new Set(movedThisWay(ctx, { how: String(node.notMoved) }).map((m) => m.id)) : null;
+    const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => !notMoved?.has(id) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
     if (!candidates.length) return true;
     // Technomancer: "any number of …"; Lively Dirge: "… with total mana value 4 or less".
     const max = Math.min(node.amount === 'all' ? candidates.length : amountOf(ctx, node.amount ?? 1), candidates.length);
@@ -3582,7 +3596,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const p = memo.players[i]!;
       const hand = [...zoneList(g, 'hand', p)];
       let chosen: ObjectId[];
-      if (node.mode === 'all') chosen = hand;
+      // Teferi's Puzzle Box: all of them, "in any order" — the order chosen is the order they go to the bottom.
+      if (node.mode === 'all' && node.ordered && hand.length > 1) {
+        if (!answer) {
+          memo.i = i;
+          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: hand.length, max: hand.length, text: 'Put the cards in your hand on the bottom of your library in the order you choose (the first goes on the bottom first).' } };
+        }
+        chosen = answer.objects;
+        if (chosen.length !== hand.length || new Set(chosen).size !== chosen.length || !chosen.every((id) => hand.includes(id))) throw new RulesError('Choose every card in your hand, in order.');
+        answer = null;
+      } else if (node.mode === 'all') chosen = hand;
       else {
         const max = node.mode === 'up_to' ? Math.min(Number(node.upTo), hand.length) : hand.length;
         if (!answer) {
@@ -4428,8 +4451,22 @@ function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefi
   c.attackers[o.id] = { zcc: o.zcc, target, blocked: false, blockers: [] };
 }
 
-function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false): EffectResult {
-  const library = zoneList(ctx.g, 'library', ctx.controller);
+/** CR 614.1c: a copy exception's "it enters with an additional +1/+1 counter on it" for a token copy — those counters, replaced. */
+function copyEntersWith(ctx: EffectContext, except: CopyExcept | undefined, face: FaceDef | undefined, player: PlayerId, original: GameObject | undefined): Record<string, number> | undefined {
+  if (!except?.entersWith?.length) return undefined;
+  const out: Record<string, number> = {};
+  for (const w of except.entersWith) {
+    if (w.ifType && !face?.types.includes(w.ifType)) continue;
+    if (w.ifControlled && original?.controller !== player) continue;
+    const amount = w.amount === 'X' ? ctx.x : w.amount;
+    const n = replaceQuantity(ctx.g, 'counters', amount, { player, counter: w.counter });
+    if (n > 0) out[w.counter] = (out[w.counter] ?? 0) + n;
+  }
+  return out;
+}
+
+function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false, owner?: PlayerId): EffectResult {
+  const library = zoneList(ctx.g, 'library', owner ?? ctx.controller);
   const looked = library.slice(0, n);
   if (!looked.length) return true;
   const answer = ctx.answer?.kind === kind ? ctx.answer : null;
@@ -5282,7 +5319,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

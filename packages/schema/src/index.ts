@@ -349,6 +349,10 @@ export interface ObjectFilter {
   notTypes?: string[];
   notSubtypes?: string[];
   notSupertypes?: string[];
+  /** Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number" (the source's). */
+  statIsChosenNumber?: true;
+  /** Drown in the Loch: "with mana value less than or equal to the number of cards in its controller's graveyard" — each object's own. */
+  manaValueAtMostControllersGraveyard?: true;
   /** Any one of these colors. */
   colors?: Color[];
   notColors?: Color[];
@@ -674,6 +678,9 @@ export const RULE_FLAGS = [
   'damage_by_toughness',
   /** Port Razer: "can't attack a player it has already attacked this turn" (CR 508.1c). */
   'cant_attack_same_player',
+  /** Teferi, Master of Time: "You may activate loyalty abilities of Teferi on any player's turn any time you could cast an
+   * instant." (CR 606.3: an effect may change when.) */
+  'loyalty_instant',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -898,7 +905,15 @@ export interface CopyExcept {
    * Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature" — not a copiable value but a
    * replacement effect as it enters (CR 614.1c), checked against what it copied.
    */
-  entersWith?: { counter: string; amount: number; ifType?: string }[];
+  /** Altered Ego: "X additional +1/+1 counters" — the X paid for it. Undercover Operative: `ifControlled`, "if you control that creature". */
+  entersWith?: { counter: string; amount: number | 'X'; ifType?: string; ifControlled?: true }[];
+  /**
+   * Machine God's Effigy: "it's an artifact" — its card types become these (CR 205.1a), and subtypes that don't go with
+   * them are gone (CR 205.3d). Imposter Mech: "it's a Vehicle artifact … and it loses all other card types".
+   */
+  setTypes?: string[];
+  /** Jace, Mirror Mage: "its starting loyalty is 1". */
+  loyalty?: number;
 }
 
 export interface ContinuousEffectNode extends EffectNode {
@@ -966,7 +981,10 @@ export interface AsEntersNode extends EffectNode {
   /** player: "As ~ enters, choose a player" (`opponent`: "choose an opponent"). */
   /** discard_or_leave: Mox Diamond's "If ~ would enter, you may discard a land card instead. … If you don't, put it into its owner's graveyard." */
   /** sacrifice_or_leave: Lake of the Dead's "If this land would enter, sacrifice a Swamp instead. …" (`amount` of `filter`). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave';
+  /** word: the Sieges' "As this enchantment enters, choose Khans or Dragons." (`options`; abilities gated by `chosen_word`). */
+  /** land_type: Multiversal Passage's "choose a basic land type" (`chosen.landType`; "is the chosen type" adds it). */
+  /** number: Talion's "choose a number between 1 and 10" (`options`; `chosen.number`). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number';
   opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */
@@ -1030,6 +1048,8 @@ export interface AttackTaxNode extends EffectNode {
   condition?: ConditionNode;
   /** Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." — not at any price. */
   banned?: true;
+  /** CR 509.1d: Archangel of Tithes' "creatures can't block unless their controller pays {1} for each of those creatures". */
+  blocks?: true;
 }
 
 export interface CostModifierNode extends EffectNode {
@@ -1047,6 +1067,8 @@ export interface CostModifierNode extends EffectNode {
   condition?: ConditionNode;
   /** "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first). */
   ifTargets?: ObjectFilter;
+  /** Monastery Siege: "… that target you or a permanent you control" — targeting this effect's controller counts too. */
+  ifTargetsYou?: true;
   /** Emet-Selch: only spells cast from these zones ("from your graveyard"); `notFromHand`: "from anywhere other than your hand". */
   castFrom?: ('graveyard' | 'exile')[];
   notFromHand?: true;
@@ -1062,6 +1084,8 @@ export interface CostModifierNode extends EffectNode {
   coloredOnly?: true;
   /** Torgaar: "This spell costs {2} less to cast for each creature sacrificed this way" (`amount` each). */
   perSacrificed?: true;
+  /** March of Swirling Mist: "for each card exiled this way" — the cards exiled for its "any number" additional cost. */
+  perExiled?: true;
 }
 
 /**
@@ -1145,6 +1169,12 @@ export const PLAYER_RULES = [
   'no_lose_for_life', 'cant_lose', 'opponents_cant_win', 'flash', 'extra_vote', 'may_extra_vote', 'untap_during_others', 'protection_everything', 'life_cant_change',
   /** Omniscience: "You may cast spells from your hand without paying their mana costs." */
   'free_from_hand',
+  /** Dracogenesis: "You may cast Dragon spells without paying their mana costs." (with a filter; from any zone). */
+  'free_cast',
+  /** Worship, Angel's Grace: "damage that would reduce your life total to less than 1 reduces it to 1 instead." (CR 614.1a) */
+  'damage_floor',
+  /** Everybody Lives!: "Players can't lose life this turn." (CR 119.7) */
+  'cant_lose_life',
   /** K'rrik, Son of Yawgmoth: "For each {B} in a cost, you may pay 2 life rather than pay that mana." (CR 107.4f) */
   'black_as_phyrexian',
   /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." (CR 121.2) */
@@ -1213,11 +1243,11 @@ export const CORE_NODES = {
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
+    'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw', 'damage_prevented',

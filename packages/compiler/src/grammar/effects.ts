@@ -246,6 +246,26 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       { type: 'grant_play', what: { ref: 'created' }, mode: 'play', until: 'exiled' },
     ];
   }
+  // Rise of the Witch-king: "Each player sacrifices a creature of their choice. If you sacrificed a creature this way, you may
+  // return another permanent card from your graveyard to the battlefield." — not the one sacrificed.
+  const witch = /^(Each player sacrifices a creature of their choice\. If you sacrificed a creature this way), you may return another (.+? card) from your graveyard to the battlefield\.$/.exec(text.trim());
+  if (witch) {
+    const first = parseEffectText(`${witch[1]}, draw a card.`, b);
+    const back = parseSentence(`You may return a ${witch[2]} from your graveyard to the battlefield`, b);
+    const iff = first?.[1];
+    const ret = back?.length === 1 && back[0]!.type === 'may' ? (back[0]!.effects as EffectNode[])[0] : undefined;
+    if (!first || first.length !== 2 || iff?.type !== 'if' || ret?.type !== 'return_chosen') return null;
+    return [first[0]!, { ...iff, effects: [{ type: 'may', effects: [{ ...ret, notMoved: 'sacrificed' }] }] }];
+  }
+  // Winds of Abandon (and overloaded): "Exile target creature you don't control. For each creature exiled this way, its
+  // controller searches their library for a basic land card. Those players put those cards onto the battlefield tapped, then
+  // shuffle."
+  const winds = /^Exile (target|each) (creature you don't control|creatures? your opponents control)\. For each creature exiled this way, its controller searches their library for a basic land card\. Those players put those cards onto the battlefield tapped, then shuffle\.$/.exec(text.trim());
+  if (winds) {
+    const exiled = parseSentence(`Exile ${winds[1]} ${winds[2]}`, b);
+    if (!exiled || exiled.length !== 1 || exiled[0]!.type !== 'move') return null;
+    return [...exiled, { type: 'search', filter: { zone: 'library', owner: 'you', supertypes: ['Basic'], types: ['Land'] }, amount: 1, to: 'battlefield', tapped: true, forEachMoved: { how: 'exiled', types: ['Creature'] } }];
+  }
   // Promise of Loyalty: "Each player puts a vow counter on a creature they control and sacrifices the rest. Each of those
   // creatures can't attack you or planeswalkers you control for as long as it has a vow counter on it."
   const vow = /^Each player puts an? (\S+) counter on (an? .+?) they control and sacrifices the rest\. Each of those creatures can't attack you or planeswalkers you control for as long as it has an? \1 counter on it\.$/.exec(text.trim());
@@ -1268,7 +1288,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // "If that spell is countered this way, exile it instead of putting it into its owner's graveyard." (CR 701.6a)
       if (/^If (?:that spell|it) is countered this way, exile it instead of putting it into its owner's graveyard$/.test(s)) {
-        const last = out[out.length - 1];
+        // Syncopate: "Counter target spell unless its controller pays {X}. If that spell is countered this way, exile it …"
+        const prev = out[out.length - 1];
+        const inner = prev?.type === 'unless_pays' && (prev.effects as EffectNode[] | undefined)?.length === 1 ? (prev.effects as EffectNode[])[0] : undefined;
+        const last = inner?.type === 'counter' ? inner : prev;
         if (last?.type !== 'counter') return null;
         last.exile = true;
         continue;
@@ -2064,6 +2087,31 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^You have no maximum hand size for the rest of the game$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', until: 'game' }];
   // Emergence Zone: "You may cast spells this turn as though they had flash." (CR 702.8a)
   if (/^You may cast spells this turn as though they had flash$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash' }];
+  // Blossoming Calm: "You gain hexproof until your next turn."; Everybody Lives!: "Players gain hexproof until end of turn.";
+  // Gilded Light: "You gain shroud until end of turn." (CR 702.11c, 702.18)
+  const playerWard = /^(You|Players|Each player) gains? (hexproof|shroud) until (end of turn|your next turn)$/.exec(s);
+  if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: playerWard[3] === 'end of turn' ? 'eot' : 'your_next_turn' }];
+  // Everybody Lives!: "Players can't lose life this turn and players can't lose the game or win the game this turn.";
+  // Courageous Resolve: "you can't lose life this turn, you can't lose the game this turn, and your opponents can't win the
+  // game this turn." (CR 119.7, 104.3)
+  const noLoss = s.split(/, and |, | and (?=(?:you|players|your opponents) can't)/i);
+  if (noLoss.length > 1 || /^(?:You|Players) can't lose life this turn$/.test(s)) {
+    const nodes = noLoss.map((c): EffectNode[] | null => {
+      const t = c.replace(/^\w/, (x) => x.toLowerCase());
+      const players = { ref: 'players', who: 'each' } as Ref;
+      if (t === "you can't lose life this turn") return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'cant_lose_life', until: 'eot' }];
+      if (t === "players can't lose life this turn") return [{ type: 'player_effect', who: players, rule: 'cant_lose_life', until: 'eot' }];
+      if (t === "you can't lose the game this turn") return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'cant_lose', until: 'eot' }];
+      if (t === "your opponents can't win the game this turn") return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'opponents_cant_win', until: 'eot' }];
+      if (t === "players can't lose the game or win the game this turn") return [{ type: 'player_effect', who: players, rule: 'cant_lose', until: 'eot' }, { type: 'player_effect', who: players, rule: 'opponents_cant_win', until: 'eot' }];
+      return null;
+    });
+    if (nodes.every(Boolean)) return nodes.flat() as EffectNode[];
+  }
+  // Angel's Grace: "You can't lose the game this turn and your opponents can't win the game this turn."; "Until end of turn,
+  // damage that would reduce your life total to less than 1 reduces it to 1 instead."
+  if (/^You can't lose the game this turn and your opponents can't win the game this turn$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'opponents_cant_win', until: 'eot' }];
+  if (/^Until end of turn, damage that would reduce your life total to less than 1 reduces it to 1 instead$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'damage_floor', until: 'eot' }];
   // Teferi, Time Raveler: "Until your next turn, you may cast sorcery spells as though they had flash." (CR 702.8a)
   const flashUntil = /^Until your next turn, you may cast (sorcery|creature|instant and sorcery|noncreature) spells as though they had flash$/.exec(s);
   if (flashUntil) {
@@ -2565,6 +2613,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Teferi's Puzzle Box: "that player puts the cards in their hand on the bottom of their library in any order, then draws
+  // that many cards." — every card, in the order they choose.
+  const bottomAll = /^(?:(.+?) puts|Put) (?:all )?the cards in (?:your|their) hand on the bottom of (?:your|their) library in any order, then (?:draws?|draw) that many cards$/.exec(s);
+  if (bottomAll) {
+    const r = attempt(b, (b) => {
+      const who = bottomAll[1] ? parsePlayerRef(bottomAll[1], b) : { ref: 'you' as const };
+      return who ? [{ type: 'wheel', who, mode: 'all', to: 'bottom', ordered: true }] : null;
+    });
+    if (r) return r;
+  }
   const wheel = /^(?:(.+?) )?(?:discards?|[Dd]iscard) (all the cards in (?:your|their) hand|any number of cards|up to (\w+) cards), then (?:draws?|draw) that many cards( plus one| minus one)?$/.exec(s);
   if (wheel) {
     const r = attempt(b, (b) => {
@@ -2734,11 +2792,17 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // "Look at the top four cards of your library, then put them back in any order."
-  const reorder = /^[Ll]ook at the top (\w+) cards of your library(?:,| and) then put them back in any order$/.exec(s);
+  // Portent, Architects of Will: "… of target player's library, then put them back in any order".
+  const reorder = /^[Ll]ook at the top (\w+) cards of (your|target player's|target opponent's) library(?:,| and) then put them back in any order$/.exec(s);
   if (reorder) {
     const amount = parseAmount(reorder[1]!);
-    return typeof amount === 'number' ? [{ type: 'reorder_top', amount }] : null;
+    const library = reorder[2] === 'your' ? null : parsePlayerRef(reorder[2]!.replace(/'s$/, ''), b);
+    if (reorder[2] !== 'your' && !library) return null;
+    if (library) b.player = library;
+    return typeof amount === 'number' ? [{ type: 'reorder_top', amount, ...(library ? { library } : {}) }] : null;
   }
+  // Portent: "You may have that player shuffle."
+  if (/^You may have that player shuffle$/.test(s) && b.player && b.player.ref === 'target') return [{ type: 'may', effects: [{ type: 'shuffle', who: b.player }] }];
   // CR 701.14a: "Target creature you control fights target creature you don't control." / "… fight each other."
   const fight = /^(.+?) fights (.+)$/.exec(s) ?? /^(.+?) and (.+?) fight each other$/.exec(s);
   if (fight) {
@@ -2921,13 +2985,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
   // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
-  const cantCast = /^(?:(Until your next turn|Until end of turn|This turn), )?(.+?) can't cast (.+?)(?: (this turn|until your next turn))?$/.exec(s);
+  // Single Combat: "Players can't cast creature or planeswalker spells until the end of your next turn."
+  const cantCast = /^(?:(Until your next turn|Until end of turn|This turn|Until the end of your next turn), )?(.+?) can't cast (.+?)(?: (this turn|until your next turn|until the end of your next turn))?$/.exec(s);
   if (cantCast && (cantCast[1] ? !cantCast[4] : cantCast[4])) {
     const r = attempt(b, (b) => {
       const who = /^players$/i.test(cantCast[2]!) ? ({ ref: 'players', who: 'each' } as Ref) : parsePlayerRef(cantCast[2]!, b);
       const ban = who ? parseCastBan(cantCast[3]!, b) : null;
       if (!who || !ban || ban.during || ban.maxPerTurn) return null;
-      const until = /next turn/i.test(cantCast[1] ?? cantCast[4]!) ? 'your_next_turn' : 'eot';
+      const when = cantCast[1] ?? cantCast[4]!;
+      const until = /end of your next turn/i.test(when) ? 'end_of_your_next_turn' : /next turn/i.test(when) ? 'your_next_turn' : 'eot';
       // Avatar's Wrath: "your opponents can't cast spells from anywhere other than their hands".
       return [{ type: 'prohibit_casting', who, until, ...(ban.filter ? { filter: ban.filter } : {}), ...(ban.fromZones ? { fromZones: ban.fromZones } : {}) }];
     });
@@ -3552,7 +3618,7 @@ const VERBS: Record<string, VerbHandler> = {
       const of = parseObjectRef(copy[3]!, b);
       if (!of || of.plural) return null;
       const except = copy[4] ? parseCopyExcept(copy[4], b) : undefined;
-      if (except === null || except?.entersWith) return null;
+      if (except === null) return null;
       const node: EffectNode = { type: 'create_token', amount, copyOf: of.ref, who };
       if (except) node.except = except;
       if (copy[2]) node.tapped = true;

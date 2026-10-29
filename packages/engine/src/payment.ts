@@ -3,14 +3,14 @@ import { evalCondition } from './conditions.js';
 import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
-import { planAutoTap } from './autotap.js';
+import { planManaOnly } from './autotap.js';
 import { canActivateTapAbilities, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { anyColorChoices, parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
 import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
-import { lifeLoss, replaceQuantity } from './quantities.js';
+import { cantLoseLife, lifeLoss, replaceQuantity } from './quantities.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
@@ -195,6 +195,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const life = lifeCost(g, player, o, c);
       if (g.players[player]!.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
       if (life > 0 && playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
+      if (life > 0 && cantLoseLife(g, player)) throw new RulesError('You can’t lose life this turn, so you can’t pay life.');
     } else if (c.type === 'discard_self') {
       if (o.zone !== 'hand' || o.owner !== player) throw new RulesError(`${nameOf(g, o)} isn’t in your hand.`);
     } else if (c.type === 'exile_self') {
@@ -591,7 +592,8 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
 
 /** CR 601.2g: activates mana abilities automatically to cover a cost beyond what's in the pool. */
 export function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: number, events: GameEvent[], exclude: ObjectId[] = [], purpose: ManaPurpose = OTHER_PURPOSE): void {
-  const plan = planAutoTap(g, player, cost, x, exclude, purpose);
+  // The cost's Phyrexian symbols were settled already (settlePhyrexian): what's left is paid with mana, never unasked-for life.
+  const plan = planManaOnly(g, player, cost, x, exclude, purpose);
   if (!plan) throw new RulesError('You don’t have enough untapped mana sources.');
   for (const step of plan) runManaAbility(g, player, step.object, step.ability, step.choice, events);
 }

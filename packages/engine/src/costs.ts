@@ -13,7 +13,8 @@ function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: 
   return (targets ?? []).flat().some((t) => {
     if (t.kind !== 'object') return false;
     const o = g.objects[t.id];
-    return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, filter, { controller, source, anyZone: true }));
+    // "that target a creature": a creature permanent, not a creature card elsewhere (a filter that names a zone checks that one).
+    return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, filter, { controller, source }));
   });
 }
 
@@ -33,7 +34,7 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (a.kind !== 'static' || a.effect.type !== 'cost_modifier') continue;
     const e = a.effect as CostModifierNode;
     // Torgaar: "for each creature sacrificed this way" — counted from the cost choices as it's cast (see cast()).
-    if (!e.self || e.perSacrificed) continue;
+    if (!e.self || e.perSacrificed || e.perExiled) continue;
     const ctx = ctxFor(player, spell);
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
     if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, player, spell)) continue;
@@ -62,7 +63,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
       }
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
       // Killian: "Spells you cast that target a creature cost {2} less to cast."
-      if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
+      const targetsYou = Boolean(e.ifTargetsYou && (targets ?? []).flat().some((t) => t.kind === 'player' && t.player === source.controller));
+      if (e.ifTargets && !targetsYou && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
       for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
     }
   }

@@ -96,6 +96,18 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
         // "As ~ enters, choose a player" / "… choose an opponent" (CR 800.4a: one still in the game).
         g.pending = { ...base, text: node.opponent ? 'Choose an opponent.' : 'Choose a player.', options: livePlayers(g).filter((p) => !node.opponent || p !== o.controller) };
         break;
+      case 'number':
+        // Talion, the Kindly Lord: "choose a number between 1 and 10".
+        g.pending = { ...base, text: 'Choose a number.', options: [...(node.options ?? [])] };
+        break;
+      case 'land_type':
+        // Multiversal Passage: "choose a basic land type" (CR 205.3i).
+        g.pending = { ...base, text: 'Choose a basic land type.', options: ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] };
+        break;
+      case 'word':
+        // The Sieges: "choose Khans or Dragons".
+        g.pending = { ...base, text: `Choose ${(node.options ?? []).join(' or ')}.`, options: [...(node.options ?? [])] };
+        break;
       case 'card_type':
         // CR 205.2a: the card types.
         g.pending = { ...base, text: 'Choose a card type.', options: node.options ?? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Instant', 'Kindred', 'Land', 'Planeswalker', 'Sorcery'] };
@@ -226,7 +238,10 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         // Spark Double: "… except it enters with an additional +1/+1 counter on it if it's a creature" (CR 614.1c).
         for (const w of next.node.copyExcept?.entersWith ?? []) {
           if (w.ifType && !chars(g, o).types.includes(w.ifType)) continue;
-          const n = replaceQuantity(g, 'counters', w.amount, { player: o.controller, object: o, counter: w.counter });
+          // Undercover Operative: "… if you control that creature".
+          if (w.ifControlled && original.controller !== o.controller) continue;
+          const amount = w.amount === 'X' ? (o.x ?? 0) : w.amount;
+          const n = replaceQuantity(g, 'counters', amount, { player: o.controller, object: o, counter: w.counter });
           if (n > 0) o.counters[w.counter] = (o.counters[w.counter] ?? 0) + n;
         }
       }
@@ -244,10 +259,13 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
     case 'creature_type':
     case 'card_type':
     case 'player':
+    case 'word':
+    case 'land_type':
+    case 'number':
     case 'card_name': {
       const choice = answer.choice;
       if (!choice || !p.options?.includes(choice)) throw new RulesError(`Choose one of: ${p.options?.slice(0, 6).join(', ')}…`);
-      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : p.choice === 'card_type' ? { cardType: choice } : p.choice === 'player' ? { player: choice } : { creatureType: choice }) };
+      o.chosen = { ...o.chosen, ...(p.choice === 'color' ? { color: choice as Color } : p.choice === 'card_name' ? { cardName: choice } : p.choice === 'card_type' ? { cardType: choice } : p.choice === 'player' ? { player: choice } : p.choice === 'word' ? { word: choice } : p.choice === 'land_type' ? { landType: choice } : p.choice === 'number' ? { number: Number(choice) } : { creatureType: choice }) };
       events.push({ type: 'chosen', object: o.id, choice });
       // Banner of Kinship: counters for each permanent of the chosen type, put on it as it enters (CR 122.6).
       const then = next.node.thenCounters;

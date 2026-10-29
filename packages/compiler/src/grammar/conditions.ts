@@ -64,7 +64,8 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
     if (all.every(Boolean)) return { type: 'and', all: all as ConditionNode[] };
   }
   // "if a nonland permanent left the battlefield this turn or a spell was warped this turn"
-  const either = t.split(/ or (?=a |an |you |there |it's )/);
+  // Dark Fortress: "if this land entered this turn or if you control a basic land".
+  const either = t.split(/ or if | or (?=a |an |you |there |it's )/);
   if (either.length > 1) {
     const any = either.map((p) => parseOne(p, b));
     if (any.every(Boolean)) return { type: 'or', any: any as ConditionNode[] };
@@ -163,7 +164,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const youMoved = /^you (exiled|milled|sacrificed|destroyed) (?:a|an|one or more) (.+?) this way$/.exec(t);
   if (youMoved) {
     const amount = movedThisWay(`${youMoved[2]} ${youMoved[1]} this way`, b);
-    if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
+    // "If you sacrificed a creature this way" after "Each player sacrifices …" — only yours.
+    if (amount) return { type: 'amount', amount: youMoved[1] === 'sacrificed' ? { ...amount, yours: true } : amount, op: 'ge', n: 1 } as ConditionNode;
   }
   // Padeem: "if you control the artifact with the greatest mana value or tied for the greatest mana value"
   const greatest = /^you control the (\w+) with the greatest mana value or tied for the greatest mana value$/.exec(t);
@@ -622,6 +624,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Lion Sash: "If it was a permanent card" (CR 110.4a: artifact, battle, creature, enchantment, land, planeswalker).
   const typesOf = (w: string) => (w === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : [w.replace(/^\w/, (c) => c.toUpperCase())]);
   if (wasCard && b.it && (b.it.ref === 'target' || b.it.ref === 'created')) return { type: 'is', of: b.it, filter: { types: typesOf(wasCard[1]!) } };
+  // Kaya, Intangible Slayer: "Exile target creature or enchantment. If it wasn't an Aura, …" — the card, now in exile.
+  const wasntSub = /^it wasn't an? (Aura|Equipment|Vehicle|Saga)$/.exec(t);
+  if (wasntSub && b.it && b.it.ref === 'target') return { type: 'is', of: b.it, filter: { notSubtypes: [wasntSub[1]!] } };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath

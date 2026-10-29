@@ -413,7 +413,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         ...(e.combat ? { combat: { ...e.combat, from: source.id } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes
-          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && source.chosen?.creatureType ? [source.chosen.creatureType] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
+          ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && (source.chosen?.creatureType ?? source.chosen?.landType) ? [(source.chosen.creatureType ?? source.chosen.landType)!] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
           : {}),
         ...(e.setTypes ? { types: { types: e.setTypes.types, subtypes: e.setTypes.subtypes, retain: false } } : {}),
         // Theros Gods: "As long as your devotion to red is less than five, Purphoros isn't a creature."
@@ -894,6 +894,11 @@ export function matchesFilter(
   if (f.power && !compare(thenPT ? thenPT.power : c.power, counted(f.power))) return false;
   if (f.toughness && !compare(thenPT ? thenPT.toughness : c.toughness, counted(f.toughness))) return false;
   if (f.manaValue && !compare(manaValueOf(g, o), counted(f.manaValue))) return false;
+  if (f.statIsChosenNumber) {
+    const n = ctx.source?.chosen?.number;
+    if (n === undefined || (manaValueOf(g, o) !== n && !(c.types.includes('Creature') && (c.power === n || c.toughness === n)))) return false;
+  }
+  if (f.manaValueAtMostControllersGraveyard && manaValueOf(g, o) > (g.zones.graveyard[o.controller]?.length ?? 0)) return false;
   if (f.manaValueParity && manaValueOf(g, o) % 2 !== (f.manaValueParity === 'even' ? 0 : 1)) return false;
   // "that was dealt damage this turn"
   if (f.damagedThisTurn && o.damagedTurn !== g.turn) return false;
@@ -1040,7 +1045,8 @@ function anyAddsLandTypes(g: GameState): boolean {
     if (v) break;
     const o = g.objects[id];
     if (!o) continue;
-    v = printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && adds((a.effect as ContinuousEffectNode).addTypes?.subtypes));
+    // Thran Portal: "This land is the chosen type in addition to its other types" — a basic land type chosen as it entered.
+    v = printedAbilities(faceOf(g, o)).some((a) => a.kind === 'static' && a.effect.type === 'continuous' && (adds((a.effect as ContinuousEffectNode).addTypes?.subtypes) || Boolean((a.effect as ContinuousEffectNode).addTypes?.chosenType && o.chosen?.landType)));
   }
   if (charsDepth > 0) addsLandTypesMemo = { g, v };
   return v;

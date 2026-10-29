@@ -2,6 +2,8 @@ import { isRingBearer } from './ring.js';
 import type { AttackTaxNode, EffectNode, ObjectFilter, StaticAbility, StaticPreventionNode } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
+import { planAutoTap } from './autotap.js';
+import { parseManaCost } from './mana.js';
 import {
   RulesError,
   type AttackTarget,
@@ -214,6 +216,25 @@ const sameTarget = (a: AttackTarget, b: AttackTarget) =>
  * CR 508.1g: the total cost to attack with these creatures — "Creatures can't attack you unless their controller pays
  * {2} for each creature they control that's attacking you". The mana symbols, concatenated ("" if none).
  */
+/** CR 509.1d: the costs to block with these creatures ("can't block unless their controller pays {1} for each of those creatures"). */
+export function blockTax(g: GameState, blockers: readonly ObjectId[]): string {
+  let out = '';
+  const each = [...new Set(blockers)];
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
+      const e = (a as StaticAbility).effect as AttackTaxNode;
+      if (!e.blocks || !staticConditionHolds(g, e, src)) continue;
+      for (const b of each) {
+        const o = g.objects[b];
+        if (o && (!e.filter || matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) out += e.cost;
+      }
+    }
+  }
+  return out;
+}
+
 export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; target: AttackTarget }[]): string {
   let out = '';
   for (const id of abilitySources(g)) {
@@ -221,7 +242,7 @@ export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; 
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
       const e = (a as StaticAbility).effect as AttackTaxNode;
-      if (e.banned || !staticConditionHolds(g, e, src)) continue;
+      if (e.banned || e.blocks || !staticConditionHolds(g, e, src)) continue;
       // Sphere of Safety: {X} each, X counted now.
       const n = e.x ? amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, e.x) : 0;
       if (e.x && n <= 0) continue;
@@ -525,9 +546,12 @@ export function blockDeclarationProblem(g: GameState, player: PlayerId, blocks: 
     if (list.length > max) return `${nameOf(g, a)} can’t be blocked by more than ${max === 1 ? 'one creature' : `${max} creatures`}.`;
   }
 
-  // CR 509.1c: requirements.
+  // CR 509.1d: the costs to block, paid as blockers are declared — mana the player can't produce means they can't block so.
+  const tax = blockTax(g, [...used.keys()]);
+  if (tax && !planAutoTap(g, player, parseManaCost(tax))) return `Blocking with those creatures costs ${tax}, which can’t be paid.`;
+  // CR 509.1c: requirements. A creature isn't required to block if that would mean paying a cost (CR 509.1d).
   const attackers = attackingCreatures(g).filter((o) => defenderOf(g, c.attackers[o.id]!.target) === player);
-  const potential = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => canBlockAtAll(g, o, player));
+  const potential = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => canBlockAtAll(g, o, player) && !blockTax(g, [o.id]));
   const able = (b: GameObject, a: GameObject) => !evasionProblem(g, b, a);
   const requirement = (a: GameObject, kind: 'one' | 'all') => chars(g, a).combat.some((r) => r.mustBeBlocked === kind);
   // A requirement that can't be met without breaking "needs N blockers" doesn't apply.
@@ -573,6 +597,15 @@ export function declareBlockers(
   const c = g.combat!;
   const problem = blockDeclarationProblem(g, player, blocks);
   if (problem) throw new RulesError(problem);
+  // CR 509.1d: the costs to block are paid (mana abilities may be activated).
+  const tax = blockTax(g, blocks.map((x) => x.blocker));
+  if (tax) {
+    try {
+      payDuringResolution(g, player, tax, events);
+    } catch {
+      throw new RulesError(`Blocking with those creatures costs ${tax}, which can’t be paid.`);
+    }
+  }
   for (const { blocker, attacker } of blocks) {
     // CR 509.1g: it becomes a blocking creature (of each attacker it blocks).
     const zcc = g.objects[blocker]!.zcc;
@@ -910,8 +943,9 @@ export function dealDamage(
     } else {
       // CR 120.3a: damage to a player makes them lose that much life (CR 119.8: unless their life total can't change).
       if (!playerRule(g, to.player, 'life_cant_change')) {
-        // Bloodletter of Aclazotz: the damage is the same; the life lost may be more.
-        const lost = lifeLoss(g, to.player, amount);
+        // Bloodletter of Aclazotz: the damage is the same; the life lost may be more. Worship: never below 1 from damage.
+        const raw = lifeLoss(g, to.player, amount);
+        const lost = playerRule(g, to.player, 'damage_floor') ? Math.max(0, Math.min(raw, ps.life - 1)) : raw;
         ps.life -= lost;
         events.push({ type: 'life', player: to.player, delta: -lost, life: ps.life });
       }

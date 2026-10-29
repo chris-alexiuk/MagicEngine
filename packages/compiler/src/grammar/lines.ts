@@ -808,6 +808,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       b.named['the creature'] = { ref: 'attached' };
       return { trigger: { type: 'phase', step: 'upkeep', whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     }
+    // Frontier Siege, Carpet of Flowers: "At the beginning of each of your main phases" — precombat and postcombat both (CR 505.1).
+    if (t === 'the beginning of each of your main phases') {
+      return { trigger: { type: 'either', of: [{ type: 'phase', step: 'main1', whose: 'you' }, { type: 'phase', step: 'main2', whose: 'you' }] }, it: { ref: 'self' }, player: null };
+    }
     if (t === 'the beginning of each of your postcombat main phases' || t === 'the beginning of each of your second main phases') {
       return { trigger: { type: 'phase', step: 'main2', whose: 'you' }, it: { ref: 'self' }, player: null };
     }
@@ -1085,6 +1089,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // General Kreat: "Whenever one or more Goblins you control attack" — once per declaration, if any of them attack.
   // Hermes, Overseer of Elpis: "Whenever you attack with one or more Birds" — the same.
+  // Ainok Strike Leader: "Whenever you attack with this creature and/or your commander" — once, if either attacks (CR 903.3).
+  if (/^you attack with (?:~|this creature) and\/or your commander$/.test(t)) {
+    return { trigger: { type: 'you_attack', filter: { anyOf: [{ isSource: true }, { commander: true, owner: 'you' }] } }, it: { ref: 'self' }, player: null };
+  }
   const attackWith = /^you attack with one or more (.+)$/.exec(t);
   if (attackWith && !/ you control$/.test(attackWith[1]!) && attackWith[1] !== 'creatures') return parseTrigger(word, `one or more ${attackWith[1]} you control attack`, b);
   const someAttack = /^one or more (.+? you control) attack$/.exec(t);
@@ -1892,6 +1900,10 @@ export const triggeredRule: GrammarRule = {
           // Kodama of the East Tree: what this permanent's ability put there can't trigger it again.
           trig.trigger = { ...trig.trigger, notBySource: true };
           effectText = iff[2]!;
+        } else if (iff && iff[1] === "you haven't added mana with this ability this turn" && /^you may add /.test(iff[2]!)) {
+          // Carpet of Flowers: "if you haven't added mana with this ability this turn, you may add X mana …" — that's "you may
+          // add …. Do this only once each turn." (CR 603.2h): it triggers again only if you didn't take the mana.
+          effectText = `${iff[2]!.replace(/\.$/, '')}. Do this only once each turn.`;
         } else if (iff && iff[1] === "you're the defending player" && trig.trigger.type === 'attacks' && !trig.trigger.defender) {
           // Kazuul: "Whenever a creature an opponent controls attacks, if you're the defending player" — it attacks you or a
           // planeswalker you control (CR 506.2); that can't change before it resolves.
@@ -2105,7 +2117,7 @@ export const continuousRule: GrammarRule = {
     // Arixmethes: "As long as Arixmethes has a slumber counter on it, it's a land."
     if (conds.length) rest = rest.replace(/^it's /, 'it is ');
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
-      parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b);
+      parseCantEnter(rest, b) ?? parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b) ?? parseLoyaltyAnyTime(rest);
     if (!effect) return null;
     // Off the battlefield, continuous effects reach only keyword grants (Lier's flashback, Jo Grant's cycling) and the
     // spells on the stack; Yixlid Jailer's "Cards in graveyards lose all abilities" isn't applied there.
@@ -2187,6 +2199,9 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
     if (types && (types.length !== 1 || types[0] !== 'Creature')) return null;
     return { type: 'attack_tax', cost: '', banned: true, ...(ban[2] ? { planeswalkers: true } : {}), ...(Object.keys(rest).length ? { filter: rest } : {}) };
   }
+  // CR 509.1d: Archangel of Tithes: "creatures can't block unless their controller pays {1} for each of those creatures".
+  const block = /^creatures can't block unless their controller pays ((?:\{(?:\d+|[WUBRGC])\})+) for each (?:of those creatures|creature they control that's blocking)$/i.exec(body);
+  if (block) return { type: 'attack_tax', cost: block[1]!, blocks: true };
   const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX])\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
   if (!m || /X/.test(m[3]!) !== Boolean(m[4])) return null;
   const x = m[4] ? parseCount(m[4], b) : undefined;
@@ -2257,7 +2272,43 @@ function parseFlashFor(body: string, b: Binder): PlayerRuleNode | null {
  * CR 609.4b: Chromatic Orrery: "You may spend mana as though it were mana of any color."; Oath of Nissa: "… to cast
  * planeswalker spells." (for those spells only).
  */
+/**
+ * Grafdigger's Cage: "Creature cards in graveyards and libraries can't enter the battlefield."; Containment Priest: "If a
+ * nontoken creature would enter and it wasn't cast, exile it instead." (CR 614.1a)
+ */
+function parseCantEnter(body: string, b: Binder): EffectNode | null {
+  if (body === "If a nontoken creature would enter and it wasn't cast, exile it instead") return { type: 'enter_exile_uncast', filter: { types: ['Creature'], token: false } };
+  const m = /^((?:[A-Za-z]+ )*?cards) in (graveyards|libraries|graveyards and libraries) can't enter(?: the battlefield)?$/.exec(body);
+  if (!m) return null;
+  const pf = parseFilter(`${m[1]!.replace(/^\w/, (c) => c.toLowerCase())} in graveyards`, b);
+  if (!pf || !pf.plural || pf.filter.zone !== 'graveyard' || pf.filter.owner) return null;
+  const { zone: _z, ...filter } = pf.filter;
+  return { type: 'cant_enter', filter, fromZones: m[2] === 'graveyards' ? ['graveyard'] : m[2] === 'libraries' ? ['library'] : ['graveyard', 'library'] };
+}
+
+/** Teferi, Master of Time: "You may activate loyalty abilities of Teferi on any player's turn any time you could cast an instant." */
+function parseLoyaltyAnyTime(body: string): ContinuousEffectNode | null {
+  return body === "You may activate loyalty abilities of ~ on any player's turn any time you could cast an instant" ? { type: 'continuous', affected: { ref: 'self' }, rules: ['loyalty_instant'] } : null;
+}
+
 function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
+  // Worship: "If you control a creature, damage that would reduce your life total to less than 1 reduces it to 1 instead."
+  const floor = /^(?:If (.+?), )?[Dd]amage that would reduce your life total to less than 1 reduces it to 1 instead$/.exec(body);
+  if (floor) {
+    const condition = floor[1] ? parseCondition(floor[1], b) : undefined;
+    if (condition === null) return null;
+    return { type: 'player_rule', who: 'you', rule: 'damage_floor', ...(condition ? { condition } : {}) } as PlayerRuleNode;
+  }
+  // Dracogenesis: "You may cast Dragon spells without paying their mana costs."; Rooftop Storm: "You may pay {0} rather than pay
+  // the mana cost for Zombie creature spells you cast." (CR 118.9: an alternative cost, wherever they're cast from).
+  const free = /^You may cast (.+?) spells without paying their mana costs$/.exec(body) ?? /^You may pay \{0\} rather than pay the mana cost for (.+?) spells you cast$/.exec(body);
+  if (free) {
+    const first = free[1]!.split(' ')[0]!;
+    const pf = parseFilter(`${isSubtype(first) ? free[1] : free[1]!.replace(/^\w/, (c) => c.toLowerCase())} spells`, b);
+    if (!pf || !pf.plural) return null;
+    const { zone: _z, ...filter } = pf.filter;
+    return Object.keys(filter).length ? { type: 'player_rule', who: 'you', rule: 'free_cast', filter } : null;
+  }
   const m = /^(You|Players) may spend mana as though it were mana of any color(?: to cast (.+?) spells)?$/.exec(body);
   if (!m) return null;
   const who = m[1] === 'You' ? 'you' : 'each';
@@ -2776,13 +2827,15 @@ export const costModifierRule: GrammarRule = {
     }
     // Killian, Ink Duelist: "Spells you cast that target a creature cost {2} less to cast." (CR 601.2f: targets first)
     // Charix: "Spells your opponents cast that target Charix cost {2} more to cast."
-    const thatTarget = /^Spells (you|your opponents) cast that target (?:(?:a|an) (.+?)|(~)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
+    // Monastery Siege: "Spells your opponents cast that target you or a permanent you control cost {2} more to cast."
+    const thatTarget = /^Spells (you|your opponents) cast that target (?:(you or )?(?:a|an) (.+?)|(~)) cost (\{\d+\}) (less|more) to cast$/.exec(body);
     if (thatTarget) {
-      const a = amountOf(thatTarget[4]!);
-      const pf = a && !thatTarget[3] ? parseFilter(thatTarget[2]!, b) : null;
-      if (!a || (!thatTarget[3] && (!pf || pf.plural))) return null;
-      const ifTargets: ObjectFilter = thatTarget[3] ? { isSource: true } : pf!.filter;
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[5] as 'less' | 'more', ifTargets, ...a } as CostModifierNode };
+      const a = amountOf(thatTarget[5]!);
+      const pf = a && !thatTarget[4] ? parseFilter(thatTarget[3]!, b) : null;
+      if (!a || (!thatTarget[4] && (!pf || pf.plural))) return null;
+      if (thatTarget[2] && thatTarget[1] === 'you') return null;
+      const ifTargets: ObjectFilter = thatTarget[4] ? { isSource: true } : pf!.filter;
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[6] as 'less' | 'more', ifTargets, ...(thatTarget[2] ? { ifTargetsYou: true } : {}), ...a } as CostModifierNode };
     }
     // Herald's Horn, Urza's Incubator: "Creature spells you cast of the chosen type cost {1} less to cast."
     // Goblin Anarchomancer: "Each spell you cast that's red or green costs {1} less to cast."
@@ -3240,6 +3293,11 @@ export const asEntersRule: GrammarRule = {
       }
     }
     if (what === 'choose a creature type') node = { type: 'as_enters', choice: 'creature_type' };
+    // Talion, the Kindly Lord: "choose a number between 1 and 10".
+    const between = /^choose a number between (\d+) and (\d+)$/.exec(what);
+    if (between && Number(between[2]) - Number(between[1]) <= 30) node = { type: 'as_enters', choice: 'number', options: Array.from({ length: Number(between[2]) - Number(between[1]) + 1 }, (_, i) => String(Number(between[1]) + i)) };
+    // Multiversal Passage, Thran Portal: "choose a basic land type".
+    if (what === 'choose a basic land type') node = { type: 'as_enters', choice: 'land_type' };
     // True-Name Nemesis: "choose a player"; Black Vise: "choose an opponent" — "the chosen player" later.
     if (what === 'choose a player') node = { type: 'as_enters', choice: 'player' };
     if (what === 'choose an opponent') node = { type: 'as_enters', choice: 'player', opponent: true };

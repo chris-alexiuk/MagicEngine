@@ -13,7 +13,7 @@ import { COLOR_WORDS, SUPERTYPE_WORDS, subtypeOf, TYPE_NOUNS } from './words.js'
 function exceptParts(text: string): string[] {
   return text
     // Hulkling: "his name is ~, he's 4/4, and he has flying and this ability" — a character card's pronouns too.
-    .split(/,? and (?=(?:it|its|the token|he|his|she|her)\b)|, (?:and )?(?=(?:it|its|the token|he|his|she|her)\b)/)
+    .split(/,? and (?=(?:it|its|the tokens?|he|his|she|her|they|their)\b)|, (?:and )?(?=(?:it|its|the tokens?|he|his|she|her|they|their)\b)/)
     .map((p) => p.trim())
     .filter(Boolean);
 }
@@ -35,20 +35,55 @@ function typeWords(words: string[], out: CopyExcept, replaceCreatureTypes: boole
   return true;
 }
 
+/** Runs `f` with the quoted abilities' mentions of `name` read as "this creature". */
+function withSelfQuotes<T>(b: Binder, name: string, f: () => T): T {
+  const quotes = b.env.quotes;
+  if (!quotes) return f();
+  const saved = [...quotes];
+  for (let i = 0; i < quotes.length; i++) quotes[i] = quotes[i]!.split(name).join('this creature');
+  try {
+    return f();
+  } finally {
+    for (let i = 0; i < saved.length; i++) quotes[i] = saved[i]!;
+  }
+}
+
+/** "… with trample", "… with crew 3" — keywords the copy has. */
+function withKeywords(text: string, out: CopyExcept, b: Binder): boolean {
+  const kws = parseKeywordList(text, b, true);
+  if (!kws?.length) return false;
+  (out.keywords ??= []).push(...kws);
+  return true;
+}
+
 /** CR 707.9: "except it isn't legendary", "except it's 1/1 and it has flying". */
 export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
   const out: CopyExcept = {};
   // Saw in Half: "their base power is half that creature's power and their base toughness is half that creature's
   // toughness, rounded up".
   if (/^(?:its|their) (?:base )?power is half that creature's power and (?:its|their) (?:base )?toughness is half that creature's toughness, rounded up$/.test(text.trim())) return { halfStats: 'up' };
-  const parts = exceptParts(text.trim());
+  const t = text
+    .trim()
+    // Moritte of the Frost: "… and, if it's a creature, it enters with two additional +1/+1 counters on it and has haste".
+    .replace(/ and, if it's an? (creature|artifact|planeswalker), it enters with (.+?) on it and has (.+)$/, " and it enters with $2 on it if it's a $1 and it has $3")
+    // Auton Soldier: "it isn't legendary, is an artifact in addition to its other types, and has myriad" — the subject once.
+    .replace(/,( and)? (?=(?:is|has|enters with|loses) )/g, ',$1 it ')
+    .replace(/ and (?=(?:has|is an?|loses) )/g, ' and it ');
+  const parts = exceptParts(t);
   if (!parts.length) return null;
   for (const part of parts) {
-    const p = part
+    // Astral Dragon: "they're 3/3 Dragon creatures in addition to their other types, and they have flying" — each token.
+    const plural = /^(?:they|the tokens)\b/.test(part);
+    let p = part
+      .replace(/^they're\b|^they are\b|^the tokens are\b/, "it's")
+      .replace(/^they have\b|^the tokens have\b/, 'it has')
+      .replace(/^they aren't\b|^the tokens aren't\b/, "it isn't")
       .replace(/^(?:the token|he|she|they)\b/, 'it')
       .replace(/^(?:his|her|their) name\b/, 'its name')
       .replace(/^it is\b|^it's\b|^he's\b|^she's\b/, "it's")
-      .replace(/^it's not\b/, "it isn't");
+      .replace(/^it's not\b/, "it isn't")
+      .replace(/\btheir other\b/g, 'its other');
+    if (plural) p = p.replace(/^it's (\d+\/\d+) /, "it's a $1 ").replace(/\b(creature|artifact|enchantment)s\b/g, '$1');
     if (/^it's legendary$/.test(p)) {
       out.supertypes = ['Legendary'];
       continue;
@@ -82,34 +117,80 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     }
     // "it's a 3/3 black Zombie creature in addition to its other types"
     // Ratadrabik: "it's a 2/2 black Zombie in addition to its other colors and types" — the colors are added too.
-    const addition = /^it's (?:a |an )?(?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) )*)(.+) in addition to its other (colors and )?types$/.exec(p);
+    // Sakashima's Student: "it's a Ninja in addition to its other creature types".
+    // Kaya, Intangible Slayer: "it's a 1/1 white Spirit creature with flying in addition to its other types".
+    const addition = /^it's (?:a |an )?(?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) (?:and )?)*)(.+?)(?: with (.+))? in addition to its other (colors and )?(creature )?types$/.exec(p);
     if (addition) {
       if (addition[1]) {
         out.power = Number(addition[1]);
         out.toughness = Number(addition[2]);
       }
-      const colors = addition[3]!.trim().split(' ').filter(Boolean);
-      if (colors.length && addition[5]) out.addColors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
+      const colors = addition[3]!.replace(/\band\b/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (colors.length && addition[6]) out.addColors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
       else if (colors.length) out.colors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
-      if (!typeWords(addition[4]!.split(' '), out, false)) return null;
+      // Moritte of the Frost: "it's legendary and snow in addition to its other types".
+      const words = addition[4]!.split(/ and | /);
+      if (addition[7] && words.some((w) => subtypeOf(w) !== w)) return null;
+      if (!typeWords(words, out, false)) return null;
+      if (addition[5] && !withKeywords(addition[5], out, b)) return null;
       continue;
     }
     // "it's a 4/4 black Zombie": the stated colors and creature types replace its own.
-    const becomes = /^it's (?:a|an) (?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) )*)([A-Z][\w-]*(?: [A-Z][\w-]*)*)$/.exec(p);
+    // Sauron, the Necromancer: "it's a 3/3 black Wraith with menace".
+    const becomes = /^it's (?:a|an) (?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) (?:and )?)*)([A-Z][\w-]*(?: [A-Z][\w-]*)*)(?: with (.+))?$/.exec(p);
     if (becomes) {
       if (becomes[1]) {
         out.power = Number(becomes[1]);
         out.toughness = Number(becomes[2]);
       }
-      const colors = becomes[3]!.trim().split(' ').filter(Boolean);
+      const colors = becomes[3]!.replace(/\band\b/g, ' ').trim().split(/\s+/).filter(Boolean);
       if (colors.length) out.colors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
       if (!typeWords(becomes[4]!.split(' '), out, true)) return null;
+      if (becomes[5] && !withKeywords(becomes[5], out, b)) return null;
       continue;
     }
-    // Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature"
-    const counter = /^it enters with an additional (\S+) counter on it(?: if it's an? (creature|planeswalker|artifact|enchantment|land))?$/.exec(p);
+    // Machine God's Effigy: "it's an artifact" — that's its card type now (CR 205.1a).
+    // Dino DNA: "it's a 6/6 green Dinosaur creature with trample". Imposter Mech: "it's a Vehicle artifact with crew 3".
+    const retyped = /^it's (?:a|an) (?:(\d+)\/(\d+) )?((?:(?:white|blue|black|red|green) (?:and )?)*)((?:[A-Z][\w-]* )*)((?:artifact|enchantment|creature|land)(?: (?:artifact|enchantment|creature|land))*)(?: with (.+))?$/.exec(p);
+    if (retyped) {
+      if (retyped[1]) {
+        out.power = Number(retyped[1]);
+        out.toughness = Number(retyped[2]);
+      }
+      const colors = retyped[3]!.replace(/\band\b/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (colors.length) out.colors = colors.map((c) => COLOR_WORDS[c]!) as Color[];
+      out.setTypes = retyped[5]!.split(' ').map((w) => TYPE_NOUNS[w]!);
+      const subtypes = retyped[4]!.trim().split(' ').filter(Boolean);
+      if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
+      if (subtypes.length && out.setTypes.includes('Creature')) out.setCreatureTypes = subtypes;
+      else if (subtypes.length) out.addSubtypes = subtypes;
+      if (retyped[6] && !withKeywords(retyped[6], out, b)) return null;
+      continue;
+    }
+    // Imposter Mech, Espers to Magicite: "… and it loses all other card types" — the types it was just given are its only ones.
+    // Shelob, Child of Ungoliant: "… and it loses all other card types and creature types".
+    const loses = /^it loses all other card types( and creature types)?$/.exec(p);
+    if (loses) {
+      if (!out.setTypes) {
+        if (!out.addTypes?.length) return null;
+        out.setTypes = out.addTypes;
+        delete out.addTypes;
+      }
+      if (loses[1] && out.setTypes.includes('Creature')) out.setCreatureTypes = [];
+      continue;
+    }
+    // Spark Double: "it enters with an additional +1/+1 counter on it if it's a creature".
+    // Altered Ego: "it enters with X additional +1/+1 counters on it". Undercover Operative: "… a shield counter on it if you control that creature".
+    const counter = /^it enters with (an|a|one|two|three|four|five|X)(?: additional)? (\S+) counters? on it(?: if it's an? (creature|planeswalker|artifact|enchantment|land)| if you control that creature)?$/.exec(p);
     if (counter) {
-      (out.entersWith ??= []).push({ counter: counter[1]!, amount: 1, ...(counter[2] ? { ifType: counter[2][0]!.toUpperCase() + counter[2].slice(1) } : {}) });
+      const amount = counter[1] === 'X' ? 'X' : ({ a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5 } as Record<string, number>)[counter[1]!]!;
+      (out.entersWith ??= []).push({ counter: counter[2]!, amount, ...(counter[3] ? { ifType: counter[3][0]!.toUpperCase() + counter[3].slice(1) } : {}), ...(/if you control that creature$/.test(p) ? { ifControlled: true as const } : {}) });
+      continue;
+    }
+    // Jace, Mirror Mage: "its starting loyalty is 1".
+    const loyalty = /^its starting loyalty is (\d+)$/.exec(p);
+    if (loyalty) {
+      out.loyalty = Number(loyalty[1]);
       continue;
     }
     if (/^it has this ability$/.test(p)) {
@@ -132,7 +213,9 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     }
     const has = /^it has (.+)$/.exec(p);
     if (has) {
-      const kws = parseKeywordList(has[1]!, b, true);
+      // Sakashima the Impostor: "except its name is Sakashima the Impostor, …, and it has "{2}{U}{U}: Return Sakashima the
+      // Impostor to its owner's hand …"" — named after this card, the copy's quoted ability means the copy itself.
+      const kws = out.name && out.name === b.env.cardName ? withSelfQuotes(b, out.name, () => parseKeywordList(has[1]!, b, true)) : parseKeywordList(has[1]!, b, true);
       if (!kws?.length) return null;
       (out.keywords ??= []).push(...kws);
       continue;

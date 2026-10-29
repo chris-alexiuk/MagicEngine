@@ -2,7 +2,7 @@ import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canActivateTapAbilities, chars, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
+import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
@@ -19,7 +19,7 @@ import { freePermission, graveyardLandPermission, graveyardPermissionCosts, grav
 import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
 import { activationsThisTurn, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
-import { faceOf, zoneList } from './zones.js';
+import { enteringBanned, faceOf, zoneList } from './zones.js';
 
 /**
  * Actions the player could take right now, for driving a UI or a bot. Casts and
@@ -55,7 +55,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
   if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player)) {
     for (const id of zoneList(g, 'graveyard', player)) {
       const def = g.cards[g.objects[id]!.card]!;
-      if (def.faces[0]!.types.includes('Land') && (ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!) || graveyardLandPermission(g, player, g.objects[id]!))) out.push({ type: 'play_land', player, object: id });
+      if (def.faces[0]!.types.includes('Land') && (ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!) || graveyardLandPermission(g, player, g.objects[id]!)) && !enteringBanned(g, g.objects[id]!, 'graveyard')) out.push({ type: 'play_land', player, object: id });
     }
   }
   // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library.
@@ -73,7 +73,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         if (face.keywords.some((k) => k.id === 'aftermath')) return;
       }
       if (face.types.includes('Land')) {
-        if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc')) {
+        if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc') && !((o.zone === 'graveyard' || o.zone === 'library') && enteringBanned(g, o, o.zone))) {
           out.push({ type: 'play_land', player, object: id, ...(faceIndex ? { face: faceIndex } : {}) });
         }
         return;
@@ -309,7 +309,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (limit && activationsThisTurn(g, o, ability) >= limit) return;
       const { cost } = ab;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
-      if ((ab.timing === 'sorcery' || cost.loyalty !== undefined) && !sorcerySpeed) return;
+      if ((ab.timing === 'sorcery' || (cost.loyalty !== undefined && !hasRule(g, o, 'loyalty_instant'))) && !sorcerySpeed) return;
       if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;

@@ -1,6 +1,6 @@
 import { isRoom, roomFace } from './rooms.js';
 import { faceDownFace } from './face-down.js';
-import type { CardDef, CastOptionNode, ExileInsteadNode, FaceDef } from '@mtg/schema';
+import type { CardDef, CastOptionNode, ExileInsteadNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
@@ -194,6 +194,10 @@ export function moveObject(
 ): void {
   const o = obj(g, id);
   const from = o.zone;
+  // Grafdigger's Cage: "Creature cards in graveyards and libraries can't enter the battlefield." — it stays where it is.
+  if (to === 'battlefield' && (from === 'graveyard' || from === 'library') && enteringBanned(g, o, from)) return;
+  // Containment Priest: "If a nontoken creature would enter and it wasn't cast, exile it instead." (CR 614.1a)
+  if (to === 'battlefield' && from !== 'battlefield' && from !== 'stack' && !o.token && enteringExiled(g, o)) to = 'exile';
   // CR 614.1a: "exile it instead" replaces the move — flashback (CR 702.34a), "if it would die this turn",
   // and "if ~ would be put into a graveyard from anywhere".
   if (from === 'stack' && (o.exileOnLeave === true || (o.exileOnLeave === 'graveyard' && to === 'graveyard'))) to = 'exile';
@@ -562,6 +566,30 @@ function exiledInstead(g: GameState, o: GameObject, from: ZoneName): { node: Exi
     }
   }
   return null;
+}
+
+/** Grafdigger's Cage, Soulless Jailer, Kunoros: cards like this in these zones can't enter the battlefield. */
+export function enteringBanned(g: GameState, o: GameObject, from: ZoneName): boolean {
+  return abilitySources(g).some((id) => {
+    const source = g.objects[id]!;
+    return objectAbilities(g, source).some((a) => {
+      if (a.kind !== 'static' || a.effect.type !== 'cant_enter') return false;
+      const e = a.effect as unknown as { filter?: ObjectFilter; fromZones?: ZoneName[] };
+      return (!e.fromZones || e.fromZones.includes(from)) && (!e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true }));
+    });
+  });
+}
+
+/** Containment Priest: a card like this entering without having been cast is exiled instead. */
+function enteringExiled(g: GameState, o: GameObject): boolean {
+  return abilitySources(g).some((id) => {
+    const source = g.objects[id]!;
+    return objectAbilities(g, source).some((a) => {
+      if (a.kind !== 'static' || a.effect.type !== 'enter_exile_uncast') return false;
+      const e = a.effect as unknown as { filter?: ObjectFilter };
+      return !e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true });
+    });
+  });
 }
 
 function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {

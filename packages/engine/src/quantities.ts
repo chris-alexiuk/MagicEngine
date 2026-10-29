@@ -51,7 +51,14 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
  * effect, or paying life — which is losing it (CR 119.4).
  */
 export function lifeLoss(g: GameState, player: PlayerId, n: number): number {
+  // Everybody Lives!: "Players can't lose life this turn." (CR 119.7)
+  if (cantLoseLife(g, player)) return 0;
   return replaceQuantity(g, 'lose_life', n, { player });
+}
+
+/** CR 119.7: "can't lose life" (an effect this turn); CR 119.8: such a player can't pay life either. */
+export function cantLoseLife(g: GameState, player: PlayerId): boolean {
+  return (g.playerEffects ?? []).some((e) => e.player === player && e.rule === 'cant_lose_life' && e.lastTurn >= g.turn);
 }
 
 /**

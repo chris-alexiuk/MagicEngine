@@ -263,7 +263,7 @@ export interface GameObject {
   /** CR 607.2a: the permanent whose ability exiled this card (for "the exiled card"). */
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
-  chosen?: { color?: Color; creatureType?: string; cardName?: string; cardType?: string; player?: PlayerId };
+  chosen?: { color?: Color; creatureType?: string; cardName?: string; cardType?: string; player?: PlayerId; word?: string; landType?: string; number?: number };
 }
 
 /** A reference that goes stale when the object changes zones. */

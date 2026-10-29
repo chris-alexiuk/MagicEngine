@@ -609,9 +609,11 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
 }
 
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
-export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean }): NonNullable<Resolution['moves']> {
+export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean; yours?: boolean }): NonNullable<Resolution['moves']> {
   const how = e.how;
   return (ctx.resolution?.moves ?? []).filter((m) => {
+    // Rise of the Witch-king: "If you sacrificed a creature this way" — only what this player sacrificed.
+    if (e.yours && m.controller !== ctx.controller) return false;
     const right =
       how === 'destroyed'
         ? m.effect === 'destroy' && m.from === 'battlefield'

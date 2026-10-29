@@ -47,6 +47,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f[key] = { op, n };
     return true;
   }],
+  // Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number".
+  [/ with mana value, power, or toughness equal to the chosen number$/, (f) => !f.statIsChosenNumber && ((f.statIsChosenNumber = true), true)],
+  // Drown in the Loch: "… with mana value less than or equal to the number of cards in its controller's graveyard".
+  [/ with mana value less than or equal to the number of cards in its controller's graveyard$/, (f) => !f.manaValue && !f.manaValueAtMostControllersGraveyard && ((f.manaValueAtMostControllersGraveyard = true), true)],
   // The Darkness Crystal: "target creature card exiled with The Darkness Crystal" (CR 607.2a).
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).

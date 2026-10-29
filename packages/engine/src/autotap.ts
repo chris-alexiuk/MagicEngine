@@ -6,6 +6,7 @@ import type { ObjectFilter } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { anyColorChoices, type ManaCost, manaOnly, manaOption, shortfall } from './mana.js';
 import { playerRule } from './player-rules.js';
+import { cantLoseLife } from './quantities.js';
 import { RulesError } from './types.js';
 import { anyColorCost, asThoughAnyColor, canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
 import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
@@ -86,7 +87,7 @@ const toActivation = (s: Source, m: Mode): PlannedActivation => ({
 export function phyrexianLifeOptions(g: GameState, player: PlayerId, cost: ManaCost): number[][] {
   const n = cost.phyrexian.length;
   const ps = g.players[player];
-  const most = !ps || playerRule(g, player, 'life_cant_change') ? 0 : Math.floor(Math.max(0, ps.life) / 2);
+  const most = !ps || playerRule(g, player, 'life_cant_change') || cantLoseLife(g, player) ? 0 : Math.floor(Math.max(0, ps.life) / 2);
   const out: number[][] = [];
   // Symbols that are the same can be paid either way alike: only how many of each kind matters.
   const kinds = new Map<string, number[]>();
@@ -142,7 +143,7 @@ export function settlePhyrexian(g: GameState, player: PlayerId, cost: ManaCost, 
     if (choice.length !== full.phyrexian.length) throw new RulesError(`Say how to pay each of the ${full.phyrexian.length} Phyrexian mana symbols: with mana or 2 life.`);
     life = choice.flatMap((c, i) => (c === 'life' ? [i] : []));
   } else {
-    const payable = (c: ManaCost) => (autoTapping ? planAutoTap(g, player, c, x, exclude, purpose) !== null : (() => { const need = shortfall(spendablePool(g, player, purpose), c, x); return Boolean(need && !need.specific.length && !need.generic); })());
+    const payable = (c: ManaCost) => (autoTapping ? planManaOnly(g, player, c, x, exclude, purpose) !== null : (() => { const need = shortfall(spendablePool(g, player, purpose), c, x); return Boolean(need && !need.specific.length && !need.generic); })());
     life = phyrexianLifeOptions(g, player, full).find((opt) => payable(manaOnly(full, opt))) ?? [];
   }
   Object.assign(cost, manaOnly(full, life));
@@ -153,12 +154,18 @@ export function planAutoTap(g: GameState, player: PlayerId, cost: ManaCost, x = 
   // CR 107.4f: Phyrexian symbols — mana if that's payable, else 2 life for as few of them as needed.
   const phy = withPlayerPhyrexian(g, player, cost, purpose);
   if (phy.phyrexian.length) {
+    // The rest is mana only: converting it again (K'rrik, Defiler of Vigor) would never end.
     for (const life of phyrexianLifeOptions(g, player, phy)) {
-      const plan = planAutoTap(g, player, manaOnly(phy, life), x, exclude, purpose);
+      const plan = planManaOnly(g, player, manaOnly(phy, life), x, exclude, purpose);
       if (plan) return plan;
     }
     return null;
   }
+  return planManaOnly(g, player, cost, x, exclude, purpose);
+}
+
+/** planAutoTap for a cost already settled to mana only (no Phyrexian symbols left to convert). */
+export function planManaOnly(g: GameState, player: PlayerId, cost: ManaCost, x: number, exclude: readonly ObjectId[], purpose: ManaPurpose): PlannedActivation[] | null {
   // CR 609.4b: "as though it were mana of any color" — any mana pays its colored symbols.
   const anyColor = asThoughAnyColor(g, player, purpose);
   if (anyColor) cost = anyColorCost(cost, anyColor);

@@ -36,6 +36,13 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
   if (x.name) f.name = x.name;
   if (x.nonlegendary) f.supertypes = f.supertypes.filter((s) => s !== 'Legendary');
   for (const s of x.supertypes ?? []) if (!f.supertypes.includes(s)) f.supertypes.push(s);
+  // CR 205.1a / 205.3d: "it's an artifact" — its card types are replaced, and subtypes of the types it lost go with them.
+  if (x.setTypes) {
+    f.types = [...x.setTypes];
+    const allowed = new Set(x.setTypes.flatMap((t) => SUBTYPES[t.toLowerCase() as keyof typeof SUBTYPES] ?? []));
+    if (x.setTypes.some((t) => t === 'Instant' || t === 'Sorcery')) for (const s of SUBTYPES.spell) allowed.add(s);
+    f.subtypes = f.subtypes.filter((s) => allowed.has(s));
+  }
   for (const t of x.addTypes ?? []) if (!f.types.includes(t)) f.types.push(t);
   if (x.setCreatureTypes) f.subtypes = [...f.subtypes.filter((s) => !CREATURE_TYPES.has(s)), ...x.setCreatureTypes];
   for (const s of x.addSubtypes ?? []) if (!f.subtypes.includes(s)) f.subtypes.push(s);
@@ -43,7 +50,12 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
   if (x.addColors) f.colors = (['W', 'U', 'B', 'R', 'G'] as const).filter((c) => f.colors.includes(c) || x.addColors!.includes(c));
   if (x.power !== undefined) f.power = String(x.power);
   if (x.toughness !== undefined) f.toughness = String(x.toughness);
-  if (x.keywords) f.keywords.push(...structuredClone(x.keywords));
+  if (x.loyalty !== undefined) f.loyalty = String(x.loyalty);
+  // A quoted ability ('it has "{T}: Add {U}."') is printed on the copy — one of its own abilities, mana abilities too.
+  for (const k of structuredClone(x.keywords ?? [])) {
+    if (k.id === 'ability' && k.abilities) f.abilities.push(...k.abilities.map((a) => ({ ...a, text: a.text ?? k.text })));
+    else f.keywords.push(k);
+  }
   // "except it has this ability"
   if (x.abilities) for (const a of x.abilities) if (!f.abilities.some((b) => b.text === a.text)) f.abilities.push(structuredClone(a));
   // CR 202.3a: with no mana cost its mana value is 0.

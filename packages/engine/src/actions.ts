@@ -10,7 +10,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canActivateTapAbilities, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
 import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
@@ -58,7 +58,7 @@ import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
 import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
 import { lifeLoss, replaceQuantity } from './quantities.js';
-import { drawCard, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
+import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
 /**
  * Applies one player action. Pure: the input state is never modified.
@@ -326,6 +326,8 @@ function playLand(g: GameState, player: PlayerId, id: ObjectId, faceIndex: numbe
   const landKey = !fromExile && !fromGraveyard ? graveyardLandPermission(g, player, o) : null;
   if (!fromExile && !fromGraveyard && !landKey && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only play lands from your hand.');
   if (!face.types.includes('Land')) throw new RulesError(`${face.name} isn’t a land.`);
+  // Soulless Jailer: "Permanent cards in graveyards can't enter the battlefield." — nor be played from there.
+  if ((o.zone === 'graveyard' || o.zone === 'library') && enteringBanned(g, o, o.zone)) throw new RulesError(`${face.name} can’t enter the battlefield from there.`);
   // CR 712.12: a modal double-faced card is played as a land with a land face up.
   if (faceIndex > 0 && def.layout !== 'modal_dfc') throw new RulesError('Only modal double-faced cards can be played back face up.');
   // CR 305.1: during your main phase, with the stack empty.
@@ -471,6 +473,8 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
     base.push({ type: 'cast_option', id: 'fuse', kind: 'additional', cost: { mana: def.faces[1]!.manaCost } });
   }
   if (o.zone === 'hand' && !face.types.includes('Land') && playerRule(g, player, 'free_from_hand')) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
+  // Dracogenesis, Rooftop Storm: "You may cast Dragon spells without paying their mana costs." — wherever they're cast from.
+  if (!face.types.includes('Land') && ruleAllows(g, player, 'free_cast', o)) return [...base, { type: 'cast_option', id: 'free', kind: 'alternative', cost: {} }];
   return base;
 }
 
@@ -718,6 +722,12 @@ function cast(
   addPerTargetCost(castFace, targets, cost);
   addModeCosts(castFace, modes, cost);
   for (const s of splices) addCost(cost, parseManaCost(s.cost));
+  // CR 601.2f / 107.3a: the total cost includes the value chosen for X — generic mana a reduction can take off too
+  // (Goblin Electromancer and a Fireball with X=3: {2}{R}).
+  if (cost.x) {
+    cost.generic += cost.x * x;
+    cost.x = 0;
+  }
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
   if (alt?.reduceBySacrificed) {
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
@@ -757,9 +767,14 @@ function cast(
   const fixedSacrifices = (additional.other ?? []).filter((c) => c.type === 'sacrifice' && c.amount !== 'any').reduce((n, c) => n + Number(c.amount ?? 1), 0);
   const anySacrificed = (additional.other ?? []).some((c) => c.type === 'sacrifice' && c.amount === 'any') ? Math.max(0, (costChoices.sacrifice?.length ?? 0) - fixedSacrifices) : 0;
   additional.other = (additional.other ?? []).map((c) => (c.type === 'sacrifice' && c.amount === 'any' ? { ...c, amount: anySacrificed } : c));
+  // March of Swirling Mist: "you may exile any number of blue cards from your hand".
+  const fixedExiled = (additional.other ?? []).filter((c) => c.type === 'exile_cards' && c.amount !== 'any').reduce((n, c) => n + Number(c.amount ?? 1), 0);
+  const anyExiled = (additional.other ?? []).some((c) => c.type === 'exile_cards' && c.amount === 'any') ? Math.max(0, (costChoices.exile?.length ?? 0) - fixedExiled) : 0;
+  additional.other = (additional.other ?? []).map((c) => (c.type === 'exile_cards' && c.amount === 'any' ? { ...c, amount: anyExiled } : c));
   // "This spell costs {2} less to cast for each creature sacrificed this way." (CR 601.2f)
   for (const a of castFace.abilities) {
     if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perSacrificed) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anySacrificed);
+    if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perExiled) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anyExiled);
   }
   checkOtherCosts(g, player, o, additional, costChoices);
   // CR 119.4: all the life it costs at once.
@@ -1053,8 +1068,9 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   const cost = ability.cost.other?.some((c) => c.amount === 'X' || (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X') ? { ...ability.cost, other: ability.cost.other.map((c) => xFilter(c.amount === 'X' ? { ...c, amount: choices.x } : c)) } : ability.cost;
 
   if (cost.loyalty !== undefined) {
-    // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn.
-    if (!sorcerySpeed) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
+    // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn (Teferi, Master of Time: any
+    // time you could cast an instant).
+    if (!sorcerySpeed && !hasRule(g, o, 'loyalty_instant')) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
     if (o.loyaltyActivatedTurn === g.turn) throw new RulesError(`You’ve already activated a loyalty ability of ${name} this turn.`);
     // CR 606.6: a negative loyalty cost needs at least that many loyalty counters ("−X": X of them).
     if ((o.counters.loyalty ?? 0) + cost.loyalty + (cost.loyaltyX ?? 0) * choices.x < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
