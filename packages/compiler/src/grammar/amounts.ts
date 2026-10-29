@@ -296,6 +296,15 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
       return { kind: 'spells_cast_this_turn', filter, ...(who ? { player: who } : {}) };
     }
   }
+  // Prophet of the Scarab: "the number of Zombies you control or the number of Zombie cards in your graveyard, whichever is
+  // greater"; Triumphant Chomp: "2 or the greatest power among Dinosaurs you control, whichever is greater".
+  const whichever = /^(.+?) or (.+), whichever is greater$/.exec(t);
+  if (whichever) {
+    const num = (s: string): AmountExpr | null => (/^\d+$/.test(s) ? { kind: 'sum', parts: [], plus: Number(s) } : parseCount(s, b));
+    const one = num(whichever[1]!);
+    const two = one && num(whichever[2]!);
+    return one && two ? { kind: 'max', parts: [one, two] } : null;
+  }
   // Knight-Errant of Eos: "the number of creatures that convoked it" (CR 702.51c).
   if (/^the number of creatures that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Cavern-Hoard Dragon: "the greatest number of artifacts an opponent controls" — the most any one opponent controls.

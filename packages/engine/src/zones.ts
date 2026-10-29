@@ -309,6 +309,8 @@ export function moveObject(
   delete o.renowned;
   delete o.saddledTurn;
   delete o.goadedBy;
+  delete o.suspected;
+  delete o.solved;
   delete o.prepared;
   delete o.ringBearer;
   if (o.phasedOut) {

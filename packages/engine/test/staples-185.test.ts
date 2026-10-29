@@ -777,6 +777,13 @@ const CARDS = [
   makeCard({ name: 'Knuckles Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +4/+2.\nEquipped creature has double strike as long as two or more Equipment are attached to it.\nEquip {1}' }),
   makeCard({ name: 'Pack Leader Lite', type_line: 'Creature — Werewolf', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Pack tactics — Whenever this creature attacks, if you attacked with creatures with total power 6 or greater this combat, draw a card.' }),
   makeCard({ name: 'Kroxa Lite', type_line: 'Creature — Giant', mana_cost: '{0}', power: '6', toughness: '6', oracle_text: "When this creature enters, each opponent discards a card, then each opponent who didn't discard a nonland card this way loses 3 life." }),
+  makeCard({ name: 'Vow Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: "Enchant creature\nEnchanted creature gets +2/+2, has vigilance, and can't attack you or planeswalkers you control." }),
+  makeCard({ name: 'Prophet Lite', type_line: 'Creature — Zombie', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'When this creature enters, draw cards equal to the number of Zombies you control or the number of Zombie cards in your graveyard, whichever is greater.' }),
+  makeCard({ name: 'Ravager Lite', type_line: 'Creature — Minotaur', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'When this creature enters, each player loses a third of their life, rounded up.' }),
+  makeCard({ name: 'Servitor Lite', type_line: 'Creature — Construct', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'When this creature enters, suspect it.' }),
+  makeCard({ name: 'Agrus Lite', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "When this creature enters, choose up to one target creature. If it's suspected, exile it. Otherwise, suspect it." }),
+  makeCard({ name: 'Lammasu Lite', type_line: 'Creature — Lammasu', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'When this creature enters, all suspected creatures are no longer suspected.' }),
+  makeCard({ name: 'Case Lite', type_line: 'Enchantment — Case', mana_cost: '{0}', oracle_text: 'To solve — You control three or more artifacts. (If unsolved, solve at the beginning of your end step.)\nSolved — {T}: Draw a card.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -6596,6 +6603,67 @@ describe('Sieges', () => {
       g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Kroxa Lite', 'hand') }));
       expect(g.zones.hand.bob!.length).toBe(0);
       expect(g.players.bob!.life).toBe(land ? 17 : 20);
+    });
+  }
+  it("Vow of Duty: the enchanted creature can't attack the Aura's controller, only others (CR 508.1c)", () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'alice');
+    const z = give(g, 'alice', 'Zombie', 'battlefield', { sick: false });
+    const vow = give(g, 'bob', 'Vow Lite', 'battlefield');
+    g.objects[vow]!.attachedTo = { id: z, zcc: g.objects[z]!.zcc };
+    expect(chars(g, g.objects[z]!).power).toBe(4);
+    g = toAttack(toStep(g, 'beginning_of_combat'));
+    const at = (player: string) => ({ type: 'choose' as const, player: 'alice', answer: { kind: 'declare_attackers' as const, attacks: [{ attacker: z, target: { kind: 'player' as const, player } }] } });
+    expect(illegal(g, at('bob'))).toMatch(/can’t attack Bob/);
+    g = act(g, at('carol'));
+    expect(g.objects[z]!.tapped).toBeFalsy();
+  });
+  it('Prophet of the Scarab: the greater of two counts', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Zombie', 'battlefield');
+    for (let i = 0; i < 3; i++) give(g, 'alice', 'Zombie', 'graveyard');
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Prophet Lite', 'hand') }));
+    expect(g.zones.hand.alice!.length).toBe(hand + 3);
+  });
+  it('Dire Fleet Ravager: each player loses a third of their life, rounded up', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.players.bob!.life = 10;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Ravager Lite', 'hand') }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([13, 6]);
+  });
+  it("Suspect: menace and can't block until it's no longer suspected (CR 701.60)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sv = give(g, 'alice', 'Servitor Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: sv }));
+    const c = chars(g, g.objects[sv]!);
+    expect([c.keywords.some((k) => k.id === 'menace'), c.rules.has('cant_block')]).toEqual([true, true]);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Lammasu Lite', 'hand') }));
+    const d = chars(g, g.objects[sv]!);
+    expect([g.objects[sv]!.suspected, d.keywords.some((k) => k.id === 'menace'), d.rules.has('cant_block')]).toEqual([undefined, false, false]);
+  });
+  it("Agrus Kos: suspects a creature that isn't, exiles one that is", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const z = give(g, 'bob', 'Zombie', 'battlefield');
+    for (let i = 0; i < 2; i++) {
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Agrus Lite', 'hand') });
+      g = drive(g, (g) => (g.pending?.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: z }]] } } as never) : null));
+      expect(i === 0 ? g.objects[z]!.suspected !== undefined : g.objects[z]!.zone === 'exile').toBe(true);
+    }
+  });
+  for (const n of [2, 3]) {
+    it(`Case: ${n === 3 ? 'solved at the end step, then its Solved ability works' : 'not solved without three artifacts'} (CR 719.3)`, () => {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const cs = give(g, 'alice', 'Case Lite', 'battlefield');
+      for (let i = 0; i < n; i++) give(g, 'alice', 'Sword Lite', 'battlefield');
+      expect(() => act(g, { type: 'activate', player: 'alice', object: cs, ability: 0 })).toThrow();
+      g = toStep(g, 'end', 'alice');
+      g = settle(g);
+      expect(Boolean(g.objects[cs]!.solved)).toBe(n === 3);
+      if (n === 3) {
+        const hand = g.zones.hand.alice!.length;
+        g = settle(act(g, { type: 'activate', player: 'alice', object: cs, ability: 0 }));
+        expect(g.zones.hand.alice!.length).toBe(hand + 1);
+      }
     });
   }
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

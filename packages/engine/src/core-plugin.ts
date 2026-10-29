@@ -1731,6 +1731,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 719.3c: "To solve — …": the Case becomes solved.
+  solve(_node, ctx) {
+    if (ctx.source?.zone === 'battlefield') ctx.source.solved = true;
+    return true;
+  },
+
+  // CR 701.60a: "Suspect target creature." — suspected until it leaves the battlefield; `off`: "it's no longer suspected".
+  suspect(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'battlefield') continue;
+      if (node.off) delete o.suspected;
+      // CR 701.60d: a suspected permanent can't become suspected again.
+      else if (o.suspected === undefined && !hasRule(ctx.g, o, 'cant_be_suspected')) o.suspected = ++ctx.g.clock;
+    }
+    return true;
+  },
+
   // CR 104.2a / 104.3a: a player wins (everyone else loses) or loses the game.
   game_result(node, ctx) {
     for (const p of refPlayers(ctx, ref(node, 'who'))) {

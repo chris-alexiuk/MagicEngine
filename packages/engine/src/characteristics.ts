@@ -430,7 +430,7 @@ function staticEffects(g: GameState): ActiveEffect[] {
         // CR 702.16a: "protection from the chosen color" — what was chosen for this source; "you" is its controller.
         ...(e.keywords ? { keywords: bindQualityKeywords(e.keywords, { you: source.controller, grantedBy: source.id, ...(source.chosen?.color ? { color: source.chosen.color } : {}), ...(source.chosen?.creatureType ? { creatureType: source.chosen.creatureType } : {}) }) } : {}),
         ...(e.rules ? { rules: e.rules } : {}),
-        ...(e.combat ? { combat: { ...e.combat, from: source.id } } : {}),
+        ...(e.combat ? { combat: { ...e.combat, from: source.id, ...(e.combat.cantAttackYou ? { cantAttackPlayer: source.controller } : {}) } } : {}),
         // CR 205.1b / 613.1d: "is a Wizard in addition to its other types" (layer 4).
         ...(e.addTypes
           ? { types: { types: e.addTypes.types, subtypes: [...e.addTypes.subtypes, ...(e.addTypes.chosenType && (source.chosen?.creatureType ?? source.chosen?.landType) ? [(source.chosen.creatureType ?? source.chosen.landType)!] : []), ...(e.addTypes.allCreatureTypes ? CREATURE_TYPES : [])], retain: true } }
@@ -645,8 +645,15 @@ function layered(g: GameState, o: GameObject): Characteristics {
   const stampOf = (k: string) => o.counterStamps?.[k] ?? -Infinity;
   let counted = 0;
   const sortedCounters = [...keywordCounters].sort((a, b) => stampOf(a[0]) - stampOf(b[0]));
+  // CR 701.60c: "A suspected permanent has menace and 'This creature can't block' for as long as it's suspected." — abilities
+  // it has from when it became suspected (an earlier "loses all abilities" doesn't take them; a later one does).
+  let suspect = o.zone === 'battlefield' && o.suspected !== undefined ? o.suspected : undefined;
   const countersUpTo = (t: number) => {
     while (counted < sortedCounters.length && stampOf(sortedCounters[counted]![0]) < t) c.keywords.push({ id: sortedCounters[counted++]![0] });
+    if (suspect !== undefined && suspect < t) {
+      c.keywords.push({ id: 'menace' }, SUSPECT_CANT_BLOCK);
+      suspect = undefined;
+    }
   };
   // CR 613.1f: layer 6 — ability-adding effects (and here, rule flags, which ride along with abilities).
   const inLayer6 = effects.filter((e) => !e.ptGated && (e.keywords || e.rules || e.combat || e.loseAbilities || e.loseKeywords) && e.applies(o, c));
@@ -703,6 +710,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
   if (banned.length) out.keywords = out.keywords.filter((k) => !banned.includes(k.id));
   return out;
 }
+
+/** CR 701.60c: a suspected permanent's "This creature can't block." */
+const SUSPECT_CANT_BLOCK: KeywordInstance = {
+  id: 'ability',
+  text: "This creature can't block.",
+  abilities: [{ kind: 'static', text: "This creature can't block.", effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['cant_block'] } } as AbilityNode],
+};
 
 /** Granted self-only static abilities (see grantableStatic in the compiler). Returns their +N/+N. */
 function applyGrantedStatics(c: Characteristics): [number, number] {
@@ -888,6 +902,8 @@ export function matchesFilter(
   if (f.dealtDamageThisTurn && !((g.turnLog.dealtDamage ?? {})[`${o.id}:${o.zcc}`] ?? 0)) return false;
   // Vengeful Ancestor: "a goaded creature" (CR 701.15) — by an effect, or a static "is goaded".
   if (f.goaded && !(o.goadedBy?.length || c.combat.some((r) => r.goaded))) return false;
+  // CR 701.60: "all suspected creatures", "if it's not suspected".
+  if (f.suspected !== undefined && (o.zone === 'battlefield' && o.suspected !== undefined) !== f.suspected) return false;
   if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
   if (f.controller === 'you' && controller !== ctx.controller) return false;
   if ((f.controller === 'opponent' || f.controller === 'not_you') && controller === ctx.controller) return false;

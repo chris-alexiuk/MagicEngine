@@ -3,6 +3,7 @@ import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, Objec
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
+import { parseCondition } from './grammar/conditions.js';
 import { parseCost } from './grammar/lines.js';
 import { capitalise, subtypeOf, TYPE_NOUNS } from './grammar/words.js';
 import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
@@ -370,6 +371,13 @@ export class ParserRegistry {
       // trigger, with that many permanents.
       const annihilatorX = /^(.+?) has annihilator X, where X is the number of (\S+) counters on it\.$/.exec(line);
       const selfName = (n: string) => n === '~' || n === 'This creature' || n === ctx.faceName || n === ctx.faceName.split(',')[0];
+      // CR 604.3: Mistform Ultimus: "~ is every creature type (even if this card isn't on the battlefield)." — the same
+      // characteristic-defining ability as changeling (CR 702.73a), in every zone.
+      const everyType = /^(.+?) is every creature type\.$/.exec(line);
+      if (everyType && selfName(everyType[1]!)) {
+        result.keywords.push({ id: 'changeling' });
+        continue;
+      }
       if (annihilatorX && selfName(annihilatorX[1]!)) {
         const node = this.parseBlock(['Whenever ~ attacks, defending player sacrifices two permanents of their choice.'], env, line);
         const sac = node?.kind === 'triggered' && node.effects.length === 1 && node.effects[0]!.type === 'sacrifice_choice' ? node.effects[0]! : null;
@@ -403,6 +411,25 @@ export class ParserRegistry {
         const node = this.parseBlock([wordBullet[2]!], env, line);
         if (node) {
           node.gate = wordGate;
+          result.abilities.push(node);
+        } else result.unparsed.push(line);
+        continue;
+      }
+      // CR 719.3c: "To solve — [condition]" means "At the beginning of your end step, if this Case is not solved and
+      // [condition], it becomes solved."
+      const toSolve = /^To solve — (.+?)\.?$/.exec(line);
+      if (toSolve) {
+        const cond = parseCondition(toSolve[1]!.replace(/^\w/, (c) => c.toLowerCase()), new Binder(env as GrammarEnv));
+        if (cond) result.abilities.push({ kind: 'triggered', text: line, trigger: { type: 'phase', step: 'end', whose: 'you' }, condition: { type: 'and', all: [{ type: 'solved', not: true }, cond] }, effects: [{ type: 'solve' }] } as AbilityNode);
+        else result.unparsed.push(line);
+        continue;
+      }
+      // CR 702.169a: "Solved — [ability]" means "As long as this Case is solved, [ability]."
+      const solvedLine = /^Solved — (.+)$/.exec(line);
+      if (solvedLine) {
+        const node = this.parseBlock([solvedLine[1]!], env, line);
+        if (node) {
+          node.gate = { type: 'solved' };
           result.abilities.push(node);
         } else result.unparsed.push(line);
         continue;

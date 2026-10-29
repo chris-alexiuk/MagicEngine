@@ -558,6 +558,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
     else if (w === 'attacking') f.combat = 'attacking';
     // Vengeful Ancestor: "Whenever a goaded creature attacks" (CR 701.15)
     else if (w === 'goaded') f.goaded = true;
+    // Nelly Borca: "goad all suspected creatures" (CR 701.60).
+    else if (w === 'suspected') f.suspected = true;
     // Greater Auramancy: "Enchanted creatures you control have shroud."; "equipped creatures you control".
     else if (w === 'enchanted' && f.enchanted === undefined) f.enchanted = true;
     else if (w === 'equipped') f.equipped = true;

@@ -9,7 +9,7 @@ import { isRingBearer } from './ring.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
 ];
 
@@ -373,7 +373,12 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         const self = source && declared.some((d) => d.id === source.id && d.zcc === (ctx.sourceZcc ?? source.zcc));
         return Boolean(self) && declared.filter((d) => d.id !== source!.id).length >= Number(cond.n ?? 1);
       }
-      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => g.objects[id]?.controller === controller).length;
+      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => cond.anyone || g.objects[id]?.controller === controller).length;
+      return n >= Number(cond.n ?? 1);
+    }
+    case 'to_graveyard_this_turn': {
+      // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
+      const n = (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
       return n >= Number(cond.n ?? 1);
     }
     case 'opponent_has_more': {
@@ -422,6 +427,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'day_night':
       // CR 731: "if it's night"
       return cond.is === 'neither' ? !g.dayNight : g.dayNight === cond.is;
+    case 'solved':
+      // CR 719.3b: a Case is solved (or not) until it leaves the battlefield.
+      return Boolean(source && source.zone === 'battlefield' && source.solved) !== Boolean(cond.not);
     case 'prepared':
       // CR 722.3a: "if this creature isn't prepared"
       return Boolean(source && source.zone === 'battlefield' && source.prepared) !== Boolean(cond.not);

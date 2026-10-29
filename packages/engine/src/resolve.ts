@@ -296,7 +296,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -379,6 +379,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return refObjects(ctx, e.of)[0]?.cast?.sacrificed ?? 0;
     case 'sum':
       return e.parts.reduce((n, p) => n + amountOf(ctx, p), 0);
+    case 'max':
+      return Math.max(...e.parts.map((p) => amountOf(ctx, p)));
     case 'life':
       return g.players[refPlayers(ctx, e.who)[0] ?? '']?.life ?? 0;
     case 'counters': {
@@ -758,7 +760,8 @@ export function amountOf(ctx: EffectContext, a: Amount | unknown): number {
     const e = a as AmountExpr;
     // "half X, rounded down", "half their life, rounded up" — the count is halved; "-X, where X is half …" then negates it.
     const base = count(ctx, e);
-    const n = e.half ? (e.half === 'up' ? Math.ceil(base / 2) : Math.floor(base / 2)) : base;
+    const d = e.divisor ?? 2;
+    const n = e.half ? (e.half === 'up' ? Math.ceil(base / d) : Math.floor(base / d)) : base;
     return n * (e.times ?? 1) + (e.plus ?? 0);
   }
   return 0;

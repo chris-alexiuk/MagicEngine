@@ -2234,6 +2234,8 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   'attacks or blocks each combat if able': ['attacks_each_combat', 'blocks_each_combat'],
   'attack or block each combat if able': ['attacks_each_combat', 'blocks_each_combat'],
   "can't be countered": ['cant_be_countered'],
+  // Airtight Alibi: "Enchanted creature … can't become suspected." (CR 701.60)
+  "can't become suspected": ['cant_be_suspected'],
   "doesn't untap during your untap step": ['doesnt_untap'],
   "doesn't untap during its controller's untap step": ['doesnt_untap'],
   // Back to Basics, Meekstone: "Nonbasic lands don't untap during their controllers' untap steps."
@@ -2421,7 +2423,8 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
 /** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you." */
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
-  const ban = /^(.*?creatures(?: with [a-z]+)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
+  // Rite of the Raging Storm: "Creatures named Lightning Rager can't attack you or planeswalkers you control."
+  const ban = /^(.*?creatures(?: with [a-z]+| named [A-Z][\w ,'-]+?)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
   if (ban) {
     const pf = parseFilter(ban[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
@@ -2739,7 +2742,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) every creature type|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2752,7 +2755,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   const normalized = m[2]!
     .replace(/, and it loses /, ' and loses ')
     .replace(/^(is an? (?:colorless )?land) with (QUOTED_\d+)(?= and |$)/, '$1 and has $2');
-  const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't ))/g, ' and ').replace(/ and and /g, ' and ');
+  const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't |must be ))/g, ' and ').replace(/ and and /g, ' and ');
   let loseOthers = false;
   for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? )/)) {
     // "loses all other abilities, card types, and creature types" / "… card types and abilities" — with the types this
@@ -2775,6 +2778,11 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
     // Blade of the Oni: "is a black Demon in addition to its other colors and types" (layers 4 and 5).
     const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (colors and )?(?:land )?types$/.exec(part);
+    // Arachnoform: "is every creature type" (CR 205.3m, layer 4).
+    if (/^(?:is|are) every creature type$/.test(part) && !effect.addTypes) {
+      effect.addTypes = { types: [], subtypes: [], allCreatureTypes: true };
+      continue;
+    }
     if (also && !effect.addTypes && also[1] === 'the chosen type') {
       effect.addTypes = { types: [], subtypes: [], chosenType: true };
       continue;
@@ -2925,6 +2933,9 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   }
   // "all other card types" only makes sense with the types the effect sets.
   if (loseOthers && !effect.setTypes) return null;
+  // Sandwurm Convergence: "Creatures with flying can't attack you …" is checked as they attack (parseAttackTax), with
+  // whatever abilities they have by then.
+  if (effect.combat?.cantAttackYou && subject.ref.ref === 'all') return null;
   return effect;
 }
 

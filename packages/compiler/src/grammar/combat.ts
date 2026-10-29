@@ -14,6 +14,8 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   if (/^must be blocked(?: this turn)? if able$/.test(p)) return { mustBeBlocked: 'one' };
   // Shiny Impetus: "Enchanted creature … is goaded" (a static ability; see goaders in the engine).
   if (/^(?:is|are) goaded$/.test(p)) return { goaded: true };
+  // Vow of Duty: "Enchanted creature … can't attack you or planeswalkers you control." — the source's controller (CR 508.1c).
+  if (/^can't attack you or planeswalkers you control$/.test(p)) return { cantAttackYou: true };
   if (/^can't be blocked by more than one creature(?: each combat)?$/.test(p)) return { maxBlockers: 1 };
   // CR 509.1a: blocking more than one attacker.
   const additional = /^can block (?:an additional|(\w+) additional) creatures?(?: each combat)?$/.exec(p);

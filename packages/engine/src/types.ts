@@ -179,6 +179,10 @@ export interface GameObject {
   saddledTurn?: number;
   /** CR 702.112b: it became renowned. */
   renowned?: true;
+  /** CR 719.3b: a Case that became solved. */
+  solved?: true;
+  /** CR 701.60a: suspected (the timestamp it became so: its menace and "can't block" are layer 6 abilities, CR 701.60c). */
+  suspected?: number;
   /** CR 702.177a: abilities activated "only once" (by index). */
   activatedOnce?: Record<number, true>;
   /** CR 702.143a: foretold (exiled face down from hand) on this turn. */

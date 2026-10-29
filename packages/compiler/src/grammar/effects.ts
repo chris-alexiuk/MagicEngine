@@ -1837,9 +1837,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
 /** "half X", "half their life", "half their library", "half the cards in their hand" — halved, rounded `dir`. */
 function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] | null {
   const kinds: string[] = [];
+  let third = false;
   const t = text
     .replace(/\bhalf X\b/g, () => (kinds.push('x'), 'X'))
     .replace(/\b(loses?) half (?:their|his or her|your) life\b/, (_m, v: string) => (kinds.push('life'), `${v} X life`))
+    // Dire Fleet Ravager: "each player loses a third of their life, rounded up".
+    .replace(/\b(loses?) a third of (?:their|your) life\b/, (_m, v: string) => (kinds.push('life'), (third = true), `${v} X life`))
     .replace(/\b(mills?) half (?:their|your) library\b/, (_m, v: string) => (kinds.push('library'), `${v} X cards`))
     // Ulamog, the Defiler: "target opponent exiles the top half of their library, rounded up".
     .replace(/\b(exiles?) the top half of (their|your) library\b/, (_m, v: string, w: string) => (kinds.push('library'), `${v} the top X cards of ${w} library`))
@@ -1868,14 +1871,14 @@ function parseHalved(text: string, dir: 'up' | 'down', b: Binder): EffectNode[] 
         // opponent loses half their life" — each their own.
         if (!one(e.who)) {
           if (kinds[0] !== 'life' || e.type !== 'lose_life' || (e.who as Ref | undefined)?.ref !== 'players') return out;
-          out.amount = { kind: 'life', who: { ref: 'each_player' }, half: dir };
+          out.amount = { kind: 'life', who: { ref: 'each_player' }, half: dir, ...(third ? { divisor: 3 } : {}) };
           bound++;
           return out;
         }
         // Singularity Rupture: "any number of target players each mill half their library" — each of them their own.
         const many = (e.who as Ref).ref === 'target' && ((b.targets[(e.who as { index: number }).index]?.count ?? 1) > 1);
         const player: Ref = many && e.type === 'mill' ? { ref: 'each_player' } : (e.who as Ref);
-        out.amount = kinds[0] === 'life' ? { kind: 'life', who: e.who, half: dir } : { kind: 'cards', zone: kinds[0] === 'library' ? 'library' : 'hand', who: 'you', player, half: dir };
+        out.amount = kinds[0] === 'life' ? { kind: 'life', who: e.who, half: dir, ...(third ? { divisor: 3 } : {}) } : { kind: 'cards', zone: kinds[0] === 'library' ? 'library' : 'hand', who: 'you', player, half: dir };
       }
       bound++;
       return out;
@@ -2252,6 +2255,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Ophidian: "this creature assigns no combat damage this turn"; Lim-Dûl's Paladin: "it assigns no combat damage this turn
   // and defending player loses 4 life".
+  // CR 701.60: Absolving Lammasu: "all suspected creatures are no longer suspected"; Airtight Alibi: "it's no longer suspected".
+  const unsuspect = /^(.+?) (?:is|are) no longer suspected$/.exec(s.replace(/^([Ii]t|[Tt]hey)'(s|re) /, (_m, w: string, v: string) => `${w} ${v === 's' ? 'is' : 'are'} `));
+  if (unsuspect) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(unsuspect[1]!, b);
+      return what ? [{ type: 'suspect', what: what.ref, off: true }] : null;
+    });
+    if (r) return r;
+  }
   const noDamage = /^(.+?) assigns no combat damage this turn(?: and (.+))?$/.exec(s);
   if (noDamage) {
     const r = attempt(b, (b) => {
@@ -2509,7 +2521,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Wan Shi Tong: "draw half X cards, rounded down"; Quietus Spike: "that player loses half their life, rounded up";
   // Traumatize: "Target player mills half their library, rounded down."
   const halved = /^(.+), rounded (up|down)$/.exec(s);
-  if (halved && /\bhalf\b/.test(halved[1]!)) {
+  if (halved && /\bhalf\b|\ba third of\b/.test(halved[1]!)) {
     const r = attempt(b, (b) => parseHalved(halved[1]!, halved[2] as 'up' | 'down', b));
     if (r) return r;
   }
@@ -2922,6 +2934,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // CR 701.60a: "Suspect target creature.", "suspect it", "suspect enchanted creature".
+  const suspect = /^[Ss]uspect (.+)$/.exec(s);
+  if (suspect) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(suspect[1]!, b);
+      return what ? [{ type: 'suspect', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
   // "Investigate twice.", "Proliferate twice." — the action, again.
   const again = /^(.+) (twice|three times)$/.exec(s);
   if (again && /^(?:[Ii]nvestigate|[Pp]roliferate|[Pp]opulate|[Ss]cry \w+|[Ss]urveil \w+|[Aa]mass .+|[Bb]olster \w+|[Cc]onnive|[Ee]xplore|[Ii]ncubate \w+)$/.test(again[1]!)) {
@@ -3066,6 +3087,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   const bottom = /^Put any number of cards from your hand on the bottom of your library, then draw that many cards( plus one)?$/.exec(s);
   if (bottom) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'any', to: 'bottom', ...(bottom[1] ? { delta: 1 } : {}) }];
   // Winds of Change: "Each player shuffles the cards from their hand into their library, then draws that many cards."
+  // Whirlpool Warrior: "shuffle the cards from your hand into your library, then draw that many cards" — you.
+  if (/^[Ss]huffle (?:the cards from your hand|your hand) into your library, then draw that many cards$/.test(s)) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'all', to: 'shuffle' }];
   const shuffleWheel = /^(.+?) shuffles? (?:the cards from (?:their|your) hand|(?:their|your) hand) into (?:their|your) library, then draws? that many cards$/.exec(s);
   if (shuffleWheel) {
     const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
@@ -3738,7 +3761,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // "Choose target creature." — the target, for what follows ("that creature").
-  const chooseTarget = /^[Cc]hoose (target .+|up to one target .+)$/.exec(s);
+  const chooseTarget = /^[Cc]hoose ((?:another )?target .+|up to one (?:other )?target .+)$/.exec(s);
   if (chooseTarget) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(chooseTarget[1]!, b);
@@ -4577,6 +4600,8 @@ const VERBS: Record<string, VerbHandler> = {
     }
     return null;
   },
+  // Absolving Lammasu: "you gain 3 life and suspect up to one target creature an opponent controls" (CR 701.60a).
+  suspect: objectVerb('suspect'),
   // Charismatic Conqueror: "they may tap that permanent" — tapping is the same whoever does it.
   tap: (args, who, b, imperative) => objectVerb('tap')(args, who, b, imperative || (who.ref !== 'players' && /^(?:it|that permanent|that creature)$/.test(args))),
   untap(args, who, b, imperative) {

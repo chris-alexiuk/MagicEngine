@@ -94,6 +94,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (typeof n === 'number') return { type: 'amount', amount: { kind: 'life_this_turn', who: lifeN[1] === 'you' ? 'you' : lifeN[1] === 'a player' ? 'a_player' : 'an_opponent', ...(stat ? { stat } : {}) }, op: 'ge', n };
   }
   // Chandra, Fire of Kaladesh: "If Chandra has dealt 3 or more damage this turn".
+  // CR 701.60: "If it's suspected", Rubblebelt Braggart: "if it's not suspected"; Repeat Offender: "If this creature is suspected".
+  const itsSuspected = /^(it|that creature|this creature|~)(?:'s| is)( not)? suspected$/.exec(t);
+  if (itsSuspected) {
+    const of: Ref | null | undefined = itsSuspected[1] === 'this creature' || itsSuspected[1] === '~' ? { ref: 'self' } : b.it;
+    if (of) return { type: 'is', of, filter: { suspected: !itsSuspected[2] } };
+  }
   const srcDealt = /^(?:~|it|this creature) has dealt (\w+) or more damage this turn$/.exec(t);
   if (srcDealt) {
     const n = parseAmount(srcDealt[1]!);
@@ -898,6 +904,25 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (attackedWith) {
     const n = parseAmount(attackedWith[1]!);
     return typeof n === 'number' ? { type: 'attacked_with', n } : null;
+  }
+  // Case of the Gateway Express: "Three or more creatures attacked this turn." — anyone's.
+  const creaturesAttacked = /^(\w+) or more creatures attacked this turn$/.exec(t);
+  if (creaturesAttacked) {
+    const n = parseAmount(creaturesAttacked[1]!);
+    return typeof n === 'number' ? { type: 'attacked_with', n, anyone: true } : null;
+  }
+  // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
+  const toYards = /^(\w+) or more (creature |artifact |land )?cards were put into graveyards from anywhere this turn$/.exec(t);
+  if (toYards) {
+    const n = parseAmount(toYards[1]!);
+    return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[2] ? { cardType: capitalise(toYards[2].trim()) } : {}) } : null;
+  }
+  // Case of the Shattered Pact: "There are five colors among permanents you control."
+  const colorsAmong = /^there are (\w+)(?: or more)? colors among (.+)$/.exec(t);
+  if (colorsAmong) {
+    const n = parseAmount(colorsAmong[1]!);
+    const pf = typeof n === 'number' ? parseFilter(colorsAmong[2]!, b) : null;
+    return pf && pf.plural && !pf.filter.zone ? { type: 'amount', amount: { kind: 'colors_among', filter: pf.filter }, op: 'ge', n: n as number } : null;
   }
   // Kytheon, Hero of Akros: "if Kytheon and at least two other creatures attacked this combat".
   const withSelf = /^~ and at least (\w+) other creatures attacked this combat$/.exec(t);
