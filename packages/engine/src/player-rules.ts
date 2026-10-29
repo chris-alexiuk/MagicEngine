@@ -143,6 +143,9 @@ export function maxHandSize(g: GameState, player: PlayerId): number | null {
       changes.push({ t: source.timestamp, ...(e.rule === 'max_hand_size' ? { set: e.amount ?? 7 } : { delta: e.amount ?? 0 }) });
     }
   }
+  for (const e of g.playerEffects ?? []) {
+    if (e.player === player && e.rule === 'hand_size_delta' && e.lastTurn >= g.turn) changes.push({ t: e.timestamp ?? 0, delta: e.amount ?? 0 });
+  }
   let n = g.config.maxHandSize;
   for (const c of changes.sort((a, b) => a.t - b.t)) n = c.set !== undefined ? c.set : n + (c.delta ?? 0);
   return Math.max(0, n);

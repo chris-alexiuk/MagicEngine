@@ -1,6 +1,6 @@
 import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
 import type { Binder } from './binder.js';
-import { parseFilter, parseObjectRef, parsePlayerRef } from './nouns.js';
+import { parseFilter, parseObjectRef, parsePlayerRef, type ParsedFilter } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
 import { capitalise, COLOR_WORDS, isSubtype, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
@@ -311,7 +311,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
-  const paid = /^(?:its|~'s|the) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
+  const paid = /^(?:its|~'s|the|her|his) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };
   // The Mastery cycle: "You may pay {1}{B} rather than pay this spell's mana cost. … If the {1}{B} cost was paid, …" — the
   // alternative cost (its option is "alt").
@@ -398,11 +398,34 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     // Currency Converter: "If it's a land card", "If it's a nonland card".
     const noun = itsA[2]!.replace(/^an? /, '');
     const bare = noun.replace(/ card$/, '');
-    const pf = parseFilter(noun, b) ?? (bare !== noun ? (parseFilter(bare, b) ?? (/^non[a-z]+$/.test(bare) ? parseFilter(`${bare} permanent`, b) : null)) : null);
+    // Karametra's Blessing: "If it's an enchanted creature or enchantment creature" — either.
+    const either = (): ParsedFilter | null => {
+      const parts = noun.split(/ or (?:an? )?/);
+      if (parts.length !== 2) return null;
+      const fs = parts.map((x) => parseFilter(x, b));
+      return fs.every((f) => f && !f.plural && !f.filter.zone && !f.filter.controller) ? { filter: { anyOf: fs.map((f) => f!.filter) }, plural: false } : null;
+    };
+    const pf = parseFilter(noun, b) ?? (bare !== noun ? (parseFilter(bare, b) ?? (/^non[a-z]+$/.test(bare) ? parseFilter(`${bare} permanent`, b) : null)) : null) ?? either();
     if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) {
       const cond: ConditionNode = { type: 'is', of: b.it, filter: pf.filter };
       return itsA[1] ? { type: 'not', cond } : cond;
     }
+  }
+  // Burning Hands: "If that permanent is green, …"; Lightning Dart: "If that creature is white or blue, …" (CR 105.2).
+  const itsColor = /^(?:it|that creature|that permanent|that target)(?:'s| is)( not)? (white|blue|black|red|green)(?:,? (?:or|and\/or) (white|blue|black|red|green))?$/.exec(t);
+  if (itsColor && b.it && b.it.ref !== 'self') {
+    const code = (c: string) => ({ white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' })[c]!;
+    const cond: ConditionNode = { type: 'is', of: b.it, filter: { colors: [code(itsColor[2]!), ...(itsColor[3] ? [code(itsColor[3])] : [])] } };
+    return itsColor[1] ? { type: 'not', cond } : cond;
+  }
+  // Hexgold Slash: "If that creature has toxic, …".
+  const itsKeyword = /^(?:it|that creature) has (flying|toxic|trample|deathtouch|haste|lifelink|vigilance|reach|defender|menace|first strike|double strike)$/.exec(t);
+  if (itsKeyword && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { keywords: [itsKeyword[1]!.replace(' ', '_')] } };
+  // Gimli's Fury: "If it's legendary, it also gains trample until end of turn."
+  const itsLegendary = /^(?:it|that creature|that permanent)(?:'s| is)( not)? legendary$/.exec(t);
+  if (itsLegendary && b.it && b.it.ref !== 'self') {
+    const cond: ConditionNode = { type: 'is', of: b.it, filter: { supertypes: ['Legendary'] } };
+    return itsLegendary[1] ? { type: 'not', cond } : cond;
   }
   // Fatal Push: "if it has mana value 2 or less" — the object the instruction is about.
   const itHas = /^(?:it|that creature|that permanent) has (mana value|power|toughness) (\d+) or (less|greater)$/.exec(t);
@@ -578,6 +601,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const spent: AmountExpr = { kind: 'mana_spent', of: b.it };
     b.difference = spentVs[1] === 'greater' ? { kind: 'sum', parts: [spent, { ...n, times: -1 } as AmountExpr] } : { kind: 'sum', parts: [n, { ...spent, times: -1 }] };
     return { type: 'amount', amount: spent, op: spentVs[1] === 'greater' ? 'gt' : 'lt', n };
+  }
+  // Wistfulness: "if {G}{G} was spent to cast it"; Seed Spark: "If {G} was spent to cast this spell".
+  const spentColors = /^((?:\{[WUBRG]\})+) was spent to cast (?:it|this spell|~)$/.exec(t);
+  if (spentColors) {
+    const need: Record<string, number> = {};
+    for (const m of spentColors[1]!.matchAll(/\{([WUBRG])\}/g)) need[m[1]!] = (need[m[1]!] ?? 0) + 1;
+    return { type: 'spent_colors', need };
   }
   // Blazing Bomb: "if at least four mana was spent to cast it"; Tellah: "If four or more mana was spent to cast that spell".
   const spentAtLeast = /^(?:at least (\w+)|(\w+) or more) mana was spent to cast (?:that spell|it)$/.exec(t);

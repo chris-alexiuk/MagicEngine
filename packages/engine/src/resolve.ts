@@ -157,6 +157,9 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
     case 'sacrificed_this_way':
       // What this resolution sacrificed, where it is now ("… sacrifices a creature. Return it to the battlefield").
       return movedThisWay(ctx, { how: 'sacrificed' }).flatMap((m) => (g.objects[m.id] ? [g.objects[m.id]!] : []));
+    case 'graveyard_this_way':
+      // Starfall Invocation: "return a creature card put into your graveyard this way" — still there.
+      return movedThisWay(ctx, { how: 'graveyard' }).flatMap((m) => (g.objects[m.id]?.zone === 'graveyard' ? [g.objects[m.id]!] : []));
     case 'discarded_this_way':
       // Malcolm: "you may cast the discarded card" — what this resolution's discard effects put into a graveyard.
       return (ctx.resolution?.moves ?? [])
@@ -382,8 +385,9 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // "the number of experience counters you have": counters on a player (CR 122.1).
       // Vraska, Betrayal's Sting: "… they get a number of poison counters equal to the difference" — a target player's.
       const playerTarget = e.of.ref === 'target' ? ctx.targets[e.of.index]?.[0] : undefined;
-      // Phyrexian Swarmlord: "for each poison counter your opponents have".
-      if (e.of.ref === 'players') {
+      // Phyrexian Swarmlord: "for each poison counter your opponents have"; Whispering Specter: "for each poison counter
+      // they have" — the player it dealt damage to.
+      if (e.of.ref === 'players' || e.of.ref === 'trigger_player') {
         return refPlayers(ctx, e.of).reduce((n, p) => {
           const ps = g.players[p];
           return n + (e.counter === 'poison' ? (ps?.poison ?? 0) : e.counter ? (ps?.counters?.[e.counter] ?? 0) : 0);
@@ -673,6 +677,12 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const { attachedTo: _a, ...rest } = f;
     const o = ctx.affected;
     return bindFilter(ctx, { ...rest, attachedToObject: o ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } });
+  }
+  // Blastfire Bolt: "all Equipment attached to that creature".
+  if (f.attachedToRef) {
+    const { attachedToRef, ...rest } = f;
+    const o = refObjects(ctx, attachedToRef as Ref)[0];
+    return bindFilter(ctx, { ...rest, attachedToObject: o && o.zone === 'battlefield' ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } });
   }
   // Within Range: "the number of creatures attacking them" — the player counted for.
   if (f.attackingPlayerRef) {

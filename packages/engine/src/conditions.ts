@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -427,6 +427,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'renowned':
       // CR 702.112b
       return Boolean(source?.renowned && source.zone === 'battlefield') !== Boolean(cond.not);
+    case 'spent_colors': {
+      // Wistfulness: "if {G}{G} was spent to cast it"; Mythos of Snapdax: "If {B}{R} was spent to cast this spell".
+      const spent = source?.cast?.spent ?? {};
+      return Object.entries(cond.need as Record<string, number>).every(([c, n]) => (spent[c as 'W'] ?? 0) >= n);
+    }
     case 'paid':
       // "if its evoke cost was paid" — the spell, or the permanent it became (CR 601.2f).
       return Boolean(source?.cast?.paid?.includes(String(cond.cost))) !== Boolean(cond.not);

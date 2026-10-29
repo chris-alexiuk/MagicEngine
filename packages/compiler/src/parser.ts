@@ -76,6 +76,9 @@ export class ParserRegistry {
       parseAbilities: (t, name, typeLine) => this.parse(t, { cardName: name, faceName: name, typeLine }),
     };
     const result: ParseResult = { keywords: [], abilities: [], unparsed: [], manualKeywords: [] };
+    // CR 702.148a: cleave — the text with its square-bracketed words, and (cast for the cleave cost) without them.
+    const cleaved = /^Cleave (?:\{[^}]+\})+/m.test(text) && /\[[^\]]+\]/.test(text) ? text.replace(/ ?\[[^\]]+\]/g, '') : undefined;
+    if (cleaved !== undefined) text = text.replace(/\[([^\]]+)\]/g, '$1');
     // Battle Angels of Tyr: "Flying, myriad" — a keyword line is read once each of its keywords is (myriad's ability is
     // attached below).
     const lineKeywords = new Map<string, KeywordInstance[]>();
@@ -762,6 +765,18 @@ export class ParserRegistry {
       if (!spell || overloaded.unparsed.length || overloaded.abilities.length !== 1 || spell.targets?.length) continue;
       kw.abilities = [{ kind: 'static', text: `Overload ${kw.cost}`, effect: { type: 'cast_option', id: 'overload', kind: 'alternative', cost: { mana: kw.cost }, spell } as CastOptionNode }];
       result.manualKeywords = result.manualKeywords.filter((l) => !/^Overload\b/.test(l));
+    }
+    // CR 702.148a: "Cleave [cost]" — cast for that cost, the spell is its text without the bracketed words.
+    for (const kw of result.keywords) {
+      if (kw.id !== 'cleave' || !kw.cost || !/^(\{[^}]+\})+$/.test(kw.cost) || kw.abilities?.length || cleaved === undefined) continue;
+      if (!result.abilities.some((a) => a.kind === 'spell') || result.unparsed.length) continue;
+      const without = this.parse(cleaved, ctx);
+      // Lunar Rejection: "Return target creature to its owner's hand. / Draw a card." — one spell, its lines in order.
+      const parts = without.abilities.filter((a): a is SpellAbility => a.kind === 'spell');
+      if (!parts.length || without.unparsed.length || parts.slice(1).some((p) => p.targets?.length || p.modes) || (parts.length > 1 && parts[0]!.modes)) continue;
+      const spell: SpellAbility = parts.length === 1 ? parts[0]! : { ...parts[0]!, text: parts.map((p) => p.text).join('\n'), effects: parts.flatMap((p) => p.effects) };
+      kw.abilities = [{ kind: 'static', text: `Cleave ${kw.cost}`, effect: { type: 'cast_option', id: 'cleave', kind: 'alternative', cost: { mana: kw.cost }, spell } as CastOptionNode }];
+      result.manualKeywords = result.manualKeywords.filter((l) => !/^Cleave\b/.test(l));
     }
     result.manualKeywords = result.manualKeywords.filter((l) => !lineKeywords.get(l)?.every(keywordSupported));
     return result;

@@ -3542,13 +3542,21 @@ export const staticPreventionRule: GrammarRule = {
       const pf = parseFilter(by[2]!, new Binder(env));
       if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(by[1] === 'Combat damage' ? { combat: true } : {}), from: pf.filter } } as StaticAbility;
     }
-    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to) (.+?)( during your turn)?\.$/.exec(line);
+    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
     const node: StaticPreventionNode = { type: 'prevent_damage' };
     if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
     if (m[4]) node.condition = { type: 'your_turn', value: true };
     const self = (t: string) => t === '~' || /^this (?:creature|permanent|artifact|enchantment|land)$/.test(t);
+    // Defang: "Prevent all damage that would be dealt by enchanted creature."; Ghostly Possession: "… to and dealt by
+    // enchanted creature"; General's Kabuto: "… to equipped creature".
+    if (/^(?:enchanted|equipped) creature$/.test(m[3]!)) {
+      if (m[2] !== 'by') node.toAttached = true;
+      if (m[2] !== 'to') node.byAttached = true;
+      return { kind: 'static', text: original, effect: node };
+    }
+    if (m[2] === 'by') return null;
     if (m[2] === 'to and dealt by') {
       if (!self(m[3]!)) return null;
       node.toSelf = true;
@@ -3963,6 +3971,10 @@ export const castOptionRule: GrammarRule = {
     // Replicate, squad: "As an additional cost to cast this spell, you may pay [cost] any number of times."
     const anyTimes = /^As an additional cost to cast ~, you may pay (.+?) any number of times$/.exec(t);
     if (anyTimes) return make('additional', anyTimes[1]!, { repeatable: true });
+    // Spirit Water Revival: "As an additional cost to cast this spell, you may waterbend {6}." — "if this spell's additional
+    // cost was paid" asks about it.
+    const mayBend = /^As an additional cost to cast ~, you may waterbend \{(\d+)\}$/.exec(t);
+    if (mayBend) return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'additional', kind: 'additional', cost: { mana: `{${mayBend[1]}}`, waterbend: Number(mayBend[1]) } } as CastOptionNode };
     // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
     const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+|blight \d+)$/.exec(t);
     if (mayAdditional) {
@@ -4365,6 +4377,10 @@ export const additionalCostRule: GrammarRule = {
     const env = envOf(ctx);
     const m = /^As an additional cost to cast ~, (.+)\.$/.exec(line);
     if (!env || !m) return null;
+    // CR 701.67a: "As an additional cost to cast this spell, waterbend {5}" / "waterbend {X}" — that much more mana, each
+    // generic of which an untapped artifact or creature may pay by tapping.
+    const bend = /^waterbend \{(\d+|X)\}$/.exec(m[1]!);
+    if (bend) return { kind: 'static', text: original, effect: { type: 'additional_mana', mana: `{${bend[1]}}`, waterbend: bend[1] === 'X' ? 'X' : Number(bend[1]) } } as StaticAbility;
     const b = new Binder(env);
     const cost = choiceCost(m[1]!.replace(/^\w/, (c) => c.toUpperCase()), b);
     if (cost) return { kind: 'static', text: original, effect: { type: 'additional_cost', cost } } as StaticAbility;

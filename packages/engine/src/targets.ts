@@ -103,6 +103,15 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
     const player = !known ? undefined : index === undefined ? triggerInfo!.player : playerOfTarget(g, priorTargets![index]?.[0]);
     filter = known ? { ...rest, controllerPlayer: player ?? '\u0000none' } : rest;
   }
+  // Fiery Annihilation: "target Equipment attached to that creature" — an earlier target (not yet known: any).
+  if (filter.attachedToRef) {
+    const { attachedToRef, ...rest } = filter;
+    const r = attachedToRef as { ref?: string; index?: number };
+    const t = r.ref === 'target' && priorTargets ? priorTargets[r.index ?? 0]?.[0] : undefined;
+    const id = t && t.kind === 'object' ? ((t as { id?: string }).id ?? (t as { object?: string }).object) : undefined;
+    const o = id ? g.objects[id] : undefined;
+    filter = r.ref === 'target' && priorTargets ? { ...rest, attachedToObject: o ? { id: o.id, zcc: o.zcc } : { id: '', zcc: -1 } } : rest;
+  }
   const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object' || (filter[k]?.n === 'X' && targetX !== undefined));
   if (!keys.length) return filter;
   const ctx = { g, controller, ...(source ? { source } : {}), events: [], targets: [], x: targetX ?? 0, memo: {}, ...(triggerInfo ? { trigger: triggerInfo } : {}) } as EffectContext;
@@ -297,6 +306,7 @@ function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
       ...(spec.sameOwner ? { sameOwner: true as const } : {}),
       ...(spec.perPlayer ? { perPlayer: true as const } : {}),
       ...(controlledByTargetIndex(spec.filter) !== undefined ? { controlledByTarget: controlledByTargetIndex(spec.filter)! } : {}),
+      ...((spec.filter?.attachedToRef as { ref?: string } | undefined)?.ref === 'target' ? { attachedToTarget: (spec.filter!.attachedToRef as { index?: number }).index ?? 0 } : {}),
       candidates,
     };
   });

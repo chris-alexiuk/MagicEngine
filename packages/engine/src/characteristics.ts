@@ -878,6 +878,7 @@ export function matchesFilter(
   if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
   if (f.notCopy && o.spellCopy) return false;
   if (f.castFromZone && !(o.zone === 'stack' && o.cast?.from === f.castFromZone)) return false;
+  if (f.notCastFromHand && o.cast?.from === 'hand') return false;
   if (f.ownerPlayer !== undefined && o.owner !== f.ownerPlayer) return false;
   // CR 715: "a creature spell that has an Adventure".
   if (f.hasAdventure && g.cards[o.card]?.layout !== 'adventure') return false;

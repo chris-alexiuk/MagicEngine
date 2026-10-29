@@ -82,6 +82,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.controlledBy = who), true));
   }],
+  // Blastfire Bolt: "Destroy all Equipment attached to that creature." — the target, as the effect applies.
+  [/ attached to (?:that creature|that permanent|it)$/, (f, _m, b) => b.it?.ref === 'target' && !f.attachedTo && !f.attachedToRef && ((f.attachedToRef = b.it), true)],
   // "for each Aura attached to it": it is the source, or what the source enchants or equips.
   [/ attached to (it|~|this creature)$/, (f, m, b) => {
     // Bruenor Battlehammer: "Each creature you control gets +2/+0 for each Equipment attached to it" — each one's own.
@@ -159,6 +161,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that(?: are|'s| is) one or more colors$/, (f) => !f.colors && ((f.colors = ['W', 'U', 'B', 'R', 'G']), true)],
   // Oran-Rief: "each green creature that entered this turn"
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
+  // Coiling Stalker: "target creature you control that doesn't have a +1/+1 counter on it".
+  [/ that (?:doesn't|don't) have an? (\S+) counter on (?:it|them)$/, (f, m) => !f.notCounter && !f.counter && ((f.notCounter = m[1]!), true)],
+  // Wash Away: "target spell that wasn't cast from its owner's hand".
+  [/ that wasn't cast from its owner's hand$/, (f) => !f.notCastFromHand && ((f.notCastFromHand = true), true)],
   // "creature that was dealt damage this turn"
   [/ that was dealt damage this turn$/, (f) => !f.damagedThisTurn && ((f.damagedThisTurn = true), true)],
   // Tiamat: "Dragon cards not named Tiamat" (CR 201.2).
@@ -232,6 +238,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
   // Scourge of Fleets: "each creature your opponents control with toughness X or less, where X is …".
   [/ with (power|toughness) X or less$/, (f, m) => compare(f, m[1]!, 'X', 'le')],
+  // Expel the Interlopers: "creatures with power greater than or equal to the chosen number" (read as X).
+  [/ with (power|toughness|mana value) (?:X or greater|greater than or equal to X)$/, (f, m) => compare(f, m[1]!, 'X', 'ge')],
   // Steel Hellkite: "each nonland permanent with mana value X"
   [/ with mana value X$/, (f) => compare(f, 'mana value', 'X', 'eq')],
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
@@ -251,7 +259,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ without ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   // Shalai: "each creature you control that doesn't have hexproof"
   [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
-  [/ with ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
+  [/ with ([a-z ,]+(?:and\/or [a-z ]+)?)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
 ];
 
 function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge' | 'eq'): boolean {
@@ -267,7 +275,10 @@ function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: str
     f[key] = [text];
     return true;
   }
-  const kws = parseKeywordList(text, b);
+  // Henrika Domnathi: "with flying, deathtouch, and/or lifelink" — any of them. "with flying and first strike" would need
+  // both, which the filter can't say.
+  if (/ and (?!\/or)/.test(text.replace(/and\/or/g, 'or')) && key === 'keywords') return false;
+  const kws = parseKeywordList(text.replace(/,? and\/or /g, ', or '), b);
   // Stormtide Leviathan: "without flying or islandwalk" — a landwalk is its kind ("landwalk:island").
   if (!kws || f[key] || kws.some((k) => (k.text && k.id !== 'landwalk') || k.cost || k.n !== undefined)) return false;
   f[key] = kws.map((k) => (k.id === 'landwalk' ? `landwalk:${k.text!.toLowerCase()}` : k.id));
@@ -680,6 +691,16 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       if (it?.ref === 'self' && /^(?:that|those) creatures?$/i.test(t) && !/\b(?:Creature|Vehicle)\b/.test(b.env.typeLine)) return null;
       // Rivalry: "… this enchantment deals 2 damage to them" — one permanent is never "them" (that player is, when named).
       if (it?.ref === 'self' && /^(?:them|they)$/i.test(t)) return null;
+      // Fiery Annihilation: "Exile up to one target Equipment attached to that creature. If that creature would die this turn,
+      // …" — an Equipment target isn't "that creature": the creature target before it is.
+      if (it?.ref === 'target' && /^that creature$/i.test(t)) {
+        const spec = b.targets[it.index];
+        const f = spec?.what === 'object' ? spec.filter : undefined;
+        if (f && !f.types?.includes('Creature') && (f.types?.length || f.subtypes?.some((x) => x === 'Equipment' || x === 'Aura'))) {
+          const index = [...b.targets.keys()].reverse().find((i) => b.targets[i]!.what === 'object' && b.targets[i]!.filter?.types?.includes('Creature'));
+          return index === undefined ? null : { ref: { ref: 'target', index }, plural: false, targeted: false };
+        }
+      }
       return it ? { ref: it, plural: /^(them|they|those)/i.test(t), targeted: false } : null;
     }
     // Necropotence: "Whenever you discard a card, exile that card from your graveyard." — where it now is.
@@ -979,7 +1000,9 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
       b.it = ref;
       return [ref];
     }
-    const parts = t.split(/ and (?=each |you$|target |~)/);
+    // Safe Passage: "you and creatures you control"; Defend the Hearth: "players".
+    if (/^players$/.test(t)) return [{ ref: 'players', who: 'each' }];
+    const parts = t.split(/ and (?=each |you$|target |~|(?:other )?(?:creatures|permanents|planeswalkers) you control$)/);
     const out: Ref[] = [];
     for (const part of parts) {
       // Bonfire of the Damned: "target player or planeswalker and each creature that player or that planeswalker's

@@ -312,7 +312,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const before = o && o.zone === 'battlefield' ? damageBeforeExcess(ctx.g, source, o) : Infinity;
       // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
       // instead." (CR 120.4a: the damage event is modified first)
-      if (o && node.excessToController && hasKeyword(ctx.g, source, 'trample') && n > before) {
+      // Flame Spill: "Excess damage is dealt to that creature's controller instead." (CR 120.4a)
+      if (o && node.excessToController && (node.excessAlways || hasKeyword(ctx.g, source, 'trample')) && n > before) {
         dealt += dealDamage(ctx.g, source, to, before, false, ctx.events);
         dealt += dealDamage(ctx.g, source, { kind: 'player', player: o.controller }, n - before, false, ctx.events);
         continue;
@@ -712,6 +713,32 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // "Create a Food token or a Treasure token." — the controller picks one as it resolves.
+  // CR 614.10: "Target opponent skips their next combat phase", "You skip your next turn", "… their next untap step",
+  // "… their next draw step" (Moment of Silence: "… their next combat phase this turn").
+  skip_next(node, ctx) {
+    const what = node.what as 'turn' | 'untap' | 'draw' | 'combat';
+    const n = node.amount === undefined ? 1 : amountOf(ctx, node.amount);
+    for (const p of refPlayers(ctx, ref(node, 'who'))) {
+      const ps = ctx.g.players[p];
+      if (!ps || n <= 0) continue;
+      const sk = (ps.skipNext ??= {});
+      if (node.thisTurn) sk.combatThisTurn = ctx.g.turn;
+      else sk[what] = (sk[what] ?? 0) + n;
+    }
+    return true;
+  },
+
+  // Expel the Interlopers: "Choose a number between 0 and 10. Destroy all creatures with power greater than or equal to
+  // the chosen number." — what follows reads the number as X.
+  choose_number(node, ctx) {
+    const min = node.min as number;
+    const options = Array.from({ length: (node.max as number) - min + 1 }, (_, i) => String(min + i));
+    const answer = answerOf(ctx, 'choose_option');
+    if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text: `Choose a number between ${min} and ${node.max as number}.`, sourceName: sourceName(ctx) } };
+    if (!options.includes(answer.choice)) throw new RulesError('Choose one of the numbers.');
+    return { expand: bindX(node.effects as EffectNode[], Number(answer.choice)) };
+  },
+
   choose_one(node, ctx) {
     const labels = node.labels as string[];
     const options = node.options as EffectNode[][];
@@ -728,7 +755,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'game' ? Number.MAX_SAFE_INTEGER : g.turn;
     const players = refPlayers(ctx, ref(node, 'who'));
     const filter = node.filter ? { filter: node.filter as ObjectFilter } : {};
-    g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn, ...filter }))];
+    // Inspired Idea: "Your maximum hand size is reduced by three for the rest of the game" — in timestamp order (CR 613.7).
+    const amount = typeof node.amount === 'number' ? { amount: node.amount, timestamp: ++g.clock } : {};
+    g.playerEffects = [...(g.playerEffects ?? []).filter((e) => e.lastTurn >= g.turn), ...players.map((player) => ({ player, rule: node.rule as PlayerRule, lastTurn, ...filter, ...amount }))];
     return true;
   },
 
@@ -2766,7 +2795,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const hasX = cost.includes('{X}') || chosenLife;
     const maxX = chosenLife ? ctx.g.players[payer]!.life : hasX && node.maxX !== undefined ? Math.max(0, amountOf(ctx, node.maxX as Amount)) : undefined;
     if (!answer) {
-      const price = [cost, chosenLife ? 'X life' : life ? `${life} life` : '', extra.length ? describeEffects(extra) : ''].filter(Boolean).join(' and ');
+      const price = [node.xColor ? `any amount of {${node.xColor as string}}` : cost, chosenLife ? 'X life' : life ? `${life} life` : '', extra.length ? describeEffects(extra) : ''].filter(Boolean).join(' and ');
       const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
       return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx), ...(hasX ? { x: maxX !== undefined ? { max: Math.max(0, maxX) } : {} } : {}) } };
     }
@@ -2777,7 +2806,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (maxX !== undefined && x > maxX) throw new RulesError(`X can’t be greater than ${maxX}.`);
     const ps = ctx.g.players[payer]!;
     if (life && ps.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
-    if (cost) payDuringResolution(ctx.g, payer, cost, ctx.events, x);
+    // Leyline Tyrant: "you may pay any amount of {R}" — X of that color.
+    if (cost) payDuringResolution(ctx.g, payer, node.xColor ? cost.replace('{X}', `{${node.xColor as string}}`.repeat(x)) : cost, ctx.events, node.xColor ? 0 : x);
     if (life) {
       const lost = lifeLoss(ctx.g, payer, life);
       ps.life -= lost;
@@ -3830,6 +3860,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // Dark Confidant: "reveal the top card of your library and put that card into your hand. You lose life equal to its
   // mana value." (CR 701.20a)
+  // Summon: Fenrir: "When you next cast a creature spell this turn, that creature enters with an additional +1/+1 counter
+  // on it." — the spell, if it's still on the stack.
+  spell_enter_counters(node, ctx) {
+    for (const o of refObjects(ctx, ref(node, 'what'))) {
+      if (o.zone !== 'stack' || !o.cast) continue;
+      const k = String(node.counter);
+      o.cast.enterCounters = { ...(o.cast.enterCounters ?? {}), [k]: (o.cast.enterCounters?.[k] ?? 0) + amountOf(ctx, node.amount ?? 1) };
+    }
+    return true;
+  },
+
   // Counterbalance: "reveal the top card of your library" — it stays there; "the revealed card" afterwards.
   reveal_top_card(node, ctx) {
     const g = ctx.g;
@@ -4097,7 +4138,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.laterTurn ? { laterTurn: true as const } : {}),
       createdTurn: g.turn,
       createdStep: g.step,
-      effects: freezeTargetAmounts(node.effects as EffectNode[], ctx),
+      // Storm King's Thunder: "copy that spell X times" — the X of the spell or ability that created it.
+      effects: bindX(freezeTargetAmounts(node.effects as EffectNode[], ctx), ctx.x),
       // CR 603.7c / 400.7: a target this resolution moved ("put it onto the battlefield … exile it at the beginning of
       // the next end step") is followed to the object it became.
       targets: ctx.targets.map((list) => list.map((t) => (t.kind === 'object' && ctx.resolution?.found?.[t.id] !== undefined ? { ...t, zcc: ctx.resolution.found[t.id]! } : t))),
@@ -4244,8 +4286,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Currency Converter: "a card exiled with this artifact".
     // Party Thrasher: "exile the top two cards of your library, then choose one of them" — among those.
     const among = node.among ? refObjects(ctx, ref(node, 'among')).map((o) => o.id) : null;
-    const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : g.zones.battlefield);
-    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' || among ? { anyZone: true } : {}) }));
+    // Hellkite Courser: "a commander you own from the command zone".
+    const pool = among ?? (filter.zone === 'exile' ? g.zones.exile : filter.zone === 'command' ? g.zones.command : g.zones.battlefield);
+    const candidates = pool.filter((id) => matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, ...(filter.zone === 'exile' || filter.zone === 'command' || among ? { anyZone: true } : {}) }));
     if (!candidates.length || !ctx.resolution) return true;
     let pick = candidates.length === 1 ? candidates[0] : undefined;
     if (!pick) {
@@ -4330,18 +4373,25 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Obscuring Haze: "by creatures your opponents control" — whatever matches when the damage would be dealt (CR 615).
     const byRef = node.by as Ref | undefined;
     const toRef = node.to as Ref | undefined;
-    const filtered = amount === 'all' && (byRef?.ref === 'all' || toRef?.ref === 'all') && (!byRef || byRef.ref === 'all') && (!toRef || toRef.ref === 'all');
+    // Heavy Fog: "to you this turn by attacking creatures" — a player, and a kind of source.
+    const filtered = amount === 'all' && (byRef?.ref === 'all' || toRef?.ref === 'all');
     if (filtered) {
-      g.prevention.push({
-        id: `p${g.nextId++}`,
-        turn: g.turn,
-        amount,
-        controller: ctx.controller,
-        ...(byRef?.ref === 'all' ? { byFilter: byRef.filter } : {}),
-        ...(toRef?.ref === 'all' ? { toFilter: toRef.filter } : {}),
-        ...(node.combat ? { combat: true as const } : {}),
-        ...then,
-      });
+      for (const to of toRef && toRef.ref !== 'all' ? lock(toRef) : [undefined]) {
+        for (const by of byRef && byRef.ref !== 'all' ? lock(byRef) : [undefined]) {
+          g.prevention.push({
+            id: `p${g.nextId++}`,
+            turn: g.turn,
+            amount,
+            controller: ctx.controller,
+            ...(to ? { to } : {}),
+            ...(by ? { by } : {}),
+            ...(byRef?.ref === 'all' ? { byFilter: byRef.filter } : {}),
+            ...(toRef?.ref === 'all' ? { toFilter: toRef.filter } : {}),
+            ...(node.combat ? { combat: true as const } : {}),
+            ...then,
+          });
+        }
+      }
       return true;
     }
     for (const to of lock(node.to as Ref | undefined)) {
@@ -5610,7 +5660,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

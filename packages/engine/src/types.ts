@@ -79,6 +79,8 @@ export interface PlayerState {
   poison: number;
   /** CR 122.1: other counters a player can have — energy (CR 107.14), experience, rad. */
   counters?: Record<string, number>;
+  /** CR 614.10: "skips their next turn / untap step / draw step / combat phase" — how many are still to be skipped. */
+  skipNext?: { turn?: number; untap?: number; draw?: number; combat?: number; combatThisTurn?: number };
   pool: ManaPool;
   /** CR 106.6: mana that can be spent only on certain things; it empties with the pool (CR 500.5). */
   restricted?: RestrictedMana[];
@@ -234,7 +236,7 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true; convoked?: ObjectRef[]; sacrificed?: number };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true; convoked?: ObjectRef[]; sacrificed?: number; spent?: Partial<Record<'W' | 'U' | 'B' | 'R' | 'G' | 'C', number>> };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -610,6 +612,8 @@ export interface TargetPrompt {
   perPlayer?: true;
   /** "… and up to one target creature that player controls": controlled by the player chosen for prompt N (or by the controller of the permanent chosen for it). */
   controlledByTarget?: number;
+  /** Fiery Annihilation: "target Equipment attached to that creature" — only what's attached to that earlier target. */
+  attachedToTarget?: number;
   candidates: Target[];
 }
 
@@ -1021,7 +1025,7 @@ export interface GameState {
   nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number; keyword?: string }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
   /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
-  playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter }[];
+  playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter; amount?: number; timestamp?: number }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[] }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */

@@ -413,7 +413,12 @@ function spellProgram(face: FaceDef, modes: number[] | undefined, holds?: (c: Co
   return flatten(programs, modes, holds, allModes);
 }
 
-function addCost(into: ManaCost, extra: ManaCost): void {
+/** CR 701.67a: "As an additional cost to cast this spell, waterbend {5}" — the mana it adds, and how much tapping may pay. */
+export function additionalMana(face: FaceDef): { mana: string; waterbend?: number | 'X' }[] {
+  return face.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'additional_mana' ? [a.effect as unknown as { mana: string; waterbend?: number | 'X' }] : []));
+}
+
+export function addCost(into: ManaCost, extra: ManaCost): void {
   into.generic += extra.generic;
   into.x += extra.x;
   into.hybrid.push(...extra.hybrid);
@@ -734,6 +739,10 @@ function cast(
   const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : (airbent ?? face.manaCost))));
   if (during?.free) x = 0;
   for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
+  // CR 701.67a: "As an additional cost to cast this spell, waterbend {5}" — that much more (X: the value chosen).
+  const extraMana = additionalMana(castFace);
+  for (const e of extraMana) addCost(cost, parseManaCost(e.mana));
+  const bendable = [...extraMana.map((e) => e.waterbend), ...added.map((a) => a.cost.waterbend), alt?.cost.waterbend].reduce<number>((n, w) => n + (w === 'X' ? x : (w ?? 0)), 0);
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (kicked) {
@@ -807,6 +816,18 @@ function cast(
   // CR 119.4: paying 0 life is always possible (Angel's Grace: below 0 life and still playing).
   if (lifeTotal > 0 && lifeTotal > g.players[player]!.life) throw new RulesError(`You don’t have ${lifeTotal} life to pay.`);
   if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
+  // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the waterbend cost's generic mana.
+  const bent = costChoices.waterbend ?? [];
+  if (bent.length) {
+    if (bent.length > Math.min(bendable, cost.generic) || new Set(bent).size !== bent.length) throw new RulesError(`Tap at most ${Math.min(bendable, cost.generic)} artifacts and creatures to waterbend.`);
+    const busy = [...(costChoices.crew ?? []), ...(costChoices.convoke ?? []), ...(costChoices.improvise ?? [])];
+    for (const b of bent) {
+      const t = g.objects[b];
+      if (!t || t.zone !== 'battlefield' || t.controller !== player || t.tapped || busy.includes(b) || !(hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'))) throw new RulesError('Waterbend by tapping untapped artifacts and creatures you control.');
+    }
+    for (const b of bent) setTapped(g, b, true, events);
+    cost.generic -= bent.length;
+  }
   // Creatures tapped for a cost (teamwork, conspire, harmonize) can't also tap for mana.
   if (wantsAutoTap) autoTap(g, player, cost, x, events, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });
 
@@ -873,6 +894,8 @@ function cast(
     ...(kicked ? { kicked: true as const, kicks } : extras.includes('kicker') ? { kicked: true as const, kicks: 1 } : {}),
     ...(paid.length ? { paid } : {}),
     ...(colorsSpent ? { colors: colorsSpent } : {}),
+    // Wistfulness: "if {G}{G} was spent to cast it" — how much of each color.
+    ...(colorsSpent ? { spent: Object.fromEntries((['W', 'U', 'B', 'R', 'G'] as const).filter((m) => spent[m] > 0).map((m) => [m, spent[m]])) } : {}),
     // CR 702.62a: a creature spell cast this way gains haste.
     ...(during?.suspended ? { suspended: true as const } : {}),
     ...(giftTo ? { giftTo } : {}),

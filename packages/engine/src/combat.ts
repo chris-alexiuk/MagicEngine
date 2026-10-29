@@ -143,6 +143,8 @@ export function canExert(g: GameState, o: GameObject): boolean {
 /** CR 508.1c: restrictions on what a creature may attack ("can't attack unless defending player controls an Island"). */
 /** CR 510.1a: the combat damage a creature assigns — its power, or its toughness (Doran, the Siege Tower). */
 function combatDamageOf(g: GameState, o: GameObject): number {
+  // Ophidian: "this creature assigns no combat damage this turn".
+  if (hasRule(g, o, 'assigns_no_combat_damage')) return 0;
   return hasRule(g, o, 'damage_by_toughness') ? toughness(g, o) : power(g, o);
 }
 
@@ -1041,7 +1043,10 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       // The Mindskinner: "If a source you control would deal damage …"; Ironscale Hydra: "If a creature would deal …".
       if (e.from && !matchesFilter(g, source, e.from, { controller: holder.controller, source: holder, anyZone: true })) continue;
       let hit = false;
+      // Defang: "Prevent all damage that would be dealt by enchanted creature."
+      const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
       if (e.bySelf && source.id === holder.id) hit = true;
+      else if (e.byAttached && attachedHost !== undefined && source.id === attachedHost) hit = true;
       else if (to.kind === 'player') hit = Boolean((e.toYou && to.player === holder.controller) || (e.toOpponents && to.player !== holder.controller));
       else {
         const o = g.objects[to.object];

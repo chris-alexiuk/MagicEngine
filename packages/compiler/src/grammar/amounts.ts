@@ -156,6 +156,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Otharri: "for each experience counter you have" (CR 122.1: counters on a player).
   const playerCounter = /^(\w+) counter you have$/.exec(t);
   if (playerCounter) return { kind: 'counters', of: { ref: 'you' }, counter: playerCounter[1]! };
+  // Whispering Specter: "that player discards a card for each poison counter they have".
+  const theyCounter = /^(\w+) counter (?:they have|that player has)$/.exec(t);
+  if (theyCounter && b.player?.ref === 'trigger_player') return { kind: 'counters', of: { ref: 'trigger_player' }, counter: theyCounter[1]! };
   // Phyrexian Swarmlord: "for each poison counter your opponents have" — all of theirs together.
   const theirCounter = /^(\w+) counter your opponents have$/.exec(t);
   if (theirCounter) return { kind: 'counters', of: { ref: 'players', who: 'opponents' }, counter: theirCounter[1]! };
@@ -396,6 +399,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const inner = parseCount(plusAfter[1]!, b);
     const n = parseAmount(plusAfter[2]!);
     if (inner && typeof n === 'number') return { ...inner, plus: (inner.plus ?? 0) + n };
+  }
+  // Ajani, Strength of the Pride: "the number of creatures you control plus the number of planeswalkers you control".
+  const twoCounts = /^(the number of .+?) plus (the number of .+)$/.exec(t);
+  if (twoCounts) {
+    const one = parseCount(twoCounts[1]!, b.clone());
+    const two = one ? parseCount(twoCounts[2]!, b.clone()) : null;
+    if (one && two) return { kind: 'sum', parts: [one, two] };
   }
   const plus = /^(\w+) plus (.+)$/.exec(t);
   if (plus) {

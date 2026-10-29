@@ -8,7 +8,7 @@ import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
-import { addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
+import { addCost, additionalMana, addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets, targetCandidates } from './targets.js';
@@ -90,6 +90,9 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // Airbend: {2} rather than its mana cost.
       const airbent = !free && o.zone === 'exile' ? permissionCost(g, player, o) : undefined;
       const cost = parseManaCost(lifeInstead || free ? '' : (airbent ?? face.manaCost));
+      // Water Whip: "As an additional cost to cast this spell, waterbend {5}."
+      const extraMana = additionalMana(face);
+      for (const e of extraMana) addCost(cost, parseManaCost(e.mana));
       applyCostModifiers(g, player, o, face, cost);
       // X spells need a value; the UI asks for one (also "discard X cards" as an additional cost).
       if (cost.unsupported.length || cost.x > 0 || additionalCosts(face).some((c) => c.amount === 'X')) return;
@@ -103,7 +106,19 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (!costs) return;
       // Creatures tapped for an additional cost can't also tap for mana.
       const tappedForCost = costs.crew ?? [];
-      if (!planAutoTap(g, player, cost, 0, tappedForCost, purpose)) {
+      // CR 701.67a: waterbend — untapped artifacts and creatures tapped for as much of it as it takes.
+      const bendable = extraMana.reduce((n, e) => n + (typeof e.waterbend === 'number' ? e.waterbend : 0), 0);
+      if (bendable && !planAutoTap(g, player, cost, 0, tappedForCost, purpose)) {
+        const tappable = g.zones.battlefield.filter((x) => {
+          const t = g.objects[x]!;
+          return t.controller === player && !t.tapped && !tappedForCost.includes(x) && (hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'));
+        });
+        for (let k = 1; k <= Math.min(bendable, cost.generic, tappable.length) && !help.waterbend; k++) {
+          const pick = tappable.slice(0, k);
+          if (planAutoTap(g, player, { ...cost, specific: { ...cost.specific }, generic: cost.generic - k }, 0, [...tappedForCost, ...pick], purpose)) help = { waterbend: pick };
+        }
+        if (!help.waterbend) return;
+      } else if (!planAutoTap(g, player, cost, 0, tappedForCost, purpose)) {
         if (!helpers.length) return;
         help = helperChoices(g, player, o, helpers, cost);
         const rest = { ...cost, specific: { ...cost.specific } };
@@ -117,11 +132,13 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const lookAtTargets = face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as { ifTargets?: unknown }).ifTargets));
       if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face) || lookAtTargets) {
         const total = parseManaCost(face.manaCost);
+        for (const e of extraMana) addCost(total, parseManaCost(e.mana));
         const refs = (choice.targets ?? []).map((list) => list.map((t): TargetRef => (t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : (t as TargetRef))));
         applyCostModifiers(g, player, o, face, total, refs);
         addPerTargetCost(face, choice.targets, total);
         addModeCosts(face, choice.modes, total);
-        if (!planAutoTap(g, player, total, 0, tappedForCost, purpose)) return;
+        if (help.waterbend) total.generic = Math.max(0, total.generic - help.waterbend.length);
+        if (!planAutoTap(g, player, total, 0, [...tappedForCost, ...(help.waterbend ?? [])], purpose)) return;
       }
       const all = { ...costs, ...help };
       // CR 119.4: life to pay for the targets (Terror of the Peaks), on top of any other life the costs ask for.

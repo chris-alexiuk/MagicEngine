@@ -156,7 +156,9 @@ function samplePrompts(prompts: TargetPrompt[]): Target[][] {
     const later = prompts.filter((q) => q.controlledByTarget === i && (q.upTo ? (q.min ?? 0) : q.count) > 0);
     const enough = (t: Target) => later.every((q) => q.candidates.filter((c) => playerOfTarget(c) === playerOfTarget(t) && JSON.stringify(c) !== JSON.stringify(t)).length >= (q.upTo ? (q.min ?? 0) : q.count));
     const own = later.length && pr.candidates.some(enough) ? pr.candidates.filter(enough) : pr.candidates;
-    out.push(samplePrompt({ ...pr, candidates: dependent(own, pr.controlledByTarget, out) }));
+    const attachedTo = pr.attachedToTarget !== undefined ? out[pr.attachedToTarget]?.[0] : undefined;
+    const onIt = (t: Target) => pr.attachedToTarget === undefined || (t.kind === 'object' && attachedTo?.kind === 'object' && current?.objects[t.object]?.attachedTo?.id === attachedTo.object);
+    out.push(samplePrompt({ ...pr, candidates: dependent(own, pr.controlledByTarget, out).filter(onIt) }));
   });
   return out;
 }
@@ -203,7 +205,9 @@ function randomiseTargets(g: GameState, a: Action): Action {
   let stuck = false;
   withTargetX(x, () => {
     for (const spec of specs!) {
-      const candidates = dependent(targetCandidates(g, a.player, spec, o), controlledByTargetIndex(spec.filter), out);
+      const attachedIndex = (spec.filter?.attachedToRef as { ref?: string; index?: number } | undefined)?.ref === 'target' ? ((spec.filter!.attachedToRef as { index?: number }).index ?? 0) : undefined;
+      const attachedTo = attachedIndex !== undefined ? out[attachedIndex]?.[0] : undefined;
+      const candidates = dependent(targetCandidates(g, a.player, spec, o), controlledByTargetIndex(spec.filter), out).filter((t) => attachedIndex === undefined || (t.kind === 'object' && attachedTo?.kind === 'object' && g.objects[t.object]?.attachedTo?.id === attachedTo.object));
       // A later target with none left for the earlier ones picked ("another target creature that player controls"): keep the offered choice.
       if (!spec.upTo && candidates.length < (spec.count ?? 1)) stuck = true;
       out.push(distinct(spec, sample(candidates, spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)));

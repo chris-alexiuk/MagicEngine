@@ -351,9 +351,21 @@ export function endStep(g: GameState, events: GameEvent[]): void {
     }
     // CR 500.7: an extra turn comes next (the most recently created first).
     // Trouble in Pairs: "If an opponent would begin an extra turn, that player skips that turn instead." (CR 614.10)
-    while (g.extraTurns?.length && (g.players[g.extraTurns[0]!]?.lost || playerRule(g, g.extraTurns[0]!, 'skip_extra_turns'))) g.extraTurns.shift();
-    const extra = g.extraTurns?.shift();
-    beginTurn(g, extra ?? nextPlayer(g, g.active), events);
+    const takeExtra = () => {
+      while (g.extraTurns?.length && (g.players[g.extraTurns[0]!]?.lost || playerRule(g, g.extraTurns[0]!, 'skip_extra_turns'))) g.extraTurns.shift();
+      return g.extraTurns?.shift();
+    };
+    let base = g.active;
+    let extra = takeExtra();
+    let player = extra ?? nextPlayer(g, base);
+    // CR 614.10: "Target opponent skips their next turn" — the next turn that player would take, then the one after it.
+    for (let guard = 0; guard < 1000 && g.players[player]?.skipNext?.turn; guard++) {
+      g.players[player]!.skipNext!.turn!--;
+      if (extra === undefined) base = player;
+      extra = takeExtra();
+      player = extra ?? nextPlayer(g, base);
+    }
+    beginTurn(g, player, events);
     return;
   }
   let next = nextStepAfter(g.step);
@@ -370,7 +382,26 @@ export function endStep(g: GameState, events: GameEvent[]): void {
     g.combat = null;
   }
   next = extraPhaseStep(g, next);
+  // CR 614.10: "That player skips their next combat phase" — on to what would follow it.
+  while (next === 'beginning_of_combat' && takeSkip(g, 'combat')) {
+    g.step = 'end_of_combat';
+    next = extraPhaseStep(g, 'main2');
+  }
   beginStep(g, next ?? 'cleanup', events);
+}
+
+/** CR 614.10: uses up one of the active player's pending skips of that kind, if they have one. */
+function takeSkip(g: GameState, kind: 'untap' | 'draw' | 'combat'): boolean {
+  const sk = g.players[g.active]?.skipNext;
+  if (!sk) return false;
+  if (kind === 'combat' && sk.combatThisTurn !== undefined) {
+    const now = sk.combatThisTurn === g.turn;
+    delete sk.combatThisTurn;
+    if (now) return true;
+  }
+  if (!sk[kind]) return false;
+  sk[kind]!--;
+  return true;
 }
 
 export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): void {
@@ -420,6 +451,11 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
 
   switch (step) {
     case 'untap': {
+      // CR 614.10: "skips their next untap step" — nothing happens in it.
+      if (takeSkip(g, 'untap')) {
+        beginStep(g, 'upkeep', events);
+        return;
+      }
       // CR 502.1: phasing happens first.
       phasingStep(g, events);
       // CR 502.3: "You may choose not to untap ~" — the active player chooses before untapping.
@@ -440,7 +476,7 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       const skip = g.turn === 1 && g.order.length === 2;
       // CR 504.1: the active player draws a card — unless they skip it (CR 614.10: "Skip your draw step" is
       // "instead of drawing, do nothing"; the step still happens for priority).
-      if (!skip && !playerRule(g, g.active, 'skip_draw')) {
+      if (!skip && !playerRule(g, g.active, 'skip_draw') && !takeSkip(g, 'draw')) {
         // CR 702.52a: the player may dredge instead.
         const dredge = dredgeOptions(g, g.active);
         if (dredge.length) {
