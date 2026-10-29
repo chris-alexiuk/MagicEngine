@@ -1291,10 +1291,10 @@ export function bindQualityKeywords(
   keywords: KeywordInstance[],
   bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string; chosenCardType?: string },
 ): KeywordInstance[] {
-  if (!keywords.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents')) return keywords;
+  if (!keywords.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents' || (k.id === 'untargetable' && k.opponents))) return keywords;
   return keywords.flatMap((k) => {
     // Vines of Vastwood: "your opponents" are the granting effect's controller's.
-    if (k.id === 'untargetable_by_opponents') return [{ ...k, you: bind.you }];
+    if (k.id === 'untargetable_by_opponents' || (k.id === 'untargetable' && k.opponents)) return [{ ...k, you: bind.you }];
     if ((k.id !== 'protection' && k.id !== 'hexproof_from') || !k.text) return [k];
     let ok = true;
     const parts = splitQualities(k.text).map((q) => {

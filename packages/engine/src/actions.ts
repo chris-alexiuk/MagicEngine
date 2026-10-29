@@ -31,7 +31,7 @@ import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, pay
 import { settlePhyrexian } from './autotap.js';
 import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
-import { chooseTargets, divisionFor, withTargetKicks } from './targets.js';
+import { chooseTargets, divisionFor, targetingAs, withTargetKicks } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
 import {
   RulesError,
@@ -1195,7 +1195,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
 
   // CR 602.2b (following CR 601.2b–c): modes and targets.
   const program = flatten([ability], choices.modes);
-  const targets = chooseTargets(g, player, program.specs, choices.targets, o, choices.x);
+  const targets = targetingAs(true, () => chooseTargets(g, player, program.specs, choices.targets, o, choices.x));
   const division = divisionFor(program.effects, targets, choices.x, choices.divide, (a) => amountOf({ g, controller: player, source: o, events: [], targets, x: choices.x, memo: {} }, a as Amount));
   const source = { id, zcc: o.zcc };
   // "Choose one that hasn't been chosen this turn —" (Kargan Intimidator).

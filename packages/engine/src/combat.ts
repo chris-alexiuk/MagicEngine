@@ -1036,12 +1036,16 @@ export function dealDamage(
   o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
     // CR 120.3c: damage to a planeswalker removes that many loyalty counters.
-    o.counters.loyalty = Math.max(0, (o.counters.loyalty ?? 0) - amount);
+    const had = o.counters.loyalty ?? 0;
+    o.counters.loyalty = Math.max(0, had - amount);
+    if (had > o.counters.loyalty) events.push({ type: 'counters', object: o.id, counter: 'loyalty', delta: o.counters.loyalty - had });
     return amount;
   }
   if (hasType(g, o, 'Battle') && !hasType(g, o, 'Creature')) {
     // CR 120.3h: damage to a battle removes that many defense counters.
-    o.counters.defense = Math.max(0, (o.counters.defense ?? 0) - amount);
+    const had = o.counters.defense ?? 0;
+    o.counters.defense = Math.max(0, had - amount);
+    if (had > o.counters.defense) events.push({ type: 'counters', object: o.id, counter: 'defense', delta: o.counters.defense - had });
     return amount;
   }
   if (infect || hasKeyword(g, source, 'wither')) {

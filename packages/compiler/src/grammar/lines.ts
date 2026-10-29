@@ -16,6 +16,7 @@ import type {
   AddManaEffect,
   ExileInsteadNode,
   FaceDef,
+  KeywordInstance,
   ManaSpend,
   ObjectFilter,
   PlayerRule,
@@ -457,6 +458,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
       if (typeof amount !== 'number') return null;
       (cost.other ??= []).push({ type: 'remove_counters_self', counter: m[2]!.replace(/−/g, '-'), amount });
     }
+    // Arcbound Javelineer: "Remove X +1/+1 counters from this creature" — X announced as it's activated (CR 107.3a).
+    else if (/^[Rr]emove X (\S+) counters from ~$/.test(item)) {
+      (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove X (\S+)/.exec(item)![1]!.replace(/−/g, '-'), amount: 'X', xAnnounced: true });
+    }
     // Storage lands: "Remove any number of storage counters from ~" (the number is X for the ability).
     else if (/^[Rr]emove any number of (\S+) counters from ~$/.test(item)) {
       (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove any number of (\S+)/.exec(item)![1]!, amount: 'X' });
@@ -778,12 +783,12 @@ export const activatedRule: GrammarRule = {
     }
     // "Remove any number of … counters" is X only for mana abilities so far; "Sacrifice X Squirrels" is announced (CR 107.3a).
     // Sphinx of the Revelation: "Pay X {E}" — announced too.
-    if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice' && c.type !== 'pay_energy')) return null;
+    if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice' && c.type !== 'pay_energy' && !c.xAnnounced)) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
     // "{X}, {T}: Tap target creature with power X or less."; "−X: Return target creature card with mana value X …".
     // Ruthless Technomancer: "Sacrifice X artifacts: Return target creature card with power X or less …" — X announced first.
-    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X' || ((c.type === 'sacrifice' || c.type === 'pay_energy') && c.amount === 'X')));
+    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X' || ((c.type === 'sacrifice' || c.type === 'pay_energy' || c.xAnnounced) && c.amount === 'X')));
     // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
     // (its power as it was, CR 608.2h).
     const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));
@@ -922,6 +927,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'a spell or ability you control counters a spell') return { trigger: { type: 'counters_spell', who: 'you' }, it: null, player: null };
   // CR 731.1a: "Whenever day becomes night or night becomes day"
   if (t === 'day becomes night or night becomes day') return { trigger: { type: 'day_night_changed' }, it: { ref: 'self' }, player: null };
+  // Chandra, Fire Artisan: "Whenever one or more loyalty counters are removed from Chandra, she deals that much damage …"
+  const removedFrom = /^one or more (\S+) counters are removed from ~$/.exec(t);
+  if (removedFrom) {
+    b.eventAmount = true;
+    return { trigger: { type: 'counters_removed', counter: removedFrom[1]! }, it: { ref: 'self' }, player: null };
+  }
   // CR 702.63a (vanishing): "When the last time counter is removed from ~"
   const lastCounter = /^the last (\S+) counter is removed from ~$/.exec(t);
   if (lastCounter) return { trigger: { type: 'last_counter_removed', counter: lastCounter[1]! }, it: { ref: 'self' }, player: null };
@@ -2433,6 +2444,9 @@ export const continuousRule: GrammarRule = {
       rest = inYard[2]!;
       fromGraveyard = true;
     }
+    // Fugitive Droid: "This creature can't be blocked if an artifact entered the battlefield under your control this turn." —
+    // a static ability's "if" is "as long as".
+    rest = rest.replace(/^(~|Equipped creature|Enchanted creature) (can't be blocked|has [a-z ]+?) if (.+)$/, '$1 $2 as long as $3');
     for (;;) {
       const during = /^During (your turn|turns other than yours), (.+)$/i.exec(rest);
       if (during) {
@@ -2898,6 +2912,34 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   return null;
 }
 
+/**
+ * What can't target it (CR 115): "abilities your opponents control" (Shanna), "spells" (Dense Foliage), "black or red
+ * spells your opponents control" (Fiendslayer Paladin), "Aura spells" (Tetsuo Umezawa), "red spells or abilities from red
+ * sources" (Suq'Ata Firewalker), "nongreen spells your opponents control or abilities from nongreen sources your opponents
+ * control" (Thrun, Breaker of Silence), "abilities from artifact sources" (Artifact Ward).
+ */
+function untargetableBy(text: string): KeywordInstance | null {
+  const colorsOf = (words: string): Pick<ObjectFilter, 'colors' | 'notColors'> | null => {
+    const list = words.split(/ or |, (?:or )?/);
+    const non = list.every((w) => /^non(?:white|blue|black|red|green)$/.test(w));
+    if (!non && !list.every((w) => COLOR_WORDS[w])) return null;
+    const colors = list.map((w) => COLOR_WORDS[w.replace(/^non/, '')]!) as Color[];
+    return non ? { notColors: colors } : { colors };
+  };
+  const opp = (s: string | undefined) => (s ? { opponents: true as const } : {});
+  const simple = /^(spells|abilities)( your opponents control)?$/.exec(text);
+  if (simple) return { id: 'untargetable', by: simple[1] as 'spells' | 'abilities', ...opp(simple[2]) };
+  const aura = /^Aura spells$/.exec(text);
+  if (aura) return { id: 'untargetable', by: 'spells', filter: { subtypes: ['Aura'] } };
+  const colored = /^((?:non)?(?:white|blue|black|red|green)(?: or (?:non)?(?:white|blue|black|red|green))?) spells( your opponents control)?$/.exec(text);
+  if (colored && colorsOf(colored[1]!)) return { id: 'untargetable', by: 'spells', filter: colorsOf(colored[1]!)!, ...opp(colored[2]) };
+  const both = /^((?:non)?(?:white|blue|black|red|green)) spells( your opponents control)? or abilities from \1 sources( your opponents control)?$/.exec(text);
+  if (both && Boolean(both[2]) === Boolean(both[3]) && colorsOf(both[1]!)) return { id: 'untargetable', filter: colorsOf(both[1]!)!, ...opp(both[2]) };
+  const fromType = /^abilities from (artifact|creature|enchantment|land) sources$/.exec(text);
+  if (fromType) return { id: 'untargetable', by: 'abilities', filter: { types: [TYPE_NOUNS[fromType[1]!]!] } };
+  return null;
+}
+
 /** The effect part of a static ability: "Creatures you control get +1/+1", "it has first strike". */
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Jetmir, Nexus of Revels: "Creatures you control also get +1/+0 and have trample as long as …" — "also" adds nothing.
@@ -2910,6 +2952,21 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   if (shielded) {
     const what = parseObjectRef(shielded[1]!.replace(/^(?=Enchanted|Equipped|Creatures|Other|Each)\w/, (c) => c.toLowerCase()), b, 'static');
     return what && !what.targeted ? { type: 'continuous', affected: what.ref, keywords: [{ id: 'untargetable_by_opponents' }] } : null;
+  }
+  // Shanna, Sisay's Legacy: "Shanna can't be the target of abilities your opponents control."; Dense Foliage: "Creatures
+  // can't be the targets of spells."; Suq'Ata Firewalker: "… of red spells or abilities from red sources" (CR 115).
+  // Spectral Shield: "Enchanted creature gets +0/+2 and can't be the target of spells."
+  const pumpToo = /^(.+?) gets ([+-]\d+\/[+-]\d+) and can't be the target of (.+)$/.exec(body);
+  const alsoNot = pumpToo ? untargetableBy(pumpToo[3]!) : null;
+  if (pumpToo && alsoNot) {
+    const pump = parseContinuous(`${pumpToo[1]} gets ${pumpToo[2]}`, b);
+    return pump && !pump.keywords && !pump.condition ? { ...pump, keywords: [alsoNot] } : null;
+  }
+  const untargetable = /^(.+?) can't be the targets? of (.+)$/.exec(body);
+  const notBy = untargetable ? untargetableBy(untargetable[2]!) : null;
+  if (untargetable && notBy) {
+    const what = parseObjectRef(untargetable[1]!.replace(/^(?=Enchanted|Equipped|Creatures|Other|Each)\w/, (c) => c.toLowerCase()), b, 'static');
+    return what && !what.targeted ? { type: 'continuous', affected: what.ref, keywords: [notBy] } : null;
   }
   // Shalai: "You, planeswalkers you control, and other creatures you control have hexproof." — the player too.
   // Serra's Emissary: "You and creatures you control have protection from the chosen card type." (CR 702.16b–e)

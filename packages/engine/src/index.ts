@@ -23,7 +23,7 @@ export { planAutoTap } from './autotap.js';
 export { chars, hasKeyword, hasProtectionFrom, hasRule, hasType, manaAbilities, matchesFilter, power, toughness } from './characteristics.js';
 export type { Characteristics, FilterContext } from './characteristics.js';
 export { activatedAbilities, flatten, spellPrograms } from './program.js';
-export { canChooseTargets, defaultTargets, isLegalTarget, targetCandidates, targetPrompts } from './targets.js';
+export { canChooseTargets, defaultTargets, isLegalTarget, targetCandidates, targetingAs, targetPrompts } from './targets.js';
 export { attackRestriction, attackTax, attackTargets, combatLimits, mustAttack, blockDeclarationProblem, defendingPlayers, evasionProblem as blockProblem } from './combat.js';
 export { parseManaCost, payFromPool } from './mana.js';
 export { hasEffectHandler, hasStaticHandler, hasTriggerMatcher, installPlugin, installedPlugins } from './registry.js';

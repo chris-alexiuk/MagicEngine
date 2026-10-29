@@ -20,7 +20,7 @@ import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
 import { dayNightCard, setDayNight } from './day-night.js';
 import { ensureFaceDownDefs } from './face-down.js';
-import { chooseTargets, targetPrompts } from './targets.js';
+import { chooseTargets, targetingAs, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
 import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
@@ -916,7 +916,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 702.16a: "gains protection from the color of your choice" — chosen now; "from the chosen color" — as chosen
     // before (by this spell, or as its source entered: Floating Shield remembers it as it's sacrificed).
     let keywords = Array.isArray(node.keywords) ? (node.keywords as KeywordInstance[]) : undefined;
-    if (keywords?.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents')) {
+    if (keywords?.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents' || (k.id === 'untargetable' && k.opponents))) {
       const src = ctx.source;
       const lk = src && !src.chosen ? g.lastKnown?.[src.id] : undefined;
       const before = src?.chosen ?? (lk && lk.zcc + 1 === src!.zcc ? lk.chosen : undefined);
@@ -3271,6 +3271,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Plaguecrafter: "Each player who can't discards a card." — each player who had nothing to sacrifice.
     const couldnt = (ctx.memo.couldnt as PlayerId[] | undefined) ?? [];
     if (node.cant && couldnt.length) return { expand: couldnt.flatMap((p) => (node.cant as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
+    // Wasitora: "If the player can't, you create …" — you do it.
+    if (node.cantYou && couldnt.length) return { expand: couldnt.flatMap(() => structuredClone(node.cantYou as EffectNode[])) };
     return true;
   },
 
@@ -3440,7 +3442,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (entry?.program && answer.targets) {
         // CR 115.5: an ability on the stack can't target itself.
         if (answer.targets.some((list) => list.some((t) => t.kind === 'ability' && t.entry === id))) throw new RulesError('A copy can’t target itself.');
-        entry.targets = chooseTargets(g, ctx.controller, entry.program.specs, answer.targets, sourceObj(entry), entry.x ?? 0);
+        entry.targets = targetingAs(entry.kind === 'ability', () => chooseTargets(g, ctx.controller, entry.program!.specs, answer.targets!, sourceObj(entry), entry.x ?? 0));
       }
       ctx.memo.index = (ctx.memo.index as number) + 1;
     }
@@ -3455,7 +3457,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const current = entry.targets.map((list) =>
           list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })),
         );
-        const prompts = targetPrompts(g, ctx.controller, entry.program.specs, sourceObj(entry)).map((p) => ({
+        const prompts = targetingAs(entry.kind === 'ability', () => targetPrompts(g, ctx.controller, entry.program!.specs, sourceObj(entry))).map((p) => ({
           ...p,
           candidates: p.candidates.filter((t) => !(t.kind === 'ability' && t.entry === id)),
         }));
@@ -3497,7 +3499,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           if (!node.oneOf && (i > 0 || j > 0)) return;
           const changed = asked.map((l, k) => (k === i ? l.map((x, m) => (m === j ? ({ kind: 'object', object: me.id } as Target) : x)) : l));
           try {
-            options.push({ i, j, targets: chooseTargets(g, entry.controller, entry.program!.specs, changed, source, entry.x ?? 0) });
+            options.push({ i, j, targets: targetingAs(entry.kind === 'ability', () => chooseTargets(g, entry.controller, entry.program!.specs, changed, source, entry.x ?? 0)) });
           } catch (err) {
             if (!(err instanceof RulesError)) throw err;
           }
@@ -3525,13 +3527,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (node.change && answer.targets && sameAs(answer.targets.flat()[0])) throw new RulesError('Choose a different target.');
       if (answer.targets) {
         if (answer.targets.some((list) => list.some((t) => (t.kind === 'ability' && t.entry === id) || (t.kind === 'object' && t.object === id)))) throw new RulesError('A spell or ability can’t target itself.');
-        entry.targets = chooseTargets(g, entry.controller, entry.program.specs, answer.targets, source, entry.x ?? 0);
+        entry.targets = targetingAs(entry.kind === 'ability', () => chooseTargets(g, entry.controller, entry.program!.specs, answer.targets!, source, entry.x ?? 0));
         announceTargets(entry, ctx.events);
       }
       return true;
     }
     const current = entry.targets.map((list) => list.map((t): Target => (t.kind === 'player' || t.kind === 'ability' ? t : { kind: 'object', object: t.id })));
-    const prompts = targetPrompts(g, entry.controller, entry.program.specs, source).map((p) => ({
+    const prompts = targetingAs(entry.kind === 'ability', () => targetPrompts(g, entry.controller, entry.program!.specs, source)).map((p) => ({
       ...p,
       candidates: p.candidates.filter((t) => !(t.kind === 'ability' && t.entry === id) && !(t.kind === 'object' && t.object === id)),
     }));
@@ -5276,6 +5278,15 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   day_night_changed(t, check) {
     const e = check.event;
     return e.type === 'day_night' && e.from && !check.sourceLeft ? [{}] : [];
+  },
+  // Chandra, Fire Artisan: "Whenever one or more loyalty counters are removed from Chandra" — once for the counters removed at
+  // once, with how many (damage to a planeswalker removes them too, CR 120.3c).
+  counters_removed(t, check) {
+    const e = check.event;
+    if (e.type !== 'counters' || e.delta >= 0 || e.object !== check.source.id || check.sourceLeft || (t.counter !== undefined && e.counter !== t.counter)) return [];
+    const together = (check.batch ?? [e]).filter((x) => x.type === 'counters' && x.delta < 0 && x.object === e.object && (t.counter === undefined || x.counter === e.counter));
+    if (together[0] !== e) return [];
+    return [{ object: refTo(check.source), amount: -together.reduce((n, x) => n + (x.type === 'counters' ? x.delta : 0), 0) }];
   },
   // CR 702.63a: "When the last time counter is removed from ~".
   last_counter_removed(t, check) {

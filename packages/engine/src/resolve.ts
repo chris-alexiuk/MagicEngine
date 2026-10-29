@@ -2,7 +2,7 @@ import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/sch
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, loggedUpTo } from './conditions.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { isLegalTarget, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
+import { isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
 import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
@@ -906,7 +906,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
   let chosen = 0;
   let legal = 0;
   // CR 608.2b: "with mana value X or less" — the X it was cast or activated with.
-  const out = withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
+  const out = targetingAs(entry.kind === 'ability', () => withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
     withPriorTargets(entry.targets, () => withTargetX(entry.x, () =>
       program.specs.map((spec, i) =>
         (entry.targets[i] ?? []).filter((t) => {
@@ -917,7 +917,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
         }),
       ),
     )),
-  );
+  ));
   // Gilded Drake: "This ability still resolves if its target becomes illegal."
   return chosen > 0 && legal === 0 && !program.specs.some((s) => s.stillResolves) ? null : out;
 }

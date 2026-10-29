@@ -1,4 +1,4 @@
-import type { EffectNode, ObjectFilter, TargetSpec } from '@mtg/schema';
+import type { EffectNode, KeywordInstance, ObjectFilter, TargetSpec } from '@mtg/schema';
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
@@ -10,6 +10,22 @@ import { livePlayers, manaValueOf, nameOf } from './zones.js';
  * Targeting (CR 115). `source` is the object the spell or ability comes from: the
  * spell itself for a spell, or the permanent whose ability it is.
  */
+
+/**
+ * Whether the targets being chosen or checked are an ability's rather than a spell's (CR 115.1, 113.1): Shanna, Sisay's
+ * Legacy "can't be the target of abilities your opponents control"; Dense Foliage: "Creatures can't be the targets of
+ * spells."
+ */
+let byAbility = false;
+export function targetingAs<T>(ability: boolean, fn: () => T): T {
+  const before = byAbility;
+  byAbility = ability;
+  try {
+    return fn();
+  } finally {
+    byAbility = before;
+  }
+}
 
 /** The event a triggered ability's targets are being chosen or checked for (Scrap Trawler: "with lesser mana value"). */
 let triggerInfo: TriggerInfo | undefined;
@@ -120,6 +136,15 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
   return out;
 }
 
+function untargetableBy(g: GameState, k: KeywordInstance, controller: PlayerId, source: GameObject | null): boolean {
+  if (k.by === 'spells' && byAbility) return false;
+  if (k.by === 'abilities' && !byAbility) return false;
+  // "your opponents control": the opponents of the player the keyword was granted for.
+  if (k.opponents && (!k.you || k.you === controller)) return false;
+  if (k.filter && !(source && matchesFilter(g, source, k.filter, { controller: source.controller, source, anyZone: true }))) return false;
+  return true;
+}
+
 function canTargetObject(g: GameState, controller: PlayerId, spec: TargetSpec, o: GameObject, source: GameObject | null): boolean {
   // CR 115.5: a spell or ability on the stack can't target itself.
   if (source && source.id === o.id && o.zone === 'stack') return false;
@@ -133,6 +158,9 @@ function canTargetObject(g: GameState, controller: PlayerId, spec: TargetSpec, o
     if (o.controller !== controller && source && hasHexproofFrom(g, o, source)) return false;
     // Vines of Vastwood: "can't be the target of spells or abilities your opponents control" — the granting player's.
     if (chars(g, o).keywords.some((k) => k.id === 'untargetable_by_opponents' && k.you && k.you !== controller)) return false;
+    // Shanna: "can't be the target of abilities your opponents control"; Gaea's Revenge: "… of nongreen spells or abilities
+    // from nongreen sources"; Tetsuo Umezawa: "… of Aura spells".
+    if (chars(g, o).keywords.some((k) => k.id === 'untargetable' && untargetableBy(g, k, controller, source))) return false;
     // CR 702.16b: protection — can't be targeted by spells or abilities from a source with that quality.
     if (source && hasProtectionFrom(g, o, source)) return false;
   }

@@ -90,6 +90,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const inner = rest !== chooseNumber[3] ? parseEffectText(rest, b) : null;
     return inner ? [{ type: 'choose_number', min: Number(chooseNumber[1]), max: Number(chooseNumber[2]), effects: inner }] : null;
   }
+  // Iron Lad, Diverging Destiny: "Reveal the top card of your library. If it's an artifact card, draw a card." — the card stays.
+  const revealTop = /^Reveal the top card of your library\. If it's an? (.+?) card, ([^.]+)\.$/.exec(text.trim());
+  if (revealTop) {
+    const r = attempt(b, (b) => {
+      const pf = parseFilter(`${revealTop[1]} card in your library`, b);
+      if (!pf || pf.plural || pf.filter.controller) return null;
+      delete pf.filter.zone;
+      delete pf.filter.owner;
+      const it = b.it;
+      b.it = { ref: 'chosen_object' };
+      const then = parseEffectText(`${capitalise(revealTop[2]!)}.`, b);
+      b.it = it;
+      return then ? [{ type: 'reveal_top_card' }, { type: 'if', cond: { type: 'is', of: { ref: 'chosen_object' }, filter: pf.filter }, effects: then }] : null;
+    });
+    if (r) return r;
+  }
   // Counterbalance: "Whenever an opponent casts a spell, you may reveal the top card of your library. If you do, counter that
   // spell if it has the same mana value as the revealed card."
   if (/^You may reveal the top card of your library\. If you do, counter that spell if it has the same mana value as the revealed card\.$/.test(text.trim()) && b.it?.ref === 'trigger_object') {
@@ -188,10 +204,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^([Ff])or each ([^,.]+), (create [^.]+)\./, (m, _f: string, each: string, make: string) =>
     /\b(?:opponent|player)\b/.test(each) || /\b(?:it|its|that|those|them|they|copy|copies)\b/.test(make) ? m : `C${make.slice(1)} for each ${each}.`,
   );
+  // Necron Monolith: "mill three cards. For each creature card milled this way, create a 2/2 … token." — after the mill.
+  text = text.replace(/\. For each ([^,.]+ this way), (create [^.]+)\./, (m, each: string, make: string) =>
+    /\b(?:it|its|that|those|them|they|copy|copies)\b/.test(make) || /\b(?:damage|life)\b/.test(each) ? m : `. C${make.slice(1)} for each ${each}.`,
+  );
   // Once and Future (adamant): "… Put up to one other target card from your graveyard on top of your library. Exile ~. If at
   // least three green mana was spent to cast this spell, instead return those cards to your hand and exile ~." — the
   // second card goes to your hand rather than on top of your library.
   text = text.replace(/^(Return target card from your graveyard to your hand)\. Put (up to one other target card) from your graveyard on top of your library\. Exile ~\. (If at least three green mana was spent to cast (?:this spell|~)), instead return those cards to your hand and exile ~\.$/, '$1. Choose $2 in your graveyard. $3, return that card to your hand. Otherwise, put that card on top of your library. Exile ~.');
+  // Hurkyl's Recall: "Return all artifacts target player owns to their hand." — that player's own hand.
+  text = text.replace(/\b([Rr]eturn all [^.]+? (?:target player|target opponent) owns) to their hand\./, "$1 to their owner's hand.");
+  // Early Harvest: "Target player untaps all basic lands they control."
+  text = text.replace(/^(Target player|Target opponent) untaps all ([^.]+?) they control\./, (_m, who: string, what: string) => `Untap all ${what} ${who.toLowerCase()} controls.`);
+  // Ashiok, Nightmare Weaver: "Exile all cards from all opponents' hands and graveyards."
+  text = text.replace(/^Exile all cards from all opponents' hands and graveyards\.$/, "Exile all cards from all opponents' hands. Exile all cards from all opponents' graveyards.");
+  // Foul-Tongue Shriek: "Target opponent loses 1 life for each attacking creature you control. You gain that much life."
+  text = text.replace(/\b((?:[Tt]arget (?:player|opponent)|[Ee]ach opponent) loses [^.]*?\blife\b[^.]*?)(?:\. You| and you) gain that much life\./, '$1. You gain life equal to the life lost this way.');
+  // Roalesk, Apex Hybrid: "proliferate, then proliferate again".
+  text = text.replace(/\b([Pp])roliferate, then proliferate again\./, '$1roliferate. Proliferate.');
   // Psychic Spiral: "Shuffle all cards from your graveyard into your library. Target player mills that many cards."
   text = text.replace(/^(Shuffle all cards from your graveyard into your library)\. (Target player|Target opponent|Each opponent) mills that many cards\./, '$1. $2 mills a card for each card shuffled into a library this way.');
   // Step Between Worlds: "Each player may shuffle their hand and graveyard into their library. Each player who does draws seven
@@ -200,6 +230,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const base = /(?:sh|ch|ss|x)es$/.test(verb) ? verb.slice(0, -2) : /s$/.test(verb) ? verb.slice(0, -1) : null;
     return base && !/\b(?:then|that|this way)\b/.test(may) ? `${may}, then ${base} ${rest}.` : m;
   });
+  // The Binding of the Titans: "For each creature card exiled this way, you gain 1 life." — the same as "You gain 1 life for
+  // each creature card exiled this way."
+  text = text.replace(/(^|\. )For each ([^,.]+ this way), (you gain \w+ life|draw a card|you draw a card|scry 1|put a \+1\/\+1 counter on ~)\./, (_m, lead: string, each: string, act: string) => `${lead}${capitalise(act)} for each ${each}.`);
   // Aclazotz, Deepest Betrayal: "each opponent discards a card. For each opponent who can't, you draw a card."
   text = text.replace(/\b([Ee]ach opponent discards a card)\. For each opponent who can't, ([^.]+)\./, (_m, d: string, then: string) => `${d}. ${then[0]!.toUpperCase()}${then.slice(1)} for each opponent who didn't discard a card this way.`);
   // Godo, Bandit Warlord: "untap it and all Samurai you control" — it, then all of them (untapping twice changes nothing).
@@ -722,6 +755,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const then = parseSentence(`You ${whoCant[1]!.replace(/^(\w+?)s\b/, '$1')}`, b);
         if (!then) return null;
         lastNode.cant = then;
+        continue;
+      }
+      // Wasitora, Nekoru Queen: "that player sacrifices a creature of their choice. If the player can't, you create a 3/3 …"
+      // — done by you, once if they had nothing to sacrifice.
+      const theyCant = /^If (?:the player|that player|they) can't, (.+)$/.exec(s);
+      if (theyCant && lastNode?.type === 'sacrifice_choice' && !lastNode.cant && (lastNode.who as { ref?: string } | undefined)?.ref !== 'players') {
+        const then = parseSentence(capitalise(theyCant[1]!), b);
+        if (!then) return null;
+        lastNode.cantYou = then;
         continue;
       }
       // Liliana, Waker of the Dead: "Each player discards a card. Each opponent who can't loses 3 life." — those who had no
@@ -5850,10 +5892,12 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   }
   // Crackle with Power: "~ deals five times X damage to each of up to X targets."
   // Let the Galaxy Burn: "~ deals X plus 2 damage to each creature …".
-  const m = /^(~|[Ii]t) deals ((?:twice|(?:three|four|five) times) X|X plus \d+|\S+) damage to (.+)$/.exec(c);
+  // Ingris Stingerquill: "Whenever a creature you control attacks, that creature deals 1 damage to each opponent."
+  const m = /^(~|[Ii]t|[Tt]hat creature) deals ((?:twice|(?:three|four|five) times) X|X plus \d+|\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
     const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
+    if (/^that creature$/i.test(m[1]!) && !fromIt) return null;
     // Super State: "Whenever enchanted creature deals combat damage to an opponent, it deals that much damage to each other
     // opponent." — the enchanted creature is the source.
     const fromAttached = m[1] !== '~' && b.it?.ref === 'attached';

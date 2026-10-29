@@ -52,7 +52,8 @@ for (const t of SUBTYPE_SET) {
   // Urza's Workshop: "for each Urza's land you control" — rules text is read with straight apostrophes.
   if (t.includes('’')) SUBTYPE_PLURALS.set(t.replace(/’/g, "'"), t);
   SUBTYPE_PLURALS.set(`${t}s`, t);
-  if (/(?:s|sh|ch|x|z)$/.test(t)) SUBTYPE_PLURALS.set(`${t}es`, t);
+  // She-Hulk, Wallbreaker: "Other Heroes you control".
+  if (/(?:s|sh|ch|x|z|o)$/.test(t)) SUBTYPE_PLURALS.set(`${t}es`, t);
   if (/[^aeiou]y$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -1)}ies`, t);
   if (/f$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -1)}ves`, t); // Elf → Elves, Wolf → Wolves
   if (/fe$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -2)}ves`, t);

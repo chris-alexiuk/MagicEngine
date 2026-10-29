@@ -325,6 +325,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it|~) escaped$/.test(t)) return { type: 'paid', cost: 'escape' };
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
+  // CR 702.143c: Poison the Cup: "If this spell was foretold" — cast for its foretell cost.
+  if (/^(?:~|it) was foretold$/.test(t)) return { type: 'paid', cost: 'foretell' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).
   const paid = /^(?:its|~'s|the|her|his) (\w+) cost was paid$/.exec(t) ?? /^an? (\w+) cost was paid for (?:it|~)$/.exec(t);
   if (paid) return { type: 'paid', cost: paid[1]!.toLowerCase() };

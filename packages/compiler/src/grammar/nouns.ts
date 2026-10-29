@@ -98,6 +98,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const who = parsePlayerRef("that player or that planeswalker's controller", b);
     return Boolean(who && ((f.controlledBy = who), true));
   }],
+  // Hurkyl's Recall: "all artifacts target player owns".
+  [/ (target player|target opponent|that player) owns$/, (f, m, b) => {
+    if (f.owner || f.ownedBy) return false;
+    const who = parsePlayerRef(m[1]!, b);
+    return Boolean(who && ((f.ownedBy = who), true));
+  }],
   // "all creatures target player controls", "each creature that player controls"
   [/ (target player|target opponent|that player|the chosen player|chosen player|they|those opponents|those players) controls?$/, (f, m, b) => {
     if (/control$/.test(m[0]) !== ['they', 'those opponents', 'those players'].includes(m[1]!)) return false;
@@ -170,7 +176,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ of the chosen color$/, (f) => !f.chosenColor && ((f.chosenColor = true), true)],
   [/ with the chosen name$/, (f) => !f.chosenName && ((f.chosenName = true), true)],
   [/ (?:from|in) your graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'you'), true)],
-  [/ (?:from|in) (?:an opponent's|each opponent's|your opponents') graveyards?$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
+  [/ (?:from|in) (?:an opponent's|each opponent's|your opponents'|all opponents') graveyards?$/, (f) => !f.zone && ((f.zone = 'graveyard'), (f.owner = 'opponent'), true)],
+  // Ashiok, Nightmare Weaver: "all cards from all opponents' hands".
+  [/ (?:from|in) (?:each opponent's|your opponents'|all opponents') hands?$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'opponent'), true)],
   [/ (?:from|in) (?:a|any|each) graveyard$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
   // "Exile all cards from target player's graveyard": that player's cards only.
   // Rakshasa Debaser: "target creature card from defending player's graveyard" — the player it attacks.
@@ -904,7 +912,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       let pf = parseFilter(each[2]!, b);
       // "all artifacts and enchantments [your opponents control]", "all artifacts, creatures, and enchantments":
       // anything that's any of them.
-      const list = pf ? null : /^((?:[a-z-]+, )*[a-z-]+),? and ([a-z-]+s\b.*)$/.exec(each[2]!);
+      // Triumphant Reckoning: "all artifact, enchantment, and planeswalker cards from your graveyard".
+      const list = pf ? null : /^((?:[a-z-]+, )*[a-z-]+),? and ([a-z-]+s\b.*|[a-z-]+ (?:cards|permanents|spells)\b.*)$/.exec(each[2]!);
       if (list && !/ and /.test(list[2]!)) pf = parseFilter(`${list[1]}, or ${list[2]}`.replace(/^(\w+), or /, '$1 or '), b);
       // "all creatures you don't control and all planeswalkers you don't control"
       const both = pf ? null : /^(.+?) and (?:all|each) (.+)$/.exec(each[2]!);

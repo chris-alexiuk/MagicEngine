@@ -11,7 +11,7 @@ import { spendablePool } from './spending.js';
 import { addCost, additionalMana, addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
 import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
-import { defaultTargets, targetCandidates } from './targets.js';
+import { defaultTargets, targetCandidates, targetingAs } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
 import { applyCostModifiers, targetCostModifiersInPlay } from './costs.js';
 import { evalCondition } from './conditions.js';
@@ -268,7 +268,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (ab.timing === 'sorcery' && !mainPhaseEmptyStack) return;
       // "Activate only during your upkeep." (CR 602.5b)
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
-      const choice = defaultProgramChoice(g, player, o, [ab]);
+      const choice = targetingAs(true, () => defaultProgramChoice(g, player, o, [ab]));
       const costs = defaultCostChoices(g, player, o, ab.cost.other ?? []);
       if (choice && costs) out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...choice, ...withCosts(costs) });
     });
@@ -358,7 +358,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const spec = ab.costReduction && JSON.stringify(ab.costReduction).includes('"ref":"target"') ? flatten([ab], undefined).specs[0] : undefined;
       if (spec) {
         let best: typeof mana | undefined;
-        for (const t of targetCandidates(g, player, spec, o)) {
+        for (const t of targetingAs(true, () => targetCandidates(g, player, spec, o))) {
           const m = structuredClone(mana);
           applyPowerUp(g, o, ab, m, player, [[t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : t]]);
           if (!best || m.generic < best.generic) [best, reducedFor] = [m, [[t]]];
@@ -388,7 +388,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         if (!found) return;
         costs = { ...costs, waterbend: found };
       }
-      const choice = defaultProgramChoice(g, player, o, [ab]);
+      const choice = targetingAs(true, () => defaultProgramChoice(g, player, o, [ab]));
       if (!choice) return;
       if (reducedFor && choice.targets?.length === 1) choice.targets = reducedFor;
       // "−X": as much loyalty as it has, and 1 (CR 606.6); "+X": 1.
@@ -397,7 +397,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         for (const x of [...new Set([1, most])]) if (x >= 1) out.push({ type: 'activate', player, object: id, ability, autoTap: true, x, ...choice, ...withCosts(costs) });
         return;
       }
-      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...(xLeast !== undefined ? { x: xLeast } : {}), ...choice, ...withCosts(costs) });
+      // Arcbound Javelineer: "Remove X +1/+1 counters from this creature" — all of them.
+      const removeX = cost.other?.find((c) => c.type === 'remove_counters_self' && c.xAnnounced);
+      const xAll = removeX ? (o.counters[String(removeX.counter)] ?? 0) : undefined;
+      out.push({ type: 'activate', player, object: id, ability, autoTap: true, ...(xLeast !== undefined ? { x: xLeast } : xAll !== undefined ? { x: xAll } : {}), ...choice, ...withCosts(costs) });
     });
     if (mine) faceOf(g, o).unparsed.forEach((line, i) => {
       if (line.includes(': ')) out.push({ type: 'activate_manual', player, object: id, line: i, autoTap: true });

@@ -1049,6 +1049,28 @@ const CARDS = [
   makeCard({ name: 'Redeemer Lite', type_line: 'Creature — Eldrazi', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'When you cast this spell, you may pay {C}. If you do, create a 1/1 colorless Eldrazi Scion creature token for each nontoken creature that died under your control this turn. Those tokens have "Sacrifice this token: Add {C}."' }),
   makeCard({ name: 'Journal Lite', type_line: 'Artifact — Clue', mana_cost: '{0}', oracle_text: 'This artifact enters with a number of suspect counters on it equal to the greatest number of creatures a player controls.' }),
   makeCard({ name: 'Discontinuity Lite', type_line: 'Instant', mana_cost: '{3}{U}{U}', cmc: 5, oracle_text: 'During your turn, this spell costs {2}{U}{U} less to cast.\nEnd the turn.' }),
+  makeCard({ name: 'Shanna Lite', type_line: 'Legendary Creature — Human Warrior', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Shanna Lite can't be the target of abilities your opponents control." }),
+  makeCard({ name: 'Fiendslayer Lite', type_line: 'Creature — Human Knight', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "This creature can't be the target of black or red spells your opponents control." }),
+  makeCard({ name: 'Foliage Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Creatures can't be the targets of spells." }),
+  makeCard({ name: 'Arrival Pinger', type_line: 'Creature — Goblin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'When this creature enters, tap target creature.' }),
+  makeCard({ name: 'Fire Artisan Lite', type_line: 'Legendary Planeswalker — Chandra', mana_cost: '{0}', loyalty: '4', oracle_text: 'Whenever one or more loyalty counters are removed from Fire Artisan Lite, she deals that much damage to target opponent or planeswalker.\n−2: You gain 1 life.' }),
+  makeCard({ name: 'Titans Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Exile up to two target cards from graveyards. For each creature card exiled this way, you gain 1 life.' }),
+  makeCard({ name: 'Javelineer Lite', type_line: 'Artifact Creature — Soldier', mana_cost: '{0}', power: '0', toughness: '1', oracle_text: '{T}, Remove X +1/+1 counters from this creature: It deals X damage to target attacking or blocking creature.' }),
+  makeCard({ name: 'Recall Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Return all artifacts target player owns to their hand.' }),
+  makeCard({ name: 'Plain Trinket', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '' }),
+  makeCard({ name: 'Harvest Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target player untaps all basic lands they control.' }),
+  makeCard({ name: 'Shriek Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Target opponent loses 1 life for each attacking creature you control. You gain that much life.' }),
+  makeCard({ name: 'Triumph Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Return all artifact, enchantment, and planeswalker cards from your graveyard to the battlefield.' }),
+  makeCard({ name: 'Acolyte Lite', type_line: 'Creature — Human Monk', mana_cost: '{0}', power: '0', toughness: '0', oracle_text: 'This creature enters with a +1/+1 counter on it for each +1/+1 counter among other creatures you control.' }),
+  makeCard({ name: 'Roalesk Lite', type_line: 'Legendary Creature — Human Mutant', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'When Roalesk Lite dies, proliferate, then proliferate again.' }),
+  makeCard({ name: 'Conflict Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Destroy all creatures. Then create a 3/2 red and white Spirit creature token for each nontoken creature you controlled that was destroyed this way.' }),
+  makeCard({ name: 'Wasitora Lite', type_line: 'Legendary Creature — Cat Dragon', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "Whenever Wasitora Lite deals combat damage to a player, that player sacrifices a creature of their choice. If the player can't, you create a 3/3 black, red, and green Cat Dragon creature token with flying." }),
+  makeCard({ name: 'Iron Lad Lite', type_line: 'Artifact Creature — Human Hero', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "{T}: Reveal the top card of your library. If it's an artifact card, draw a card." }),
+  makeCard({ name: 'Droid Lite', type_line: 'Artifact Creature — Robot', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "This creature can't be blocked if an artifact entered the battlefield under your control this turn." }),
+  makeCard({ name: 'She-Hulk Lite', type_line: 'Legendary Creature — Gamma Hero', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Other Heroes you control have trample.' }),
+  makeCard({ name: 'Plain Hero', type_line: 'Creature — Human Hero', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Ingris Lite', type_line: 'Legendary Creature — Elder Sphinx', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever a creature you control attacks, that creature deals 1 damage to each opponent.' }),
+  makeCard({ name: 'Ashiok Lite', type_line: 'Legendary Planeswalker — Ashiok', mana_cost: '{0}', loyalty: '10', oracle_text: "−10: Exile all cards from all opponents' hands and graveyards." }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -8977,6 +8999,188 @@ describe('Sieges', () => {
     r.players.alice!.pool.C = 3;
     r.players.alice!.pool.U = 2;
     expect(legalActions(r, 'alice').some((x) => x.type === 'cast' && x.object === disc)).toBe(true);
+  });
+
+  it("Shanna, Sisay's Legacy; Fiendslayer Paladin; Dense Foliage: spells or abilities only (CR 115)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const shanna = give(g, 'alice', 'Shanna Lite', 'battlefield');
+    const tapper = give(g, 'bob', 'Tapper Lite', 'battlefield');
+    const targets = (x: GameState, id: string, p: 'alice' | 'bob') => legalActions(x, p).filter((a) => a.type === 'activate' && a.object === id);
+    expect(illegal(g, { type: 'activate', player: 'bob', object: tapper, ability: 0, targets: [[{ kind: 'object', object: shanna }]] })).toMatch(/legal target/);
+    // A spell still can.
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: shanna }]] }));
+    expect(g.objects[shanna]!.zone).toBe('graveyard');
+    // Its controller's abilities can.
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const s2 = give(h, 'alice', 'Shanna Lite', 'battlefield');
+    const mine = give(h, 'alice', 'Tapper Lite', 'battlefield');
+    h = settle(act(h, { type: 'activate', player: 'alice', object: mine, ability: 0, targets: [[{ kind: 'object', object: s2 }]] }));
+    expect(h.objects[s2]!.tapped).toBe(true);
+    expect(targets(h, mine, 'alice').length).toBeGreaterThan(0);
+    // A triggered ability an opponent controls: no legal target, so it's removed (CR 603.3d).
+    let k = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    for (const id of k.zones.battlefield.filter((id) => k.objects[id]!.controller === 'bob')) moveObject(k, id, 'graveyard', []);
+    const s3 = give(k, 'alice', 'Shanna Lite', 'battlefield');
+    k = settle(act(k, { type: 'cast', player: 'bob', object: give(k, 'bob', 'Arrival Pinger', 'hand') }));
+    if (k.pending?.kind === 'trigger_targets') expect(illegal(k, { type: 'choose', player: 'bob', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: s3 }]] } })).toMatch(/legal target/);
+    expect(k.objects[s3]!.tapped).toBe(false);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const paladin = give(m, 'alice', 'Fiendslayer Lite', 'battlefield');
+    m.players.bob!.pool.R = 1;
+    expect(illegal(m, { type: 'cast', player: 'bob', object: give(m, 'bob', 'Red Bolt Lite', 'hand'), targets: [[{ kind: 'object', object: paladin }]] })).toMatch(/legal target/);
+    m = settle(act(m, { type: 'cast', player: 'bob', object: give(m, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: paladin }]] }));
+    expect(m.objects[paladin]!.zone).toBe('graveyard');
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(n, 'bob', 'Foliage Lite', 'battlefield');
+    const cub = give(n, 'alice', 'Cub', 'battlefield');
+    expect(illegal(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: cub }]] })).toMatch(/legal target/);
+    const t2 = give(n, 'alice', 'Tapper Lite', 'battlefield');
+    n = settle(act(n, { type: 'activate', player: 'alice', object: t2, ability: 0, targets: [[{ kind: 'object', object: cub }]] }));
+    expect(n.objects[cub]!.tapped).toBe(true);
+  });
+
+  it('Chandra, Fire Artisan; The Binding of the Titans; Arcbound Javelineer', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const chandra = give(g, 'alice', 'Fire Artisan Lite', 'battlefield');
+    g.objects[chandra]!.counters.loyalty = 4;
+    g = act(g, { type: 'activate', player: 'alice', object: chandra, ability: 0 });
+    g = drive(settle(g), (x) => (x.pending?.kind === 'trigger_targets' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }) : null));
+    g = settle(g);
+    expect([g.objects[chandra]!.counters.loyalty, g.players.bob!.life]).toEqual([2, 18]);
+    // Damage to her removes loyalty counters (CR 120.3c), and that triggers too.
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: chandra }]] }));
+    g = drive(g, (x) => (x.pending?.kind === 'trigger_targets' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }) : null));
+    g = settle(g);
+    expect([g.objects[chandra]!.zone, g.players.bob!.life]).toEqual(['graveyard', 16]);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const picks = [give(h, 'bob', 'Cub', 'graveyard'), give(h, 'bob', 'Salve', 'graveyard')];
+    const life = h.players.alice!.life;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Titans Lite', 'hand'), targets: [picks.map((object) => ({ kind: 'object' as const, object }))] }));
+    expect([h.objects[picks[0]!]!.zone, h.objects[picks[1]!]!.zone, h.players.alice!.life - life]).toEqual(['exile', 'exile', 1]);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const jav = give(k, 'alice', 'Javelineer Lite', 'battlefield');
+    k.objects[jav]!.counters['+1/+1'] = 3;
+    const ogre = give(k, 'bob', 'Ogre', 'battlefield');
+    k = toAttack(toStep(k, 'beginning_of_combat', 'bob'));
+    k = act(k, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: ogre, target: { kind: 'player', player: 'alice' } }] } });
+    for (let i = 0; i < 5 && k.priority !== 'alice'; i++) k = act(k, { type: 'pass', player: k.priority! });
+    expect(legalActions(k, 'alice').some((a) => a.type === 'activate' && a.object === jav && (a as { x?: number }).x === 3)).toBe(true);
+    k = settle(act(k, { type: 'activate', player: 'alice', object: jav, ability: 0, x: 3, targets: [[{ kind: 'object', object: ogre }]] } as never));
+    expect([k.objects[ogre]!.zone, k.objects[jav]!.counters['+1/+1'] ?? 0]).toEqual(['graveyard', 0]);
+  });
+
+  it("Hurkyl's Recall, Early Harvest, Foul-Tongue Shriek, Triumphant Reckoning, Ascendant Acolyte, Roalesk", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const owned = give(g, 'bob', 'Plain Trinket', 'battlefield');
+    const mine = give(g, 'alice', 'Plain Trinket', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Recall Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([g.objects[owned]!.zone, g.zones.hand.bob!.includes(owned), g.objects[mine]!.zone]).toEqual(['hand', true, 'battlefield']);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lands = [give(h, 'bob', 'Forest', 'battlefield'), give(h, 'bob', 'Forest', 'battlefield')];
+    for (const l of lands) h.objects[l]!.tapped = true;
+    const myLand = give(h, 'alice', 'Forest', 'battlefield');
+    h.objects[myLand]!.tapped = true;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Harvest Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([...lands.map((l) => h.objects[l]!.tapped), h.objects[myLand]!.tapped]).toEqual([false, false, true]);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const attackers = [give(k, 'alice', 'Cub', 'battlefield'), give(k, 'alice', 'Zombie', 'battlefield')];
+    k = attackWith(k, attackers);
+    for (let i = 0; i < 5 && k.priority !== 'alice'; i++) k = k.pending?.kind === 'declare_blockers' ? act(k, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } } as never) : act(k, { type: 'pass', player: k.priority! });
+    const [life, theirs] = [k.players.alice!.life, k.players.bob!.life];
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Shriek Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([k.players.alice!.life - life, theirs - k.players.bob!.life]).toEqual([2, 2]);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const back = [give(m, 'alice', 'Plain Trinket', 'graveyard'), give(m, 'alice', 'Aria Lite', 'graveyard'), give(m, 'alice', 'Ashiok Lite', 'graveyard')];
+    const stays = give(m, 'alice', 'Cub', 'graveyard');
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Triumph Lite', 'hand') }));
+    expect([...back.map((id) => m.objects[id]!.zone), m.objects[stays]!.zone]).toEqual(['battlefield', 'battlefield', 'battlefield', 'graveyard']);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const c1 = give(n, 'alice', 'Cub', 'battlefield');
+    const c2 = give(n, 'alice', 'Zombie', 'battlefield');
+    n.objects[c1]!.counters['+1/+1'] = 2;
+    n.objects[c2]!.counters['+1/+1'] = 1;
+    give(n, 'bob', 'Ogre', 'battlefield');
+    const acolyte = give(n, 'alice', 'Acolyte Lite', 'hand');
+    n = settle(act(n, { type: 'cast', player: 'alice', object: acolyte }));
+    expect(n.objects[acolyte]!.counters['+1/+1']).toBe(3);
+
+    let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const roalesk = give(q, 'alice', 'Roalesk Lite', 'battlefield');
+    const grow = give(q, 'alice', 'Cub', 'battlefield');
+    q.objects[grow]!.counters['+1/+1'] = 1;
+    q = settle(act(q, { type: 'cast', player: 'alice', object: give(q, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: roalesk }]] }));
+    q = drive(q, (x) => (x.pending?.kind === 'choose_objects' || x.pending?.kind === 'proliferate' ? act(x, { type: 'choose', player: 'alice', answer: { kind: x.pending.kind, objects: [grow], players: [] } } as never) : null));
+    expect(q.objects[grow]!.counters['+1/+1']).toBe(3);
+  });
+
+  it('Ceaseless Conflict, Wasitora, Iron Lad, Fugitive Droid, She-Hulk, Ingris, Ashiok', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Cub', 'battlefield');
+    give(g, 'alice', 'Zombie', 'battlefield');
+    give(g, 'bob', 'Ogre', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Pyromancer Lite', 'hand') }));
+    g = drive(g, (x) => (x.pending?.kind === 'discard' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: x.zones.hand.alice!.slice(0, 2) } }) : null));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Conflict Lite', 'hand') }));
+    // Two nontoken creatures of Alice's (and the Pyromancer's tokens, and Bob's Ogre, don't count).
+    const spirits = g.zones.battlefield.filter((id) => g.objects[id]!.token && chars(g, g.objects[id]!).subtypes.includes('Spirit'));
+    expect(spirits.length).toBe(3);
+
+    for (const blockerless of [true, false]) {
+      let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      for (const id of h.zones.battlefield.filter((id) => h.objects[id]!.controller === 'bob')) moveObject(h, id, 'graveyard', []);
+      if (!blockerless) give(h, 'bob', 'Cub', 'battlefield');
+      const was = give(h, 'alice', 'Wasitora Lite', 'battlefield');
+      h = attackWith(h, [was]);
+      if (h.pending?.kind === 'declare_blockers') h = act(h, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+      h = drive(toStep(h, 'main2', 'alice'), (x) => (x.pending?.kind === 'sacrifice' ? act(x, { type: 'choose', player: 'bob', answer: { kind: 'sacrifice', objects: (x.pending as { candidates: string[] }).candidates.slice(0, 1) } } as never) : null));
+      const cats = h.zones.battlefield.filter((id) => h.objects[id]!.token && h.objects[id]!.controller === 'alice').length;
+      expect(cats).toBe(blockerless ? 1 : 0);
+    }
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const lad = give(k, 'alice', 'Iron Lad Lite', 'battlefield');
+    const top = give(k, 'alice', 'Plain Trinket', 'library');
+    k.zones.library.alice!.splice(k.zones.library.alice!.indexOf(top), 1);
+    k.zones.library.alice!.unshift(top);
+    const hand = k.zones.hand.alice!.length;
+    k = settle(act(k, { type: 'activate', player: 'alice', object: lad, ability: 0 }));
+    expect([k.zones.hand.alice!.length - hand, k.zones.hand.alice!.includes(top)]).toEqual([1, true]);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const droid = give(m, 'alice', 'Droid Lite', 'battlefield');
+    m.objects[droid]!.sick = false;
+    give(m, 'bob', 'Ogre', 'battlefield');
+    expect(chars(m, m.objects[droid]!).rules.has('cant_be_blocked')).toBe(false);
+    m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Plain Trinket', 'hand') }));
+    expect(chars(m, m.objects[droid]!).rules.has('cant_be_blocked')).toBe(true);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(n, 'alice', 'She-Hulk Lite', 'battlefield');
+    const hero = give(n, 'alice', 'Plain Hero', 'battlefield');
+    expect(chars(n, n.objects[hero]!).keywords.some((x) => x.id === 'trample')).toBe(true);
+
+    let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(q, 'alice', 'Ingris Lite', 'battlefield');
+    const cub = give(q, 'alice', 'Cub', 'battlefield');
+    q = attackWith(q, [cub]);
+    q = drive(q, () => null);
+    expect(q.players.bob!.life).toBe(19);
+
+    let r = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const ashiok = give(r, 'alice', 'Ashiok Lite', 'battlefield');
+    r.objects[ashiok]!.counters.loyalty = 10;
+    give(r, 'bob', 'Cub', 'graveyard');
+    const mine = give(r, 'alice', 'Cub', 'graveyard');
+    r = settle(act(r, { type: 'activate', player: 'alice', object: ashiok, ability: 0 }));
+    expect([r.zones.hand.bob!.length, r.zones.graveyard.bob!.length, r.objects[mine]!.zone]).toEqual([0, 0, 'graveyard']);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

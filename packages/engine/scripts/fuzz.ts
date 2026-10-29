@@ -34,6 +34,7 @@ import {
   legalActions,
   spellPrograms,
   targetCandidates,
+  targetingAs,
   type Action,
   type ChoiceAnswer,
   type GameState,
@@ -175,6 +176,11 @@ function samplePrompt(pr: TargetPrompt): Target[] {
 
 /** Re-picks targets at random for a cast/activate action that came with defaults. */
 function randomiseTargets(g: GameState, a: Action): Action {
+  // An ability's targets (Shanna: "can't be the target of abilities your opponents control").
+  return targetingAs(a.type === 'activate', () => randomiseTargetsNow(g, a));
+}
+
+function randomiseTargetsNow(g: GameState, a: Action): Action {
   current = g;
   if ((a.type !== 'cast' && a.type !== 'activate') || !a.targets?.length) return a;
   const o = g.objects[a.object]!;

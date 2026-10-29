@@ -104,6 +104,10 @@ export interface KeywordInstance {
   costIsManaCost?: true;
   /** Protection granted by an Aura: "This effect doesn't remove this Aura." / "… doesn't remove Auras." (CR 702.16d) */
   keeps?: 'source' | 'auras';
+  /** `untargetable` (Shanna, Sisay's Legacy; Dense Foliage): only by spells, or only by abilities; only those "your
+   * opponents control"; `filter`: only from such sources ("red spells or abilities from red sources"). */
+  by?: 'spells' | 'abilities';
+  opponents?: true;
   /** Bound by the engine as a quality keyword is granted: the player "you" means, and the object that granted it. */
   you?: string;
   grantedBy?: string;
@@ -1478,7 +1482,7 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'proliferated', 'coin_flipped', 'unattached', 'milled', 'became_monarch',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'proliferated', 'coin_flipped', 'unattached', 'milled', 'became_monarch', 'counters_removed',
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
@@ -1489,6 +1493,8 @@ export const CORE_NODES = {
     // Vines of Vastwood, Canopy Cover: "can't be the target of spells or abilities your opponents control" — `you` is the
     // granting effect's controller.
     'untargetable_by_opponents',
+    // Shanna, Sisay's Legacy: "can't be the target of abilities your opponents control" (see KeywordInstance.by).
+    'untargetable',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
     'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'ascend', 'sunburst',

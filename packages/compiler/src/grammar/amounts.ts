@@ -98,7 +98,8 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   // Arid Archway: "another Desert returned this way" — returned to its owner's hand from the battlefield, other than the source.
   // Deadly Tempest: "the number of creatures they controlled that were destroyed this way" — each player's own.
   // Kaya's Wrath: "the number of creatures you controlled that were destroyed this way".
-  const yours = /^(.+?) you controlled that were (destroyed|exiled|sacrificed|returned) this way$/.exec(text.trim());
+  // Ceaseless Conflict: "for each nontoken creature you controlled that was destroyed this way".
+  const yours = /^(.+?) you controlled that (?:were|was) (destroyed|exiled|sacrificed|returned) this way$/.exec(text.trim());
   if (yours) {
     const inner = movedThisWay(`${yours[1]} ${yours[2]} this way`, b);
     return inner && inner.kind === 'moved_this_way' ? { ...inner, yours: true } : null;
@@ -214,10 +215,11 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
     return { kind: 'count', filter: { controller: 'you', anyOf: [{ types: ['Creature'], supertypes: ['Legendary'] }, { types: ['Planeswalker'] }] } };
   }
   // Deepwood Denizen: "for each +1/+1 counter on creatures you control" — that kind, on all of them.
-  const kindOn = /^([+-]\d+\/[+-]\d+|\w+) counter on (.+)$/.exec(t);
-  if (kindOn && !/^(?:~|it|him|her|this \w+|that \w+|target .+|enchanted .+|equipped .+)$/.test(kindOn[2]!)) {
-    const pf = parseFilter(kindOn[2]!, b.clone());
-    if (pf && pf.plural && !pf.filter.zone) return { kind: 'counters_among', filter: pf.filter, counter: kindOn[1]! };
+  // Ascendant Acolyte: "for each +1/+1 counter among other creatures you control".
+  const kindOn = /^([+-]\d+\/[+-]\d+|\w+) counter (?:on|among) (other )?(.+)$/.exec(t);
+  if (kindOn && !/^(?:~|it|him|her|this \w+|that \w+|target .+|enchanted .+|equipped .+)$/.test(kindOn[3]!)) {
+    const pf = parseFilter(kindOn[3]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone) return { kind: 'counters_among', filter: { ...pf.filter, ...(kindOn[2] ? { other: true } : {}) }, counter: kindOn[1]! };
   }
   // Ancient Imperiosaur: "for each creature that convoked it" (CR 702.51c).
   if (/^creature that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
