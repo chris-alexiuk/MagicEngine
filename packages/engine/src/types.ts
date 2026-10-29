@@ -875,6 +875,8 @@ export type GameEvent =
   | { type: 'prevented'; source: ObjectId; amount: number; to?: DamageRecipient }
   | { type: 'created'; object: ObjectId; controller: PlayerId }
   | { type: 'attached'; object: ObjectId; to: ObjectId; player?: true }
+  /** Grafted Exoskeleton: "Whenever this Equipment becomes unattached from a permanent" — what it was attached to. */
+  | { type: 'unattached'; object: ObjectId; from: ObjectId; fromZcc: number }
   | { type: 'became_copy'; object: ObjectId; of: ObjectId }
   | { type: 'copied'; object: ObjectId; of: ObjectId; controller: PlayerId }
   /** CR 722.3: a permanent became prepared or unprepared. */

@@ -59,6 +59,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // "target creature it's blocking" (Knight of Dusk, Urborg Panther, Goblin Snowman).
   [/ blocking or (?:being )?blocked by (~|this creature|it)$/, (f, m, b) => !f.combatWithSource && (m[1] !== 'it' || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'either'), true)],
   [/ blocking (~|this creature|it)$/, (f, m, b) => !f.combatWithSource && (m[1] !== 'it' || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'blocking'), true)],
+  // Trailblazer's Torch: "Whenever equipped creature becomes blocked, it deals 2 damage to each creature blocking it." —
+  // the equipped creature.
+  [/ blocking (?:it|equipped creature|enchanted creature)$/, (f, m, b) => !f.combatWithSource && (m[0] !== ' blocking it' || b.it?.ref === 'attached') && ((f.combatWithSource = 'blocking'), (f.combatWithAttached = true), true)],
   [/ (?:it's|it is|~ is|this creature is) blocking$| blocked by (?:~|this creature)$/, (f, m, b) => !f.combatWithSource && (!/^ it/.test(m[0]!) || !b.it || b.it.ref === 'self') && ((f.combatWithSource = 'blocked'), true)],
   // Talion, the Kindly Lord: "a spell with mana value, power, or toughness equal to the chosen number".
   [/ with mana value, power, or toughness equal to the chosen number$/, (f) => !f.statIsChosenNumber && ((f.statIsChosenNumber = true), true)],
@@ -246,6 +249,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     return Boolean(st && !f.anyOf && ((f.anyOf = [{ subtypes: [st] }, { token: true }]), true));
   }],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
+  // Brought Back: "permanent cards in your graveyard that were put there from the battlefield this turn"; Captain
+  // N'ghathrod: "… that was put there from their library this turn".
+  [/ that (?:was|were) put there from (the battlefield|their library|your library|anywhere) this turn$/, (f, m) => !f.putThereThisTurn && ((f.putThereThisTurn = m[1] === 'the battlefield' ? 'battlefield' : m[1] === 'anywhere' ? 'anywhere' : 'library'), true)],
   // Chord of Calling, Green Sun's Zenith: "a creature card with mana value X or less"
   [/ with mana value X or less$/, (f) => compare(f, 'mana value', 'X', 'le')],
   // Scourge of Fleets: "each creature your opponents control with toughness X or less, where X is …".

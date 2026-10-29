@@ -459,6 +459,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const two = one ? parseCount(twoCounts[2]!, b.clone()) : null;
     if (one && two) return { kind: 'sum', parts: [one, two] };
   }
+  // Predator's Rapport: "that creature's power plus its toughness" — both of the same object.
+  const powerPlus = /^((?:that creature|its|~|this creature)'?s? power) plus its toughness$/.exec(t);
+  if (powerPlus) {
+    const one = parseCount(powerPlus[1]!.replace(/^its power$/, 'its power'), b.clone());
+    if (one?.kind === 'stat' && one.stat === 'power') return { kind: 'sum', parts: [one, { ...one, stat: 'toughness' }] };
+  }
   const plus = /^(\w+) plus (.+)$/.exec(t);
   if (plus) {
     const n = parseAmount(plus[1]!);

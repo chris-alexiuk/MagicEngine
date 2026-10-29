@@ -802,6 +802,10 @@ const CARDS = [
   makeCard({ name: 'Elf Card Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Massacre Lite', type_line: 'Sorcery', mana_cost: '{2}{B}{B}', cmc: 4, oracle_text: 'If an opponent controls a Plains and you control a Swamp, you may cast this spell without paying its mana cost.\nAll creatures get -2/-2 until end of turn.' }),
   makeCard({ name: 'Slick Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Slick Lite deals 2 damage to any target. If you've cast another spell this turn, draw a card." }),
+  makeCard({ name: 'Discharge Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Choose target creature or planeswalker. You get {E}{E}{E}, then you may pay any amount of {E}. Discharge Lite deals that much damage to that permanent.' }),
+  makeCard({ name: 'Swipe Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Choose target creature you control and target creature you don't control. If you cast this spell during your main phase, the creature you control gets +1/+1 until end of turn. Then those creatures fight each other." }),
+  makeCard({ name: 'Brought Back Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Choose up to two target permanent cards in your graveyard that were put there from the battlefield this turn. Return them to the battlefield tapped.' }),
+  makeCard({ name: 'Wargear Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature gets +3/+2.\nWhenever this Equipment becomes unattached from a permanent, sacrifice that permanent.\nEquip {0}' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -6837,6 +6841,45 @@ describe('Sieges', () => {
       expect(g.zones.hand.alice!.length - hand).toBe(before ? 1 : 0);
     });
   }
+  it('Galvanic Discharge: you get {E}{E}{E}, then pay any amount of {E} for that much damage', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const big = give(g, 'bob', 'Big Eldrazi', 'battlefield');
+    g.players.alice!.counters = { energy: 2 };
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Discharge Lite', 'hand'), targets: [[{ kind: 'object', object: big }]] });
+    g = drive(g, () => null, 3);
+    expect(g.pending).toMatchObject({ kind: 'pay', x: { max: 5 } });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true, x: 4 } } as never));
+    expect([g.objects[big]!.damage, g.players.alice!.counters?.energy]).toEqual([4, 1]);
+  });
+  it('Tail Swipe: the creature you control gets +1/+1 in your main phase, then they fight', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mine = give(g, 'alice', 'Zombie', 'battlefield');
+    const theirs = give(g, 'bob', 'Zombie', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Swipe Lite', 'hand'), targets: [[{ kind: 'object', object: mine }], [{ kind: 'object', object: theirs }]] }));
+    expect([g.objects[mine]!.zone, g.objects[theirs]!.zone]).toEqual(['battlefield', 'graveyard']);
+  });
+  it('Brought Back: only permanent cards put into your graveyard from the battlefield this turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const died = give(g, 'alice', 'Zombie', 'battlefield');
+    const milled = give(g, 'alice', 'Four Drop', 'graveyard');
+    g.players.alice!.pool.C = 6;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Glare Lite', 'hand'), x: 2, autoTap: true, targets: [[{ kind: 'object', object: died }]] } as never));
+    expect(g.objects[died]!.zone).toBe('graveyard');
+    const bb = give(g, 'alice', 'Brought Back Lite', 'hand');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: bb, targets: [[{ kind: 'object', object: milled }]] })).toBeTruthy();
+    g = settle(act(g, { type: 'cast', player: 'alice', object: bb, targets: [[{ kind: 'object', object: died }]] }));
+    expect([g.objects[died]!.zone, g.objects[died]!.tapped]).toEqual(['battlefield', true]);
+  });
+  it('Grafted Wargear: moving it to another creature sacrifices the first one', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const a = give(g, 'alice', 'Zombie', 'battlefield');
+    const b2 = give(g, 'alice', 'Zombie', 'battlefield');
+    const w = give(g, 'alice', 'Wargear Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: w, ability: 0, targets: [[{ kind: 'object', object: a }]] }));
+    expect(chars(g, g.objects[a]!).power).toBe(5);
+    g = settle(act(g, { type: 'activate', player: 'alice', object: w, ability: 0, targets: [[{ kind: 'object', object: b2 }]] }));
+    expect([g.objects[a]!.zone, g.objects[b2]!.zone]).toEqual(['graveyard', 'battlefield']);
+  });
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const bomb = give(g, 'alice', 'Blazing Bomb Lite', 'battlefield');

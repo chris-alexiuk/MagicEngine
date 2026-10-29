@@ -292,6 +292,8 @@ export function moveObject(
   delete o.loyaltyActivations;
   // CR 400.7: a new object hasn't been dealt damage this turn.
   delete o.damagedTurn;
+  // Grafted Exoskeleton: an Equipment that leaves the battlefield becomes unattached as it does.
+  if (from === 'battlefield' && o.attachedTo) events.push({ type: 'unattached', object: o.id, from: o.attachedTo.id, fromZcc: o.attachedTo.zcc });
   delete o.attachedTo;
   delete o.attachedToPlayer;
   // CR 707.10f: a copy of a permanent spell enters as a token with the copy's values (Storm of Saruman's "isn't legendary").

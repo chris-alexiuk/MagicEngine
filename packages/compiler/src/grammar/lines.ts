@@ -244,7 +244,7 @@ function hasFreeX(v: unknown): boolean {
   if (Array.isArray(v)) return v.some(hasFreeX);
   if ((v as { kind?: unknown }).kind === 'x') return true;
   // "You may pay {X}. If you do, draw X cards." — that X is the one paid.
-  if ((v as { type?: unknown }).type === 'may_pay' && (String((v as { cost?: unknown }).cost).includes('{X}') || 'xIs' in v || 'lifeX' in v)) return false;
+  if ((v as { type?: unknown }).type === 'may_pay' && (String((v as { cost?: unknown }).cost).includes('{X}') || 'xIs' in v || 'lifeX' in v || 'energyX' in v)) return false;
   return Object.entries(v).some(([k, x]) => k !== 'token' && k !== 'abilities' && k !== 'grant' && hasFreeX(x));
 }
 
@@ -1523,11 +1523,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: one.player ?? two.player };
   }
   // "Whenever ~ becomes tapped", "Whenever enchanted land becomes tapped", "Whenever a creature you control becomes tapped"
-  const tapped = /^(~|enchanted (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes (un)?tapped$/.exec(t);
+  // Hawkeye's Bow: "Whenever equipped creature becomes tapped".
+  const tapped = /^(~|(?:enchanted|equipped) (?:creature|land|permanent|artifact)|(?:a|an|another) (.+?)) becomes (un)?tapped$/.exec(t);
   if (tapped) {
     let subject: Ref;
     if (tapped[1] === '~') subject = { ref: 'self' };
-    else if (/^enchanted /.test(tapped[1]!)) subject = { ref: 'attached' };
+    else if (/^(?:enchanted|equipped) /.test(tapped[1]!)) subject = { ref: 'attached' };
     else {
       const pf = parseFilter(tapped[2]!, b);
       if (!pf || pf.plural) return null;
@@ -1786,6 +1787,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 705: "Whenever you win a coin flip" (Tavern Scoundrel), "Whenever you lose a coin flip", "… flip a coin".
   const flip = /^you (win|lose|flip) a coin(?: flip)?$/.exec(t);
   if (flip) return { trigger: { type: 'coin_flipped', ...(flip[1] !== 'flip' ? { won: flip[1] === 'win' } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
+  // Grafted Exoskeleton: "Whenever this Equipment becomes unattached from a permanent" — "that permanent" is the one.
+  if (/^(?:~|this (?:Equipment|Aura)) becomes unattached from a permanent$/.test(t)) {
+    b.named['that permanent'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'unattached' }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // Zndrsplt, Eye of Wisdom: "Whenever a player wins a coin flip" — anyone's.
+  const anyFlip = /^a player (wins|loses|flips) a coin(?: flip)?$/.exec(t);
+  if (anyFlip) return { trigger: { type: 'coin_flipped', anyone: true, ...(anyFlip[1] !== 'flips' ? { won: anyFlip[1] === 'wins' } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // CR 701.22 / 701.25: "Whenever you scry", "Whenever you surveil", "Whenever you scry or surveil"
   const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
@@ -2761,7 +2770,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     return subject && !subject.plural ? { type: 'continuous', affected: subject.ref, combat: { mustBeBlocked: 'all' } } : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) every creature type|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -2796,9 +2805,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
     // CR 205.1b: "is a Wizard in addition to its other types", "are Equipment in addition to their other types"
     // Blade of the Oni: "is a black Demon in addition to its other colors and types" (layers 4 and 5).
-    const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (colors and )?(?:land )?types$/.exec(part);
+    // Captain's Hook: "is a Pirate in addition to its other creature types".
+    const also = /^(?:is|are) (?:a |an )?(.+?) in addition to (?:its|their) other (colors and )?(?:land |creature )?types$/.exec(part);
     // Arachnoform: "is every creature type" (CR 205.3m, layer 4).
-    if (/^(?:is|are) every creature type$/.test(part) && !effect.addTypes) {
+    if (/^(?:is|are) (?:every|all) creature types?$/.test(part) && !effect.addTypes) {
       effect.addTypes = { types: [], subtypes: [], allCreatureTypes: true };
       continue;
     }

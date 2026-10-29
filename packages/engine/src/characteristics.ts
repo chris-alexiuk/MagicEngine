@@ -912,6 +912,12 @@ export function matchesFilter(
   if (f.dealtDamageThisTurn && !((g.turnLog.dealtDamage ?? {})[`${o.id}:${o.zcc}`] ?? 0)) return false;
   // Vengeful Ancestor: "a goaded creature" (CR 701.15) — by an effect, or a static "is goaded".
   if (f.goaded && !(o.goadedBy?.length || c.combat.some((r) => r.goaded))) return false;
+  // Brought Back: "that were put there from the battlefield this turn" — its latest move this turn, and it's still there.
+  if (f.putThereThisTurn) {
+    const last = [...(g.turnLog.toGraveyard ?? [])].reverse().find((r) => r.event.type === 'moved' && r.event.object === o.id);
+    const from = last && last.event.type === 'moved' ? last.event.from : undefined;
+    if (o.zone !== 'graveyard' || !from || (f.putThereThisTurn !== 'anywhere' && from !== f.putThereThisTurn)) return false;
+  }
   // CR 701.60: "all suspected creatures", "if it's not suspected".
   if (f.suspected !== undefined && (o.zone === 'battlefield' && o.suspected !== undefined) !== f.suspected) return false;
   if (f.controllerHitBySource && !(ctx.source && (g.turnLog.combatDamagers ?? []).some((d) => d.source === ctx.source!.id && d.zcc === ctx.source!.zcc && d.player === (ctx.lastController ?? o.controller)))) return false;
@@ -974,7 +980,9 @@ export function matchesFilter(
     if (first && !(first.id === o.id && (first.zcc === undefined || first.zcc === o.zcc))) return false;
   }
   if (f.combatWithSource) {
-    const src = ctx.source;
+    // Trailblazer's Torch: "each creature blocking it" — the equipped creature.
+    const at = f.combatWithAttached ? ctx.source?.attachedTo : undefined;
+    const src = f.combatWithAttached ? (at && g.objects[at.id]?.zcc === at.zcc ? g.objects[at.id] : undefined) : ctx.source;
     const cb = g.combat;
     if (!src || !cb) return false;
     // Tinder Wall: "{R}, Sacrifice this creature: It deals 2 damage to target creature it's blocking." — as it last

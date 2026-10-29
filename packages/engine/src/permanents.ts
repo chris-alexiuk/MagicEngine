@@ -130,6 +130,8 @@ export function canEnchantPlayer(g: GameState, aura: GameObject, player: PlayerI
 export function attach(g: GameState, attachment: GameObject, target: GameObject, events: GameEvent[]): boolean {
   if (attachment.zone !== 'battlefield' || !canAttach(g, attachment, target)) return false;
   if (attachment.attachedTo?.id === target.id && attachment.attachedTo.zcc === target.zcc) return false;
+  // Moved from another permanent: it became unattached from that one.
+  if (attachment.attachedTo) events.push({ type: 'unattached', object: attachment.id, from: attachment.attachedTo.id, fromZcc: attachment.attachedTo.zcc });
   attachment.attachedTo = { id: target.id, zcc: target.zcc };
   attachment.timestamp = ++g.clock;
   events.push({ type: 'attached', object: attachment.id, to: target.id });

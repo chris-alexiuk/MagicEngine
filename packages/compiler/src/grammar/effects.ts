@@ -763,6 +763,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Galvanic Discharge: "You get {E}{E}{E}, then you may pay any amount of {E}. ~ deals that much damage to that
+      // permanent." — X energy, chosen as it's paid (CR 107.14).
+      const anyEnergy = /^(?:(.+?), then )?[Yy]ou may pay any amount of \{E\}$/.exec(s);
+      if (anyEnergy && sentences[i + 1] && /\bthat much\b/.test(sentences[i + 1]!)) {
+        const before = anyEnergy[1] ? parseSentence(capitalise(anyEnergy[1]), b) : [];
+        const inner = before ? parseSentence(capitalise(sentences[i + 1]!.replace(/\bthat much\b/g, 'X')), b) : null;
+        if (!before || !inner) return null;
+        out.push(...before, { type: 'may_pay', cost: '', energyX: true, effects: inner });
+        i++;
+        continue;
+      }
       // CR 118.12: "You may pay {2}. If you do, …" — an optional cost paid on resolution.
       // Mana the engine can pay as a resolution-time cost (no {X}, snow or Phyrexian symbols), or energy (CR 107.14).
       // CR 119.4: "You may pay 3 life", Ripples of Undeath: "you may pay {1} and 3 life" — life only if you have that much.
@@ -1056,6 +1067,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           if (rest) both = 1;
         }
         if (first && !rest) rest = parseSentence(capitalise(then[1]!.replace(/ and repeat this process$/, '')), b);
+        // Astral Slide: "If you do, return that card to the battlefield … at the beginning of the next end step." — a delayed
+        // trigger, made only if you did.
+        if (first && !rest && !repeat && / at the beginning of the next end step$/.test(then[1]!)) rest = attempt(b, (b) => parseEffectText(`${capitalise(then[1]!)}.`, b));
         if (!first || !rest) return null;
         out.push({ type: 'may_do', effects: first, then: rest, ...(repeat ? { repeat: true } : {}) });
         i += 1 + both;
@@ -3048,6 +3062,16 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^[Pp]opulate$/.test(s)) return [{ type: 'populate' }];
   // CR 705.1: "Flip a coin."
   if (/^[Ff]lip a coin$/.test(s)) return [{ type: 'flip_coin' }];
+  if (/^[Ff]lip a coin until you lose a flip$/.test(s)) return [{ type: 'flip_coin', untilLose: true }];
+  // Planar Chaos: "that player flips a coin" — they flip, and win or lose it (CR 705.2).
+  const theyFlip = /^(that player|target player|target opponent) flips a coin$/i.exec(s);
+  if (theyFlip) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(theyFlip[1]!.toLowerCase(), b);
+      return who && who.ref !== 'players' && who.ref !== 'you' ? [{ type: 'flip_coin', who }] : null;
+    });
+    if (r) return r;
+  }
   // "When this creature dies, put its counters on target creature you control." (its counters as it died)
   const itsCounters = /^[Pp]ut (?:its|~'s) counters on (.+)$/.exec(s);
   if (itsCounters && b.itIsSource) {
@@ -3789,8 +3813,23 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Tail Swipe, Blizzard Brawl: "Choose target creature you control and target creature you don't control." — the two
+  // targets, named for what follows ("the creature you control", "those creatures fight each other").
+  const choosePair = /^[Cc]hoose (target creature you control) and (target creature (?:you don't control|an opponent controls))$/.exec(s);
+  if (choosePair) {
+    const r = attempt(b, (b) => {
+      const one = parseObjectRef(choosePair[1]!, b);
+      const two = one?.targeted && !one.plural ? parseObjectRef(choosePair[2]!, b) : null;
+      if (!one || !two?.targeted || two.plural) return null;
+      b.named = { ...b.named, [choosePair[1]!.replace(/^target /, 'the ')]: one.ref, [choosePair[2]!.replace(/^target /, 'the ')]: two.ref };
+      b.fightPair = [one.ref, two.ref];
+      return [];
+    });
+    if (r) return r;
+  }
+  if (/^(?:[Tt]hen )?[Tt]hose creatures fight each other$/.test(s) && b.fightPair) return [{ type: 'fight', a: b.fightPair[0], b: b.fightPair[1] }];
   // "Choose target creature." — the target, for what follows ("that creature").
-  const chooseTarget = /^[Cc]hoose ((?:another )?target .+|up to one (?:other )?target .+)$/.exec(s);
+  const chooseTarget = /^[Cc]hoose ((?:another )?target .+|up to (?:one|two|three|four) (?:other )?target .+)$/.exec(s);
   if (chooseTarget) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(chooseTarget[1]!, b);
@@ -4395,7 +4434,10 @@ const VERBS: Record<string, VerbHandler> = {
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
     const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
-    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|that player's|defending player's|all) graveyards?$|^target .+ card$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && b.it?.ref === 'trigger_object') || (onto[1] === 'them' && Boolean(b.named['them'])))) {
+    // Grim Return: "Choose target creature card in a graveyard …. Put that card onto the battlefield under your control." — a
+    // target card in a graveyard.
+    const itCardTarget = b.it?.ref === 'target' && b.targets[b.it.index]?.filter?.zone === 'graveyard';
+    if (onto && ((!/ from your hand/.test(onto[1]!) && / from (?:a|your|an opponent's|target player's|that player's|defending player's|all) graveyards?$|^target .+ card$|^target .+ card in (?:a|your|an opponent's) graveyard$|^target .+ card exiled with (?:~|this \w+)$/.test(onto[1]!)) || onto[1] === '~ from your hand' || (/^(?:it|that card)(?: from (?:a|its owner's|their owner's) graveyard)?$/.test(onto[1]!) && (b.it?.ref === 'trigger_object' || itCardTarget)) || (onto[1] === 'them' && Boolean(b.named['them'])))) {
       const r = attempt(b, (b) => VERBS.return!(args.replace(' onto the battlefield', ' to the battlefield'), who, b, imperative));
       if (r) return r;
     }

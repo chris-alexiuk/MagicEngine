@@ -36,10 +36,11 @@ const TRIGGER_EVENTS = new Set<GameEvent['type']>([
   'class_level', 'turned_face_up', 'discarded', 'day_night', 'tapped', 'ability_activated', 'exerted', 'clashed',
   'sacrificed', 'blockers_done', 'scried', 'surveilled', 'foraged', 'copied', 'became_monstrous', 'ring_tempted',
   'room_entered', 'dungeon_completed', 'initiative', 'crime', 'transformed', 'unlocked', 'die_rolled', 'land_played', 'searched', 'countered', 'proliferated', 'coin_flip',
-  'prevented', 'player_counters', 'milled',
+  'prevented', 'player_counters', 'milled', 'unattached',
 ]);
-/** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. */
-const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed']);
+/** CR 603.6c: sacrificing is leaving the battlefield — "When you sacrifice ~" looks back too. Grafted Exoskeleton: an
+ * Equipment that leaves becomes unattached as it does (CR 603.10a). */
+const LOOK_BACK = new Set(['dies', 'leaves', 'sacrificed', 'unattached']);
 /** CR 603.10a: leaves-the-battlefield abilities "look back in time" ("When ~ enters or dies" too). */
 const looksBack = (t: TriggerNode): boolean => LOOK_BACK.has(t.type) || (t.type === 'either' && ((t.of as TriggerNode[] | undefined) ?? []).some(looksBack));
 

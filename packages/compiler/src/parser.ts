@@ -149,6 +149,17 @@ export class ParserRegistry {
         // for each artifact you control (Pearl-Ear: "affinity for Auras").
         const affinity = /^((?:[A-Z][a-z]+(?: and [a-z]+| [a-z]+)* )?[Ss]pells you cast) have affinity for (artifacts|Auras|Equipment|enchantments|creatures)\.$/.exec(l);
         if (affinity) return [`${affinity[1]} cost {1} less to cast for each ${affinity[2] === 'Equipment' ? 'Equipment' : affinity[2]!.replace(/s$/, '')} you control.`];
+        // Tenza, Godo's Maul: "Equipped creature gets +1/+1. As long as it's legendary, it gets an additional +2/+2. As long as
+        // it's red, it has trample." — each sentence about the equipped creature.
+        const attachedThen = /^((?:Equipped|Enchanted) creature) (?:gets|has) [^.]+\.(?: As long as it's [^,.]+, it (?:gets|has) [^.]+\.)+$/.exec(l);
+        if (attachedThen) {
+          const subj = attachedThen[1]!.toLowerCase();
+          const parts = l.split(/(?<=\.) (?=As long as it's )/);
+          return [parts[0]!, ...parts.slice(1).map((x) => x.replace(/^As long as it's ([^,]+), it /, `As long as ${subj} is $1, it `))];
+        }
+        // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
+        const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);
+        if (turnOtherwise) return [`During your turn, ${turnOtherwise[1]} has ${turnOtherwise[2]}.`, `During turns other than yours, ${turnOtherwise[1]} has ${turnOtherwise[3]}.`];
         // Assassin's Ink: "This spell costs {1} less to cast if you control an artifact and {1} less to cast if you control an
         // enchantment."; Geistlight Snare: "… if you control a Spirit. It also costs {1} less to cast if you control an
         // enchantment." — two reductions, each with its own condition.

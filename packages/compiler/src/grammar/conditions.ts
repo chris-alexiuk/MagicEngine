@@ -1,5 +1,5 @@
 import type { AmountExpr, ConditionNode, ObjectFilter, Ref } from '@mtg/schema';
-import type { Binder } from './binder.js';
+import { attempt, type Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef, type ParsedFilter } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
 import { capitalise, COLOR_WORDS, isSubtype, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
@@ -468,6 +468,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 701.30d: "If you win" (a clash), "If you won"
   if (t === 'you win' || t === 'you won') return { type: 'won_clash' };
   if (t === 'you lose the flip') return { type: 'won_flip', not: true };
+  // Planar Chaos: "If they lose the flip" — the player who flipped.
+  const theyFlip = /^(?:they|that player) (win|lose)s? the flip$/.exec(t);
+  if (theyFlip) return { type: 'won_flip', ...(theyFlip[1] === 'lose' ? { not: true } : {}) };
   // CR 702.179e: "you have max speed"; CR 702.131c: "you have the city's blessing"
   if (/^you have max speed$/.test(t)) return { type: 'max_speed' };
   if (/^you don't have max speed$/.test(t)) return { type: 'max_speed', not: true };
@@ -816,6 +819,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you(?:'ve)? played a land this turn$/.test(t)) return { type: 'this_turn', event: 'you_played_land' };
   // Mirrex: "Activate only if this land entered this turn."
   if (/^(?:~|this (?:land|creature|artifact|permanent|enchantment)) entered (?:the battlefield )?this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } };
+  // Malamet Battle Glyph: "If the creature you control entered this turn" — the object the text named.
+  const namedEntered = /^(that creature|it|the creature you control) entered (?:the battlefield )?this turn$/.exec(t);
+  if (namedEntered) {
+    const of = attempt(b, (b) => parseObjectRef(namedEntered[1]!, b));
+    if (of && !of.plural && of.ref.ref !== 'self') return { type: 'is', of: of.ref, filter: { enteredThisTurn: true } };
+  }
   // Fortune Teller's Talent: "you've cast a spell this turn"; Essence Channeler: "you've lost life this turn".
   if (/^you(?:'ve)? cast a spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
   // Conduit of Worlds: "If you haven't cast a spell this turn".

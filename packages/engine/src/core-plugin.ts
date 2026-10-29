@@ -1210,6 +1210,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   unattach(node, ctx) {
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'battlefield' || !o.attachedTo) continue;
+      ctx.events.push({ type: 'unattached', object: o.id, from: o.attachedTo.id, fromZcc: o.attachedTo.zcc });
       delete o.attachedTo;
       o.timestamp = ++ctx.g.clock;
     }
@@ -2131,10 +2132,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // CR 705.1: flip a coin; "if you win the flip" checks the result (CR 705.2).
-  flip_coin(_node, ctx) {
-    const won = nextRandom(ctx.g) < 0.5;
-    if (ctx.resolution) ctx.resolution.flipWon = won;
-    ctx.events.push({ type: 'coin_flip', player: ctx.controller, won });
+  flip_coin(node, ctx) {
+    // Planar Chaos: "that player flips a coin" — someone else flips (CR 705.2).
+    const player = node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller;
+    if (!player) return true;
+    // Okaun, Eye of Chaos: "flip a coin until you lose a flip" — each flip its own (CR 705.2).
+    for (let guard = 0; guard < 200; guard++) {
+      const won = nextRandom(ctx.g) < 0.5;
+      if (ctx.resolution) ctx.resolution.flipWon = won;
+      ctx.events.push({ type: 'coin_flip', player, won });
+      if (!node.untilLose || !won) break;
+    }
     return true;
   },
 
@@ -2823,9 +2831,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // X is its power"; Necrodominance: "you may pay any amount of life" (`lifeX`: X chosen as it's paid).
     const lifeX = Boolean(node.lifeX);
     const chosenLife = lifeX && fixedX === undefined;
+    // Galvanic Discharge: "you may pay any amount of {E}" — X energy (CR 107.14).
+    const energyX = Boolean(node.energyX);
     let life = lifeX ? (fixedX ?? 0) : Number(node.life ?? 0) * Math.max(0, n);
     const otherwise = fixedX !== undefined ? bindX((node.else as EffectNode[] | undefined) ?? [], fixedX) : ((node.else as EffectNode[] | undefined) ?? []);
-    if (!cost && !life && !chosenLife) return { expand: lifeX ? bindX(node.effects as EffectNode[], 0) : (node.effects as EffectNode[]) };
+    if (!cost && !life && !chosenLife && !energyX) return { expand: lifeX ? bindX(node.effects as EffectNode[], 0) : (node.effects as EffectNode[]) };
     // Dance of the Dead: "that player may pay {1}{B}" — someone other than the ability's controller.
     const payer = node.payer ? refPlayers(ctx, ref(node, 'payer'))[0] : ctx.controller;
     if (!payer) return { expand: otherwise };
@@ -2834,10 +2844,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!extra.every((e) => feasible(e, ctx, payer))) return { expand: otherwise };
     // "You may pay {X}. If you do, draw X cards." — the payer chooses X as they pay (CR 107.1c); "where X is less than or
     // equal to the amount of life you gained" bounds it.
-    const hasX = cost.includes('{X}') || chosenLife;
-    const maxX = chosenLife ? ctx.g.players[payer]!.life : hasX && node.maxX !== undefined ? Math.max(0, amountOf(ctx, node.maxX as Amount)) : undefined;
+    const hasX = cost.includes('{X}') || chosenLife || energyX;
+    const maxX = chosenLife ? ctx.g.players[payer]!.life : energyX ? (ctx.g.players[payer]!.counters?.energy ?? 0) : hasX && node.maxX !== undefined ? Math.max(0, amountOf(ctx, node.maxX as Amount)) : undefined;
     if (!answer) {
-      const price = [node.xColor ? `any amount of {${node.xColor as string}}` : cost, chosenLife ? 'X life' : life ? `${life} life` : '', extra.length ? describeEffects(extra) : ''].filter(Boolean).join(' and ');
+      const price = [node.xColor ? `any amount of {${node.xColor as string}}` : energyX ? 'any amount of {E}' : cost, chosenLife ? 'X life' : life ? `${life} life` : '', extra.length ? describeEffects(extra) : ''].filter(Boolean).join(' and ');
       const text = `pay ${price}: ${describeEffects(node.effects as EffectNode[])}${otherwise.length ? `, or else ${describeEffects(otherwise)}` : ''}`;
       return { ask: { kind: 'pay', player: payer, cost, text, sourceName: sourceName(ctx), ...(hasX ? { x: maxX !== undefined ? { max: Math.max(0, maxX) } : {} } : {}) } };
     }
@@ -2850,6 +2860,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (life && ps.life < life) throw new RulesError(`You don’t have ${life} life to pay.`);
     // Leyline Tyrant: "you may pay any amount of {R}" — X of that color.
     if (cost) payDuringResolution(ctx.g, payer, node.xColor ? cost.replace('{X}', `{${node.xColor as string}}`.repeat(x)) : cost, ctx.events, node.xColor ? 0 : x);
+    if (energyX && x > 0) payDuringResolution(ctx.g, payer, '{E}'.repeat(x), ctx.events);
     if (life) {
       const lost = lifeLoss(ctx.g, payer, life);
       ps.life -= lost;
@@ -5394,9 +5405,15 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   // CR 706: "Whenever you roll one or more dice", "Whenever you roll a die"
   // CR 705: "Whenever you win a coin flip" — once for each flip you won.
+  // Grafted Exoskeleton: "Whenever this Equipment becomes unattached from a permanent" — "that permanent" is the one it was on.
+  unattached(t, check) {
+    const e = check.event;
+    if (e.type !== 'unattached' || e.object !== check.source.id) return [];
+    return [{ object: { id: e.from, zcc: e.fromZcc } }];
+  },
   coin_flipped(t, check) {
     const e = check.event;
-    if (e.type !== 'coin_flip' || check.sourceLeft || e.player !== check.controller) return [];
+    if (e.type !== 'coin_flip' || check.sourceLeft || (!t.anyone && e.player !== check.controller)) return [];
     if (t.won !== undefined && e.won !== t.won) return [];
     return [{ player: e.player }];
   },

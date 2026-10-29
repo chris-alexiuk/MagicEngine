@@ -492,6 +492,10 @@ export interface ObjectFilter {
   damagedBySource?: true;
   /** Vengeful Ancestor: "a goaded creature" (CR 701.15). */
   goaded?: true;
+  /** Trailblazer's Torch: `combatWithSource` is about what the source is attached to ("each creature blocking it"). */
+  combatWithAttached?: true;
+  /** Brought Back: a card in a graveyard "that was put there from the battlefield this turn" (or from a library, or anywhere). */
+  putThereThisTurn?: 'battlefield' | 'library' | 'anywhere';
   /** Nelly Borca: "all suspected creatures" (true); "if it's not suspected" (false) (CR 701.60). */
   suspected?: boolean;
   /** Relentless Assault: it was declared as an attacker this turn (as this object, CR 400.7). */
@@ -1377,7 +1381,7 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'proliferated', 'coin_flipped', 'milled',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'proliferated', 'coin_flipped', 'unattached', 'milled',
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */

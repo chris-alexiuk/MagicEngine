@@ -789,7 +789,11 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     }
 
     for (const id of vanish) removeObjectEntirely(g, id);
-    for (const id of unattach) delete g.objects[id]!.attachedTo;
+    for (const id of unattach) {
+      const at = g.objects[id]!.attachedTo;
+      if (at) events.push({ type: 'unattached', object: id, from: at.id, fromZcc: at.zcc });
+      delete g.objects[id]!.attachedTo;
+    }
     for (const id of toGraveyard) moveObject(g, id, 'graveyard', events);
     for (const id of toDestroy) if (!toGraveyard.has(id)) destroy(g, g.objects[id]!, events);
     for (const l of losers) playerLoses(g, l.player, l.reason, events);

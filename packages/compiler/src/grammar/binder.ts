@@ -61,6 +61,8 @@ export class Binder {
   difference: AmountExpr | null = null;
   /** Skrelv: "Choose a color. … creatures of that color" — a color was chosen as this resolves. */
   choseColor = false;
+  /** Tail Swipe: "Choose target creature you control and target creature you don't control. … those creatures fight each other." */
+  fightPair: [Ref, Ref] | null = null;
 
   constructor(readonly env: GrammarEnv) {}
 
@@ -84,6 +86,7 @@ export class Binder {
     b.halfDir = this.halfDir;
     b.difference = this.difference;
     b.choseColor = this.choseColor;
+    b.fightPair = this.fightPair;
     return b;
   }
 
@@ -106,6 +109,7 @@ export class Binder {
     this.halfDir = other.halfDir;
     this.difference = other.difference;
     this.choseColor = other.choseColor;
+    this.fightPair = other.fightPair;
   }
 
   addTarget(spec: TargetSpec): Ref {
