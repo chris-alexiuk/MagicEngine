@@ -467,6 +467,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     }
     // CR 107.14: "Pay {E}{E}" removes energy counters from you.
     else if (/^[Pp]ay (?:\{E\})+$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: (item.length - 4) / 3 });
+    // Sphinx of the Revelation, HELIOS One: "Pay X {E}" — X announced with the ability (CR 107.3).
+    else if (/^[Pp]ay X \{E\}$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: 'X' });
     // Gonti's Aether Heart: "Pay eight {E}".
     else if (/^[Pp]ay (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) \{E\}$/.test(item)) (cost.other ??= []).push({ type: 'pay_energy', amount: parseAmount(/^[Pp]ay (\w+)/.exec(item)![1]!) as number });
     // Kozilek, the Great Distortion: "Discard a card with mana value X" — the X announced as it's activated (the engine
@@ -670,6 +672,14 @@ export const activatedRule: GrammarRule = {
         if (!colors || !amount || cb.targets.length || mana[2] || node.timing || node.maxPerTurn || node.oncePerGame) return null;
         return { ...node, effects: [{ type: 'add_mana', combination: { amount, colors } }], mana: true };
       }
+      // Brigid, Doun's Mind: "Add X {G} or X {W}, where X is the number of other creatures you control."
+      const xOr = mana ? /^X (\{[WUBRGC]\})(?: or X (\{[WUBRGC]\}))?, where X is (.+)$/.exec(mana[1]!) : null;
+      if (xOr && mana && !mana[2]) {
+        const unit = parseManaProduction(xOr[2] ? `${xOr[1]} or ${xOr[2]}` : xOr[1]!);
+        const amount = parseCount(xOr[3]!, new Binder(env));
+        if (!unit || !amount || node.timing || node.maxPerTurn || node.oncePerGame) return null;
+        return { ...node, effects: [{ ...unit, times: amount, ...(xOr[2] ? { allOne: true as const } : {}) }], mana: true };
+      }
       const scaled = mana ? /^(?:((?:\{[WUBRGC]\})+) for each (.+)|an amount of (\{[WUBRGC]\}|ANY) equal to (.+))$/.exec(mana[1]!) : null;
       const removedThisWay = scaled?.[2] && /^\S+ counter removed this way$/.test(scaled[2]) && cost.other?.some((c) => c.amount === 'X');
       const times = scaled ? (removedThisWay ? { kind: 'x' as const } : scaled[2] ? parseForEach(scaled[2], new Binder(env)) : parseCount(scaled[4]!, new Binder(env))) : null;
@@ -751,12 +761,13 @@ export const activatedRule: GrammarRule = {
       }
     }
     // "Remove any number of … counters" is X only for mana abilities so far; "Sacrifice X Squirrels" is announced (CR 107.3a).
-    if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice')) return null;
+    // Sphinx of the Revelation: "Pay X {E}" — announced too.
+    if (cost.other?.some((c) => c.amount === 'X' && c.type !== 'sacrifice' && c.type !== 'pay_energy')) return null;
     const b = new Binder(env);
     b.it = { ref: 'self' };
     // "{X}, {T}: Tap target creature with power X or less."; "−X: Return target creature card with mana value X …".
     // Ruthless Technomancer: "Sacrifice X artifacts: Return target creature card with power X or less …" — X announced first.
-    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X' || (c.type === 'sacrifice' && c.amount === 'X')));
+    b.xAllowed = /\{X\}/.test(cost.mana ?? '') || cost.loyaltyX === -1 || Boolean(cost.other?.some((c) => (c.filter as ObjectFilter | undefined)?.manaValue?.n === 'X' || ((c.type === 'sacrifice' || c.type === 'pay_energy') && c.amount === 'X')));
     // Shadowheart: "Sacrifice another creature: Draw X cards, where X is that creature's power." — the one sacrificed
     // (its power as it was, CR 608.2h).
     const sacCost = cost.other?.find((c) => c.type === 'sacrifice' && c.amount === 1 && ((c.filter as ObjectFilter | undefined)?.types ?? []).includes('Creature'));
@@ -1904,10 +1915,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const opp = exceptFirst[1] !== 'you draw';
     return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', exceptFirstInDrawStep: true }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
   }
-  const draw = /^(you draw|enchanted player draws) a card$/.exec(t);
+  // The Watcher in the Water: "Whenever you draw a card during an opponent's turn".
+  const draw = /^(you draw|enchanted player draws) a card( during an opponent's turn)?$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
-    return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
+    return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you', ...(draw[2] ? { opponentsTurn: true } : {}) }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
 
   // CR 602.2: "Whenever you activate an ability that isn't a mana ability", "Whenever an opponent activates a
@@ -2320,6 +2332,9 @@ export const continuousRule: GrammarRule = {
     // Champion of Lambholt: "Creatures with power less than this creature's power can't block creatures you control."
     const cantBlockYours = /^(Creatures .+?) can't block creatures you control$/.exec(rest);
     if (cantBlockYours) rest = `Creatures you control can't be blocked by ${cantBlockYours[1]!.replace(/^C/, 'c').replace(/\bthis creature's\b/, "~'s")}`;
+    // Gornog, the Red Reaper: "Cowards can't block Warriors." — the same as "Warriors can't be blocked by Cowards."
+    const typeBlocks = /^([A-Z][a-z]+) can't block ([A-Z][a-z]+)$/.exec(rest);
+    if (typeBlocks && subtypeOf(typeBlocks[1]!) && subtypeOf(typeBlocks[2]!) && subtypeOf(typeBlocks[1]!) !== typeBlocks[1] && subtypeOf(typeBlocks[2]!) !== typeBlocks[2]) rest = `${typeBlocks[2]} can't be blocked by ${typeBlocks[1]}`;
     // Void Winnower: "Your opponents can't block with creatures with even mana values."
     const blockWith = /^Your opponents can't block with (creatures .+)$/.exec(rest);
     if (blockWith) rest = `${blockWith[1]!.replace(/^creatures/, 'Creatures your opponents control')} can't block`;
@@ -3085,6 +3100,12 @@ export const deckRule: GrammarRule = {
 export const asUnblockedRule: GrammarRule = {
   id: 'assign_as_unblocked',
   parse(line, original) {
+    // Indomitable Might: "Enchanted creature's controller may have it assign its combat damage as though it weren't blocked."
+    if (/^(?:Enchanted|Equipped) creature's controller may have it assign its combat damage as though it weren't blocked\.$/.test(line)) {
+      return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'attached' }, rules: ['assign_as_unblocked'] } };
+    }
+    // Ancient Adamantoise: "Damage isn't removed from this creature during cleanup steps." (CR 514.2)
+    if (/^Damage isn't removed from ~ during cleanup steps\.$/.test(line)) return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['damage_not_removed'] } };
     if (!/^You may have ~ assign its combat damage as though it weren't blocked\.$/.test(line)) return null;
     return { kind: 'static', text: original, effect: { type: 'continuous', affected: { ref: 'self' }, rules: ['assign_as_unblocked'] } };
   },

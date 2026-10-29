@@ -307,7 +307,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -439,6 +439,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return e.counter ? (counters[e.counter] ?? 0) : Object.values(counters).reduce((a, b) => a + b, 0);
     }
     case 'players': {
+      // Rampant Frogantua: "for each player who has lost the game".
+      if (e.lostGame) return g.order.filter((p) => g.players[p]?.lost).length;
       // Smuggler's Share: "… who had two or more lands enter the battlefield under their control this turn".
       const lands = (p: PlayerId) => (g.turnLog.entered?.[p] ?? []).filter((id) => g.objects[id] && (g.objects[id]!.zone === 'battlefield' ? hasType(g, g.objects[id]!, 'Land') : faceOf(g, g.objects[id]!).types.includes('Land'))).length;
       return livePlayers(g).filter(
@@ -538,6 +540,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'excess_this_way':
       return ctx.resolution?.excess ?? 0;
+    case 'distinct_names': {
+      // All-Fates Scroll: "the number of differently named lands you control" (a face-down permanent has no name, CR 708.2).
+      const f = e.filter as ObjectFilter;
+      const names = g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => !o.faceDown && matchesFilter(g, o, f, { controller: ctx.controller, source: ctx.source ?? null })).map((o) => chars(g, o).name);
+      return new Set(names).size;
+    }
     case 'to_graveyard_this_turn': {
       // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (a token isn't a card).
       const [p] = refPlayers(ctx, e.player as Ref);

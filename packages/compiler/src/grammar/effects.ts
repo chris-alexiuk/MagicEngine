@@ -187,6 +187,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const kws = [sameFor[2]!, ...sameFor[3]!.split(/, (?:and )?| and /)];
     text = kws.map((k) => `If you control a creature with ${k}, creatures you control gain ${k} until end of turn.`).join(' ');
   }
+  // Liliana's Triumph: "If you control a Liliana planeswalker, each opponent also discards a card." — "also" adds nothing.
+  text = text.replace(/(\bIf [^,.]+, (?:each opponent|each player|you|that player|target opponent|target player)) also (?=[a-z])/g, '$1 ');
   // Primal Amulet, Treasure Map: "Then if there are four or more charge counters on it, remove those counters and transform
   // it."; Replicating Ring: "if it has eight or more night counters on it, remove all of them and …" — that kind of counter.
   text = text.replace(
@@ -3559,6 +3561,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Vexing Shusher: "Target spell can't be countered." (for as long as it's that spell, CR 611.2c)
+  const spellNoCounter = /^(Target spell|Target creature spell|Target spell you control)(?: or ability)? can't be countered(?: this turn)?$/.exec(s);
+  if (spellNoCounter && !/ or ability/.test(s)) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(spellNoCounter[1]!.replace(/^T/, 't'), b);
+      return what ? [{ type: 'modify', what: what.ref, rules: ['cant_be_countered'], until: 'eot' } as EffectNode] : null;
+    });
+    if (r) return r;
+  }
   // Vines of Vastwood: "Target creature can't be the target of spells or abilities your opponents control this turn." — this
   // spell's controller's opponents (not hexproof: its own controller may be one of them).
   const shielded = /^(.+?) can't be the targets? of spells or abilities your opponents control this turn$/.exec(s);
@@ -4977,10 +4988,13 @@ const VERBS: Record<string, VerbHandler> = {
     // Blacksmith's Talent: "attach target Equipment you control to up to one target creature you control".
     // Barret: "attach up to one target Equipment you control to target Rebel you control"; Sokka: "… to ~".
     // Magnetic Theft: "Attach target Equipment to target creature." — anyone's (it stays its controller's, CR 301.5c).
-    const both = imperative ? /^((?:up to one )?target (?:Aura|Equipment|Aura or Equipment)(?: you control)?) to ((?:up to one )?target .+|~)$/.exec(args) : null;
+    // Cloud, Ex-SOLDIER: "When Cloud enters, attach up to one target Equipment you control to it."
+    const both = imperative ? /^((?:up to one )?target (?:Aura|Equipment|Aura or Equipment)(?: you control)?) to ((?:up to one )?target .+|~|it)$/.exec(args) : null;
     if (both) {
+      const it = both[2] === 'it' ? b.it : null;
+      if (both[2] === 'it' && it?.ref !== 'self' && it?.ref !== 'trigger_object') return null;
       const what = parseObjectRef(both[1]!, b);
-      const to = what && !what.plural ? parseObjectRef(both[2]!, b) : null;
+      const to = what && !what.plural ? (it ? { ref: it, plural: false } : parseObjectRef(both[2]!, b)) : null;
       return what && to && !to.plural ? [{ type: 'attach', what: what.ref, to: to.ref }] : null;
     }
     const m = /^(~|it|that Equipment) to (.+)$/.exec(args);

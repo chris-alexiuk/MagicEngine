@@ -82,6 +82,12 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   // Terastodon: "each permanent put into a graveyard this way" — from the battlefield to a graveyard.
   // Arid Archway: "another Desert returned this way" — returned to its owner's hand from the battlefield, other than the source.
   // Deadly Tempest: "the number of creatures they controlled that were destroyed this way" — each player's own.
+  // Kaya's Wrath: "the number of creatures you controlled that were destroyed this way".
+  const yours = /^(.+?) you controlled that were (destroyed|exiled|sacrificed|returned) this way$/.exec(text.trim());
+  if (yours) {
+    const inner = movedThisWay(`${yours[1]} ${yours[2]} this way`, b);
+    return inner && inner.kind === 'moved_this_way' ? { ...inner, yours: true } : null;
+  }
   const theirs = /^(.+?) they controlled that were (destroyed|exiled|sacrificed|returned) this way$/.exec(text.trim());
   if (theirs) {
     const each = b.player?.ref === 'each_player' || b.player?.ref === 'players' ? b.player : null;
@@ -221,6 +227,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Heliod, the Radiant Dawn: "for each card your opponents have drawn this turn".
   if (t === 'card your opponents have drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
+  // Rampant Frogantua: "for each player who has lost the game".
+  if (t === 'player who has lost the game') return { kind: 'players', who: 'each', lostGame: true };
   if (t === 'player') return { kind: 'players', who: 'each' };
   // Teysa, Opulent Oligarch: "for each opponent who lost life this turn"
   const lost = /^(opponent|player|of your opponents) who lost life this turn$/.exec(t);
@@ -393,6 +401,12 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
   if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
+  // All-Fates Scroll: "the number of differently named lands you control".
+  const named = /^the number of differently named (.+)$/.exec(t);
+  if (named) {
+    const pf = parseFilter(named[1]!, b);
+    return pf && pf.plural && (!pf.filter.zone || pf.filter.zone === 'battlefield') ? { kind: 'distinct_names', filter: pf.filter } : null;
+  }
   // Jaws of Defeat: "the difference between that creature's power and its toughness" — the larger minus the smaller.
   const pt = /^the difference between (that creature's|its|~'s) power and its toughness$/.exec(t);
   if (pt) {

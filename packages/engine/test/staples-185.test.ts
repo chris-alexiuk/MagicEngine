@@ -844,6 +844,14 @@ const CARDS = [
   makeCard({ name: 'Banefire Lite', type_line: 'Sorcery', mana_cost: '{X}{R}', oracle_text: "Banefire Lite deals X damage to any target.\nIf X is 5 or more, this spell can't be countered and the damage can't be prevented." }),
   makeCard({ name: 'Jaws Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Whenever a creature you control enters, target opponent loses life equal to the difference between that creature's power and its toughness." }),
   makeCard({ name: 'Wall Fourteen', type_line: 'Creature — Wall', mana_cost: '{0}', power: '1', toughness: '4', oracle_text: '' }),
+  makeCard({ name: 'Adamantoise Lite', type_line: 'Creature — Turtle', mana_cost: '{0}', power: '0', toughness: '20', oracle_text: "Damage isn't removed from this creature during cleanup steps." }),
+  makeCard({ name: 'Brigid Lite', type_line: 'Creature — Kithkin', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{T}: Add X {G} or X {W}, where X is the number of other creatures you control.' }),
+  makeCard({ name: 'Shusher Lite', type_line: 'Creature — Goblin Shaman', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "{0}: Target spell can't be countered." }),
+  makeCard({ name: 'Cancel Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Counter target spell.' }),
+  makeCard({ name: 'Retaliate Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy all creatures that dealt damage to you this turn.' }),
+  makeCard({ name: 'Kaya Wrath Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Destroy all creatures. You gain life equal to the number of creatures you controlled that were destroyed this way.' }),
+  makeCard({ name: 'Watcher Lite', type_line: 'Creature — Kraken', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "Whenever you draw a card during an opponent's turn, create a 1/1 blue Tentacle creature token." }),
+  makeCard({ name: 'Revelation Lite', type_line: 'Artifact Creature — Sphinx', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '{T}, Pay X {E}: Draw X cards.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -7329,6 +7337,79 @@ describe('Sieges', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Wall Fourteen', 'hand') }));
     g = drive(g, (g) => (g.pending!.kind === 'trigger_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } }) : null), 10);
     expect(g.players.bob!.life).toBe(life - 3);
+  });
+
+  it("Ancient Adamantoise: damage isn't removed during cleanup", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const turtle = give(g, 'alice', 'Adamantoise Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    for (const t of [turtle, bear]) g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: t }]] }));
+    g = toStep(g, 'main1', 'bob');
+    expect(g.objects[turtle]!.damage).toBe(3);
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+  });
+
+  it("Brigid, Doun's Mind: X mana all of one color", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const brigid = give(g, 'alice', 'Brigid Lite', 'battlefield');
+    give(g, 'alice', 'Bear', 'battlefield');
+    give(g, 'alice', 'Bear', 'battlefield');
+    g = act(g, { type: 'activate_mana', player: 'alice', object: brigid, ability: 0, choice: 1 });
+    expect([g.players.alice!.pool.G, g.players.alice!.pool.W]).toEqual([0, 2]);
+  });
+
+  it("Vexing Shusher: target spell can't be countered", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const shusher = give(g, 'alice', 'Shusher Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'hand');
+    g.players.alice!.pool.G = 2;
+    g = act(g, { type: 'cast', player: 'alice', object: bear });
+    g = act(g, { type: 'activate', player: 'alice', object: shusher, ability: 0, targets: [[{ kind: 'object', object: bear }]] });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Cancel Lite', 'hand'), targets: [[{ kind: 'object', object: bear }]] });
+    g = settle(g);
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+  });
+
+  it("Retaliate, Kaya's Wrath, The Watcher in the Water, and paying X energy", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const hitter = give(g, 'bob', 'Bear', 'battlefield');
+    const bystander = give(g, 'bob', 'Bear', 'battlefield');
+    g = toAttack(toStep(g, 'beginning_of_combat', 'bob'));
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: hitter, target: { kind: 'player', player: 'alice' } }] } });
+    g = toStep(g, 'end_of_combat', 'bob');
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Retaliate Lite', 'hand') }));
+    expect([g.objects[hitter]!.zone, g.objects[bystander]!.zone]).toEqual(['graveyard', 'battlefield']);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(h, 'alice', 'Bear', 'battlefield');
+    give(h, 'alice', 'Bear', 'battlefield');
+    give(h, 'bob', 'Bear', 'battlefield');
+    const life = h.players.alice!.life;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Kaya Wrath Lite', 'hand') }));
+    expect(h.players.alice!.life).toBe(life + 2);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(k, 'alice', 'Watcher Lite', 'battlefield');
+    const tokens = () => k.zones.battlefield.filter((id) => k.objects[id]!.token).length;
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Zero Instant', 'hand') }));
+    expect(tokens()).toBe(0);
+    k = toStep(k, 'main1', 'bob');
+    k = act(k, { type: 'pass', player: 'bob' });
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Zero Instant', 'hand') }));
+    expect(tokens()).toBe(1);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sphinx = give(m, 'alice', 'Revelation Lite', 'battlefield');
+    m.players.alice!.counters = { ...m.players.alice!.counters, energy: 3 };
+    const hand = m.zones.hand.alice!.length;
+    illegal(m, { type: 'activate', player: 'alice', object: sphinx, ability: 0, x: 4 });
+    m = settle(act(m, { type: 'activate', player: 'alice', object: sphinx, ability: 0, x: 2 }));
+    expect(m.zones.hand.alice!.length).toBe(hand + 2);
+    expect(m.players.alice!.counters?.energy).toBe(1);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

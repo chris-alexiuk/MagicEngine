@@ -78,6 +78,8 @@ export interface TurnLog {
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
   damagedBy?: Record<ObjectId, ObjectId[]>;
+  /** Spear of Heliod: the sources (id:zcc) that dealt damage to each player this turn (combat damage marked "c:"). */
+  playerDamagedBy?: Record<PlayerId, string[]>;
   /** Each card or token put into a graveyard this turn, in order (with its card types then). */
   toGraveyard?: { event: GameEvent; types: string[]; owner: PlayerId; token: boolean }[];
   /** Danny Pink: the first counters event this turn for each object, keyed "id:zcc". */
@@ -221,6 +223,11 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to.kind === 'permanent') {
           const by = ((log.damagedBy ??= {})[e.to.object] ??= []);
           if (!by.includes(e.source)) by.push(e.source);
+        }
+        if (e.to.kind === 'player' && g.objects[e.source]) {
+          const by = ((log.playerDamagedBy ??= {})[e.to.player] ??= []);
+          const key = `${e.combat ? 'c:' : ''}${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;
+          if (!by.includes(key)) by.push(key);
         }
         if (g.objects[e.source]) {
           const key = `${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;

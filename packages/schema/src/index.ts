@@ -520,6 +520,8 @@ export interface ObjectFilter {
   enteredThisTurn?: true;
   /** Eriette of the Charmed Apple: "enchanted by an Aura you control". */
   enchantedByYou?: true;
+  /** Spear of Heliod: "that dealt damage to you this turn" ('combat': "that dealt combat damage to you this turn"). */
+  dealtDamageToYou?: true | 'combat';
 }
 
 export interface Compare {
@@ -641,7 +643,7 @@ export type AmountExpr = (
    * two or more cards this turn"; `landsEntered`, "who had two or more lands enter the battlefield under their control".
    */
   /** `drewThisWay`: Cut a Deal's "for each opponent who drew a card this way". */
-  | { kind: 'players'; who: 'opponents' | 'each'; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; /** Gnoll War Band: "each opponent who was dealt damage this turn". */ damaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter }
+  | { kind: 'players'; who: 'opponents' | 'each'; /** Rampant Frogantua: players who have lost the game. */ lostGame?: true; lostLife?: true; drew?: number; landsEntered?: number; drewThisWay?: true; combatDamaged?: true; /** Gnoll War Band: "each opponent who was dealt damage this turn". */ damaged?: true; discardedNone?: true; handAtMost?: number; handAtLeast?: number; handMoreThanYou?: true; controlsMore?: ObjectFilter }
   /** CR 700.5: devotion to one or more colors. */
   /** `manaColor`: Nykthos — "your devotion to that color", the color of the mana being added. */
   | { kind: 'devotion'; colors: Color[]; manaColor?: true }
@@ -682,6 +684,8 @@ export type AmountExpr = (
   | { kind: 'source_damage_this_turn' }
   /** Change of Fortune: "for each card you've discarded this turn". */
   | { kind: 'discarded_this_turn' }
+  /** All-Fates Scroll: "the number of differently named lands you control". */
+  | { kind: 'distinct_names'; filter: ObjectFilter }
   /** Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn". */
   | { kind: 'to_graveyard_this_turn'; player: Ref }
   | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter; /** Thrasta: "each other spell cast this turn" — by anyone. */ anyone?: true; /** Delightful Discovery: "each spell your opponents have cast this turn". */ opponents?: true }
@@ -752,6 +756,8 @@ export const RULE_FLAGS = [
   'cant_be_countered',
   /** Banefire: "the damage can't be prevented" — the spell's own damage, while it's on the stack (CR 615.12). */
   'damage_unpreventable',
+  /** Ancient Adamantoise: "Damage isn't removed from this creature during cleanup steps." (CR 514.2) */
+  'damage_not_removed',
   // Airtight Alibi: "can't become suspected" (CR 701.60).
   'cant_be_suspected',
   'doesnt_untap',
@@ -782,6 +788,8 @@ export type RuleFlag = (typeof RULE_FLAGS)[number];
 // --- Core node shapes ---------------------------------------------------------
 
 export interface AddManaEffect extends EffectNode {
+  /** Brigid, Doun's Mind: "Add X {G} or X {W}" — all of one of the options (not a mix, as with "{B} or {G} for each"). */
+  allOne?: true;
   type: 'add_mana';
   /** Mirari's Wake: "one mana of any type that land produced". */
   produced?: true;
@@ -1425,7 +1433,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

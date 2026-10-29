@@ -600,7 +600,8 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
   // CR 514.2: damage wears off and "until end of turn" effects end (regeneration shields too, CR 701.19a).
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
-    o.damage = 0;
+    // Ancient Adamantoise: "Damage isn't removed from this creature during cleanup steps."
+    if (!o.damage || !hasRule(g, o, 'damage_not_removed')) o.damage = 0;
     delete o.regenShields;
     // "becomes a copy of … until end of turn": it's what it was before.
     if (o.copyRevert) {

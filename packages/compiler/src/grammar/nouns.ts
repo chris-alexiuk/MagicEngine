@@ -74,8 +74,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
   // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
   [/ (?:that's|that are) attacking (?:one of your opponents|an opponent)$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingOpponent = true), true)],
+  // Spear of Heliod: "target creature that dealt damage to you this turn"; Witch-king: "… that dealt combat damage to you this turn".
+  [/ that dealt (combat )?damage to you this turn$/, (f, m) => !f.dealtDamageToYou && ((f.dealtDamageToYou = m[1] ? 'combat' : true), true)],
   // Eriette of the Charmed Apple: "each creature that's enchanted by an Aura you control".
   [/ (?:that's|that are) enchanted by an Aura you control$/, (f) => !f.enchantedByYou && ((f.enchantedByYou = true), true)],
+  // Don Andres, the Renegade: "each creature you control but don't own".
+  [/ you control but don't own$/, (f) => !f.controller && !f.owner && ((f.controller = 'you'), (f.owner = 'opponent'), true)],
   [/ you control$/, (f) => !f.controller && ((f.controller = 'you'), true)],
   [/ you don't control$/, (f) => !f.controller && ((f.controller = 'not_you'), true)],
   // Aku Djinn: "each creature each opponent controls"

@@ -593,6 +593,8 @@ function layered(g: GameState, o: GameObject): Characteristics {
       const locked = resolvedEffects(g).filter((e) => e.applies(o, c)).sort((a, b) => a.timestamp - b.timestamp);
       for (const e of locked) if (e.colors) c.colors = [...e.colors];
       for (const e of locked) for (const k of e.keywords ?? []) if (stacks(k) || !c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
+      // Vexing Shusher: "Target spell can't be countered."
+      for (const e of locked) for (const r of e.rules ?? []) c.rules.add(r);
     }
     return c;
   }
@@ -917,6 +919,11 @@ export function matchesFilter(
   if (f.notHistoric && (c.types.includes('Artifact') || c.supertypes.includes('Legendary') || c.subtypes.includes('Saga'))) return false;
   // "a creature dealt damage by ~ this turn"
   if (f.damagedBySource && !(ctx.source && (g.turnLog.damagedBy?.[o.id] ?? []).includes(ctx.source.id))) return false;
+  // Spear of Heliod: "target creature that dealt damage to you this turn" (Witch-king: combat damage only).
+  if (f.dealtDamageToYou) {
+    const by = g.turnLog.playerDamagedBy?.[ctx.controller] ?? [];
+    if (!by.some((k) => k.replace(/^c:/, '') === `${o.id}:${o.zcc}` && (f.dealtDamageToYou !== 'combat' || k.startsWith('c:')))) return false;
+  }
   if (f.attackedThisTurn && g.turnLog.attackedAs?.[o.id] !== o.zcc) return false;
   if (f.notCopy && o.spellCopy) return false;
   if (f.castFromZone && !(o.zone === 'stack' && o.cast?.from === f.castFromZone)) return false;

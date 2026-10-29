@@ -204,7 +204,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     // Culling Ritual: "Add {B} or {G} for each …" — the controller chooses how many of each.
-    if (effect.times !== undefined && effect.options && effect.options.length === 2 && effect.options.every((o) => o.length === 1) && choice === undefined) {
+    if (effect.times !== undefined && effect.options && effect.options.length === 2 && effect.options.every((o) => o.length === 1) && choice === undefined && !effect.allOne) {
       const n = Math.max(0, amountOf(ctx, effect.times));
       if (!n) return true;
       const [a, b2] = effect.options.map((o) => manaOption(o, ctx.source)?.[0]);
@@ -5386,6 +5386,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.nth && e.nth !== t.nth) return [];
     // The Council of Four: "Whenever a player draws their second card during their turn".
     if (t.ownTurn && check.g.active !== e.player) return [];
+    // The Watcher in the Water: "Whenever you draw a card during an opponent's turn".
+    if (t.opponentsTurn && check.g.active === check.controller) return [];
     // Orcish Bowmasters: "except the first one they draw in each of their draw steps"
     if (t.exceptFirstInDrawStep && e.firstInDrawStep) return [];
     return [{ player: e.player }];
