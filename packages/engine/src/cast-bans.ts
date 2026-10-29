@@ -86,10 +86,26 @@ export function activationProhibited(g: GameState, player: PlayerId, source: Gam
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cast_prohibition') continue;
       const e = (a as StaticAbility).effect as CastProhibitionNode;
-      if (!e.activate || (mana && e.activate.nonMana)) continue;
+      if (!e.activate || e.activate.loyalty || (mana && e.activate.nonMana)) continue;
       if (!bans(g, e, src, player) || !staticConditionHolds(g, e, src)) continue;
       if (e.during === 'your_turn' && g.active !== src.controller) continue;
       if (e.during === 'combat' && !COMBAT_STEPS.includes(g.step)) continue;
+      if (e.activate.filter && !matchesFilter(g, source, e.activate.filter, { controller: src.controller, source: src, anyZone: true })) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The Immortal Sun: "Players can't activate planeswalkers' loyalty abilities." */
+export function loyaltyProhibited(g: GameState, player: PlayerId, source: GameObject): boolean {
+  if (!anyProhibitions(g)) return false;
+  for (const id of abilitySources(g)) {
+    const src = g.objects[id]!;
+    for (const a of objectAbilities(g, src)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'cast_prohibition') continue;
+      const e = (a as StaticAbility).effect as CastProhibitionNode;
+      if (!e.activate?.loyalty || !bans(g, e, src, player) || !staticConditionHolds(g, e, src)) continue;
       if (e.activate.filter && !matchesFilter(g, source, e.activate.filter, { controller: src.controller, source: src, anyZone: true })) continue;
       return true;
     }

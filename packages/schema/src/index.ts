@@ -722,6 +722,8 @@ export interface AddManaEffect extends EffectNode {
   identity?: true;
   /** CR 106.7: "any color that a land an opponent controls could produce" / "any type that a land you control could produce". */
   couldProduce?: 'opponents' | 'you';
+  /** Gond Gate: only lands like these ("a Gate you control could produce"). */
+  couldProduceFilter?: ObjectFilter;
   /** With couldProduce: "any type" — colorless too. */
   anyType?: true;
   /** Mox Amber: "any color among legendary creatures and planeswalkers you control"; with `eachColor`, Bloom Tender's "For each color among permanents you control, add one mana of that color". */
@@ -1045,7 +1047,8 @@ export interface CastProhibitionNode extends EffectNode {
   /** "can't cast more than one spell each turn" */
   maxPerTurn?: number;
   /** Grand Abolisher: "… or activate abilities of artifacts, creatures, or enchantments" (mana abilities too, unless `nonMana`). */
-  activate?: { filter?: ObjectFilter; nonMana?: true };
+  /** The Immortal Sun: `loyalty` — only planeswalkers' loyalty abilities (CR 606). */
+  activate?: { filter?: ObjectFilter; nonMana?: true; loyalty?: true };
   /** Only activating is prohibited, not casting ("Players can't activate abilities that aren't mana abilities"). */
   activateOnly?: true;
   condition?: ConditionNode;
@@ -1233,6 +1236,10 @@ export const PLAYER_RULES = [
   'first_equip_free',
   /** Bruenor Battlehammer: "… the first equip ability you activate each turn." */
   'first_equip_free_each_turn',
+  /** Oath of Teferi: "You may activate the loyalty abilities of planeswalkers you control twice each turn rather than only once." */
+  'loyalty_twice',
+  /** Ashiok, Dream Render: "Spells and abilities your opponents control can't cause their controller to search their library." */
+  'cant_search_own_library',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 

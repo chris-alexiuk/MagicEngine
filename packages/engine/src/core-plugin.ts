@@ -2789,7 +2789,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Aven Mindcensor: "If an opponent would search a library, that player searches the top four cards of that library
     // instead." (CR 701.23a, 614.1a)
     const searchable = (z: string) => (z === 'library' && playerRule(g, player, 'search_top_four') ? zoneList(g, 'library', owner).slice(0, 4) : zoneList(g, z as 'library', owner));
-    const candidates = zones.flatMap((z) => searchable(z).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
+    // Ashiok, Dream Render: "Spells and abilities your opponents control can't cause their controller to search their library."
+    // — nothing is found (anything else the effect does still happens).
+    const barred = owner === player && player === ctx.controller && Boolean(playerRule(g, player, 'cant_search_own_library'));
+    const candidates = barred ? [] : zones.flatMap((z) => searchable(z).filter((id) => matchesFilter(g, g.objects[id]!, { ...filter, zone: z }, { controller: player, source: ctx.source ?? null })));
     const count = amountOf(ctx, node.amount);
     // CR 701.23b: with a stated quality the player may find fewer; CR 701.23d: "a card" must be found if possible.
     const quality = Object.keys(filter).some((k) => k !== 'zone' && k !== 'owner');

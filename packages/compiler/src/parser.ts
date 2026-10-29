@@ -115,6 +115,12 @@ export class ParserRegistry {
         const names = [ctx.faceName, ctx.faceName.split(',')[0]!].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
         const pair = new RegExp(`^((?:[A-Z][\\w' ]+ — )?As long as [^,]+, )((?:this creature|${names}) gets? [+-]\\d+\\/[+-]\\d+) and ((?:other )?creatures you control (?:get|have) [^"]+)\\.$`).exec(l);
         if (pair) return [`${pair[1]}${pair[2]}.`, `${pair[1]}${pair[3]}.`];
+        // Rakdos, Lord of Riots: "You can't cast Rakdos unless an opponent lost life this turn." — cast it only if that holds.
+        const castUnless = new RegExp(`^You can't cast (?:~|this spell|${names}) unless (.+)\\.$`).exec(l);
+        if (castUnless) return [`Cast this spell only if ${castUnless[1]}.`];
+        // Aettir and Priwen: "… has base power and toughness X/X, where X is your life total." — each equal to that.
+        const baseX = /^(.+ ha(?:s|ve) base power and toughness) X\/X, where X is (.+)\.$/.exec(l);
+        if (baseX) return [`${baseX[1]} each equal to ${baseX[2]}.`];
         // Multiversal Passage: "As this land enters, choose a basic land type. Then you may pay 2 life. If you don't, it enters
         // tapped." — two replacement effects as it enters, in that order (CR 614.12).
         const thenPay = /^(As (?:this land|~) enters), (choose a basic land type)\. Then (you may pay \d+ life\. If you don't, it enters tapped\.)$/.exec(l);
@@ -290,15 +296,16 @@ export class ParserRegistry {
       // Maelstrom Nexus: "The first spell you cast each turn has cascade."; Wild-Magic Sorcerer: "The first spell you cast from
       // exile each turn has cascade."; Thrumming Stone-like grants: "Spells you cast have cascade." — layer 6 on spells (CR
       // 613.1f), so the cast trigger is there as it's cast (CR 702.85a).
-      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast have) (cascade|storm)\.$/i.exec(line);
+      // Imoti, Celebrant of Bounty: "Spells you cast with mana value 6 or greater have cascade."
+      const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm)\.$/i.exec(line);
       if (spellGrant) {
-        const kws = this.keywords.parseLine(spellGrant[3]!);
+        const kws = this.keywords.parseLine(spellGrant[4]!);
         if (kws?.length === 1) {
           const abilities = this.expandKeyword(kws[0]!, env);
           if (abilities) kws[0]!.abilities = abilities;
         }
         if (kws?.length === 1 && keywordSupported(kws[0]!)) {
-          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
+          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
           result.abilities.push({ kind: 'static', text: line, effect: { type: 'continuous', affected: { ref: 'all', filter }, keywords: kws } } as AbilityNode);
         } else result.unparsed.push(line);
         continue;

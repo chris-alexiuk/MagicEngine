@@ -156,6 +156,8 @@ export interface GameObject {
   deathtouched?: true;
   /** Loyalty abilities activated this turn (once-per-turn limit). */
   loyaltyActivatedTurn?: number;
+  /** Oath of Teferi: how many loyalty abilities of it were activated in `loyaltyActivatedTurn`. */
+  loyaltyActivations?: number;
   /** CR 613.7d: set when it enters a zone; orders continuous effects from its static abilities. */
   timestamp: number;
   /** The object an Aura or Equipment is attached to (CR 701.3). */

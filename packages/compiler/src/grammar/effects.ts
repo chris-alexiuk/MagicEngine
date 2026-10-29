@@ -2140,6 +2140,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Gilded Light: "You gain shroud until end of turn." (CR 702.11c, 702.18)
   const playerWard = /^(You|Players|Each player) gains? (hexproof|shroud) until (end of turn|your next turn)$/.exec(s);
   if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: playerWard[3] === 'end of turn' ? 'eot' : 'your_next_turn' }];
+  // Roiling Vortex: "Your opponents can't gain life this turn."; Skullcrack: "Players can't gain life this turn." (CR 119.7)
+  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent) can't gain life this turn$/.exec(s);
+  if (noGain) {
+    const who: Ref | null = noGain[1] === 'Players' ? { ref: 'players', who: 'each' } : /^(?:Your opponents|Each opponent)$/.test(noGain[1]!) ? { ref: 'players', who: 'opponents' } : parsePlayerRef(noGain[1]!.toLowerCase(), b);
+    return who ? [{ type: 'player_effect', who, rule: 'cant_gain_life', until: 'eot' }] : null;
+  }
   // Everybody Lives!: "Players can't lose life this turn and players can't lose the game or win the game this turn.";
   // Courageous Resolve: "you can't lose life this turn, you can't lose the game this turn, and your opponents can't win the
   // game this turn." (CR 119.7, 104.3)
@@ -2607,6 +2613,17 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (shuffleWheel) {
     const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
     if (who) return [{ type: 'wheel', who, mode: 'all', to: 'shuffle' }];
+  }
+  // Pemmin's Aura: "Enchanted creature gets +1/-1 or -1/+1 until end of turn." — chosen as it resolves (CR 608.2d).
+  const ptOr = /^(.+?) gets? ([+-]\d+\/[+-]\d+) or ([+-]\d+\/[+-]\d+) until end of turn$/.exec(s);
+  if (ptOr) {
+    const r = attempt(b, (b) => {
+      const one = parseSentence(`${ptOr[1]} gets ${ptOr[2]} until end of turn`, b);
+      const two = one ? parseSentence(`${/\btarget\b/.test(ptOr[1]!) && b.it ? 'It' : ptOr[1]} gets ${ptOr[3]} until end of turn`, b) : null;
+      // The same object both ways (one target, not two).
+      return one && two && one.length === 1 && two.length === 1 && JSON.stringify(one[0]!.what) === JSON.stringify(two[0]!.what) && b.targets.length <= 1 ? [{ type: 'choose_one', labels: [ptOr[2]!, ptOr[3]!], options: [one, two] }] : null;
+    });
+    if (r) return r;
   }
   // Liliana of the Dark Realms: "Target creature gets +X/+X or -X/-X until end of turn, where X is …" — chosen as it
   // resolves.

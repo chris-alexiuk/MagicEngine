@@ -1,5 +1,5 @@
-import type { AddManaEffect } from '@mtg/schema';
-import { colorsAmong, hasType, manaAbilities } from './characteristics.js';
+import type { AddManaEffect, ObjectFilter } from '@mtg/schema';
+import { colorsAmong, hasType, manaAbilities, matchesFilter } from './characteristics.js';
 import type { GameObject, GameState, ManaColor, ManaPool, PlayerId } from './types.js';
 
 export const MANA_COLORS: readonly ManaColor[] = ['W', 'U', 'B', 'R', 'G', 'C'];
@@ -32,11 +32,12 @@ export function commanderIdentity(g: GameState, player: PlayerId): ManaColor[] {
  * CR 106.7: the types of mana the lands of those players could produce, ignoring abilities that themselves depend on
  * what other lands could produce (so two Exotic Orchards don't look at each other).
  */
-function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', anyType: boolean): ManaColor[] {
+function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', anyType: boolean, only?: ObjectFilter): ManaColor[] {
   const out = new Set<ManaColor>();
   for (const id of g.zones.battlefield) {
     const land = g.objects[id]!;
     if ((who === 'you') !== (land.controller === player) || !hasType(g, land, 'Land')) continue;
+    if (only && !matchesFilter(g, land, only, { controller: player, source: null })) continue;
     for (const a of manaAbilities(g, land)) {
       for (const e of a.effects) {
         if (e.type !== 'add_mana') continue;
@@ -52,7 +53,7 @@ function producible(g: GameState, player: PlayerId, who: 'opponents' | 'you', an
 
 /** The colors an "any color" mana ability can make for this player. */
 export function anyColorChoices(g: GameState, player: PlayerId, identity: boolean | undefined, effect?: AddManaEffect, source?: GameObject | null): ManaColor[] {
-  if (effect?.couldProduce) return producible(g, player, effect.couldProduce, Boolean(effect.anyType));
+  if (effect?.couldProduce) return producible(g, player, effect.couldProduce, Boolean(effect.anyType), effect.couldProduceFilter);
   // Chrome Mox: the colors of the card it imprinted.
   if (effect?.exiledColors) {
     if (!source) return [];

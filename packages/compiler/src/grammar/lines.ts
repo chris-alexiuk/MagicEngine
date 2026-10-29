@@ -1905,7 +1905,7 @@ export const triggeredRule: GrammarRule = {
         const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
         // Boromir: "Whenever an opponent casts a spell, if no mana was spent to cast it, counter that spell." — the mana
         // spent can't change, so it's checked with the cast (CR 603.4).
-        if (iff && iff[1] === 'no mana was spent to cast it' && trig.trigger.type === 'cast') {
+        if (iff && (iff[1] === 'no mana was spent to cast it' || iff[1] === 'no mana was spent to cast that spell') && trig.trigger.type === 'cast') {
           trig.trigger = { ...trig.trigger, noManaSpent: true };
           effectText = iff[2]!;
         } else if (iff && iff[1] === "it wasn't put onto the battlefield with this ability" && trig.trigger.type === 'enters' && !trig.trigger.batch) {
@@ -2189,7 +2189,8 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   // Spelunking: "Lands you control enter untapped." — the controller orders replacement effects (CR 616.1), so it wins.
   const untapped = /^(.+?) you control enter untapped$/.exec(body);
   if (untapped) {
-    const pf = parseFilter(`${untapped[1]!.replace(/^\w/, (c) => c.toLowerCase())} you control`, b);
+    // Gond Gate: "Gates you control enter untapped." — a subtype keeps its capital.
+    const pf = parseFilter(`${untapped[1]!.replace(/^\w/, (c) => c.toLowerCase())} you control`, b.clone()) ?? parseFilter(`${untapped[1]!} you control`, b);
     if (!pf || !pf.plural || pf.filter.zone) return null;
     return { type: 'enter_untapped_others', filter: pf.filter };
   }
@@ -2247,6 +2248,8 @@ function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | nu
     'Enchanted player': 'enchanted_player',
     "Enchanted creature's controller": 'enchanted_controller',
   };
+  // The Immortal Sun: "Players can't activate planeswalkers' loyalty abilities." (CR 606)
+  if (m[2] === "activate planeswalkers' loyalty abilities") return { type: 'cast_prohibition', who: WHO[m[1]!]!, activateOnly: true, activate: { filter: { types: ['Planeswalker'] }, loyalty: true } };
   // Grand Abolisher: "… can't cast spells or activate abilities of artifacts, creatures, or enchantments".
   const act = /^(?:(.+?) or )?activate (?:activated )?abilities(?: of (.+?))?( that aren't mana abilities)?$/.exec(m[2]!.replace(/^activate /, ' activate ').trim().replace(/^cast /, ''));
   if (act) {
@@ -2304,6 +2307,8 @@ function parseLoyaltyAnyTime(body: string): ContinuousEffectNode | null {
 }
 
 function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
+  if (body === 'You may activate the loyalty abilities of planeswalkers you control twice each turn rather than only once') return { type: 'player_rule', who: 'you', rule: 'loyalty_twice' } as PlayerRuleNode;
+  if (body === "Spells and abilities your opponents control can't cause their controller to search their library") return { type: 'player_rule', who: 'opponents', rule: 'cant_search_own_library' } as PlayerRuleNode;
   // Forge Anew, Bruenor Battlehammer: equip at instant speed during your turn; the first equip ability each turn for {0}.
   // (Leonin Shikari: any time; Forge Anew: "During your turn, …" — a condition, here or already taken off by the caller.)
   const equipInstant = /^(During your turn, )?[Yy]ou may activate equip abilities any time you could cast an instant$/.exec(body);
@@ -2476,6 +2481,15 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   if (base) {
     const subject = parseObjectRef(base[1]!, b, 'static');
     return subject ? { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' } : null;
+  }
+  // Aettir and Priwen: "Equipped creature has base power and toughness X/X, where X is your life total."; Dollmaker's Shop:
+  // "Creatures you control have base power and toughness each equal to the number of creatures you control." (layer 7b)
+  const baseCount = /^(.+?) ha(?:s|ve) base power and toughness (?:each equal to (.+)|X\/X, where X is (.+))$/.exec(body);
+  if (baseCount) {
+    const subject = parseObjectRef(baseCount[1]!, b, 'static');
+    const n = subject ? parseCount((baseCount[2] ?? baseCount[3])!, b) : null;
+    if (!subject || !n || JSON.stringify(n).includes('"ref":"affected"')) return null;
+    return { type: 'continuous', affected: subject.ref, setPower: n as never, setToughness: n as never, setLayer: '7b' };
   }
   // Maha, Its Feathers Night: "Creatures your opponents control have base toughness 1." — only that one (layer 7b).
   const baseOne = /^(.+?) ha(?:s|ve) base (power|toughness) (\d+)$/.exec(body);

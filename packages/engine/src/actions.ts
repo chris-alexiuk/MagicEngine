@@ -1,4 +1,4 @@
-import { activationProhibited, castProhibition } from './cast-bans.js';
+import { activationProhibited, castProhibition, loyaltyProhibited } from './cast-bans.js';
 import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
@@ -1051,6 +1051,23 @@ interface ActivationChoices {
   divide?: number[];
 }
 
+/** Whether a permanent's mana abilities would use it up (a Treasure's "Sacrifice this token") — it can't also pay another cost. */
+export function manaUsesItUp(g: GameState, id: ObjectId): boolean {
+  const o = g.objects[id];
+  return Boolean(o && manaAbilities(g, o).some((a) => (a.cost.other ?? []).length > 0));
+}
+
+/** CR 606.3: one loyalty ability of a permanent each turn (Oath of Teferi: two). */
+export function loyaltyAbilityAvailable(g: GameState, player: PlayerId, o: GameObject): boolean {
+  const used = o.loyaltyActivatedTurn === g.turn ? (o.loyaltyActivations ?? 1) : 0;
+  return used < (playerRule(g, player, 'loyalty_twice') ? 2 : 1);
+}
+
+function noteLoyaltyActivation(g: GameState, o: GameObject): void {
+  o.loyaltyActivations = o.loyaltyActivatedTurn === g.turn ? (o.loyaltyActivations ?? 1) + 1 : 1;
+  o.loyaltyActivatedTurn = g.turn;
+}
+
 /** CR 702.6a: an equip ability ("Equip [cost]": attach to target creature you control). */
 export function isEquipAbility(a: ActivatedAbility): boolean {
   return /^Equip\b/.test(a.text) && a.effects.some((e) => e.type === 'attach');
@@ -1095,7 +1112,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     // CR 606.3: main phase, empty stack, and only one loyalty ability per permanent each turn (Teferi, Master of Time: any
     // time you could cast an instant).
     if (!sorcerySpeed && !hasRule(g, o, 'loyalty_instant')) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
-    if (o.loyaltyActivatedTurn === g.turn) throw new RulesError(`You’ve already activated a loyalty ability of ${name} this turn.`);
+    if (!loyaltyAbilityAvailable(g, player, o)) throw new RulesError(`You’ve already activated a loyalty ability of ${name} this turn.`);
+    if (loyaltyProhibited(g, player, o)) throw new RulesError(`Loyalty abilities can’t be activated now.`);
     // CR 606.6: a negative loyalty cost needs at least that many loyalty counters ("−X": X of them).
     if ((o.counters.loyalty ?? 0) + cost.loyalty + (cost.loyaltyX ?? 0) * choices.x < 0) throw new RulesError(`${name} doesn’t have enough loyalty.`);
   }
@@ -1133,7 +1151,10 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
   // Permanents the cost itself taps or sacrifices can't also be tapped for mana.
-  const usesItself = [...(cost.tap || cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(choices.costs.sacrifice ?? []), ...(choices.costs.crew ?? [])];
+  // (A permanent the cost sacrifices, returns or exiles can be tapped for mana first, CR 601.2g–h: Heart Warden's {G} pays for
+  // its own "{2}, Sacrifice this creature" — unless its mana ability would use it up, like a Treasure's.)
+  const leaving = [...(cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(choices.costs.sacrifice ?? [])];
+  const usesItself = [...(cost.tap ? [id] : []), ...leaving.filter((x) => manaUsesItUp(g, x)), ...(choices.costs.crew ?? [])];
   // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the generic mana.
   const bent = choices.costs.waterbend ?? [];
   if (bent.length) {
@@ -1170,7 +1191,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     const paid = cost.loyalty + (cost.loyaltyX ?? 0) * choices.x;
     const delta = paid > 0 ? replaceQuantity(g, 'counters', paid, { player, object: o, counter: 'loyalty', cost: true }) : paid;
     o.counters.loyalty = (o.counters.loyalty ?? 0) + delta;
-    o.loyaltyActivatedTurn = g.turn;
+    noteLoyaltyActivation(g, o);
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta, by: player });
   }
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
@@ -1228,7 +1249,8 @@ function activateManual(
   if (loyalty && face.types.includes('Planeswalker')) {
     // CR 606.3: main phase, empty stack, once per turn per permanent.
     if (!sorcerySpeed()) throw new RulesError('Loyalty abilities can only be activated during your main phase with an empty stack.');
-    if (o.loyaltyActivatedTurn === g.turn) throw new RulesError(`You’ve already activated a loyalty ability of ${face.name} this turn.`);
+    if (!loyaltyAbilityAvailable(g, player, o)) throw new RulesError(`You’ve already activated a loyalty ability of ${face.name} this turn.`);
+    if (loyaltyProhibited(g, player, o)) throw new RulesError(`Loyalty abilities can’t be activated now.`);
     if (loyalty[2] === 'X') throw new RulesError('X loyalty costs aren’t supported yet; adjust counters manually.');
     const delta = (loyalty[1] === '−' || loyalty[1] === '-' ? -1 : 1) * Number(loyalty[2]);
     const current = o.counters.loyalty ?? 0;
@@ -1237,7 +1259,7 @@ function activateManual(
     // CR 606.4: the cost is adding or removing loyalty counters.
     const added = delta > 0 ? replaceQuantity(g, 'counters', delta, { player, object: o, counter: 'loyalty', cost: true }) : delta;
     o.counters.loyalty = current + added;
-    o.loyaltyActivatedTurn = g.turn;
+    noteLoyaltyActivation(g, o);
     events.push({ type: 'counters', object: id, counter: 'loyalty', delta: added, by: player });
   } else {
     // CR 602.5d: "Activate only as a sorcery" follows sorcery timing.

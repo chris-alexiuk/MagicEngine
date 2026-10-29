@@ -273,6 +273,7 @@ export function moveObject(
   o.timestamp = ++g.clock;
   if (to === 'battlefield') o.arrived = o.timestamp;
   delete o.loyaltyActivatedTurn;
+  delete o.loyaltyActivations;
   delete o.attachedTo;
   delete o.attachedToPlayer;
   delete o.copyOf;

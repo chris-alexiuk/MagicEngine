@@ -492,6 +492,13 @@ const CARDS = [
   makeCard({ name: 'Tyr Lite', type_line: 'Creature — Angel Knight', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever this creature deals combat damage to a player, draw a card if that player has more cards in hand than each other player. Then you gain 3 life if that player has more life than each other player.' }),
   makeCard({ name: 'Needlehead Lite', type_line: 'Creature — Human Assassin', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever an opponent draws a card, this creature deals 1 damage to them.' }),
   makeCard({ name: 'Guardian Angel Lite', type_line: 'Creature — Angel', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever one or more creatures you control attack, they gain indestructible until end of turn.' }),
+  makeCard({ name: 'Gond Gate Lite', type_line: 'Land — Gate', mana_cost: '', oracle_text: 'Gates you control enter untapped.\n{T}: Add {C}.\n{T}: Add one mana of any color that a Gate you control could produce.' }),
+  makeCard({ name: 'Guildgate Lite', type_line: 'Land — Gate', mana_cost: '', oracle_text: 'This land enters tapped.\n{T}: Add {W} or {U}.' }),
+  makeCard({ name: 'Aettir Lite', type_line: 'Legendary Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature has base power and toughness X/X, where X is your life total.\nEquip {0}' }),
+  makeCard({ name: 'Oath Teferi Lite', type_line: 'Legendary Enchantment', mana_cost: '{0}', oracle_text: 'You may activate the loyalty abilities of planeswalkers you control twice each turn rather than only once.' }),
+  makeCard({ name: 'Immortal Sun Lite', type_line: 'Legendary Artifact', mana_cost: '{0}', oracle_text: "Players can't activate planeswalkers' loyalty abilities." }),
+  makeCard({ name: 'Dream Render Lite', type_line: 'Legendary Planeswalker — Ashiok', mana_cost: '{0}', loyalty: '5', oracle_text: "Spells and abilities your opponents control can't cause their controller to search their library." }),
+  makeCard({ name: 'Heart Warden Lite', type_line: 'Creature — Human Druid', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '{T}: Add {G}.\n{2}, Sacrifice this creature: Draw a card.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -5304,6 +5311,65 @@ describe('cost totals', () => {
 });
 
 describe('Sieges', () => {
+  it("Heart Warden: its own {G} helps pay for sacrificing it (CR 601.2g–h)", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const warden = give(g, 'alice', 'Heart Warden Lite', 'battlefield');
+    for (const o of Object.values(g.objects)) if (o.controller === 'alice' && o.zone === 'battlefield' && o.id !== warden) o.tapped = true;
+    give(g, 'alice', 'Forest', 'battlefield');
+    const hand = g.zones.hand.alice!.length;
+    const offered = legalActions(g, 'alice').find((a) => a.type === 'activate' && a.object === warden);
+    expect(offered).toBeTruthy();
+    g = settle(act(g, offered!));
+    expect([g.objects[warden]!.zone, g.zones.hand.alice!.length]).toEqual(['graveyard', hand + 1]);
+  });
+  it("Ashiok, Dream Render: an opponent's tutor finds nothing", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    g.objects[give(g, 'bob', 'Dream Render Lite', 'battlefield')]!.counters.loyalty = 5;
+    const hand = g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Tutor Lite', 'hand') }));
+    if (g.pending?.kind === 'search') {
+      expect(g.pending.candidates).toEqual([]);
+      g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'search', objects: [] } }));
+    }
+    expect(g.zones.hand.alice!.length).toBe(hand);
+  });
+  it("The Immortal Sun: loyalty abilities can't be activated", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const walker = give(g, 'alice', 'Walker', 'hand');
+    g.players.alice!.pool.G = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: walker }));
+    give(g, 'bob', 'Immortal Sun Lite', 'battlefield');
+    expect(illegal(g, { type: 'activate', player: 'alice', object: walker, ability: 0 })).toMatch(/can’t be activated/);
+    expect(legalActions(g, 'alice').some((a) => a.type === 'activate' && a.object === walker)).toBe(false);
+  });
+  it('Oath of Teferi: loyalty abilities twice each turn', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Oath Teferi Lite', 'battlefield');
+    const walker = give(g, 'alice', 'Walker', 'hand');
+    g.players.alice!.pool.G = 2;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: walker }));
+    g = settle(act(g, { type: 'activate', player: 'alice', object: walker, ability: 0 }));
+    g = settle(act(g, { type: 'activate', player: 'alice', object: walker, ability: 0 }));
+    expect(g.objects[walker]!.counters.loyalty).toBe(5);
+    expect(illegal(g, { type: 'activate', player: 'alice', object: walker, ability: 0 })).toBeTruthy();
+  });
+  it('Gond Gate: Gates enter untapped; any color a Gate you control could produce', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const gond = give(g, 'alice', 'Gond Gate Lite', 'battlefield');
+    const gate = give(g, 'alice', 'Guildgate Lite', 'hand');
+    g = act(g, { type: 'play_land', player: 'alice', object: gate });
+    expect(g.objects[gate]!.tapped).toBe(false);
+    const choices = legalActions(g, 'alice').filter((a) => a.type === 'activate_mana' && a.object === gond && a.ability === 1).map((a) => (a as { choice?: unknown }).choice);
+    expect(choices.sort()).toEqual(['U', 'W']);
+  });
+  it('Aettir and Priwen: base power and toughness equal to your life total', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const sword = give(g, 'alice', 'Aettir Lite', 'battlefield');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: sword, ability: 0, targets: [[{ kind: 'object', object: bear }]] }));
+    g.players.alice!.life = 13;
+    expect([chars(g, g.objects[bear]!).power, chars(g, g.objects[bear]!).toughness]).toEqual([13, 13]);
+  });
   it('Razorkin Needlehead: damage to the opponent who drew (not to itself)', () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const needle = give(g, 'alice', 'Needlehead Lite', 'battlefield');

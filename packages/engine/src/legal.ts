@@ -1,4 +1,4 @@
-import { activationProhibited } from './cast-bans.js';
+import { activationProhibited, loyaltyProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
@@ -17,7 +17,7 @@ import { applyCostModifiers } from './costs.js';
 import { evalCondition } from './conditions.js';
 import { freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionUsed, mayPlayFrom, permissionCost, playableFromExile, playableFromGraveyard, playableFromTop, topLifeOnly } from './permissions.js';
 import { flashPermission, landsAllowed, playerRule, ruleAllows } from './player-rules.js';
-import { activationsThisTurn, equipAtInstantSpeed, freeEquipAvailable, perTurnLimit, targetLifeTax } from './actions.js';
+import { activationsThisTurn, equipAtInstantSpeed, freeEquipAvailable, loyaltyAbilityAvailable, manaUsesItUp, perTurnLimit, targetLifeTax } from './actions.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { enteringBanned, faceOf, zoneList } from './zones.js';
 
@@ -311,7 +311,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const { cost } = ab;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if (((ab.timing === 'sorcery' && !equipAtInstantSpeed(g, player, ab)) || (cost.loyalty !== undefined && !hasRule(g, o, 'loyalty_instant'))) && !sorcerySpeed) return;
-      if (cost.loyalty !== undefined && (o.loyaltyActivatedTurn === g.turn || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
+      if (cost.loyalty !== undefined && (!loyaltyAbilityAvailable(g, player, o) || loyaltyProhibited(g, player, o) || (o.counters.loyalty ?? 0) + cost.loyalty < 0)) return;
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
       if (cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
@@ -325,7 +325,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       let costs = defaultCostChoices(g, player, o, cost.other ?? []);
       if (!costs) return;
       if (freeEquip) costs = { ...costs, freeEquip: true };
-      const busy = [...(cost.tap ? [id] : []), ...(costs.sacrifice ?? []), ...(costs.crew ?? [])];
+      const leaving = [...(cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(costs.sacrifice ?? [])];
+      const busy = [...(cost.tap ? [id] : []), ...leaving.filter((x) => manaUsesItUp(g, x)), ...(costs.crew ?? [])];
       if (cost.mana && !freeEquip && !planAutoTap(g, player, mana, 0, busy, { kind: 'ability', source: o })) {
         // CR 701.67a: waterbend — tap untapped artifacts and creatures for as much of the generic mana as it takes.
         if (!cost.waterbend) return;
