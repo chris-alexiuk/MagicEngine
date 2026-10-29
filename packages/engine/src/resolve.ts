@@ -2,7 +2,7 @@ import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/sch
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, loggedUpTo } from './conditions.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { isLegalTarget, withTargetX, withTriggerInfo } from './targets.js';
+import { isLegalTarget, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
 import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
@@ -225,6 +225,12 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       const s = ctx.source;
       const p = s?.attachedToPlayer ?? (s ? g.lastKnown?.[s.id]?.enchantedPlayer : undefined);
       return p && live.includes(p) ? [p] : [];
+    }
+    case 'player_or_controller': {
+      // Blightning: the target player, or the target planeswalker's controller.
+      const of = ref.of as Ref;
+      const players = refPlayers(ctx, of);
+      return players.length ? players : refPlayers(ctx, { ref: 'controller_of', of } as Ref);
     }
     case 'controller_of':
     case 'owner_of': {
@@ -766,7 +772,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
   let legal = 0;
   // CR 608.2b: "with mana value X or less" — the X it was cast or activated with.
   const out = withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
-    withTargetX(entry.x, () =>
+    withPriorTargets(entry.targets, () => withTargetX(entry.x, () =>
       program.specs.map((spec, i) =>
         (entry.targets[i] ?? []).filter((t) => {
           chosen++;
@@ -775,7 +781,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
           return ok;
         }),
       ),
-    ),
+    )),
   );
   // Gilded Drake: "This ability still resolves if its target becomes illegal."
   return chosen > 0 && legal === 0 && !program.specs.some((s) => s.stillResolves) ? null : out;

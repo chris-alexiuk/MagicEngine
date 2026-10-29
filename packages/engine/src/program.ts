@@ -13,7 +13,8 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
   const effects: EffectNode[] = [];
   const add = (targets: TargetSpec[] | undefined, list: EffectNode[]) => {
     const offset = specs.length;
-    specs.push(...(targets ?? []));
+    // "… target creature that player controls" in a mode: its reference to the mode's earlier target, renumbered too.
+    specs.push(...(targets ?? []).map((t) => (offset && t.filter?.controlledBy ? shiftTargets(t, offset) : t)));
     effects.push(...list.map((e) => shiftTargets(e, offset)));
   };
   let usedModes = false;

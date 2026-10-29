@@ -55,6 +55,37 @@ export function withTargetX<T>(x: number | undefined, fn: () => T): T {
   }
 }
 
+/**
+ * Huntmaster of the Fells: "target opponent or planeswalker and … up to one target creature that player or that
+ * planeswalker's controller controls" — the targets already chosen, as a later one is checked against them
+ * (unknown while each target's candidates are listed on their own).
+ */
+let priorTargets: readonly (readonly (Target | TargetRef)[])[] | undefined;
+export function withPriorTargets<T>(list: readonly (readonly (Target | TargetRef)[])[] | undefined, fn: () => T): T {
+  const before = priorTargets;
+  priorTargets = list;
+  try {
+    return fn();
+  } finally {
+    priorTargets = before;
+  }
+}
+
+/** The earlier target a "that player controls" filter refers to: "target player", "that planeswalker's controller", "that creature's controller". */
+export function controlledByTargetIndex(filter: ObjectFilter | undefined): number | undefined {
+  let r = filter?.controlledBy as { ref?: string; index?: number; of?: unknown } | undefined;
+  if (r && (r.ref === 'player_or_controller' || r.ref === 'controller_of')) r = r.of as typeof r;
+  return r?.ref === 'target' ? (r.index ?? 0) : undefined;
+}
+
+/** The player a chosen target stands for: the player, or the permanent's controller (a card's owner, CR 108.4a). */
+function playerOfTarget(g: GameState, t: Target | TargetRef | undefined): PlayerId | undefined {
+  if (!t || t.kind === 'ability') return undefined;
+  if (t.kind === 'player') return t.player;
+  const o = g.objects['id' in t ? t.id : t.object];
+  return o ? (o.zone === 'battlefield' ? o.controller : o.owner) : undefined;
+}
+
 function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, source: GameObject | null): ObjectFilter {
   // Ink-Eyes: "target creature card from that player's graveyard" — the player the trigger is about.
   let filter = given;
@@ -62,6 +93,15 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
     const { ownedBy, ...rest } = filter;
     const player = (ownedBy as { ref?: string }).ref === 'trigger_player' ? triggerInfo?.player : undefined;
     filter = { ...rest, ownerPlayer: player ?? '\u0000none' };
+  }
+  // "destroy target artifact that player controls" (the player the trigger is about); "… target creature that player
+  // controls" (an earlier target). Not yet known (each target's candidates listed on their own): any player.
+  if (filter.controlledBy) {
+    const { controlledBy, ...rest } = filter;
+    const index = controlledByTargetIndex(filter);
+    const known = (controlledBy as { ref?: string }).ref === 'trigger_player' ? Boolean(triggerInfo) : index !== undefined && Boolean(priorTargets);
+    const player = !known ? undefined : index === undefined ? triggerInfo!.player : playerOfTarget(g, priorTargets![index]?.[0]);
+    filter = known ? { ...rest, controllerPlayer: player ?? '\u0000none' } : rest;
   }
   const keys = (['power', 'toughness', 'manaValue'] as const).filter((k) => typeof filter[k]?.n === 'object' || (filter[k]?.n === 'X' && targetX !== undefined));
   if (!keys.length) return filter;
@@ -254,6 +294,7 @@ function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
       ...(min ? { min } : {}),
       ...(spec.sameOwner ? { sameOwner: true as const } : {}),
       ...(spec.perPlayer ? { perPlayer: true as const } : {}),
+      ...(controlledByTargetIndex(spec.filter) !== undefined ? { controlledByTarget: controlledByTargetIndex(spec.filter)! } : {}),
       candidates,
     };
   });
@@ -324,6 +365,10 @@ export function defaultTargets(g: GameState, controller: PlayerId, specs: Target
 
 function defaultTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number): Target[][] | null {
   const out: Target[][] = [];
+  return withPriorTargets(out, () => defaultTargetsInto(g, controller, specs, source, x, out));
+}
+
+function defaultTargetsInto(g: GameState, controller: PlayerId, specs: TargetSpec[], source: GameObject | null, x: number, out: Target[][]): Target[][] | null {
   for (const spec of specs) {
     const candidates = targetCandidates(g, controller, spec, source).filter((t) => !another(spec) || !out.flat().some((u) => sameTarget(t, u)));
     const n = targetCount(g, controller, spec, x);
@@ -431,6 +476,10 @@ export function chooseTargets(
 }
 
 function chooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSpec[], chosen: Target[][] | undefined, source: GameObject | null, x: number): TargetRef[][] {
+  return withPriorTargets(chosen ?? [], () => chooseTargetsGiven(g, controller, specs, chosen, source, x));
+}
+
+function chooseTargetsGiven(g: GameState, controller: PlayerId, specs: TargetSpec[], chosen: Target[][] | undefined, source: GameObject | null, x: number): TargetRef[][] {
   const given = chosen ?? [];
   if (given.length !== specs.length) {
     throw new RulesError(specs.length ? `Choose targets: ${specs.map((s) => s.text).join('; ')}.` : 'This doesn’t take targets.');

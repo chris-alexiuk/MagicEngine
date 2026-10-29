@@ -602,6 +602,8 @@ export interface TargetPrompt {
   sameOwner?: true;
   /** "For each opponent, … target … that player controls": each chosen object belongs to a different player. */
   perPlayer?: true;
+  /** "… and up to one target creature that player controls": controlled by the player chosen for prompt N (or by the controller of the permanent chosen for it). */
+  controlledByTarget?: number;
   candidates: Target[];
 }
 

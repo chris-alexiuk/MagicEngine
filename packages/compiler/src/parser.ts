@@ -205,7 +205,7 @@ export class ParserRegistry {
     let wordOptions: string[] | undefined;
     const isClass = /\bClass\b/.test(ctx.typeLine);
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
+      let line = lines[i]!;
       if (line === '') continue; // pure reminder text, e.g. a basic land's "({T}: Add {G}.)"
 
       // CR 716.2a: "[Cost]: Level N" — "This Class's level becomes N. Activate only if this Class is level N-1
@@ -544,6 +544,14 @@ export class ParserRegistry {
         continue;
       }
       // CR 700.2: a modal header ("Choose one —", "When ~ enters, choose one —") and its bullets form one ability.
+      // Aetheric Amplifier: "{4}, {T}: Choose one. Activate only as a sorcery." — the restriction is the ability's, read
+      // after the modes.
+      const limited = /^([^:]+: )Choose (one|two)\. (Activate only as a sorcery\.|Activate only once each turn\.)$/.exec(line);
+      let tail = '';
+      if (limited && lines[i + 1]?.startsWith('• ')) {
+        line = `${limited[1]}Choose ${limited[2]} —`;
+        tail = ` ${limited[3]}`;
+      }
       const block = [line];
       if (
         /\bchoose (?:one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i.test(line) ||
@@ -552,6 +560,7 @@ export class ParserRegistry {
         /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line)
       ) {
         while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
+        if (tail) block[block.length - 1] += tail;
       }
       // CR 706.3b: a die roll and its results table are one ability.
       if (/\b[Rr]oll (?:a|two) d\d+(?: and ignore the lower roll)?\.$/.test(line)) {

@@ -44,7 +44,7 @@ import {
 import { defaultCastChoice } from '../src/legal.js';
 import { planAutoTap } from '../src/autotap.js';
 import { parseManaCost } from '../src/mana.js';
-import { relatedPick, withTargetX } from '../src/targets.js';
+import { controlledByTargetIndex, relatedPick, withTargetX } from '../src/targets.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -133,6 +133,34 @@ function sample(all: Target[], count: number, upTo: boolean, min = 0, sameOwner?
   return shuffle([...candidates]).slice(0, n);
 }
 
+/** The player a chosen target stands for (the player, or the permanent's controller). */
+function playerOfTarget(t: Target | undefined): string | undefined {
+  if (!t || t.kind === 'ability') return undefined;
+  if (t.kind === 'player') return t.player;
+  const o = current?.objects[t.object];
+  return o ? (o.zone === 'battlefield' ? o.controller : o.owner) : undefined;
+}
+
+/** Only the candidates controlled by the player an earlier target stands for ("… target creature that player controls"). */
+function dependent(candidates: Target[], index: number | undefined, picked: Target[][]): Target[] {
+  if (index === undefined) return candidates;
+  const who = playerOfTarget(picked[index]?.[0]);
+  return candidates.filter((t) => who !== undefined && playerOfTarget(t) === who);
+}
+
+/** Samples each prompt in order, a dependent one from what the earlier ones picked. */
+function samplePrompts(prompts: TargetPrompt[]): Target[][] {
+  const out: Target[][] = [];
+  prompts.forEach((pr, i) => {
+    // Mutiny: an earlier target whose player has enough for the later ones that depend on it.
+    const later = prompts.filter((q) => q.controlledByTarget === i && (q.upTo ? (q.min ?? 0) : q.count) > 0);
+    const enough = (t: Target) => later.every((q) => q.candidates.filter((c) => playerOfTarget(c) === playerOfTarget(t) && JSON.stringify(c) !== JSON.stringify(t)).length >= (q.upTo ? (q.min ?? 0) : q.count));
+    const own = later.length && pr.candidates.some(enough) ? pr.candidates.filter(enough) : pr.candidates;
+    out.push(samplePrompt({ ...pr, candidates: dependent(own, pr.controlledByTarget, out) }));
+  });
+  return out;
+}
+
 /** A prompt's targets: per-player prompts get one for each player who has a candidate (sometimes fewer, if allowed). */
 function samplePrompt(pr: TargetPrompt): Target[] {
   if (!pr.perPlayer) return sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner);
@@ -171,7 +199,17 @@ function randomiseTargets(g: GameState, a: Action): Action {
     const pick = relatedPick(g, spec, picked, picked.length);
     return pick.length >= (spec.upTo ? (spec.min ?? 0) : (spec.count ?? 1)) ? pick : relatedPick(g, spec, targetCandidates(g, a.player, spec, o), spec.count ?? 1);
   };
-  return { ...a, targets: withTargetX(x, () => specs!.map((spec) => distinct(spec, sample(targetCandidates(g, a.player, spec, o), spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)))) };
+  const out: Target[][] = [];
+  let stuck = false;
+  withTargetX(x, () => {
+    for (const spec of specs!) {
+      const candidates = dependent(targetCandidates(g, a.player, spec, o), controlledByTargetIndex(spec.filter), out);
+      // A later target with none left for the earlier ones picked ("another target creature that player controls"): keep the offered choice.
+      if (!spec.upTo && candidates.length < (spec.count ?? 1)) stuck = true;
+      out.push(distinct(spec, sample(candidates, spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)));
+    }
+  });
+  return stuck ? a : { ...a, targets: out };
 }
 
 function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | null {
@@ -418,10 +456,10 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
         // CR 700.2d: the same mode again, if it may be chosen more than once.
         while (p.modes.repeat && picked.length < n && legal.length) picked.push(pick(legal));
         const chosen = picked.sort((a, b) => a.i - b.i);
-        const targets = chosen.flatMap(({ o }) => o.prompts.map(samplePrompt));
-        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...p.prompts.map(samplePrompt)] } };
+        const targets = chosen.flatMap(({ o }) => samplePrompts(o.prompts));
+        return { player: me, answer: { kind: 'trigger_targets', modes: chosen.map((c) => c.i), targets: [...targets, ...samplePrompts(p.prompts)] } };
       }
-      return { player: me, answer: { kind: 'trigger_targets', targets: p.prompts.map(samplePrompt) } };
+      return { player: me, answer: { kind: 'trigger_targets', targets: samplePrompts(p.prompts) } };
     }
   }
   return null;

@@ -428,6 +428,8 @@ export interface ObjectFilter {
   ownedBy?: Ref;
   /** The player who owns it (ownedBy, bound as a target is checked). */
   ownerPlayer?: string;
+  /** The player who controls it (controlledBy, bound as a target is checked). */
+  controllerPlayer?: string;
   /** "creatures that aren't of the chosen type" (Kindred Dominance). */
   notChosenType?: true;
   /** "Aura attached to it": attached to the source (self) or to what the source is attached to (attached). */
@@ -537,6 +539,9 @@ export type Ref =
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
   | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter }
   | { ref: 'controller_of'; of: Ref }
+  /** Blightning, Bonfire of the Damned: "that player or that planeswalker's controller" — a target player, or the controller of a
+   * target permanent. */
+  | { ref: 'player_or_controller'; of: Ref }
   /** Raid Bombardment: "the player or planeswalker that creature is attacking" (a damage recipient). */
   | { ref: 'attacked_by'; of: Ref }
   | { ref: 'owner_of'; of: Ref }

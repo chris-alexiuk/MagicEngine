@@ -1150,9 +1150,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Aurelia, the Law Above: "Whenever a player attacks with three or more creatures" — anyone (CR 508.3d).
   // Firemane Commando: "Whenever another player attacks with two or more creatures, they draw a card if none of those
   // creatures attacked you."
-  const playerAttacks = /^(a|another) player attacks with (\w+) or more creatures$/.exec(t);
+  // Avatar Roku: "Whenever a player attacks" — once as attackers are declared, whoever attacks (CR 508.3d).
+  const playerAttacks = /^(a|another) player attacks(?: with (\w+) or more creatures)?$/.exec(t);
   if (playerAttacks) {
-    const min = NUMBER_WORDS[playerAttacks[2]!];
+    const min = playerAttacks[2] ? NUMBER_WORDS[playerAttacks[2]!] : 1;
     if (!min) return null;
     b.named['those creatures'] = { ref: 'all', filter: { types: ['Creature'], combat: 'attacking' } };
     return { trigger: { type: 'you_attack', anyone: true, min, ...(playerAttacks[1] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
@@ -1564,6 +1565,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Taborax: "Whenever another nontoken creature you control dies, put a +1/+1 counter on Taborax. If that creature was a
     // Cleric, …" — the creature that died, whatever "it" has become since.
     if (type === 'dies' && (pf.filter.types ?? []).includes('Creature')) b.named['that creature'] = { ref: 'trigger_object' };
+    // Oran-Rief Hydra: "Whenever a land you control enters, put a +1/+1 counter on this creature. If that land is a Forest, …"
+    if (type === 'enters' && (pf.filter.types ?? []).includes('Land')) b.named['that land'] = { ref: 'trigger_object' };
     // Old Gnawbone: "Whenever a creature you control deals combat damage to a player, create that many Treasure tokens."
     if (type === 'deals_combat_damage') b.eventAmount = true;
     return {

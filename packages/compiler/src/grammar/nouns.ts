@@ -68,6 +68,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ (?:an opponent controls|your opponents control|(?<!those )opponents control|each opponent controls)$/, (f) => !f.controller && ((f.controller = 'opponent'), true)],
   [/ enchanted player controls$/, (f) => !f.controller && ((f.controller = 'enchanted'), true)],
   [/ defending player controls$/, (f) => !f.controller && ((f.controller = 'defending'), true)],
+  // Bonfire of the Damned: "each creature that player or that planeswalker's controller controls".
+  [/ that player or that planeswalker's controller controls$/, (f, _m, b) => {
+    if (f.controller || f.controlledBy) return false;
+    const who = parsePlayerRef("that player or that planeswalker's controller", b);
+    return Boolean(who && ((f.controlledBy = who), true));
+  }],
   // "all creatures target player controls", "each creature that player controls"
   [/ (target player|target opponent|that player|the chosen player|chosen player|they|those opponents|those players) controls?$/, (f, m, b) => {
     if (/control$/.test(m[0]) !== ['they', 'those opponents', 'those players'].includes(m[1]!)) return false;
@@ -877,6 +883,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     if (t === 'defending player' && !b.player) b.player = b.named[t]!;
     return b.named[t]!;
   }
+  // Blightning: "That player or that planeswalker's controller discards two cards." — after "target player or planeswalker".
+  if (/^that player or that (?:planeswalker|permanent|battle)'s (?:controller|protector)$/.test(t) && b.it?.ref === 'target' && !/'s protector$/.test(t)) return { ref: 'player_or_controller', of: b.it };
   const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t);
   // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
   const of = owner ? (owner[1] && b.named[owner[1]]) || (owner[1] ? demonstrative(owner[1], b) : b.it) : null;
@@ -952,6 +960,14 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
     const parts = t.split(/ and (?=each |you$|target |~)/);
     const out: Ref[] = [];
     for (const part of parts) {
+      // Bonfire of the Damned: "target player or planeswalker and each creature that player or that planeswalker's
+      // controller controls" — the first part is a target a later part names.
+      if (parts.length > 1 && /^target (?:player|opponent) or planeswalker$/.test(part)) {
+        const one = parseRecipients(part, b);
+        if (!one) return null;
+        out.push(...one);
+        continue;
+      }
       const player = parsePlayerRef(part, b);
       if (player) {
         out.push(player);

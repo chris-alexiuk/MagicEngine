@@ -94,6 +94,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     /\b([Pp])ut ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+?) and ((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|X) \S+ counters? on [^.]+)\./,
     (_m, p: string, one: string, two: string) => `${p}ut ${one}. Put ${two}.`,
   );
+  // Su-Chi Cave Guard: "add eight {C}" — the same as "{C}{C}{C}{C}{C}{C}{C}{C}".
+  text = text.replace(/\b([Aa]dd) (two|three|four|five|six|seven|eight|nine|ten) (\{[WUBRGC]\})(?=[.,]| and )/g, (_m, a: string, n: string, sym: string) => `${a} ${sym.repeat(parseAmount(n) as number)}`);
   // Viewpoint Synchronization: "Search your library for up to three basic land cards and reveal them. Put two of them onto
   // the battlefield tapped and the other into your hand, then shuffle." — one instruction.
   text = text.replace(/\b(Search your library for up to \w+ [^.]+?) and reveal them\. Put (\w+) of them onto the battlefield( tapped)? and the (other|rest) into your hand, then shuffle\./, '$1, reveal them, put $2 onto the battlefield$3 and the $4 into your hand, then shuffle.');
@@ -731,7 +733,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // CR 500.5: "Until end of turn, you don't lose this mana as steps and phases end."
-      const keep = i > 0 ? /^Until end of (turn|combat), you don't lose this mana as steps and phases end$/.exec(s) : null;
+      const keep = i > 0 ? /^Until end of (turn|combat), you don't lose this mana as steps(?: and phases)? end$/.exec(s) : null;
       if (keep) {
         const last = out[out.length - 1] as AddManaEffect | undefined;
         if (last?.type !== 'add_mana') return null;
@@ -2513,7 +2515,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   const may = /^[Yy]ou may (.+)$/.exec(s);
   if (may) {
-    const inner = attempt(b, (b) => parseSentence(may[1]!, b));
+    // Tato Farmer: "you may get two rad counters" — "you get …".
+    const inner = attempt(b, (b) => parseSentence(may[1]!, b)) ?? (/^get /.test(may[1]!) ? attempt(b, (b) => parseSentence(`You ${may[1]}`, b)) : null);
     return inner ? [{ type: 'may', effects: inner }] : null;
   }
   // CR 707.2: "~ becomes a copy of target creature until end of turn, except it has this ability",
@@ -3231,6 +3234,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       ];
     }
   }
+  // Fire Prophecy: "put a card from your hand on the bottom of your library".
+  if (/^[Pp]ut a card from your hand on the bottom of your library$/.test(s)) return [{ type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount: 1, then: 'library_bottom' }];
   // Tireless Provisioner: "create a Food token or a Treasure token" — one of them, chosen as it resolves.
   const tokenOr = /^((?:[Yy]ou )?[Cc]reate) (a|an) ([A-Z]\w+) token or (a|an) ([A-Z]\w+) token$/.exec(s);
   if (tokenOr) {
@@ -3466,6 +3471,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Resolute Archangel: "if your life total is less than your starting life total, it becomes equal to your starting life
   // total" — "it" is your life total (nothing else becomes a life total).
   if (/^It becomes equal to your starting life total$/.test(s)) return [{ type: 'set_life', who: { ref: 'you' }, value: 'starting' }];
+  // Eternity Vessel: "your life total become the number of charge counters on this artifact" (after "you may have").
+  const lifeCount = /^Your life total becomes? (the number of .+)$/.exec(s);
+  if (lifeCount) {
+    const n = attempt(b, (b) => parseCount(lifeCount[1]!, b));
+    if (n) return [{ type: 'set_life', who: { ref: 'you' }, amount: n }];
+  }
   const lifeBecomes = /^(.+?)(?:'s?)? life totals? becomes? (\d+|half (?:your|their) starting life total, rounded (up|down)|equal to (?:your|their) starting life total)$/.exec(s);
   if (lifeBecomes) {
     const who = attempt(b, (b) => parsePlayerRef(lifeBecomes[1]!.replace(/^Your$|^your$/, 'you').replace(/^Each player$/i, 'each player'), b));
@@ -4633,6 +4644,8 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 701.34a
   if (/^proliferate$/i.test(c)) return [{ type: 'proliferate' }];
   // CR 701.10e: "double the number of +1/+1 counters on each creature you control", "… each kind of counter on target permanent"
+  // Aetheric Amplifier: "Double the number of each kind of counter you have" — counters on a player (CR 122.1).
+  if (/^double the number of each kind of counter you have$/i.test(c)) return [{ type: 'double_counters', who: { ref: 'you' }, counter: 'each' }];
   const dblCounters = /^double the number of (\+1\/\+1 counters|each kind of counter) on (.+)$/i.exec(c);
   if (dblCounters) {
     const what = parseObjectRef(dblCounters[2]!, b);
@@ -4827,6 +4840,28 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     .replace(/^(.+?) (becomes? )an? ((?:[A-Za-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
     .replace(/^(.+?) become ((?:[a-z]+ )*?)creatures with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 become a $3/$4 $2creature$5')
     .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5');
+  // Turn to Frog: "target creature loses all abilities and becomes a blue Frog with base power and toughness 1/1" — a
+  // creature type, not a card type: it keeps its card types and loses its other creature types (CR 205.1b); its color
+  // becomes blue (layer 5).
+  const frog = /^(.+?) (loses all abilities and )?becomes? an? (?:(white|blue|black|red|green) )?([A-Z][a-z]+) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/.exec(c);
+  if (frog && (SUBTYPES.creature as readonly string[]).includes(frog[4]!)) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(frog[1]!, b);
+      if (!what) return null;
+      return [
+        {
+          type: 'modify',
+          what: what.ref,
+          creatureTypes: [frog[4]!],
+          ...(frog[3] ? { colors: [COLOR_WORDS[frog[3]]!] } : {}),
+          ...(frog[2] ? { loseAbilities: true } : {}),
+          setPower: Number(frog[5]),
+          setToughness: Number(frog[6]),
+          until: frog[7] ? 'eot' : 'game',
+        },
+      ];
+    });
+  }
   // Jolrael, Mwonvuli Recluse: "Until end of turn, creatures you control have base power and toughness each equal to the
   // number of cards in your hand." — counted as it resolves (CR 608.2h).
   const baseEach = /^(.+?) ha(?:s|ve) base power and toughness each equal to (.+?) until end of turn$/.exec(c);
@@ -4847,11 +4882,13 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
     });
   }
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
-  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+)\/(\d+) until end of turn$/.exec(c);
+  // Biomass Mutation: "Creatures you control have base power and toughness X/X until end of turn."
+  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+|X)\/(\d+|X) until end of turn$/.exec(c);
   if (base) {
     return attempt(b, (b) => {
       const what = parseObjectRef(base[1]!, b);
-      return what ? [{ type: 'modify', what: what.ref, setPower: Number(base[2]), setToughness: Number(base[3]), until: 'eot' }] : null;
+      const v = (x: string) => (x === 'X' ? 'X' : Number(x));
+      return what ? [{ type: 'modify', what: what.ref, setPower: v(base[2]!), setToughness: v(base[3]!), until: 'eot' }] : null;
     });
   }
   // Beorn's Hospitality: "… becomes a Bear creature in addition to its other types and gains "This creature's power and

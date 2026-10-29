@@ -1330,6 +1330,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of [...chosen].reverse()) moveObject(g, id, 'library', ctx.events, { position: 'top' });
       return true;
     }
+    // Fire Prophecy: "You may put a card from your hand on the bottom of your library."
+    if (node.then === 'library_bottom') {
+      for (const id of chosen) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
+      return true;
+    }
     for (const id of chosen) {
       if (node.then === 'exile') {
         moveObject(g, id, 'exile', ctx.events);
@@ -1552,6 +1557,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
   // CR 701.10e: "double the number of +1/+1 counters on it" — put that many more on it.
   double_counters(node, ctx) {
+    // Aetheric Amplifier: "Double the number of each kind of counter you have" (CR 122.1; poison counters too, CR 122.1f).
+    if (node.who) {
+      for (const p of refPlayers(ctx, ref(node, 'who'))) {
+        const ps = ctx.g.players[p]!;
+        const kinds: [string, number][] = [...Object.entries(ps.counters ?? {}), ...(ps.poison ? [['poison', ps.poison] as [string, number]] : [])];
+        for (const [k, n] of kinds) if (n > 0) putPlayerCounters(ctx.g, ctx.controller, p, k, n, ctx.events);
+      }
+      return true;
+    }
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (o.zone !== 'battlefield') continue;
       const kinds = node.counter === 'each' ? Object.keys(o.counters) : [String(node.counter)];

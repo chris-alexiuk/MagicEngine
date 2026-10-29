@@ -179,7 +179,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Emeria Shepherd: "If that land is a Plains" — the land that entered.
   const thatIs = /^that (land|creature|permanent) is an? ([A-Z][a-z]+)$/.exec(t);
-  if (thatIs && b.it?.ref === 'trigger_object' && subtypeOf(thatIs[2]!) === thatIs[2]) return { type: 'is', of: b.it, filter: { subtypes: [thatIs[2]!] } };
+  const thatOne = b.it?.ref === 'trigger_object' ? b.it : thatIs && b.named[`that ${thatIs[1]}`]?.ref === 'trigger_object' ? b.named[`that ${thatIs[1]}`]! : null;
+  if (thatIs && thatOne && subtypeOf(thatIs[2]!) === thatIs[2]) return { type: 'is', of: thatOne, filter: { subtypes: [thatIs[2]!] } };
   // Phelia: "return that card to the battlefield under its owner's control. If it entered under your control, …" — it's
   // on the battlefield, and you control it.
   if (/^(?:it|that card|that permanent) entered (?:the battlefield )?under your control$/.test(t) && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { zone: 'battlefield', controller: 'you' } };
@@ -583,6 +584,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const { zone: _z, owner: _o, ...filter } = pf.filter;
     return { type: 'graveyard', ...c, filter };
   }
+  // Walltop Sentries: "if there's a Lesson card in your graveyard"; "if there is an instant card in your graveyard".
+  const gyOne = /^there(?:'s| is) an? (.+?) card in your graveyard$/.exec(t);
+  if (gyOne) {
+    const pf = parseFilter(`${gyOne[1]} cards in your graveyard`, b);
+    if (!pf || pf.filter.zone !== 'graveyard') return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return { type: 'graveyard', min: 1, filter };
+  }
   // Oversold Cemetery: "you have four or more creature cards in your graveyard".
   const haveKind = /^you have (\w+ or more) (.+?) cards in your graveyard$/.exec(t);
   if (haveKind) {
@@ -739,6 +748,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return hadKw[1] === 'had' ? c : { type: 'not', cond: c };
   }
   if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking' } } : { type: 'was_attacking' };
+  // Guildsworn Prowler: "When this creature dies, if it wasn't blocking, draw a card."
+  if (/^it (was|wasn't) blocking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking', blocking: true } } : { type: 'was_attacking', blocking: true };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Endless Evil: "When enchanted creature dies, if that creature was a Horror" — as it last existed.

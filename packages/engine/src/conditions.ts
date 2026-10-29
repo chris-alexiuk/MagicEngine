@@ -339,7 +339,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'was_attacking': {
       // Zurgo Stormrender: "if it was attacking" — the creature that left, as it last existed on the battlefield.
       const r = ctx.trigger?.object;
-      const a = r ? g.combat?.attackers[r.id] : undefined;
+      // Guildsworn Prowler: "if it wasn't blocking" — as a blocker instead.
+      const a = r ? (cond.blocking ? g.combat?.blockers[r.id] : g.combat?.attackers[r.id]) : undefined;
       const last = r ? g.lastKnown?.[r.id] : undefined;
       const zcc = r && last && (last.zcc === r.zcc || last.zcc === r.zcc - 1) ? last.zcc : r?.zcc;
       return Boolean(a && a.zcc === zcc);
