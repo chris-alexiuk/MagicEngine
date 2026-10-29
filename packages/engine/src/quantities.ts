@@ -171,6 +171,8 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
 export function putPlayerCounters(g: GameState, by: PlayerId, p: PlayerId, counter: string, n: number, events: GameEvent[]): void {
   const ps = g.players[p];
   if (!ps || n <= 0) return;
+  // Melira, Sylvok Outcast: "You can't get poison counters."
+  if (counter === 'poison' && playerRule(g, p, 'no_poison')) return;
   const amount = replaceQuantity(g, 'counters', n, { player: by, onPlayer: p, counter });
   if (amount <= 0) return;
   if (counter === 'poison') ps.poison += amount;

@@ -612,6 +612,12 @@ export const activatedRule: GrammarRule = {
       // three or more creatures this turn and only as a sorcery."
       // Sheoldred // The True Scriptures: "Activate only as a sorcery and only if an opponent has eight or more cards in
       // their graveyard."
+      // Hired Claw: "Activate only if an opponent lost life this turn and only once each turn."
+      const onceToo = / Activate only if ([^.]+?) and only once each turn\.$/.exec(effectText);
+      if (onceToo) {
+        effectText = effectText.slice(0, onceToo.index) + ` Activate only if ${onceToo[1]}.`;
+        node.oncePerTurn = true;
+      }
       const onlyIf = / Activate only if ([^.]+?)( and only as a sorcery)?\.$/.exec(effectText) ?? / Activate only (as a sorcery) and only if ([^.]+?)\.$/.exec(effectText);
       // Gutterbones: "Activate only during your turn and only if an opponent lost life this turn."
       const turnIf = onlyIf ? null : / Activate only during your turn and only if ([^.]+?)\.$/.exec(effectText);
@@ -1654,6 +1660,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['them'] = { ref: 'created' };
     return { trigger: { type: 'enters', subject: { ref: 'all', filter: pf.filter }, batch: true }, it: { ref: 'self' }, player: null };
   }
+  // Skyboon Evangelist: "Whenever a creature with a counter on it attacks one of your opponents" — a player, not a planeswalker
+  // or battle (every other player is an opponent, CR 806).
+  const atOpponent = /^((?:a|an|another) .+?) attacks (?:a player|an opponent|one of your opponents)$/.exec(t);
+  if (atOpponent) {
+    const r = parseTrigger(word, `${atOpponent[1]} attacks`, b);
+    if (!r || r.trigger.type !== 'attacks' || (r.trigger as { defender?: string }).defender) return null;
+    return { ...r, trigger: { ...r.trigger, defender: 'opponent' } };
+  }
   const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your|an opponent's) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
   if (other) {
     const pf = parseFilter(other[1]!, b);
@@ -1973,7 +1987,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', exceptFirstInDrawStep: true }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
   }
   // The Watcher in the Water: "Whenever you draw a card during an opponent's turn".
-  const draw = /^(you draw|enchanted player draws) a card( during an opponent's turn)?$/.exec(t);
+  const draw = /^(you draw|enchanted (?:player|opponent) draws) a card( during an opponent's turn)?$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
     return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you', ...(draw[2] ? { opponentsTurn: true } : {}) }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
@@ -2488,7 +2502,8 @@ export const continuousRule: GrammarRule = {
         const cond = attempt(b, (b) => parseCondition(tail.slice(0, i), b));
         if (cond) {
           conds.push(cond);
-          b.it = conditionSubject(cond) ?? b.it;
+          // Face of Divinity: "As long as another Aura is attached to enchanted creature, it has …" — the creature.
+          b.it = conditionSubject(cond) ?? (/ attached to (?:enchanted|equipped) creature$/.test(tail.slice(0, i)) ? { ref: 'attached' } : b.it);
           rest = tail.slice(i + 2);
           found = true;
         }
@@ -2824,6 +2839,8 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
     'have shroud': 'shroud',
     'has shroud': 'shroud',
     "can't gain life": 'cant_gain_life',
+    // Melira, Sylvok Outcast (CR 122.1f).
+    "can't get poison counters": 'no_poison',
     "don't lose the game for having 0 or less life": 'no_lose_for_life',
     "can't lose the game": 'cant_lose',
     'may cast spells as though they had flash': 'flash',
@@ -4281,13 +4298,17 @@ export const entersWithCountersRule: GrammarRule = {
       return node;
     }
     // Diregraf Colossus: "~ enters with a +1/+1 counter on it for each Zombie card in your graveyard" — counted as it enters.
-    const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on (?:it|him|her) for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(line);
+    // Myriad Construct: "If this creature was kicked, it enters with a +1/+1 counter on it for each …".
+    const perEachIf = /^If (.+?), (?:~|it) (enters(?: the battlefield)? with .+)$/.exec(line);
+    const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on (?:it|him|her) for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(perEachIf ? `~ ${perEachIf[2]}` : line);
     if (perEach) {
       const env = envOf(ctx);
       const n = parseAmount(perEach[1]!);
       const each = env && typeof n === 'number' ? parseForEach(perEach[3]!, new Binder(env)) : null;
       if (!each || typeof n !== 'number') return null;
-      return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: perEach[2]!.replace(/−/g, '-'), amount: n, perEach: each } } satisfies StaticAbility;
+      const condition = perEachIf && env ? parseCondition(perEachIf[1]!, new Binder(env)) : undefined;
+      if (condition === null) return null;
+      return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: perEach[2]!.replace(/−/g, '-'), amount: n, perEach: each, ...(condition ? { condition } : {}) } } satisfies StaticAbility;
     }
     // Towering Titan: "~ enters with X +1/+1 counters on it, where X is …"; Boss's Chauffeur: "… a number of +1/+1 counters
     // on it equal to …" — counted as it enters (CR 614.1c).

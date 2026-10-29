@@ -199,6 +199,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Oran-Rief: "each green creature that entered this turn"
   [/ that entered (?:the battlefield )?this turn$/, (f) => !f.enteredThisTurn && ((f.enteredThisTurn = true), true)],
   [/ that didn't enter (?:the battlefield )?this turn$/, (f) => f.enteredThisTurn === undefined && ((f.enteredThisTurn = false), true)],
+  [/ that entered (?:the battlefield )?under your control this turn$/, (f) => !f.enteredThisTurn && !f.enteredUnderYou && ((f.enteredThisTurn = true), (f.enteredUnderYou = true), true)],
   // Coiling Stalker: "target creature you control that doesn't have a +1/+1 counter on it".
   [/ that (?:doesn't|don't) have an? (\S+) counter on (?:it|them)$/, (f, m) => !f.notCounter && !f.counter && ((f.notCounter = m[1]!), true)],
   // Wash Away: "target spell that wasn't cast from its owner's hand".
@@ -327,7 +328,8 @@ function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge'
 
 function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: string, b: Binder): boolean {
   // Skrelv's Hive: "creatures you control with toxic" — a keyword that takes a number, whatever the number.
-  if (/^(?:toxic|ward|annihilator|afflict|bushido|rampage)$/.test(text) && !f[key]) {
+  // Arcbound Overseer: "each creature you control with modular".
+  if (/^(?:toxic|ward|annihilator|afflict|bushido|rampage|modular|fading|vanishing|bloodthirst|absorb|frenzy|flanking|renown|tribute|afterlife|amplify|graft|dethrone|exalted|crew|backup|training)$/.test(text) && !f[key]) {
     f[key] = [text];
     return true;
   }
@@ -448,6 +450,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   rest = rest.replace(/^(Artifacts|Creatures|Enchantments|Lands|Planeswalkers)(?= and )/, (w) => w.toLowerCase());
   // Lux Artillery: "counters among artifacts and creatures you control" — each permanent that's either.
   rest = rest.replace(/\b(artifacts|creatures|enchantments|lands|planeswalkers) and (artifacts|creatures|enchantments|lands|planeswalkers)\b/g, '$1 or $2');
+  // Narfi, Betrayer King: "Other snow and Zombie creatures you control" — a creature that's either.
+  rest = rest.replace(/^(snow|legendary) and ([A-Z][\w-]*) (creatures|permanents)\b/, (m, a: string, z: string, n: string) => (subtypeOf(z) === z ? `${a} or ${z} ${n}` : m));
   // Spectacular Pileup: "all creatures and Vehicles" — either.
   rest = rest.replace(/^(artifacts|creatures|enchantments|lands|planeswalkers) and (Vehicles|Equipment|Auras|Mounts|Spacecraft)\b/, '$1 or $2');
   // Elspeth, Knight-Errant: "Artifacts, creatures, enchantments, and lands you control" — likewise.
@@ -870,6 +874,12 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       // CR 113.1c: "target activated or triggered ability you control from an artifact source" — an ability on the stack.
       const ability = parseAbilityTarget(t, b);
       if (ability) return set(b, { ref: b.addTarget(ability), plural: false, targeted: true });
+      // Katara's Reversal: "Counter up to four target spells and/or abilities."
+      const several = /^up to (two|three|four|five) target spells and\/or abilities$/i.exec(t);
+      if (several) {
+        const spec: TargetSpec = { what: 'ability', abilities: ['activated', 'triggered'], spells: {}, text: t.replace(/^\w/, (c) => c.toLowerCase()), count: parseAmount(several[1]!) as number, upTo: true };
+        return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
+      }
       // "one or two target creatures", "one, two, or three target creatures", "one or more target creatures": at least one.
       const oneOr = /^(one or two|one, two, or three|one or more) (other )?target (.+)$/i.exec(t);
       if (oneOr) {

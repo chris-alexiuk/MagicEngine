@@ -5135,6 +5135,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
       // Guild Artisan: "Whenever this creature attacks a player".
       if (t.defender === 'player' && target.kind !== 'player') return [];
+      // Skyboon Evangelist: "attacks one of your opponents" — a player other than you.
+      if (t.defender === 'opponent' && (target.kind !== 'player' || target.player === check.controller)) return [];
       // CR 702.105a (dethrone): attacking the player with the most life or tied for most life.
       if (t.defender === 'most_life') {
         if (target.kind !== 'player') return [];

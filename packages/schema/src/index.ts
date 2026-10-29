@@ -457,6 +457,8 @@ export interface ObjectFilter {
   attachedToType?: string;
   /** CR 903.3: a commander. */
   commander?: boolean;
+  /** Shaile, Dean of Radiance: it entered the battlefield under your control this turn. */
+  enteredUnderYou?: true;
   /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
   counter?: string;
   /** Wave Goodbye: "without a +1/+1 counter on it" ('any': "without counters on it"). */
@@ -1369,6 +1371,8 @@ export const PLAYER_RULES = [
   'damage_floor',
   /** Everybody Lives!: "Players can't lose life this turn." (CR 119.7) */
   'cant_lose_life',
+  /** Melira, Sylvok Outcast: "You can't get poison counters." (CR 122.1f) */
+  'no_poison',
   /** K'rrik, Son of Yawgmoth: "For each {B} in a cost, you may pay 2 life rather than pay that mana." (CR 107.4f) */
   'black_as_phyrexian',
   /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." (CR 121.2) */

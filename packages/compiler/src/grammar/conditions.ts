@@ -325,6 +325,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it|~) escaped$/.test(t)) return { type: 'paid', cost: 'escape' };
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
+  // Face of Divinity: "As long as another Aura is attached to enchanted creature" — anyone's.
+  const alsoOn = /^another (Aura|Equipment) is attached to (?:enchanted|equipped) creature$/.exec(t);
+  if (alsoOn) return { type: 'count', who: 'all', filter: { subtypes: [alsoOn[1]!], attachedTo: 'attached', other: true }, min: 1 };
   // CR 702.143c: Poison the Cup: "If this spell was foretold" — cast for its foretell cost.
   if (/^(?:~|it) was foretold$/.test(t)) return { type: 'paid', cost: 'foretell' };
   // "if its evoke cost was paid", "if this spell's dash cost was paid", "if the buyback cost was paid" (CR 601.2f).

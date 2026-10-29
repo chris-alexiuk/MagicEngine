@@ -656,6 +656,9 @@ export class ParserRegistry {
       }
       // Cunning Nightbonder: "Spells with flash you cast cost {1} less to cast and can't be countered." — two statics.
       line = line.replace(/^((?:[A-Z][\w ]*?)?[Ss]pells[^.]*? you cast) cost (\{\d+\}) less to cast and can['’]t be countered\.$/, "$1 cost $2 less to cast. $1 can't be countered.");
+      // Draconic Destiny: "Enchanted creature gets +1/+1 and has flying, … It's a Dragon in addition to its other types." — two
+      // statics about the enchanted creature.
+      line = line.replace(/^(Enchanted|Equipped) creature (.+?(?:\.|\."))\s+It['’]s an? ([A-Z][\w-]*) in addition to its other types\.$/, '$1 creature $2 $1 creature is a $3 in addition to its other types.');
       // Mornsong Aria: "Players can't draw cards or gain life." — two player rules.
       line = line.replace(/^(Players|You|Your opponents) can['’]t draw cards or gain life\.$/, "$1 can't draw cards. $1 can't gain life.");
       const block = [line];
@@ -685,6 +688,16 @@ export class ParserRegistry {
             for (const n of each) result.abilities.push(n!);
             continue;
           }
+        }
+      }
+      // Draconic Destiny: "Enchanted creature gets +1/+1 and has … "{1}: …" Enchanted creature is a Dragon in addition to its
+      // other types." — after a quoted ability, a second static about the same creature.
+      const typeAfter = !node && !gate && block.length === 1 ? /^((?:Enchanted|Equipped) creature .+?\.")\s+((?:Enchanted|Equipped) creature is an? [A-Z][\w-]* in addition to its other types\.)$/.exec(line) : null;
+      if (typeAfter) {
+        const each = [typeAfter[1]!, typeAfter[2]!].map((p) => this.parseBlock([p], env, p));
+        if (each.every((n) => n?.kind === 'static')) {
+          for (const n of each) result.abilities.push(n!);
+          continue;
         }
       }
       if (node && gate) node.gate = gate;

@@ -1118,6 +1118,8 @@ export function matchesFilter(
   if (f.enteredThisTurn && !(o.zone === 'battlefield' && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id)))) return false;
   // Let the Galaxy Burn: "each creature that didn't enter this turn".
   if (f.enteredThisTurn === false && Object.values(g.turnLog.entered ?? {}).some((ids) => ids.includes(o.id))) return false;
+  // Shaile, Dean of Radiance: "each creature that entered the battlefield under your control this turn".
+  if (f.enteredUnderYou && !(o.zone === 'battlefield' && (g.turnLog.entered?.[ctx.controller] ?? []).includes(o.id))) return false;
   if (f.sharesTypeWithCommander && !sharesTypeWithCommander(g, c, ctx.controller)) return false;
   // Eriette: "enchanted by an Aura you control".
   if (f.enchantedByYou && !g.zones.battlefield.some((id) => {

@@ -1887,14 +1887,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // CR 603.7: a delayed trigger — "Sacrifice it at the beginning of the next end step."
+      // Thawing Glaciers: "Return this land to its owner's hand at the beginning of the next cleanup step." (CR 514.3a)
       const delayed =
-        /^(.+) at the beginning of the next (end step|turn's upkeep)$/.exec(s) ??
-        /^At the beginning of the next (end step|turn's upkeep), (.+)$/.exec(s) ??
+        /^(.+) at the beginning of the next (end step|turn's upkeep|cleanup step)$/.exec(s) ??
+        /^At the beginning of the next (end step|turn's upkeep|cleanup step), (.+)$/.exec(s) ??
         /^(.+) at (end of combat)$/.exec(s) ??
         /^At (end of combat), (.+)$/.exec(s);
       if (delayed) {
         const [what, when] = delayed[0].startsWith('At ') ? [delayed[2]!, delayed[1]!] : [delayed[1]!, delayed[2]!];
-        const step = when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep';
+        const step = when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : when === 'cleanup step' ? 'cleanup' : 'upkeep';
         // "Exile target creature you control and return it to the battlefield … at the beginning of the next end step" — the
         // exile is now; only the return waits (CR 603.7).
         const andReturn = !delayed[0].startsWith('At ') ? /^(.+?) and (return (?:it|them|that card|those cards) .+)$/.exec(what) : null;
@@ -1927,7 +1928,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           i++;
         }
         // CR 511.2: "at end of combat" — as the end of combat step begins.
-        out.push({ type: 'delayed', step: when === 'end step' ? 'end' : when === 'end of combat' ? 'end_of_combat' : 'upkeep', effects: inner });
+        out.push({ type: 'delayed', step, effects: inner });
         continue;
       }
       // The Enduring cycle: "Return it to the battlefield under its owner's control. It's an enchantment." (layer 4,
@@ -6042,7 +6043,8 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   // "Target creature must be blocked this turn if able." / "~ can't be blocked by more than one creature this turn."
   // Gingerbrute: "This creature can't be blocked this turn except by creatures with haste."
   // Anzrag, the Quake-Mole: "~ must be blocked each combat this turn if able." — in every combat of the turn.
-  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can't be blocked this turn except by .+|can block only .+? this turn)$/.exec(c.replace(/ must be blocked each combat this turn if able$/, ' must be blocked this turn if able'));
+  // Valor Made Real: "Target creature can block any number of creatures this turn."
+  const combat = /^(.+?) (must be blocked this turn if able|can't be blocked .+? this turn|can't be blocked this turn except by .+|can block only .+? this turn|can block any number of creatures this turn|can block an additional (?:\w+ )?creatures? (?:each combat )?this turn)$/.exec(c.replace(/ must be blocked each combat this turn if able$/, ' must be blocked this turn if able'));
   if (combat) {
     const r = attempt(b, (b) => {
       const rule = parseCombatRule(combat[2]!.replace(' this turn', ''), b);

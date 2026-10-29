@@ -561,6 +561,9 @@ export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
       if (g.pending) return;
       break;
     case 'cleanup': {
+      // CR 514.3a: "at the beginning of the next cleanup step" (Necromancy, Thawing Glaciers) triggers now, so the step
+      // gives priority and is followed by another.
+      collectTriggers(g, events);
       startCleanup(g, events);
       return;
     }
