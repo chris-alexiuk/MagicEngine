@@ -100,10 +100,19 @@ describe('leaving the game', () => {
 
 describe('planeswalkers', () => {
   it('CR 306.5b / CR 606.4 / CR 606.3 / CR 606.6: loyalty counters, once per turn, and no going below zero', () => {
-    let g = toStep(start(), 'main1');
+    // A Jace whose +2 and −12 the compiler can't read (they're resolved by hand).
+    const sculptor = makeCard({
+      name: 'Manual Sculptor',
+      type_line: 'Legendary Planeswalker — Jace',
+      mana_cost: '{2}{U}{U}',
+      cmc: 4,
+      loyalty: '3',
+      oracle_text: "+2: Each player secretly writes down a card name, then those names are revealed.\n0: Draw three cards, then put two cards from your hand on top of your library in any order.\n−1: Return target creature to its owner's hand.\n−12: Each player secretly writes down a number, then those numbers are revealed.",
+    });
+    let g = toStep(start({ extra: [sculptor] }), 'main1');
     for (let i = 0; i < 4; i++) give(g, 'alice', 'Island', 'battlefield');
     g.cards.Island = { ...g.cards.Forest!, name: 'Island', faces: [{ ...g.cards.Forest!.faces[0]!, name: 'Island', subtypes: ['Island'] }] };
-    const jace = give(g, 'alice', 'Jace, the Mind Sculptor', 'hand');
+    const jace = give(g, 'alice', 'Manual Sculptor', 'hand');
     g = act(g, { type: 'cast', player: 'alice', object: jace, autoTap: true });
     g = passRound(g);
     expect(g.objects[jace]!.counters.loyalty).toBe(3);
@@ -114,7 +123,7 @@ describe('planeswalkers', () => {
     expect(illegal(g, { type: 'activate_manual', player: 'alice', object: jace, line: minusTwelve })).toMatch(/enough loyalty/);
     g = act(g, { type: 'activate_manual', player: 'alice', object: jace, line: plusTwo });
     expect(g.objects[jace]!.counters.loyalty).toBe(5);
-    expect(g.stack).toMatchObject([{ kind: 'ability', sourceName: 'Jace, the Mind Sculptor' }]);
+    expect(g.stack).toMatchObject([{ kind: 'ability', sourceName: 'Manual Sculptor' }]);
     g = passRound(g);
     expect(g.pending).toMatchObject({ kind: 'manual_resolution', player: 'alice' });
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'manual_resolution', done: true } });

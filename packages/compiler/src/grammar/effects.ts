@@ -1210,6 +1210,19 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += 1;
         continue;
       }
+      // Jace, the Mind Sculptor: "Look at the top card of target player's library. You may put that card on the bottom of that
+      // player's library." — kept on top, or not (the controller decides).
+      const theirTop = /^Look at the top card of (target player|target opponent)'s library$/.exec(s);
+      if (theirTop && sentences[i + 1] && /^You may put that card on the bottom of (?:that player's|their) library$/.test(sentences[i + 1]!)) {
+        const r = attempt(b, (b) => {
+          const who = parsePlayerRef(theirTop[1]!, b);
+          return who ? [{ type: 'dig', amount: 1, take: 1, to: 'top', rest: 'bottom', optional: true, who, chooser: 'you' } as EffectNode] : null;
+        });
+        if (!r) return null;
+        out.push(...r);
+        i += 1;
+        continue;
+      }
       // "Look at the top card of your library. You may put that card into your graveyard." (a one-card surveil)
       const mayPut = topCard && sentences[i + 1] ? /^You may put (?:that card|it) (into your graveyard|into your hand)$/.exec(sentences[i + 1]!) : null;
       if (topCard && mayPut) {
@@ -2031,13 +2044,16 @@ function parseDig(count: string, next: string, after: string | undefined, b: Bin
     };
   }
   // "Put all creature cards revealed this way into your hand and the rest into your graveyard."
-  const all = /^Put all (.+?) cards? (?:revealed this way|from among them) into your (hand|graveyard) and the (?:rest|others) (.+)$/.exec(next);
+  // Muxus, Goblin Grandee: "Put all Goblin creature cards with mana value 5 or less from among them onto the battlefield and
+  // the rest on the bottom of your library in a random order."
+  const all = /^Put all (.+?) cards?( with [^,]+?)? (?:revealed this way|from among them) (into your hand|into your graveyard|onto the battlefield( tapped)?) and the (?:rest|others) (.+)$/.exec(next);
   if (all) {
-    const rest = REST[all[3]!];
-    const pf = parseFilter(`${all[1]} cards in your library`, b);
+    const rest = REST[all[5]!];
+    const pf = parseFilter(`${all[1]} cards${all[2] ?? ''} in your library`, b);
     if (!rest || !pf) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
-    return { node: { type: 'dig', amount, take: amount, to: all[2], filter, all: true, ...rest }, used: 1 };
+    const to = all[3] === 'into your hand' ? 'hand' : all[3] === 'into your graveyard' ? 'graveyard' : 'battlefield';
+    return { node: { type: 'dig', amount, take: amount, to, filter, all: true, ...rest, ...(all[4] ? { tapped: true } : {}) }, used: 1 };
   }
   // "You may put one of them back on top of your library. Put the rest into your graveyard."
   const back = /^You may put (\w+) of (?:them|those cards) (?:back )?on top of your library$/.exec(next);
@@ -2212,7 +2228,7 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
       // player the instruction targets.
       // Peer into the Abyss: "Target player draws cards equal to … cards in their library" — that player's.
       // Within Range: "… equal to the number of creatures attacking them".
-      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b|\bthey (?:control|lost|gained)\b|\battacking them\b/.test(what)
+      const later = /\bthat (?:player|opponent)\b|\btheir (?:hand|graveyard|library)\b|\bthey (?:control|controlled|lost|gained)\b|\battacking them\b/.test(what)
         ? attempt(b, (b) => {
             const inner = parseInner(text, b);
             // "Each opponent loses life equal to the life that player lost this turn": "that player" is each of them.
@@ -2696,7 +2712,14 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         if (!onlyCount(inner)) return null;
         return inner && expr ? bindX(inner, expr) : null;
       }
+      // Fraying Sanity: "enchanted player mills X cards, where X is the number of cards put into their graveyard …" — "their"
+      // is the player the instruction is about.
+      const subject = /\btheir\b/.test(what) ? /^(enchanted player|that player|defending player|the chosen player) /i.exec(where[1]!.trim()) : null;
+      const about = subject ? parsePlayerRef(subject[1]!, b) : null;
+      const keep = b.player;
+      if (about) b.player = about;
       const expr = parseCount(what, b);
+      b.player = keep;
       const from = b.targets.length;
       const inner = expr && parseSentence(where[1]!, b);
       if (inner && expr) bindTargetsX(b, from, expr);
@@ -3500,6 +3523,20 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Jace, the Mind Sculptor: "Exile all cards from target player's library" — the whole library.
+  const exileLibrary = /^Exile all cards from (target player|target opponent|that player)'s library$/.exec(s);
+  if (exileLibrary) {
+    const r = attempt(b, (b) => {
+      const who = exileLibrary[1] === 'your' ? ({ ref: 'you' } as Ref) : parsePlayerRef(exileLibrary[1]!, b);
+      return who ? [{ type: 'exile_top', who, amount: 999 } as EffectNode] : null;
+    });
+    if (r) return r;
+  }
+  // Derevi, Empyrial Tactician: "{1}{G}{W}{U}: Put Derevi onto the battlefield from the command zone." (it works from there)
+  if (/^Put ~ onto the battlefield from the command zone$/.test(s)) {
+    b.selfZone = 'command';
+    return [{ type: 'move', what: { ref: 'self' }, to: 'battlefield' }];
+  }
   // Aetherspouts: "For each attacking creature, its owner puts it on their choice of the top or bottom of their library."
   const eachTopOrBottom = /^For each (.+?), its owner puts it on their choice of the top or bottom of their library$/.exec(s);
   if (eachTopOrBottom) {
@@ -3678,13 +3715,22 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Loran of the Third Path: "You and target opponent each draw a card."
-  const youAnd = /^You and (target opponent|target player|that player|defending player) each (.+)$/.exec(s);
+  // Karazikar: "you and the attacking player each draw a card and lose 1 life" — both instructions, for each of them.
+  const youAnd = /^You and (target opponent|target player|that player|defending player|the attacking player|that attacking player) each (.+)$/.exec(s);
   if (youAnd) {
     const r = attempt(b, (b) => {
-      const other = parsePlayerRef(youAnd[1]!, b);
-      const mine = other ? parseClause(youAnd[2]!, b, { ref: 'you' }) : null;
-      const theirs = mine && other ? parseClause(youAnd[2]!, b, other) : null;
-      return mine && theirs ? [...mine.effects, ...theirs.effects] : null;
+      const other = parsePlayerRef(youAnd[1]!, b) ?? (b.named[youAnd[1]!] as Ref | undefined) ?? null;
+      const both = /^(.+?) and ((?:lose|gain|draw|discard|mill|create|sacrifice)s? .+)$/.exec(youAnd[2]!);
+      const parts = parseClause(youAnd[2]!, b.clone(), { ref: 'you' }) || !both ? [youAnd[2]!] : [both[1]!, both[2]!];
+      const out: EffectNode[] = [];
+      for (const who of [{ ref: 'you' } as Ref, other]) {
+        for (const part of parts) {
+          const c = who ? parseClause(part, b, who) : null;
+          if (!c) return null;
+          out.push(...c.effects);
+        }
+      }
+      return out;
     });
     if (r) return r;
   }

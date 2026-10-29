@@ -33,6 +33,12 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
     return { ...inner, filter: { ...inner.filter, other: true } };
   }
   const t = text.trim();
+  // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (tokens aren't cards).
+  const putThere = /^cards put into (your|their|that player's) graveyard from anywhere this turn$/.exec(t);
+  if (putThere && plural) {
+    const player = putThere[1] === 'your' ? ({ ref: 'you' } as Ref) : b.player && b.player.ref !== 'you' ? b.player : null;
+    return player ? { kind: 'to_graveyard_this_turn', player } : null;
+  }
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
   // Animus of Night's Reach: "the number of creature cards in defending player's graveyard".
@@ -75,6 +81,13 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
 export function movedThisWay(text: string, b: Binder): AmountExpr | null {
   // Terastodon: "each permanent put into a graveyard this way" — from the battlefield to a graveyard.
   // Arid Archway: "another Desert returned this way" — returned to its owner's hand from the battlefield, other than the source.
+  // Deadly Tempest: "the number of creatures they controlled that were destroyed this way" — each player's own.
+  const theirs = /^(.+?) they controlled that were (destroyed|exiled|sacrificed|returned) this way$/.exec(text.trim());
+  if (theirs) {
+    const each = b.player?.ref === 'each_player' || b.player?.ref === 'players' ? b.player : null;
+    const inner = each ? movedThisWay(`${theirs[1]} ${theirs[2]} this way`, b) : null;
+    return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
+  }
   const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned) this way$/.exec(text.trim());
   if (!m) return null;
   const another = /^another /.test(m[1]!);
@@ -205,6 +218,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   // Fists of Flame: "for each card you've drawn this turn"
   if (t === "card you've drawn this turn") return { kind: 'drawn_this_turn' };
+  // Heliod, the Radiant Dawn: "for each card your opponents have drawn this turn".
+  if (t === 'card your opponents have drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
   if (t === 'player') return { kind: 'players', who: 'each' };
   // Teysa, Opulent Oligarch: "for each opponent who lost life this turn"

@@ -566,7 +566,10 @@ function layered(g: GameState, o: GameObject): Characteristics {
       if (e && e.affected.ref === 'self') for (const r of e.rules ?? []) c.rules.add(r);
     }
     // Layer 6 on spells (CR 613.1f): "Instant and sorcery spells you control have lifelink" (Heartflame Duelist).
-    for (const e of spellGrants(g)) if (e.applies(o, c)) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
+    // A keyword that's a triggered ability (cascade, ripple, storm) triggers once for each instance (CR 702.85c): Maelstrom
+    // Nexus gives a spell with cascade a second one; Zhulodok's "Cascade, cascade." is two.
+    const stacks = (k: KeywordInstance) => Boolean(k.abilities?.some((a) => a.kind === 'triggered'));
+    for (const e of spellGrants(g)) if (e.applies(o, c)) for (const k of e.keywords ?? []) if (stacks(k) || !c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
     applyOwnCDA(g, o, c);
     everyCreatureTypeElsewhere(g, o, c);
     // Effects locked to this spell (CR 611.2c) — "Target spell or permanent becomes white" (Purelace):
@@ -574,7 +577,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     if (g.effects.length) {
       const locked = resolvedEffects(g).filter((e) => e.applies(o, c)).sort((a, b) => a.timestamp - b.timestamp);
       for (const e of locked) if (e.colors) c.colors = [...e.colors];
-      for (const e of locked) for (const k of e.keywords ?? []) if (!c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
+      for (const e of locked) for (const k of e.keywords ?? []) if (stacks(k) || !c.keywords.some((x) => x.id === k.id)) c.keywords.push(k);
     }
     return c;
   }

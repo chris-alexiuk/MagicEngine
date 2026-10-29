@@ -822,6 +822,19 @@ const CARDS = [
   makeCard({ name: 'Ant Lite', type_line: 'Creature — Insect', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'At the beginning of your end step, each player may put two +1/+1 counters on a creature they control. Goad each creature that had counters put on it this way.' }),
   makeCard({ name: 'Spouts Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'For each attacking creature, its owner puts it on their choice of the top or bottom of their library.' }),
   makeCard({ name: 'Kess Lite', type_line: 'Legendary Creature — Human Wizard', mana_cost: '{0}', power: '3', toughness: '4', oracle_text: 'Once during each of your turns, you may cast an instant or sorcery spell from your graveyard. If a spell cast this way would be put into your graveyard, exile it instead.' }),
+  makeCard({ name: 'Zhulodok Lite', type_line: 'Legendary Creature — Eldritch', mana_cost: '{0}', power: '4', toughness: '4', oracle_text: 'Colorless spells you cast from your hand with mana value 7 or greater have "Cascade, cascade."' }),
+  makeCard({ name: 'Seven Relic', type_line: 'Artifact', mana_cost: '{7}', cmc: 7, oracle_text: '' }),
+  makeCard({ name: 'Derevi Lite', type_line: 'Legendary Creature — Bird Wizard', mana_cost: '{3}', cmc: 3, power: '2', toughness: '3', oracle_text: 'Flying\n{1}: Put Derevi Lite onto the battlefield from the command zone.' }),
+  makeCard({ name: 'Infantry Lite', type_line: 'Artifact — Equipment', mana_cost: '{0}', oracle_text: 'Equipped creature has menace and mobilize X, where X is its power.\nEquip {0}' }),
+  makeCard({ name: 'Firebender Lite', type_line: 'Creature — Human Monk', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: "Firebending X, where X is this creature's power." }),
+  makeCard({ name: 'Sanity Lite', type_line: 'Enchantment — Aura Curse', mana_cost: '{0}', oracle_text: 'Enchant player\nAt the beginning of each end step, enchanted player mills X cards, where X is the number of cards put into their graveyard from anywhere this turn.' }),
+  makeCard({ name: 'Sculptor Lite', type_line: 'Legendary Planeswalker — Jace', mana_cost: '{0}', loyalty: '3', oracle_text: "+2: Look at the top card of target player's library. You may put that card on the bottom of that player's library.\n−12: Exile all cards from target player's library, then that player shuffles their hand into their library." }),
+  makeCard({ name: 'Deadly Tempest Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Destroy all creatures. Each player loses life equal to the number of creatures they controlled that were destroyed this way.' }),
+  makeCard({ name: 'Avenger Lite', type_line: 'Creature — Spirit', mana_cost: '{0}', power: '2', toughness: '4', oracle_text: 'Mobilize X, where X is the number of creature cards in your graveyard.' }),
+  makeCard({ name: 'Pariah Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nAll damage that would be dealt to you is dealt to enchanted creature instead.' }),
+  makeCard({ name: 'Palisade Lite', type_line: 'Creature — Giant Soldier', mana_cost: '{0}', power: '2', toughness: '7', oracle_text: 'All damage that would be dealt to you and other permanents you control is dealt to this creature instead.' }),
+  makeCard({ name: 'Bodyguard Lite', type_line: 'Creature — Human', mana_cost: '{0}', power: '2', toughness: '5', oracle_text: 'As long as this creature is untapped, all damage that would be dealt to you by unblocked creatures is dealt to this creature instead.' }),
+  makeCard({ name: 'Karazikar Lite', type_line: 'Legendary Creature — Beholder', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'Whenever an opponent attacks another one of your opponents, you and the attacking player each draw a card and lose 1 life.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -7082,6 +7095,140 @@ describe('Sieges', () => {
     g = settle(act(g, { type: 'cast', player: 'alice', object: zero }));
     expect(g.objects[zero]!.zone).toBe('exile');
     illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Zero Instant', 'graveyard') });
+  });
+
+  it('Zhulodok: a colorless spell of mana value 7 or more from the hand cascades twice', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Zhulodok Lite', 'battlefield');
+    const lib = g.zones.library.alice!;
+    const top = ['Trinket', 'Trinket'].map((n) => give(g, 'alice', n, 'library'));
+    for (const id of top) lib.splice(lib.indexOf(id), 1);
+    lib.unshift(...top);
+    g.players.alice!.pool.C = 7;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Seven Relic', 'hand') });
+    expect(g.stack.filter((e) => e.kind === 'ability')).toHaveLength(2);
+    g = settle(g);
+    g = drive(g, (g) => (g.pending!.kind === 'cast_free' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'cast_free', cast: true } }) : null), 20);
+    expect(top.map((id) => g.objects[id]!.zone)).toEqual(['battlefield', 'battlefield']);
+  });
+
+  it('Derevi: put onto the battlefield from the command zone by an ability (not cast)', () => {
+    const deck = [...Array.from({ length: 40 }, () => 'Swamp'), 'Derevi Lite'];
+    let g = toStep(start({ format: 'commander', extra: CARDS, decks: { alice: deck, bob: deck }, commanders: { alice: ['Derevi Lite'] } }), 'main1', 'alice');
+    const derevi = g.zones.command.find((id) => g.objects[id]!.commander)!;
+    g.players.alice!.pool.B = 1;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: derevi, ability: 0 }));
+    expect(g.objects[derevi]!.zone).toBe('battlefield');
+    expect(g.commanderCasts[derevi] ?? 0).toBe(0);
+    // On the battlefield the ability does nothing to activate.
+    illegal(g, { type: 'activate', player: 'alice', object: derevi, ability: 0 });
+  });
+
+  it("Infantry Shield and Firebending Student: mobilize X and firebending X, X the creature's power", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'alice', 'Bear', 'battlefield');
+    const shield = give(g, 'alice', 'Infantry Lite', 'battlefield');
+    g.objects[shield]!.attachedTo = { id: bear, zcc: g.objects[bear]!.zcc };
+    const monk = give(g, 'alice', 'Firebender Lite', 'battlefield');
+    g = attackWith(g, [bear, monk]);
+    g = drive(g, () => null);
+    const warriors = g.zones.battlefield.filter((id) => g.objects[id]!.token && /Warrior Token/.test(g.objects[id]!.card));
+    expect(warriors.length).toBe(2);
+    expect(warriors.every((id) => Boolean(g.combat?.attackers[id]))).toBe(true);
+    expect(g.players.alice!.restricted?.filter((r) => r.color === 'R' && r.keep === 'end_of_combat')).toHaveLength(3);
+  });
+
+  it('Fraying Sanity: mills as many as were put into their graveyard this turn (cards, not tokens)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const curse = give(g, 'alice', 'Sanity Lite', 'battlefield');
+    g.objects[curse]!.attachedToPlayer = 'bob';
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: bear }]] }));
+    expect(g.zones.graveyard.bob).toEqual([bear]);
+    const lib = g.zones.library.bob!.length;
+    g = toStep(g, 'end', 'alice');
+    g = drive(g, () => null);
+    expect(g.zones.library.bob!.length).toBe(lib - 1);
+    expect(g.zones.graveyard.bob!.length).toBe(2);
+  });
+
+  it("Jace, the Mind Sculptor: you decide whether their top card goes to the bottom; −12 exiles their library", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const jace = give(g, 'alice', 'Sculptor Lite', 'battlefield');
+    g.objects[jace]!.counters.loyalty = 3;
+    const top = g.zones.library.bob![0]!;
+    g = settle(act(g, { type: 'activate', player: 'alice', object: jace, ability: 0, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.pending).toMatchObject({ kind: 'choose_objects', player: 'alice', candidates: [top] });
+    g = settle(act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [] } }));
+    expect(g.zones.library.bob!.at(-1)).toBe(top);
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const j2 = give(h, 'alice', 'Sculptor Lite', 'battlefield');
+    h.objects[j2]!.counters.loyalty = 12;
+    const hand = h.zones.hand.bob!.length;
+    h = settle(act(h, { type: 'activate', player: 'alice', object: j2, ability: 1, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(h.zones.library.bob!.length).toBe(hand);
+    expect(h.zones.hand.bob!.length).toBe(0);
+  });
+
+  it("Deadly Tempest: each player loses life for their own creatures destroyed; Avenger of the Fallen's mobilize X", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Bear', 'battlefield');
+    give(g, 'alice', 'Bear', 'battlefield');
+    give(g, 'bob', 'Bear', 'battlefield');
+    const [a, b] = [g.players.alice!.life, g.players.bob!.life];
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Deadly Tempest Lite', 'hand') }));
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([a - 2, b - 1]);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const avenger = give(h, 'alice', 'Avenger Lite', 'battlefield');
+    for (let i = 0; i < 3; i++) give(h, 'alice', 'Bear', 'graveyard');
+    h = attackWith(h, [avenger]);
+    h = drive(h, () => null);
+    expect(h.zones.battlefield.filter((id) => /Warrior Token/.test(h.objects[id]!.card))).toHaveLength(3);
+  });
+
+  it('Damage redirection: Pariah, Palisade Giant, Veteran Bodyguard (CR 614.1b)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const pariah = give(g, 'alice', 'Pariah Lite', 'battlefield');
+    g.objects[pariah]!.attachedTo = { id: bear, zcc: g.objects[bear]!.zcc };
+    const life = g.players.alice!.life;
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = settle(act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(g.players.alice!.life).toBe(life);
+    expect(g.objects[bear]!.zone).toBe('graveyard');
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const giant = give(h, 'alice', 'Palisade Lite', 'battlefield');
+    const mine = give(h, 'alice', 'Bear', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: mine }]] }));
+    expect(h.objects[mine]!.damage).toBe(0);
+    expect(h.objects[giant]!.damage).toBe(3);
+    // Not itself: Bolting the Giant damages it.
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'object', object: giant }]] }));
+    expect(h.objects[giant]!.damage).toBe(6);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const guard = give(k, 'alice', 'Bodyguard Lite', 'battlefield');
+    const attacker = give(k, 'bob', 'Bear', 'battlefield');
+    const al = k.players.alice!.life;
+    k = toAttack(toStep(k, 'beginning_of_combat', 'bob'));
+    k = act(k, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker, target: { kind: 'player', player: 'alice' } }] } });
+    k = toStep(k, 'end_of_combat', 'bob');
+    expect(k.players.alice!.life).toBe(al);
+    expect(k.objects[guard]!.damage).toBe(2);
+  });
+
+  it('Karazikar: an opponent attacking another opponent — you and they each draw and lose 1 life', () => {
+    let g = toStep(start({ extra: CARDS, players: 3 }), 'main1', 'bob');
+    give(g, 'alice', 'Karazikar Lite', 'battlefield');
+    const bear = give(g, 'bob', 'Bear', 'battlefield');
+    const [ah, bh, al, bl] = [g.zones.hand.alice!.length, g.zones.hand.bob!.length, g.players.alice!.life, g.players.bob!.life];
+    g = toAttack(toStep(g, 'beginning_of_combat', 'bob'));
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: bear, target: { kind: 'player', player: 'carol' } }] } });
+    g = drive(g, () => null);
+    expect([g.zones.hand.alice!.length, g.zones.hand.bob!.length]).toEqual([ah + 1, bh + 1]);
+    expect([g.players.alice!.life, g.players.bob!.life]).toEqual([al - 1, bl - 1]);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

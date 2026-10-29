@@ -175,12 +175,13 @@ describe('activated abilities (CR 602)', () => {
     const jace = give(g, 'alice', 'Jace, the Mind Sculptor', 'battlefield');
     g.objects[jace]!.counters.loyalty = 3;
     const bears = give(g, 'bob', 'Grizzly Bears', 'battlefield');
-    // "−1: Return target creature to its owner's hand." (after "0: Draw three cards, then put two …")
-    g = act(g, { type: 'activate', player: 'alice', object: jace, ability: 1, targets: [[obj(bears)]] });
+    // "−1: Return target creature to its owner's hand." (after "+2: Look at the top card of target player's library …" and
+    // "0: Draw three cards, then put two …")
+    g = act(g, { type: 'activate', player: 'alice', object: jace, ability: 2, targets: [[obj(bears)]] });
     expect(g.objects[jace]!.counters.loyalty).toBe(2);
     g = passRound(g);
     expect(g.objects[bears]!.zone).toBe('hand');
-    expect(illegal(g, { type: 'activate', player: 'alice', object: jace, ability: 0, targets: [[]] })).toMatch(/already activated/);
+    expect(illegal(g, { type: 'activate', player: 'alice', object: jace, ability: 1, targets: [[]] })).toMatch(/already activated/);
   });
 });
 

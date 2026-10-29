@@ -307,7 +307,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -514,6 +514,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return (g.turnLog.discarded ?? []).filter((d) => d.player === ctx.controller).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === ctx.controller).length;
     }
     case 'drawn_this_turn':
+      // Heliod, the Radiant Dawn: "each card your opponents have drawn this turn" — all of theirs.
+      if (e.who === 'opponents') return livePlayers(g).filter((p) => p !== ctx.controller).reduce((n, p) => n + (g.turnLog.drawn?.[p] ?? 0), 0);
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
     case 'tokens_created_this_turn':
       return g.turnLog.tokensCreated?.[ctx.controller] ?? 0;
@@ -536,6 +538,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     }
     case 'excess_this_way':
       return ctx.resolution?.excess ?? 0;
+    case 'to_graveyard_this_turn': {
+      // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (a token isn't a card).
+      const [p] = refPlayers(ctx, e.player as Ref);
+      return p ? (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && r.owner === p).length : 0;
+    }
     case 'died_this_turn':
       // "for each creature that died this turn" — creatures by default, as they last existed (CR 700.4).
       return (g.turnLog.died ?? []).filter(
@@ -762,7 +769,7 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
 }
 
 /** "for each creature destroyed this way": what this resolution's destroy / exile / sacrifice / mill effects moved. */
-export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean; yours?: boolean }): NonNullable<Resolution['moves']> {
+export function movedThisWay(ctx: EffectContext, e: { how: string; types?: string[]; notTypes?: string[]; token?: boolean; subtypes?: string[]; other?: boolean; yours?: boolean; controlledBy?: Ref }): NonNullable<Resolution['moves']> {
   const how = e.how;
   // Thallid Omnivore: "Sacrifice another creature: … If a Saproling was sacrificed this way, …" — what the cost sacrificed.
   const paid = how === 'sacrificed' ? (ctx.resolution?.entry.costLKI?.sacrificed ?? []) : [];
@@ -770,6 +777,8 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
   return [...fromCost, ...(ctx.resolution?.moves ?? [])].filter((m) => {
     // Rise of the Witch-king: "If you sacrificed a creature this way" — only what this player sacrificed.
     if (e.yours && m.controller !== ctx.controller) return false;
+    // Deadly Tempest: "the number of creatures they controlled that were destroyed this way" — each player's own.
+    if (e.controlledBy && !refPlayers(ctx, e.controlledBy).includes(m.controller)) return false;
     const right =
       how === 'destroyed'
         ? m.effect === 'destroy' && m.from === 'battlefield'

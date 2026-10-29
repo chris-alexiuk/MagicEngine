@@ -1,5 +1,5 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, EffectNode, ObjectFilter, StaticAbility, StaticPreventionNode } from '@mtg/schema';
+import type { AttackTaxNode, EffectNode, ObjectFilter, RedirectDamageNode, StaticAbility, StaticPreventionNode } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
 import { planAutoTap } from './autotap.js';
@@ -918,6 +918,11 @@ export function damageBeforeExcess(g: GameState, source: GameObject, o: GameObje
   return caps.length ? Math.min(...caps) : Infinity;
 }
 
+/** Whether any permanent has a damage redirection (most games: none). */
+function hasRedirects(g: GameState): boolean {
+  return g.zones.battlefield.some((id) => objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'redirect_damage'));
+}
+
 /** CR 615.12: a static ability saying damage (or combat damage) can't be prevented. */
 function staticUnpreventable(g: GameState, combat: boolean, source: GameObject): boolean {
   for (const id of g.zones.battlefield) {
@@ -932,6 +937,45 @@ function staticUnpreventable(g: GameState, combat: boolean, source: GameObject):
   return false;
 }
 
+/**
+ * CR 614.1b: "All damage that would be dealt to you is dealt to enchanted creature instead." — where the damage goes, each
+ * redirection applying at most once (CR 614.5); none if the new recipient isn't there to be dealt damage.
+ */
+function redirectDamage(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): DamageRecipient {
+  const used = new Set<string>();
+  const same = (a: DamageRecipient, b: DamageRecipient) => (a.kind === 'player' ? b.kind === 'player' && a.player === b.player : b.kind === 'permanent' && a.object === b.object);
+  for (let guard = 0; guard < 8; guard++) {
+    let next: DamageRecipient | null = null;
+    for (const id of g.zones.battlefield) {
+      const holder = g.objects[id]!;
+      objectAbilities(g, holder).forEach((a, i) => {
+        if (next || a.kind !== 'static' || a.effect.type !== 'redirect_damage' || used.has(`${id}:${i}`)) return;
+        const e = a.effect as RedirectDamageNode;
+        if (e.combat && !combat) return;
+        if (e.unblocked && !(combat && g.combat?.attackers[source.id] && !g.combat.attackers[source.id]!.blocked)) return;
+        if (!staticConditionHolds(g, e, holder)) return;
+        const attached = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? g.objects[holder.attachedTo.id] : undefined;
+        const hit =
+          (e.fromYou && to.kind === 'player' && to.player === holder.controller) ||
+          (e.fromAttached && to.kind === 'permanent' && attached?.id === to.object) ||
+          (e.fromObjects && to.kind === 'permanent' && g.objects[to.object] && matchesFilter(g, g.objects[to.object]!, e.fromObjects, { controller: holder.controller, source: holder }));
+        if (!hit) return;
+        const there = e.to === 'self' ? holder : attached;
+        if (!there || there.zone !== 'battlefield') return;
+        const candidate: DamageRecipient = e.to === 'attached_controller' ? { kind: 'player', player: there.controller } : { kind: 'permanent', object: there.id };
+        if (candidate.kind === 'permanent' && !['Creature', 'Planeswalker', 'Battle'].some((t) => hasType(g, there, t))) return;
+        if (same(candidate, to)) return;
+        used.add(`${id}:${i}`);
+        next = candidate;
+      });
+      if (next) break;
+    }
+    if (!next) return to;
+    to = next;
+  }
+  return to;
+}
+
 export function dealDamage(
   g: GameState,
   source: GameObject,
@@ -940,6 +984,8 @@ export function dealDamage(
   combat: boolean,
   events: GameEvent[],
 ): number {
+  // CR 614.1b: Pariah — dealt to another permanent or player instead.
+  if (amount > 0 && hasRedirects(g)) to = redirectDamage(g, source, to, combat);
   // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
   amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).

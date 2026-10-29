@@ -20,6 +20,7 @@ import type {
   ObjectFilter,
   PlayerRule,
   PlayerRuleNode,
+  RedirectDamageNode,
   EffectNode,
   ModeChoice,
   Program,
@@ -1167,6 +1168,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.named['that attacking player'] = { ref: 'trigger_player' };
     return { trigger: { type: 'you_attack', anyone: true, atOpponents: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
+  // Karazikar, the Eye Tyrant: "Whenever an opponent attacks another one of your opponents" — creatures attacking them.
+  if (t === 'an opponent attacks another one of your opponents') {
+    b.named['the attacking player'] = b.named['that attacking player'] = { ref: 'trigger_player' };
+    return { trigger: { type: 'you_attack', anyone: true, other: true, atOpponents: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+  }
   const playerAttacks = /^(a|another) player attacks(?: with (\w+) or more creatures)?$/.exec(t);
   if (playerAttacks) {
     const min = playerAttacks[2] ? NUMBER_WORDS[playerAttacks[2]!] : 1;
@@ -2199,7 +2205,7 @@ export const triggeredRule: GrammarRule = {
         effectText = effectText.replace(/^\w/, (c) => c.toUpperCase());
         const program = parseProgram(effectText, b);
         // A triggered ability doesn't work from the hand ("put ~ from your hand onto the battlefield" is unread).
-        if (b.selfZone === 'hand') return null;
+        if (b.selfZone === 'hand' || b.selfZone === 'command') return null;
         if (program && doOnce) {
           const first = program.effects?.[0];
           if (program.effects?.length !== 1 || first?.type !== 'may') return null;
@@ -2382,7 +2388,7 @@ export const continuousRule: GrammarRule = {
     // Arixmethes: "As long as Arixmethes has a slumber counter on it, it's a land."
     if (conds.length) rest = rest.replace(/^it's /, 'it is ');
     const effect: ContinuousEffectNode | PlayerRuleNode | CastProhibitionNode | AttackTaxNode | EffectNode | null =
-      parseCantEnter(rest, b) ?? parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b) ?? parseLoyaltyAnyTime(rest);
+      parseCantEnter(rest, b) ?? parseContinuous(rest, b) ?? parsePlayerRule(rest) ?? parseFlashFor(rest, b) ?? parseAnyColor(rest, b) ?? parseCastProhibition(rest, b) ?? parseAttackTax(rest, b) ?? parseOthersEnterTapped(rest, b) ?? parseLoyaltyAnyTime(rest) ?? parseRedirect(rest, b);
     if (!effect) return null;
     // Off the battlefield, continuous effects reach only keyword grants (Lier's flashback, Jo Grant's cycling) and the
     // spells on the stack; Yixlid Jailer's "Cards in graveyards lose all abilities" isn't applied there.
@@ -2405,6 +2411,28 @@ export const continuousRule: GrammarRule = {
     return node;
   },
 };
+
+/**
+ * CR 614.1b: "All damage that would be dealt to you is dealt to enchanted creature instead." (Pariah); Palisade Giant: "… to
+ * you and other permanents you control is dealt to this creature instead"; Treacherous Link: "All damage that would be dealt
+ * to enchanted creature is dealt to its controller instead"; Veteran Bodyguard: "… to you by unblocked creatures …".
+ */
+function parseRedirect(body: string, b: Binder): RedirectDamageNode | null {
+  const m = /^[Aa]ll (combat )?damage that would be dealt to (you|you and other permanents you control|you and permanents you control|enchanted creature|equipped creature)( by unblocked creatures)? is dealt to (enchanted creature|equipped creature|~|its controller) instead$/.exec(body);
+  if (!m) return null;
+  const attachment = /\b(?:Aura|Equipment)\b/.test(b.env.typeLine);
+  const toAttached = m[4] === 'enchanted creature' || m[4] === 'equipped creature';
+  if ((toAttached || m[4] === 'its controller' || /^(?:enchanted|equipped)/.test(m[2]!)) && !attachment) return null;
+  if (m[4] === 'its controller' && !/^(?:enchanted|equipped)/.test(m[2]!)) return null;
+  if (m[4] === '~' && !/\bCreature\b/.test(b.env.typeLine)) return null;
+  const node: RedirectDamageNode = { type: 'redirect_damage', to: m[4] === '~' ? 'self' : toAttached ? 'attached' : 'attached_controller' };
+  if (/^you\b/.test(m[2]!)) node.fromYou = true;
+  if (/permanents you control$/.test(m[2]!)) node.fromObjects = { controller: 'you', ...(/other permanents/.test(m[2]!) ? { other: true } : {}) };
+  if (/^(?:enchanted|equipped) creature$/.test(m[2]!)) node.fromAttached = true;
+  if (m[1]) node.combat = true;
+  if (m[3]) node.unblocked = true;
+  return node;
+}
 
 /** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
 /** CR 614.1d: "Creatures your opponents control enter tapped.", "Artifacts and creatures your opponents control enter tapped." */
@@ -2489,6 +2517,9 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
 function parseCastProhibition(body: string, b: Binder): CastProhibitionNode | null {
   // After a condition ("During your turn, your opponents can't …") the subject starts lower-case.
   body = body.replace(/^\w/, (c) => c.toUpperCase());
+  // Ethersworn Canonist: "Each player who has cast a nonartifact spell this turn can't cast additional nonartifact spells." —
+  // the spells cast this turn count, before it entered too.
+  body = body.replace(/^Each player who has cast (?:a|an) (\w+) spell this turn can't cast additional \1 spells$/, "Each player can't cast more than one $1 spell each turn");
   // Gaddock Teeg: "Noncreature spells with mana value 4 or greater can't be cast."
   const passive = /^(Spells .+|.+ spells|[A-Z]\w* spells with .+) can't be cast$/.exec(body);
   if (passive) {

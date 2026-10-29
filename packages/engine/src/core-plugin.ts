@@ -1446,6 +1446,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const looked = (memo.looked ??= library.slice(0, amountOf(ctx, node.amount))).filter((id) => g.objects[id]?.zone === 'library');
     if (!looked.length) return done();
     const take = amountOf(ctx, node.take ?? 1);
+    // Jace, the Mind Sculptor: "Look at the top card of target player's library. You may put that card on the bottom …" — you
+    // decide, about their library.
+    const chooser = node.chooser === 'you' ? ctx.controller : who;
     const answer = answerOf(ctx, 'choose_objects');
     if (!memo.chosen) {
       const filter = node.filter ? liveFilter(ctx, { ...(node.filter as ObjectFilter), zone: 'library' as const }) : null;
@@ -1469,7 +1472,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         memo.chosen = candidates.slice(0, max);
       } else {
         const kinds = each ? Object.fromEntries(candidates.map((id) => [id, each.flatMap((_, i) => (fits(id, i) ? [i] : []))])) : undefined;
-        return { ask: { kind: 'choose_objects', player: who, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards${total ? ` with total mana value ${total.max} or less` : ''}.`, seen: looked, ...(total ? { totalMV: total } : {}), ...(kinds ? { kinds } : {}) } };
+        const keepTop = String(node.to) === 'top' && node.rest === 'bottom';
+        return { ask: { kind: 'choose_objects', player: chooser, candidates, min, max, text: keepTop ? `Choose the cards to leave on top (the rest go on the bottom).` : `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards${total ? ` with total mana value ${total.max} or less` : ''}.`, seen: looked, ...(total ? { totalMV: total } : {}), ...(kinds ? { kinds } : {}) } };
       }
       // The chosen cards go where the text says.
       const chosen = memo.chosen;
@@ -5812,7 +5816,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

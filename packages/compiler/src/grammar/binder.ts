@@ -36,7 +36,7 @@ export class Binder {
   /** Other phrases with a fixed meaning in this ability ("the blocking creature"). */
   named: Record<string, Ref> = {};
   /** Set when the text moves this object out of a zone ("return ~ from your graveyard"): the ability works there (CR 113.6m). */
-  selfZone: 'graveyard' | 'hand' | null = null;
+  selfZone: 'graveyard' | 'hand' | 'command' | null = null;
   /** "it" is this object even though it has left the battlefield ("When ~ dies, it deals damage …"). */
   itIsSource = false;
   /** "Whenever a Dragon you control enters, it deals …": "it" is a permanent on the battlefield that can be a source. */

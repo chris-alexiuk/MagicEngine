@@ -1,9 +1,10 @@
 import { parseEffectText } from './grammar/effects.js';
-import type { AbilityNode, CastOptionNode, ConditionNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
+import type { AbilityNode, CastOptionNode, ConditionNode, EffectNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
 import { parseCondition } from './grammar/conditions.js';
+import { parseCount } from './grammar/amounts.js';
 import { parseCost } from './grammar/lines.js';
 import { capitalise, subtypeOf, TYPE_NOUNS } from './grammar/words.js';
 import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
@@ -358,10 +359,14 @@ export class ParserRegistry {
       // 613.1f), so the cast trigger is there as it's cast (CR 702.85a).
       // Imoti, Celebrant of Bounty: "Spells you cast with mana value 6 or greater have cascade."
       // Wildsear, Scouring Maw: "Enchantment spells you cast from your hand have cascade."
-      const fromHand = / from your hand have (?:cascade|storm)\.$/.test(line) ? line.replace(/ from your hand have /, ' have ') : line;
+      // Zhulodok, Void Gorger: "Colorless spells you cast from your hand with mana value 7 or greater have "Cascade, cascade."" —
+      // two instances (each triggers, CR 702.85c).
+      const twice = / have "Cascade, cascade\."$/.test(line);
+      const grantLine = twice ? line.replace(/ have "Cascade, cascade\."$/, ' have cascade.') : line;
+      const fromHand = / from your hand (?:with mana value \d+ or greater )?have (?:cascade|storm)\.$/.test(grantLine) ? grantLine.replace(/ from your hand (?=(?:with mana value \d+ or greater )?have )/, ' ') : grantLine;
       // The First Sliver: "Sliver spells you cast have cascade." — a card type or a subtype.
       const kind = /^([A-Z][a-z]+) spells you cast (?:have|with)/.exec(fromHand)?.[1];
-      const kindFilter = kind ? parseFilter(`${['Enchantment', 'Artifact', 'Creature', 'Instant', 'Sorcery', 'Planeswalker'].includes(kind) ? kind.toLowerCase() : kind} spells`, new Binder(env as GrammarEnv)) : null;
+      const kindFilter = kind ? parseFilter(`${['Enchantment', 'Artifact', 'Creature', 'Instant', 'Sorcery', 'Planeswalker', 'Colorless'].includes(kind) ? kind.toLowerCase() : kind} spells`, new Binder(env as GrammarEnv)) : null;
       // Thrumming Stone: "Spells you cast have ripple 4."
       const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm|ripple \d+)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
       if (spellGrant) {
@@ -370,8 +375,9 @@ export class ParserRegistry {
           const abilities = this.expandKeyword(kws[0]!, env);
           if (abilities) kws[0]!.abilities = abilities;
         }
-        if (kws?.length === 1 && keywordSupported(kws[0]!)) {
-          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kindFilter ? (({ zone: _z, ...f }) => f)(kindFilter.filter) : {}), ...(fromHand !== line ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
+        if (kws?.length === 1 && keywordSupported(kws[0]!) && (!kind || kindFilter)) {
+          if (twice) kws.push(structuredClone(kws[0]!));
+          const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kindFilter ? (({ zone: _z, ...f }) => f)(kindFilter.filter) : {}), ...(fromHand !== grantLine ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
           result.abilities.push({ kind: 'static', text: line, effect: { type: 'continuous', affected: { ref: 'all', filter }, keywords: kws } } as AbilityNode);
         } else result.unparsed.push(line);
         continue;
@@ -401,6 +407,42 @@ export class ParserRegistry {
       // those subtypes in every zone).
       if (/^(?:This land|~) is every nonbasic land type\.$/.test(line) && /\bLand\b/.test(ctx.typeLine)) {
         result.extraSubtypes = SUBTYPES.land.filter((t) => !['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'].includes(t));
+        continue;
+      }
+      // Firebending Student: "Firebending X, where X is this creature's power." (CR 702.189a, with X counted as it attacks)
+      if (/^Firebending X, where X is (?:this creature's|~'s) power\.$/.test(line)) {
+        result.keywords.push({
+          id: 'firebending',
+          abilities: [{ kind: 'triggered', text: line, trigger: { type: 'attacks', subject: { ref: 'self' } }, effects: [{ type: 'add_mana', options: [['R']], times: { kind: 'stat', stat: 'power', of: { ref: 'self' } }, keep: 'end_of_combat' }] }],
+        } as KeywordInstance);
+        continue;
+      }
+      // Avenger of the Fallen: "Mobilize X, where X is the number of creature cards in your graveyard." (counted as it attacks)
+      const ownMobilizeX = /^Mobilize X, where X is (.+)\.$/.exec(line);
+      if (ownMobilizeX) {
+        const kw = this.keywords.parseLine('Mobilize 1');
+        const abilities = kw?.length === 1 ? this.expandKeyword(kw[0]!, env) : null;
+        const n = parseCount(ownMobilizeX[1]!, new Binder(env as GrammarEnv));
+        const make = abilities?.[0]?.kind === 'triggered' ? (abilities[0] as { effects: EffectNode[] }).effects.find((e) => e.type === 'create_token') : undefined;
+        if (kw?.length === 1 && make && n) {
+          make.amount = n;
+          delete kw[0]!.n;
+          kw[0]!.abilities = abilities!;
+          result.keywords.push(kw[0]!);
+        } else result.unparsed.push(line);
+        continue;
+      }
+      // Infantry Shield: "Equipped creature has menace and mobilize X, where X is its power." — the creature's power as it attacks.
+      const mobilizeX = /^((?:Equipped|Enchanted) creature has (?:[a-z ]+ and )?)mobilize X, where X is its power\.$/.exec(line);
+      if (mobilizeX) {
+        const node = this.parseBlock([`${mobilizeX[1]}mobilize 1.`], env, line);
+        const kw = node?.kind === 'static' && node.effect.type === 'continuous' ? ((node.effect as { keywords?: KeywordInstance[] }).keywords ?? []).find((k) => k.id === 'mobilize') : undefined;
+        const make = kw?.abilities?.[0]?.kind === 'triggered' ? (kw.abilities[0] as { effects: EffectNode[] }).effects.find((e) => e.type === 'create_token') : undefined;
+        if (node && kw && make) {
+          make.amount = { kind: 'stat', stat: 'power', of: { ref: 'self' } };
+          delete kw.n;
+          result.abilities.push(node);
+        } else result.unparsed.push(line);
         continue;
       }
       if (annihilatorX && selfName(annihilatorX[1]!)) {
@@ -1055,6 +1097,8 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   }
   // "this creature", "this Aura", "this Equipment" (the subtype words are capitalised).
   out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'gi'), '~');
+  // Blood for the Blood God!: "… Exile Blood for the Blood God!" — the name's "!" ended the sentence.
+  if (/~$/.test(out) && [...names].some((n) => n.endsWith('!'))) out += '.';
   return out;
 }
 
