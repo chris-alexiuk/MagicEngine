@@ -93,7 +93,7 @@ export interface TurnLog {
   /** Port Razer: the players each creature (as this object) attacked this turn. */
   attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
-  discarded?: { id: ObjectId; zcc: number }[];
+  discarded?: { id: ObjectId; zcc: number; player?: PlayerId }[];
   /** Players who activated a loyalty ability this turn (The Chain Veil). */
   loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
@@ -221,7 +221,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         break;
       case 'discarded': {
         const o = g.objects[e.object];
-        if (o) (log.discarded ??= []).push({ id: o.id, zcc: o.zcc });
+        if (o) (log.discarded ??= []).push({ id: o.id, zcc: o.zcc, player: e.player });
         break;
       }
       case 'cast': {

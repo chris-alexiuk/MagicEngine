@@ -186,10 +186,21 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Reject Imperfection: "If that spell's mana value was 3 or less"; Serum Snare: "If that permanent had mana value 3 or
   // less" — the target, wherever it is now.
-  const targetMV = /^(?:that (?:spell|permanent|creature|card)'s mana value was|that (?:spell|permanent|creature|card) had mana value|it had mana value) (\d+) or (less|greater)$/.exec(t);
+  // Fading Hope: "If its mana value was 3 or less".
+  const targetMV = /^(?:that (?:spell|permanent|creature|card)'s mana value was|that (?:spell|permanent|creature|card) had mana value|it had mana value|its mana value was) (\d+) or (less|greater)$/.exec(t);
   if (targetMV && b.it?.ref === 'target') return { type: 'amount', amount: { kind: 'stat', stat: 'mana_value', of: b.it }, op: targetMV[2] === 'less' ? 'le' : 'ge', n: Number(targetMV[1]) };
   // Glorious Gale: "Counter target creature spell. If it was a legendary spell, the Ring tempts you."
   if (/^(?:it|that spell) was a legendary spell$/.test(t) && b.it?.ref === 'target') return { type: 'is', of: b.it, filter: { supertypes: ['Legendary'] } };
+  // Avatar of Woe: "if there are ten or more creature cards total in all graveyards".
+  const allGy = /^there are (\w+) or more (.+?) cards (?:total )?in all graveyards$/.exec(t);
+  if (allGy) {
+    const n = parseAmount(allGy[1]!);
+    const pf = typeof n === 'number' ? parseFilter(`${allGy[2]} cards in all graveyards`, b.clone()) : null;
+    if (pf && typeof n === 'number') {
+      const { zone: _z, ...filter } = pf.filter;
+      return { type: 'amount', amount: { kind: 'cards', zone: 'graveyard', who: 'each', filter }, op: 'ge', n };
+    }
+  }
   // Ringwraiths: "If that creature is legendary, its controller loses 3 life." — the target, now.
   if (/^(?:that creature|it) is legendary$/.test(t)) {
     const of = b.named['that creature'] ?? (b.it && b.it.ref !== 'self' ? b.it : null);
@@ -314,7 +325,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Addendum: "If you cast this spell during your main phase" (a copy wasn't cast, CR 707.10).
   if (/^you cast (?:~|this spell) during your main phase$/.test(t)) return { type: 'cast_in_main_phase' };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
-  if (/^(?:it|~) was kicked$/.test(t)) return { type: 'kicked' };
+  if (/^(?:it|~|he|she) was kicked$/.test(t)) return { type: 'kicked' };
   // Sevinne's Reclamation: "If this spell was cast from a graveyard"; "if this spell was cast from your hand" (a copy wasn't
   // cast, CR 707.10).
   // Anti-Venom: "When Anti-Venom enters, if he was cast" — by anyone (CR 601.2: it was a spell before it entered).

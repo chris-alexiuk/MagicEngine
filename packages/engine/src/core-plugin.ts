@@ -1114,6 +1114,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (done.includes(p)) continue;
       const hand = zoneList(ctx.g, 'hand', p);
       if (hand.length <= n) {
+        // Aclazotz: "For each opponent who can't, …" — what each discarded, even with no choice to make.
+        if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + hand.length;
         for (const id of [...hand]) discardRecorded(ctx, id);
         done.push(p);
         continue;

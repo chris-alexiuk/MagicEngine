@@ -174,6 +174,8 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   if (spec.player === 'you' && player !== controller) return false;
   // The Lord of Pain: "choose another target player" — not the player who cast that spell.
   if (spec.notTriggerPlayer && triggerInfo?.player === player) return false;
+  // Needle Drop: "any target that was dealt damage this turn".
+  if (spec.damagedThisTurn && !((g.turnLog.damageTaken?.[player] ?? 0) > 0)) return false;
   // CR 702.11c: a player with hexproof can't be the target of spells or abilities their opponents control;
   // CR 702.18: with shroud, of any spell or ability.
   if (playerRule(g, player, 'shroud')) return false;

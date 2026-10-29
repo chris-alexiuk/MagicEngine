@@ -294,6 +294,8 @@ export interface TargetSpec {
   player?: 'opponent' | 'you';
   /** The Lord of Pain: "Whenever a player casts …, choose another target player" — not the player the trigger is about. */
   notTriggerPlayer?: true;
+  /** Needle Drop: "any target that was dealt damage this turn" — a player too. */
+  damagedThisTurn?: true;
   /** How many; 1 unless stated. */
   count?: number;
   /** "Exile X target creatures": as many as the X announced (CR 601.2b–c). `count` is then ignored. */
@@ -541,7 +543,7 @@ export type Ref =
   /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
   /** `except`: Kediss's "each other opponent" — not the player the trigger was about. */
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
-  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref }
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref; discardedNone?: true }
   | { ref: 'controller_of'; of: Ref }
   /** Blightning, Bonfire of the Damned: "that player or that planeswalker's controller" — a target player, or the controller of a
    * target permanent. */
@@ -653,6 +655,8 @@ export type AmountExpr = (
   /** Hit the Mother Lode: N minus the discovered card's mana value (0 if none, or if it's N or more). */
   | { kind: 'discover_shortfall'; n: number }
   | { kind: 'source_damage_this_turn' }
+  /** Change of Fortune: "for each card you've discarded this turn". */
+  | { kind: 'discarded_this_turn' }
   | { kind: 'spells_cast_this_turn'; player?: Ref; /** Call Forth the Tempest: their total mana value (`other`: but this spell's). */ totalMv?: true; other?: true; filter?: ObjectFilter }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn' }

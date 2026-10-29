@@ -197,6 +197,8 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
           (ref.who === 'each' || p !== of) &&
           !not.includes(p) &&
           (!ref.lostLife || (g.turnLog.lifeLost?.[p] ?? 0) > 0) &&
+          // Liliana, Waker of the Dead: "Each opponent who can't [discard a card] loses 3 life."
+          (!ref.discardedNone || (ctx.resolution?.discarded?.[p] ?? 0) === 0) &&
           // Thornbow Archer: "each opponent who doesn't control an Elf".
           (!ref.controlsNone || controlledCount(ctx, p, ref.controlsNone as ObjectFilter) === 0),
       );
@@ -291,7 +293,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -458,8 +460,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
       if (e.totalMv) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id && (s.zcc === undefined || s.zcc === ctx.source.zcc))).reduce((n, s) => n + (s.mv ?? 0), 0);
       // Magebane Lizard: "the number of noncreature spells they've cast this turn".
-      if (e.filter) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && g.objects[s.id] && matchesFilter(g, g.objects[s.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
+      if (e.filter) return (g.turnLog.castSpells ?? []).filter((s) => s.player === p && !(e.other && ctx.source && s.id === ctx.source.id) && g.objects[s.id] && matchesFilter(g, g.objects[s.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
       return g.turnLog.spellsCast[p] ?? 0;
+    }
+    // Change of Fortune: "draw a card for each card you've discarded this turn".
+    case 'discarded_this_turn': {
+      // Counting what this resolution just discarded too ("Discard your hand, then draw a card for each …").
+      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
+      return (g.turnLog.discarded ?? []).filter((d) => d.player === ctx.controller).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === ctx.controller).length;
     }
     case 'drawn_this_turn':
       return g.turnLog.drawn?.[ctx.controller] ?? 0;

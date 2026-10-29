@@ -362,6 +362,12 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     const counter = removeFrom[2]?.replace(/−/g, '-');
     return { type: 'remove_counters', amount, filter: pf.filter, ...(counter ? { counter } : {}) };
   }
+  // Glen Elendra Guardian: "Remove a counter from this creature" — any kind, the player's choice (CR 118.3).
+  const removeAny = /^[Rr]emove (a|an|one|two|three) counters? from ~$/.exec(item);
+  if (removeAny) {
+    const amount = parseAmount(removeAny[1]!.replace(/^an$/, 'a'));
+    return typeof amount === 'number' ? { type: 'remove_counters', amount, filter: { isSource: true } } : null;
+  }
   // "Return an Island you control to its owner's hand", "return two Islands you control to their owner's hand"
   const ret = /^[Rr]eturn (a|an|one|two|three) (.+?) you control to (?:its|their) owners?'s? hands?$/.exec(item);
   if (ret && b) {
@@ -2518,7 +2524,11 @@ function parseCantEnter(body: string, b: Binder): EffectNode | null {
 
 /** Teferi, Master of Time: "You may activate loyalty abilities of Teferi on any player's turn any time you could cast an instant." */
 function parseLoyaltyAnyTime(body: string): ContinuousEffectNode | null {
-  return body === "You may activate loyalty abilities of ~ on any player's turn any time you could cast an instant" ? { type: 'continuous', affected: { ref: 'self' }, rules: ['loyalty_instant'] } : null;
+  // The Wandering Emperor: "As long as ~ entered this turn, you may activate her loyalty abilities any time you could cast an
+  // instant." (CR 606.3: an effect may change when.)
+  return body === "You may activate loyalty abilities of ~ on any player's turn any time you could cast an instant" || /^you may activate (?:her|his|its|~'s) loyalty abilities any time you could cast an instant$/i.test(body)
+    ? { type: 'continuous', affected: { ref: 'self' }, rules: ['loyalty_instant'] }
+    : null;
 }
 
 function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
@@ -2697,8 +2707,9 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Layer 7b: "Enchanted creature has base power and toughness 1/1."
   const base = /^(.+?) ha(?:s|ve) base power and toughness (\d+)\/(\d+)$/.exec(body);
   if (base) {
+    // Utter Insignificance: "Enchanted creature loses all abilities and has base power and toughness 1/1." — a list, below.
     const subject = parseObjectRef(base[1]!, b, 'static');
-    return subject ? { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' } : null;
+    if (subject) return { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' };
   }
   // Aettir and Priwen: "Equipped creature has base power and toughness X/X, where X is your life total."; Dollmaker's Shop:
   // "Creatures you control have base power and toughness each equal to the number of creatures you control." (layer 7b)
@@ -3066,6 +3077,9 @@ export const costModifierRule: GrammarRule = {
       const condition = during[3] === 'turn' ? { type: 'your_turn', value: true } : { type: 'step', step: 'end', yours: true };
       return { kind: 'static', text: original, effect: { type: 'cost_modifier', self: true, change: during[2] as 'less' | 'more', ...a, condition } as CostModifierNode };
     }
+    // Avatar of Woe: "If there are ten or more creature cards total in all graveyards, this spell costs {6} less to cast."
+    const leadingIf = /^If ([^,]+), (?:~|this spell) costs (\{[^}]+\}) (less|more) to cast$/.exec(body);
+    if (leadingIf) return costModifierRule.parse(`This spell costs ${leadingIf[2]} ${leadingIf[3]} to cast if ${leadingIf[1]}.`, original, ctx);
     const own = /^(?:~|This spell) costs (\{[^}]+\}) (less|more) to cast(?: for each (.+?)| (?:if|as long as) (.+?)|, where X is (.+?))?$/.exec(body);
     if (own) {
       const a = amountOf(own[1]!);
@@ -3563,6 +3577,8 @@ export const exileInsteadRule: GrammarRule = {
     const env = envOf(ctx);
     if (!env) return null;
     const make = (node: Omit<ExileInsteadNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'exile_instead', ...node } });
+    // Gloomshrieker: "If this creature would die, exile it instead." — this one.
+    if (/^If ~ would die, exile it instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true } });
     const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line) ?? /^If (?:a|an|another) (.+?) would die, instead exile it and you gain (\w+) life\.$/.exec(line);
     if (dies) {
       const pf = parseFilter(dies[1]!, new Binder(env));

@@ -206,6 +206,16 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  if (t === "card you've discarded this turn") return { kind: 'discarded_this_turn' };
+  // Lock and Load: "for each other instant and sorcery spell you've cast this turn" — not this one.
+  const otherCast = /^other (.+?) spell you've cast this turn$/.exec(t);
+  if (otherCast) {
+    const pf = parseFilter(`${otherCast[1]} spell`, b.clone());
+    if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
+      const { zone: _z, ...filter } = pf.filter;
+      return { kind: 'spells_cast_this_turn', filter, other: true };
+    }
+  }
   // Rug of Smothering: "they lose 1 life for each spell they've cast this turn" — the player the trigger is about.
   if (/^spell (?:they've|that player has) cast this turn$/.test(t) && b.player && b.player.ref !== 'players' && b.player.ref !== 'you') return { kind: 'spells_cast_this_turn', player: b.player };
   // Thousand-Year Storm: "for each other instant and sorcery spell you've cast before it this turn"

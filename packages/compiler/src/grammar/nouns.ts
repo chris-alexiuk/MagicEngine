@@ -39,7 +39,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     if (key !== 'manaValue' && !/^the number of /.test(m[3]!)) return false;
     if (/ plus the sacrificed /.test(m[3]!) && m[2] !== 'equal to') return false;
     // "… in your library" is the card's zone: peeled first.
-    if (f[key] || / in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[3]!)) return false;
+    // Ensnaring Bridge: "with power greater than the number of cards in your hand" — a count, not the card's zone.
+    if (f[key] || (/ in (?:your|their|a) (?:library|graveyard|hand)$/.test(m[3]!) && m[3] !== 'the number of cards in your hand')) return false;
     if (m[3] === 'that damage' && !b.eventAmount) return false;
     const n = m[3] === 'that damage' ? ({ kind: 'event' } as const) : parseCount(m[3]!, b);
     if (!n) return false;
@@ -215,7 +216,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     return true;
   }],
   // Hollowhenge Overlord: "each creature you control that's a Wolf or a Werewolf"; "… that are Wolves or Werewolves".
-  [/ (?:that's an? ([A-Z][\w-]*) or an? ([A-Z][\w-]*)|that are ([A-Z][\w-]*) or ([A-Z][\w-]*))$/, (f, m) => {
+  // Skeleton Crew: "Each other creature you control that's a Skeleton or Pirate".
+  [/ (?:that's an? ([A-Z][\w-]*) or (?:an? )?([A-Z][\w-]*)|that are ([A-Z][\w-]*) or ([A-Z][\w-]*))$/, (f, m) => {
     const one = subtypeOf((m[1] ?? m[3])!);
     const two = subtypeOf((m[2] ?? m[4])!);
     return Boolean(one && two && !f.subtypes && ((f.subtypes = [one, two]), true));
@@ -628,7 +630,8 @@ function parseAbilityTarget(t: string, b: Binder): TargetSpec | null {
 
 export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'): ParsedRef | null {
   return attempt(b, (b) => {
-    const t = text.trim();
+    // Pernicious Deed: "each artifact, creature, and enchantment with mana value X or less" — each one of any of those types.
+    const t = text.trim().replace(/^each ((?:(?:artifact|creature|enchantment|land|planeswalker|battle), )+)and (artifact|creature|enchantment|land|planeswalker|battle)\b/, 'each $1or $2');
     if (t === '~') return set(b, { ref: { ref: 'self' }, plural: false, targeted: false });
     // A "this turn" ability's reference to what its creator targeted (see the sentence loop in effects.ts).
     const outer = /^TARGETREF(\d+)$/.exec(t);
@@ -931,6 +934,8 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
       return [ref];
     }
     // Wrathful Red Dragon: "any target that isn't a Dragon".
+    // Needle Drop: "any target that was dealt damage this turn".
+    if (/^any target that was dealt damage this turn$/i.test(t)) return [b.addTarget({ what: 'any', filter: { types: ANY_TARGET_TYPES, damagedThisTurn: true }, damagedThisTurn: true, text: t.toLowerCase() })];
     const notKind = /^any target that isn't an? ([A-Z][a-z]+)$/.exec(t);
     if (notKind && subtypeOf(notKind[1]!) === notKind[1]) return [b.addTarget({ what: 'any', filter: { types: ANY_TARGET_TYPES, notSubtypes: [notKind[1]!] }, text: t.toLowerCase() })];
     const any = /^(?:any (other )?target|(another )?target (creature|player|opponent|planeswalker|battle)(?:,? (?:creature|player|planeswalker|battle))*,? or (creature|player|planeswalker|battle))$/i.exec(t);

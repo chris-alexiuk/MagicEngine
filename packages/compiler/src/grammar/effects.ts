@@ -577,6 +577,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         lastNode.cant = then;
         continue;
       }
+      // Liliana, Waker of the Dead: "Each player discards a card. Each opponent who can't loses 3 life." — those who had no
+      // card to discard.
+      const whoCantLose = /^Each (player|opponent) who can't loses (\d+) life$/.exec(s);
+      if (whoCantLose && lastNode?.type === 'discard' && !lastNode.all && (lastNode.who as { ref?: string } | undefined)?.ref === 'players') {
+        out.push({ type: 'lose_life', amount: Number(whoCantLose[2]), who: { ref: 'players', who: whoCantLose[1] === 'player' ? 'each' : 'opponents', discardedNone: true } });
+        continue;
+      }
       // Eldrazi Monument: "sacrifice a creature. If you can't, sacrifice this artifact."
       const youCant = /^If you can't, (.+)$/.exec(s);
       if (youCant && lastNode?.type === 'sacrifice_choice' && (lastNode.who as { ref?: string } | undefined)?.ref === 'you') {
@@ -2153,6 +2160,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (out) return out;
   }
+  // Mana Breach: "that player returns a land they control to its owner's hand"; "Each player returns a creature they control
+  // to its owner's hand" — each chooses one of their own.
+  const theyReturn = /^(.+?) returns? (a|an|one|two) (.+?) (?:they|he or she) controls? to (?:its|their) owners?'s? hands?$/.exec(s);
+  if (theyReturn && !/^(?:You|you)$/.test(theyReturn[1]!)) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(theyReturn[1]!, b);
+      if (!who || who.ref === 'you') return null;
+      const inner = parseSentence(`Return ${theyReturn[2]} ${theyReturn[3]} you control to ${theyReturn[2] === 'two' ? "their owners' hands" : "its owner's hand"}`, b);
+      return inner?.length === 1 && inner[0]!.type === 'move_chosen' ? [{ type: 'players_do', players: who, effects: inner }] : null;
+    });
+    if (r) return r;
+  }
+  // Ominous Cemetery: "Target creature's owner shuffles it into their library."
+  const ownerShuffles = /^(Target .+?)'s owner shuffles it into their library$/.exec(s);
+  if (ownerShuffles) return parseSentence(`The owner of ${ownerShuffles[1]!.replace(/^T/, 't')} shuffles it into their library`, b);
   // Oblation: "The owner of target nonland permanent shuffles it into their library, then draws two cards."
   const oblation = /^The owner of (target .+?) shuffles it into their library, then draws (a|one|two|three) cards?$/.exec(s);
   if (oblation) {
@@ -4558,7 +4580,8 @@ const VERBS: Record<string, VerbHandler> = {
     // Codsworth: "Attach target Aura or Equipment you control to target creature you control." (CR 701.3)
     // Blacksmith's Talent: "attach target Equipment you control to up to one target creature you control".
     // Barret: "attach up to one target Equipment you control to target Rebel you control"; Sokka: "… to ~".
-    const both = imperative ? /^((?:up to one )?target (?:Aura|Equipment|Aura or Equipment) you control) to ((?:up to one )?target .+|~)$/.exec(args) : null;
+    // Magnetic Theft: "Attach target Equipment to target creature." — anyone's (it stays its controller's, CR 301.5c).
+    const both = imperative ? /^((?:up to one )?target (?:Aura|Equipment|Aura or Equipment)(?: you control)?) to ((?:up to one )?target .+|~)$/.exec(args) : null;
     if (both) {
       const what = parseObjectRef(both[1]!, b);
       const to = what && !what.plural ? parseObjectRef(both[2]!, b) : null;
@@ -4675,6 +4698,13 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   if (/^investigate$/i.test(c)) {
     const clue = parseTokenPhrase('a Clue token', b);
     return clue ? [{ type: 'create_token', amount: 1, token: clue.face, who: { ref: 'you' } }] : null;
+  }
+  // Fateful Absence: "Destroy target creature or planeswalker. Its controller investigates."
+  const theyInvestigate = /^(.+?) investigates$/i.exec(c);
+  if (theyInvestigate) {
+    const who = parsePlayerRef(theyInvestigate[1]!, b);
+    const clue = who && who.ref !== 'players' ? parseTokenPhrase('a Clue token', b) : null;
+    if (clue) return [{ type: 'create_token', amount: 1, token: clue.face, who }];
   }
   // CR 701.65a: "Airbend target nonland permanent", "airbend up to one other target creature or spell".
   const airbend = /^airbend (.+)$/i.exec(c);
