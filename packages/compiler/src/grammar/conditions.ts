@@ -449,6 +449,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Tadeas, Juniper Ascendant: "As long as ~ isn't attacking".
   const notAttacking = /^(~|it) (?:isn't|is not) (attacking|blocking)$/.exec(t);
   if (notAttacking && (notAttacking[1] === '~' || b.it?.ref === 'self')) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
+  // Tahngarth's Rage: "Enchanted creature gets -2/-1 as long as it isn't attacking."
+  if (notAttacking && notAttacking[1] === 'it' && b.it?.ref === 'attached') return { type: 'not', cond: { type: 'is', of: { ref: 'attached' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
   // Gift of Fangs: "as long as it isn't a Vampire" — what the static ability is about.
   const isnt = /^(~|it|(?:enchanted|equipped) (?:creature|permanent)) isn't (an? [A-Z][\w-]*|(?:white|blue|black|red|green))$/.exec(t);
   if (isnt) {
@@ -642,6 +644,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Saddled Rimestag: "as long as you had another creature enter the battlefield under your control this turn".
   const anotherEntered = /^another (creature|artifact|land|permanent) entered the battlefield under your control this turn$/.exec(t) ?? /^you had another (creature|artifact|land|permanent) enter the battlefield under your control this turn$/.exec(t);
   if (anotherEntered) return { type: 'entered_this_turn', filter: { ...(anotherEntered[1] === 'permanent' ? {} : { types: [capitalise(anotherEntered[1]!)] }), other: true }, min: 1 };
+  // Tenacious Hunter: "As long as a creature has a -1/-1 counter on it".
+  const hasCounter = /^an? (creature|permanent)( you control)? has an? (\S+) counter on it$/.exec(t);
+  if (hasCounter) return { type: 'count', who: hasCounter[2] ? 'you' : 'all', filter: { ...(hasCounter[1] === 'creature' ? { types: ['Creature'] } : {}), counter: hasCounter[3]!.replace(/−/g, '-') }, min: 1 };
+  // Swordsworn Cavalier: "as long as another Knight entered the battlefield under your control this turn".
+  const anotherKind = /^another ([A-Z][a-z]+) entered the battlefield under your control this turn$/.exec(t);
+  if (anotherKind && isSubtype(anotherKind[1]!)) return { type: 'entered_this_turn', filter: { subtypes: [anotherKind[1]!], other: true }, min: 1 };
   // Corrupted: "an opponent has three or more poison counters"
   const poison = /^(an opponent|you) ha(?:s|ve) (\w+ or more) poison counters$/.exec(t);
   if (poison) {

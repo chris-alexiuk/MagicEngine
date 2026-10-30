@@ -3131,6 +3131,67 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return { expand: answer.pay ? action : (node.effects as EffectNode[]) };
   },
 
+  // Cranial Extraction, Surgical Extraction, Eradicate: "Search [a player]'s graveyard, hand, and library for (all | any
+  // number of | up to four) cards with [a chosen name | the same name as that card] and exile them. Then that player
+  // shuffles." (CR 701.23); Lost Legacy: "… then draws a card for each card exiled from their hand this way."
+  extirpate(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { name?: string; who?: PlayerId; done?: boolean };
+    memo.who ??= refPlayers(ctx, ref(node, 'who'))[0];
+    const who = memo.who;
+    if (!who) return true;
+    const names = (o: GameObject): string[] => {
+      const def = g.cards[o.card];
+      return def ? [def.name, ...def.faces.map((f) => f.name)] : [nameOf(g, o)];
+    };
+    if (memo.name === undefined) {
+      if (node.nameFrom) {
+        // "the same name as that creature" — the card it was, wherever it went (CR 400.7: a card exiled is still that card).
+        const r = node.nameFrom as Ref;
+        const t = r.ref === 'target' ? ctx.targets?.[(r as { index: number }).index]?.[0] : undefined;
+        const id = t && t.kind === 'object' ? t.id : refObjects(ctx, r)[0]?.id;
+        const o = id ? g.objects[id] : undefined;
+        if (!o) return true;
+        memo.name = nameOf(g, o);
+      } else {
+        // CR 201.3: any card name may be chosen; only the names of cards in this game can matter.
+        const kinds = (node.nameFilter ?? {}) as ObjectFilter;
+        const options = new Set<string>();
+        for (const def of Object.values(g.cards)) {
+          const face = def.faces[0];
+          if (!face || def.layout === 'token') continue;
+          if (kinds.notTypes?.some((t) => face.types.includes(t)) || (kinds.types && !kinds.types.some((t) => face.types.includes(t)))) continue;
+          if (kinds.notSupertypes?.some((t) => face.supertypes.includes(t)) && face.types.includes('Land')) continue;
+          options.add(def.faces.length > 1 && (def.layout === 'split' || def.layout === 'adventure') ? def.name : face.name);
+        }
+        const answer = answerOf(ctx, 'choose_option');
+        if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: [...options].sort(), text: 'Choose a card name.', sourceName: sourceName(ctx) } };
+        if (!options.has(answer.choice)) throw new RulesError('Choose one of the names.');
+        memo.name = answer.choice;
+      }
+    }
+    const name = memo.name;
+    const zones = ['graveyard', 'hand', 'library'] as const;
+    const candidates = zones.flatMap((z) => zoneList(g, z, who)).filter((id) => names(g.objects[id]!).includes(name) || nameOf(g, g.objects[id]!) === name);
+    let chosen = candidates;
+    if (node.amount !== 'all' && candidates.length) {
+      const max = node.amount === 'any' ? candidates.length : Math.min(Number(node.amount), candidates.length);
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 0, max, text: `Exile up to ${max} cards named ${name}.`, sourceName: sourceName(ctx), seen: [...zoneList(g, 'hand', who)] } };
+      if (answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose up to ${max} of them.`);
+      chosen = answer.objects;
+    }
+    const fromHand = chosen.filter((id) => g.objects[id]!.zone === 'hand').length;
+    for (const id of chosen) moveObject(g, id, 'exile', ctx.events);
+    shuffleInPlace(g, zoneList(g, 'library', who));
+    ctx.events.push({ type: 'shuffled', player: who });
+    if (ctx.resolution) ctx.resolution.created = chosen.map((id) => refTo(g.objects[id]!));
+    // Lost Legacy: "That player shuffles, then draws a card for each card exiled from their hand this way."
+    if (fromHand && node.perHand === 'draw') return { expand: [{ type: 'draw', amount: fromHand, who: { ref: 'you' }, asPlayer: who } as EffectNode] };
+    if (fromHand && node.perHand && typeof node.perHand === 'object') return { expand: [{ type: 'create_token', amount: fromHand, token: node.perHand, who: { ref: 'you' }, asPlayer: who } as EffectNode] };
+    return true;
+  },
+
   search(node, ctx) {
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;

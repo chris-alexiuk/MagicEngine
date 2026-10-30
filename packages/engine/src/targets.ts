@@ -43,6 +43,7 @@ export function checkingOnResolution<T>(fn: () => T): T {
 function playerWhoOk(g: GameState, controller: PlayerId, who: NonNullable<TargetSpec['who']>, player: PlayerId, source: GameObject | null): boolean {
   if (who.lostLife && !((g.turnLog.lifeLost?.[player] ?? 0) > 0)) return false;
   if (who.attacked && !g.turnLog.attacked.includes(player)) return false;
+  if (who.damagedBySource && !resolving && !(source && (g.turnLog.playerDamagedBy?.[player] ?? []).some((k) => k.replace(/^c:/, '') === `${source.id}:${source.zcc}`))) return false;
   // Hope of Ghirapur sacrifices itself as it's activated: what it did this turn stays done (CR 608.2b).
   if (who.combatDamagedBySource && !resolving && !(source && (g.turnLog.playerDamagedBy?.[player] ?? []).includes(`c:${source.id}:${source.zcc}`))) return false;
   if (who.more && !(who.asActivated && resolving)) {

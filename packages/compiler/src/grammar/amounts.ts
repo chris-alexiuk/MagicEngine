@@ -175,7 +175,8 @@ function diedThisTurn(text: string, b: Binder): AmountExpr | null {
 
 /** What follows "for each": a singular noun phrase. */
 export function parseForEach(text: string, b: Binder): AmountExpr | null {
-  const t = text.trim();
+  // Toil to Renown: "for each tapped artifact, creature, and land you control" — each permanent that's any of them, once.
+  const t = text.trim().replace(/^((?:tapped |untapped )?(?:artifact|creature|enchantment|land|planeswalker)), (artifact|creature|enchantment|land|planeswalker),? and (artifact|creature|enchantment|land|planeswalker)(?= you control$)/, '$1, $2, or $3');
   // Multani: "for each land you control and each land card in your graveyard" — the two counts added.
   const added = /^(.+?) and each (.+)$/.exec(t);
   if (added) {
@@ -434,6 +435,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (t === 'your speed') return { kind: 'speed' };
   // Cryptborn Horror: "the total life lost by your opponents this turn".
   if (t === 'the total life lost by your opponents this turn' || t === 'the total amount of life your opponents have lost this turn') return { kind: 'life_this_turn', who: 'opponents', stat: 'lost' };
+  // Molten Hydra, Torture Chamber: "the number of +1/+1 counters removed this way" (by the cost, or by the effect).
+  if (/^the number of (?:\S+ )?counters removed this way$/.test(t)) return { kind: 'counters_removed' };
   // Ral Zarek, Guest Lecturer: "where X is the number of coins that came up heads" (CR 705.2).
   if (t === 'the number of coins that came up heads') return { kind: 'flips_won' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.

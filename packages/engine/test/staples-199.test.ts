@@ -30,6 +30,9 @@ const CARDS = [
   makeCard({ name: 'Blur Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Prevent all damage that creatures would deal to players this turn.' }),
   makeCard({ name: 'Hallar Lite', type_line: 'Legendary Creature — Elf Archer', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever you cast a spell, if that spell was kicked, put a +1/+1 counter on Hallar Lite, then Hallar Lite deals damage equal to the number of +1/+1 counters on it to each opponent.' }),
   makeCard({ name: 'Kick Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Kicker {0}\nDraw a card.' }),
+  makeCard({ name: 'Cranial Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Choose a nonland card name. Search target player's graveyard, hand, and library for all cards with that name and exile them. Then that player shuffles." }),
+  makeCard({ name: 'Surgical Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Choose target card in a graveyard other than a basic land card. Search its owner's graveyard, hand, and library for any number of cards with the same name as that card and exile them. Then that player shuffles." }),
+  makeCard({ name: 'The End Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Exile target creature or planeswalker. Search its controller's graveyard, hand, and library for any number of cards with the same name as that permanent and exile them. That player shuffles, then draws a card for each card exiled from their hand this way." }),
 ];
 
 function settle(g: GameState): GameState {
@@ -216,5 +219,34 @@ describe('staples (slice 273)', () => {
     expect(life - g.players.bob!.life).toBe(3);
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Kick Lite', 'hand') } as never));
     expect(life - g.players.bob!.life).toBe(3);
+  });
+
+  it('Cranial Extraction: every card with the chosen name, from graveyard, hand and library', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b, c, d] = [give(g, 'bob', 'Ogre', 'graveyard'), give(g, 'bob', 'Ogre', 'hand'), give(g, 'bob', 'Ogre', 'library'), give(g, 'bob', 'Cub', 'hand')];
+    g = cast(g, 'alice', 'Cranial Lite', { targets: [[{ kind: 'player', player: 'bob' }]] });
+    expect((g.pending as { options?: string[] } | null)?.options).not.toContain('Plains');
+    g = choose(g, { kind: 'choose_option', choice: 'Ogre' });
+    expect([a, b, c, d].map((id) => g.objects[id]!.zone)).toEqual(['exile', 'exile', 'exile', 'hand']);
+  });
+
+  it('Surgical Extraction: any number with the same name as the target card', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [a, b, c] = [give(g, 'bob', 'Ogre', 'graveyard'), give(g, 'bob', 'Ogre', 'hand'), give(g, 'bob', 'Ogre', 'library')];
+    const plains = give(g, 'bob', 'Plains', 'graveyard');
+    expect(illegal(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Surgical Lite', 'hand'), targets: [[{ kind: 'object', object: plains }]] } as never)).toBeTruthy();
+    g = cast(g, 'alice', 'Surgical Lite', { targets: [[{ kind: 'object', object: a }]] });
+    expect(g.pending?.kind).toBe('choose_objects');
+    g = choose(g, { kind: 'choose_objects', objects: [a, c] });
+    expect([a, b, c].map((id) => g.objects[id]!.zone)).toEqual(['exile', 'hand', 'exile']);
+  });
+
+  it('The End: the same name everywhere, and that player draws for each card from their hand', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [o, h1, h2] = [give(g, 'bob', 'Ogre', 'battlefield'), give(g, 'bob', 'Ogre', 'hand'), give(g, 'bob', 'Ogre', 'hand')];
+    const hand = g.zones.hand.bob!.length;
+    g = cast(g, 'alice', 'The End Lite', { targets: [[{ kind: 'object', object: o }]] });
+    g = choose(g, { kind: 'choose_objects', objects: [h1, h2] });
+    expect([g.objects[o]!.zone, g.objects[h1]!.zone, g.zones.hand.bob!.length]).toEqual(['exile', 'exile', hand]);
   });
 });

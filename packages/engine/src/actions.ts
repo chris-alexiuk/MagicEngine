@@ -1272,7 +1272,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     const counts = (g.turnLog.abilityActivations ??= {});
     counts[key] = (counts[key] ?? 0) + 1;
   }
-  const lki = costLKI(g, cost, choices.costs);
+  const lki = costLKI(g, cost, choices.costs, o);
   payOtherCosts(g, player, o, cost, events, choices.costs);
 
   // CR 602.2: the ability goes on the stack.

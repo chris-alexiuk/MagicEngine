@@ -134,6 +134,8 @@ export interface CostLKI {
   tapped?: LKIStats[];
   /** What the creature returned for ninjutsu or sneak was attacking (CR 702.49c, 702.190b). */
   attackTarget?: AttackTarget;
+  /** Molten Hydra: "Remove all +1/+1 counters from this creature: … equal to the number of +1/+1 counters removed this way." */
+  countersRemoved?: number;
 }
 
 export interface GameObject {

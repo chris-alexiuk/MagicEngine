@@ -25,6 +25,11 @@ const PERMANENT_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land'
 
 /** Post-modifiers, peeled off the end of a phrase one at a time. */
 const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boolean][] = [
+  // Kassandra, Eagle Bearer: "a creature you control with a legendary Equipment attached to it".
+  [/ with (?:an?|one or more) ([a-z]+ (?:Equipment|Aura)) attached to (?:it|them)$/, (f, m, b) => {
+    const pf = !f.withAttached ? parseFilter(m[1]!, b.clone()) : null;
+    return Boolean(pf && !pf.plural && ((f.withAttached = pf.filter), true));
+  }],
   // Loot, Exuberant Explorer: "a creature card with mana value less than or equal to the number of lands you control" —
   // counted as the effect applies. Before "you control": that's
   // the count's.
@@ -241,7 +246,24 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Tiamat: "Dragon cards not named Tiamat" (CR 201.2).
   [/ not named (~|[A-Z].*)$/, (f, m, b) => !f.notName && ((f.notName = m[1] === '~' ? b.env.cardName : m[1]!.trim()), true)],
   // "a card named Pir, Imaginative Rascal" (CR 201.2) — after any zone words are peeled off.
-  [/ named ([A-Z].*)$/, (f, m) => !f.name && ((f.name = m[1]!.trim()), true)],
+  // Bogbrew Witch: "a card named Festering Newt or Bubbling Cauldron"; Liu Bei: "a permanent named Guan Yu, Sainted Warrior or
+  // a permanent named Zhang Fei, Fierce Warrior"; Shield of Kaldra: "Equipment named Sword of Kaldra, ~, and Helm of Kaldra" —
+  // any of those names. (Agency Outfitter's "a card named … and/or a card named …" is two cards, and Urborg Panther's "a
+  // creature named …, a creature named …, and ~" three; Forging the Tyrite Sword's "… or an Equipment card" another kind.)
+  [/ named ([A-Z~].*)$/, (f, m, b) => {
+    if (f.name || f.anyOf) return false;
+    const text = m[1]!.trim();
+    // Kookus: "a creature named Keeper of Kookus" — the card's own (short) name inside another, written "~" by then.
+    const fix = (n: string) => (n.trim() === '~' ? b.env.cardName : n.trim().replace(/~/g, (b.env.faceName || b.env.cardName).split(',')[0]!));
+    const either = /^(.+?) or (?:(?:an? )?(?:card|permanent|creature) named )?([A-Z~].*)$/.exec(text);
+    const list = /^([^,]+), ([^,]+),? and ([^,]+)$/.exec(text);
+    if (/ (?:and\/or|and|or) (?:an? )?(?:card|permanent|creature) named |, an? (?:card|permanent|creature) named | or an? [a-z]/.test(text) && !(either && !/ named |, an? /.test(either[2]!) && / or (?:an? )?(?:card|permanent|creature) named /.test(text))) return false;
+    if (either && !/ (?:and|or) /.test(either[2]!)) f.anyOf = [{ name: fix(either[1]!) }, { name: fix(either[2]!) }];
+    else if (list) f.anyOf = [list[1]!, list[2]!, list[3]!].map((n) => ({ name: fix(n) }));
+    else if (/ (?:and|or) /.test(text) && text !== b.env.cardName) return false;
+    else f.name = fix(text);
+    return true;
+  }],
   // Rite of Flame: "for each card named Rite of Flame in each graveyard" — its own name.
   [/ named ~$/, (f, _m, b) => !f.name && ((f.name = b.env.cardName), true)],
   [/ with (power|toughness|mana value) (\d+) or (less|greater)$/, (f, m) => compare(f, m[1]!, Number(m[2]), m[3] === 'less' ? 'le' : 'ge')],
@@ -269,7 +291,7 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Sage's Reverie: "each Aura you control that's attached to a creature".
   // End Hostilities: "all permanents attached to creatures".
   [/ attached to (creatures|lands|artifacts)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1]!.replace(/s$/, '').replace(/^\w/, (c) => c.toUpperCase())), true)],
-  [/ (?:that's|that are) attached to an? (creature|land|artifact|permanent)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1] === 'permanent' ? '' : m[1]!.replace(/^\w/, (c) => c.toUpperCase())), m[1] !== 'permanent')],
+  [/ (?:(?:that's|that are) )?attached to an? (creature|land|artifact|permanent)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1] === 'permanent' ? '' : m[1]!.replace(/^\w/, (c) => c.toUpperCase())), m[1] !== 'permanent')],
   // Urza's Ruinous Blast: "all nonland permanents that aren't legendary"
   [/ (?:that aren't|that isn't|that's not) legendary$/, (f) => !f.notSupertypes && ((f.notSupertypes = ['Legendary']), true)],
   // Summon: Leviathan: "each creature that isn't a Kraken, Leviathan, Merfolk, Octopus, or Serpent"; "creatures that aren't
@@ -433,9 +455,10 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // Sonar Strike: "target attacking, blocking, or tapped creature" — any of the three.
   if (text.trim() === 'attacking, blocking, or tapped creature') return { filter: { anyOf: [{ combat: 'attacking_or_blocking', types: ['Creature'] }, { tapped: true, types: ['Creature'] }] }, plural: false };
   // Mindsparker: "a white or blue instant or sorcery spell" — either color and either type.
-  const colorsTypes = /^((?:an? )?(?:white|blue|black|red|green) or (?:white|blue|black|red|green)) (instant|sorcery|artifact|creature|enchantment) or (instant|sorcery|artifact|creature|enchantment) (spells?|cards?|permanents?)$/.exec(text.trim());
+  // Essence Burn: "target black or green creature or planeswalker".
+  const colorsTypes = /^((?:an? )?(?:white|blue|black|red|green) or (?:white|blue|black|red|green)) (instant|sorcery|artifact|creature|enchantment|planeswalker) or (instant|sorcery|artifact|creature|enchantment|planeswalker)(?: (spells?|cards?|permanents?))?$/.exec(text.trim());
   if (colorsTypes) {
-    const one = parseFilter(`${colorsTypes[1]} ${colorsTypes[3]} ${colorsTypes[4]}`, b);
+    const one = parseFilter(`${colorsTypes[1]} ${colorsTypes[3]}${colorsTypes[4] ? ` ${colorsTypes[4]}` : ''}`, b);
     const t = TYPE_NOUNS[colorsTypes[2]!];
     if (one && t && !one.filter.anyOf && one.filter.types?.length === 1) return { ...one, filter: { ...one.filter, types: [t, ...one.filter.types] } };
   }
@@ -969,7 +992,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
       // "one or two target creatures", "one, two, or three target creatures", "one or more target creatures": at least one.
-      const oneOr = /^(one or two|one, two, or three|one or more) (other )?target (.+)$/i.exec(t);
+      // Predictive Preparations: "on each of one or two target creatures" — the same.
+      const oneOr = /^(?:each of )?(one or two|one, two, or three|one or more) (other )?target (.+)$/i.exec(t);
       if (oneOr) {
         // Leonardo's Technique: "one or two target creature cards each with mana value 3 or less" — each of them.
         const pf = parseFilter(oneOr[3]!.replace(/^((?:[a-z]+ )*cards) each with /, '$1 with '), b);
@@ -1070,6 +1094,7 @@ function playerWho(text: string): TargetSpec['who'] | null {
   if (text === 'lost life this turn') return { lostLife: true };
   if (text === 'attacked this turn' || text === 'attacked with a creature this turn') return { attacked: true };
   if (text === 'was dealt combat damage by ~ this turn') return { combatDamagedBySource: true };
+  if (text === 'was dealt damage by ~ this turn') return { damagedBySource: true };
   const m = /^(?:has|controls) (?:at least (\w+) )?(more|fewer) (life|cards in hand|creatures|creature cards in their graveyard) than you(?: do)?( as you activate this ability)?$/.exec(text);
   if (!m) return null;
   const by = m[1] ? parseAmount(m[1]) : 1;
@@ -1153,7 +1178,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     b.player = ref;
     return ref;
   }
-  const playerTarget = /^(up to one )?target (player|opponent)(?: who (.+))?$/.exec(t);
+  // Wicked Akuba: "target player dealt damage by this creature this turn".
+  const playerTarget = /^(up to one )?target (player|opponent)(?: who (.+))?$/.exec(t.replace(/^((?:up to one )?target (?:player|opponent)) (dealt (?:combat )?damage by ~ this turn)$/, '$1 who was $2'));
   if (playerTarget) {
     const spec: TargetSpec = { what: 'player', text: t };
     if (playerTarget[2] === 'opponent') spec.player = 'opponent';

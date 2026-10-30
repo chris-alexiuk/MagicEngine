@@ -201,7 +201,9 @@ function variantOf(line: string, env: GrammarEnv): { base: string; condition: Co
   const sentences = splitSentences(line);
   if (!sentences || sentences.length < 2) return undefined;
   const IF = /^If (?:this spell|~) was kicked, |^If the gift was promised, |^If you cast (?:this spell|~) during your main phase, /;
-  const k = sentences.findIndex((s, i) => i > 0 && IF.test(s) && /\btarget\b/.test(s) && !/\bwould\b/.test(s));
+  // (Not a replacement: "If this spell was kicked, … would die …"; Falling Timber's "… another target creature would deal this
+  // turn" is a target.)
+  const k = sentences.findIndex((s, i) => i > 0 && IF.test(s) && /\btarget\b/.test(s) && !/\bwould\b(?! deal this turn$)/.test(s));
   if (k < 0) return undefined;
   const s = sentences[k]!;
   const head = /^If [^,]+/.exec(s)![0];
@@ -468,6 +470,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Rr]emove X (\S+) counters from ~$/.test(item)) {
       (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove X (\S+)/.exec(item)![1]!.replace(/−/g, '-'), amount: 'X', xAnnounced: true });
     }
+    // Molten Hydra: "Remove all +1/+1 counters from this creature" — however many (CR 118.3).
+    else if (/^[Rr]emove all (\S+) counters from ~$/.test(item)) {
+      (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove all (\S+)/.exec(item)![1]!.replace(/−/g, '-'), amount: 'all' });
+    }
     // Storage lands: "Remove any number of storage counters from ~" (the number is X for the ability).
     else if (/^[Rr]emove any number of (\S+) counters from ~$/.test(item)) {
       (cost.other ??= []).push({ type: 'remove_counters_self', counter: /^[Rr]emove any number of (\S+)/.exec(item)![1]!, amount: 'X' });
@@ -546,6 +552,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate no more than three times each turn\.$/, (a) => (a.maxPerTurn = 3)],
   // CR 602.2
   [/ Any player may activate this ability\.$/, (a) => (a.anyPlayer = true)],
+  // Scandalmonger: "Any player may activate this ability but only as a sorcery."
+  [/ Any player may activate this ability but only as a sorcery\.$/, (a) => ((a.anyPlayer = true), (a.timing = 'sorcery'))],
   // CR 702.177a (exhaust)
   [/ Activate only once\.$/, (a) => (a.oncePerGame = true)],
   // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability."
@@ -588,6 +596,9 @@ export const activatedRule: GrammarRule = {
       node.maxPerTurn = 1;
       andIf(node, { type: 'is', of: { ref: 'self' }, filter: { attackedThisTurn: true } });
     }
+    // Relic Amulet: "Remove all charge counters from this artifact: It deals that much damage to target creature." — as many as
+    // the cost removed.
+    if (cost.other?.some((c) => c.type === 'remove_counters_self' && c.amount === 'all')) effectText = effectText.replace(/\bdeals that much damage to ([^.]+)\./, 'deals damage to $1 equal to the number of counters removed this way.');
     // Lair of the Hydra: "X can't be 0." — announced as 1 or more (CR 107.3, 601.2b).
     if (/ X can't be 0\.$/.test(effectText) && (/\{X\}/.test(cost.mana ?? '') || cost.other?.some((c) => c.amount === 'X'))) {
       effectText = effectText.replace(/ X can't be 0\.$/, '');
@@ -3277,7 +3288,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? \d+\/\d+ (?:[A-Z][\w’'-]* )*artifact creature(?: with [a-z ,]+)?|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? \d+\/\d+ (?:[A-Z][\w’'-]* )*artifact creature(?: with [a-z ,]+)?|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*(?: [A-Z][\w’'-]*)*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? (?:that's|that (?:is|are)) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3387,7 +3398,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     }
     // Layers 4, 5, 7b: Living Lands: "All Forests are 1/1 creatures that are still lands."; Ambush Commander: "Forests you
     // control are 1/1 green Elf creatures that are still lands." (CR 205.1b: still lands; base P/T in layer 7b)
-    const stillLands = /^(?:is|are) (?:an? )?(\d+)\/(\d+) ((?:white|blue|black|red|green) )?((?:[A-Z][\w-]* )*)creatures? that (?:is|are) still (?:an? )?lands?$/.exec(part);
+    const stillLands = /^(?:is|are) (?:an? )?(\d+)\/(\d+) ((?:white|blue|black|red|green) )?((?:[A-Z][\w-]* )*)creatures? (?:that's|that (?:is|are)) still (?:an? )?lands?$/.exec(part);
     if (stillLands && !effect.setTypes && !effect.addTypes && effect.setPower === undefined) {
       const subtypes = stillLands[4]!.trim() ? stillLands[4]!.trim().split(' ') : [];
       if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
@@ -3479,9 +3490,10 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       continue;
     }
     // Nim Deathmantle: "… and is a black Zombie" — its color and creature types replaced (layers 4 and 5).
-    const isCreatureKind = /^is an? (?:(white|blue|black|red|green) )?([A-Z][\w’'-]*)$/.exec(part);
-    if (isCreatureKind && (SUBTYPES.creature as readonly string[]).includes(isCreatureKind[2]!) && !effect.creatureTypes && !(isCreatureKind[1] && effect.colors)) {
-      effect.creatureTypes = [isCreatureKind[2]!];
+    // Oni Possession: "Enchanted creature is a Demon Spirit." — both creature types (layer 4).
+    const isCreatureKind = /^is an? (?:(white|blue|black|red|green) )?([A-Z][\w’'-]*(?: [A-Z][\w’'-]*)*)$/.exec(part);
+    if (isCreatureKind && isCreatureKind[2]!.split(' ').every((w) => (SUBTYPES.creature as readonly string[]).includes(w)) && !effect.creatureTypes && !(isCreatureKind[1] && effect.colors)) {
+      effect.creatureTypes = isCreatureKind[2]!.split(' ');
       if (isCreatureKind[1]) effect.colors = [COLOR_WORDS[isCreatureKind[1]]! as Color];
       continue;
     }

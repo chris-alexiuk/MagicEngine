@@ -709,8 +709,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return o && g.turnLog.attackedAs?.[o.id] === o.zcc ? (g.turnLog.attacks?.[o.id] ?? 0) : 0;
     }
     case 'counters_removed':
-      // Coalition Relic: "for each charge counter removed this way".
-      return ctx.resolution?.countersRemoved ?? 0;
+      // Coalition Relic: "for each charge counter removed this way"; Molten Hydra: those its cost removed.
+      return ctx.resolution?.countersRemoved ?? ctx.resolution?.entry.costLKI?.countersRemoved ?? 0;
     case 'speed':
       // CR 702.179a: The Speed Demon: "where X is your speed".
       return g.players[ctx.controller]?.speed ?? 0;

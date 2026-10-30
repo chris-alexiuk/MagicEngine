@@ -101,7 +101,8 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     if (name && /,\s+(?:it|he|she|they)(?:'s| is| has| have)\b| until /.test(name[1]!)) return null;
     if (name) {
       // Hulkling: "his name is Hulkling, Young Avenger" — its own name, written "~" by then.
-      out.name = name[1] === '~' ? (b.env.faceName || b.env.cardName) : name[1]!;
+      // Mishra, Eminent One: "its name is Mishra's Warform" — the short name inside another (written "~" by then).
+      out.name = name[1] === '~' ? (b.env.faceName || b.env.cardName) : name[1]!.replace(/~/g, (b.env.faceName || b.env.cardName).split(',')[0]!);
       continue;
     }
     const pt = /^it's (\d+)\/(\d+)$/.exec(p);

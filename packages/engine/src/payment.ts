@@ -243,6 +243,8 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
         }
       }
       if (total !== n) throw new RulesError(`Choose ${n} counter(s) to remove.`);
+    } else if (c.type === 'remove_counters_self' && c.amount === 'all') {
+      // "Remove all +1/+1 counters from this creature" — however many there are, none included.
     } else if (c.type === 'remove_counters_self') {
       // CR 118.3: a cost can be paid only if it's possible — enough counters of that kind.
       const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
@@ -323,7 +325,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
 }
 
 /** CR 608.2h: what the chosen sacrifice and discard costs were, before they're paid. */
-export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}): CostLKI | undefined {
+export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}, source?: GameObject): CostLKI | undefined {
   const stats = (id: string) => lkiStats(g, g.objects[id]!);
   const sacrificed = (cost.other ?? []).some((c) => c.type === 'sacrifice') ? (choices.sacrifice ?? []).map(stats) : [];
   const discarded = (cost.other ?? []).some((c) => c.type === 'discard') ? (choices.discard ?? []).map(stats) : [];
@@ -333,8 +335,12 @@ export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}): Co
   // Ninjutsu, sneak: what the returned creature was attacking.
   const returned = (cost.other ?? []).some((c) => c.type === 'return_unblocked') ? choices.returned?.[0] : undefined;
   const attackTarget = returned ? g.combat?.attackers[returned]?.target : undefined;
-  if (!sacrificed.length && !discarded.length && !exiled.length && !tapped.length && !attackTarget) return undefined;
+  // Molten Hydra: "Remove all +1/+1 counters from this creature" — how many that was.
+  const removeAll = (cost.other ?? []).find((c) => c.type === 'remove_counters_self' && c.amount === 'all');
+  const countersRemoved = removeAll && source ? (source.counters[String(removeAll.counter)] ?? 0) : undefined;
+  if (!sacrificed.length && !discarded.length && !exiled.length && !tapped.length && !attackTarget && countersRemoved === undefined) return undefined;
   return {
+    ...(countersRemoved !== undefined ? { countersRemoved } : {}),
     ...(sacrificed.length ? { sacrificed } : {}),
     ...(discarded.length ? { discarded } : {}),
     ...(exiled.length ? { exiled } : {}),
@@ -411,10 +417,10 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       }
     } else if (c.type === 'remove_counters_self') {
       const counter = String(c.counter);
-      const n = c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
+      const n = c.amount === 'all' ? (o.counters[counter] ?? 0) : c.amount === 'X' ? (choices.counters ?? 0) : Number(c.amount ?? 1);
       o.counters[counter] = (o.counters[counter] ?? 0) - n;
       if (o.counters[counter]! <= 0) delete o.counters[counter];
-      events.push({ type: 'counters', object: o.id, counter, delta: -n });
+      if (n > 0) events.push({ type: 'counters', object: o.id, counter, delta: -n });
     } else if (c.type === 'crew' || c.type === 'station' || c.type === 'tap_creatures') {
       for (const id of choices.crew ?? []) setTapped(g, id, true, events);
     } else if (c.type === 'return_unblocked' || c.type === 'return_permanents') {

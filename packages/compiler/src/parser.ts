@@ -163,6 +163,9 @@ export class ParserRegistry {
         if (cycleDies) return [`When you cycle ${cycleDies[1]}, ${cycleDies[3]}`, `When ${cycleDies[2]} dies, ${cycleDies[3]}`];
         // Bloodstone Goblin, Hallar: "Whenever you cast a spell, if that spell was kicked, …" — a kicked spell (it stays kicked).
         if (/^Whenever you cast a spell, if that spell was kicked, /.test(l)) return [l.replace(/^Whenever you cast a spell, if that spell was kicked, /, 'Whenever you cast a kicked spell, ')];
+        // The Shards: "{3}, {T} or {U}, {T}: Return target creature to its owner's hand." — either cost (two abilities).
+        const eitherCost = /^((?:\{[^}]+\})+, \{T\}) or ((?:\{[^}]+\})+, \{T\}): (.+)$/.exec(l);
+        if (eitherCost) return [`${eitherCost[1]}: ${eitherCost[3]}`, `${eitherCost[2]}: ${eitherCost[3]}`];
         // Tidal Barracuda: "Any player may cast spells as though they had flash."
         if (l === 'Any player may cast spells as though they had flash.') return ['Players may cast spells as though they had flash.'];
         // Vizier of the Menagerie: "You can spend mana of any type to cast creature spells." — as though any color.
@@ -208,7 +211,8 @@ export class ParserRegistry {
         if (isAnd) return [`${isAnd[1]} ${isAnd[2]}.`, `${isAnd[1]} ${isAnd[3]}.`];
         // Gift of Fangs: "Enchanted creature gets +2/+2 as long as it's a Vampire. Otherwise, it gets -2/-2."
         // Bonds of Faith: "… as long as it's a Human. Otherwise, it can't attack or block."
-        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*)\. Otherwise, it (gets [+-]\d+\/[+-]\d+|can't attack or block|can't block)\.$/.exec(l);
+        // Tahngarth's Rage: "Enchanted creature gets +3/+0 as long as it's attacking. Otherwise, it gets -2/-1."
+        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*|attacking)\. Otherwise, it (gets [+-]\d+\/[+-]\d+|can't attack or block|can't block)\.$/.exec(l);
         if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
         // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
         const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);
@@ -1258,8 +1262,10 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   const beforeOf = legendary && !ctx.faceName.includes(',') ? /^([A-Z][\p{L}'’-]+ [A-Z][\p{L}'’-]+) (?:of|the) [A-Z]/u.exec(ctx.faceName)?.[1] : undefined;
   const names = new Set([ctx.faceName, ctx.cardName, shortName(ctx.faceName), ...(ofName ? [ofName] : []), ...(beforeOf ? [beforeOf] : [])].filter((n) => n.length > 1));
   // Longest first so "Kinnan, Bonder Prodigy" is replaced before "Kinnan".
+  // (Not inside another card's name: Nissa Revane's "a card named Nissa's Chosen", Kookus's "a creature named Keeper of Kookus",
+  // Mishra's "its name is Mishra's Warform".)
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
-    out = out.replace(new RegExp(`(?<![\\w'])${escapeRegExp(name)}(?![\\w])`, 'g'), '~');
+    out = out.replace(new RegExp(`(?<![\\w'])(?<!\\b[A-Z][a-z]+ of )${escapeRegExp(name)}(?![\\w])(?!['’]s [A-Z][a-z]+(?![a-z]* (?:creature|card|token|permanent)s?\\b))`, 'g'), '~');
   }
   // "this creature", "this Aura", "this Equipment" (the subtype words are capitalised).
   out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'gi'), '~');

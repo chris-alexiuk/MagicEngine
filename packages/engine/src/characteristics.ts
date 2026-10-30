@@ -1104,6 +1104,10 @@ export function matchesFilter(
     const a = g.objects[id]!;
     return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && chars(g, a).subtypes.includes('Equipment');
   })) return false;
+  if (f.withAttached && !g.zones.battlefield.some((id) => {
+    const a = g.objects[id]!;
+    return a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && matchesFilter(g, a, f.withAttached!, { ...ctx, anyZone: false });
+  })) return false;
   if (f.attachedToObject && (o.attachedTo?.id !== f.attachedToObject.id || o.attachedTo.zcc !== f.attachedToObject.zcc)) return false;
   // CR 303.4: an Aura attached to a player (an unbound reference matches nothing).
   if ((f.attachedToPlayerRef || f.attachedToPlayerId !== undefined) && (f.attachedToPlayerId === undefined || o.attachedToPlayer !== f.attachedToPlayerId)) return false;
