@@ -984,6 +984,8 @@ export class ParserRegistry {
       // Siege Dragon: "Whenever this creature attacks, if defending player controls no Walls, it deals 2 damage to each creature
       // without flying that player controls." — the defending player.
       .map((l) => l.replace(/^(Whenever (?:this creature|~) attacks, if defending player [^,]+, [^.]+?) that player controls\.$/, '$1 defending player controls.'))
+      // Hedron Matrix: "Equipped creature gets +X/+X, where X is its mana value." — the equipped creature's.
+      .map((l) => l.replace(/^(Equipped|Enchanted) creature gets \+X\/\+X, where X is its mana value\.$/, (_m, w: string) => `${w} creature gets +X/+X, where X is ${w.toLowerCase()} creature's mana value.`))
       // Earth Surge: "Each land gets +2/+2 as long as it's a creature." — each land creature (CR 613.4c after layer 4).
       .map((l) => l.replace(/^Each (land|artifact) gets ([+-]\d+\/[+-]\d+) as long as it's a creature\.$/, 'Each $1 creature gets $2.'))
       // Sawblade Skinripper: "if you sacrificed one or more permanents this turn, this creature deals that much damage" — as many

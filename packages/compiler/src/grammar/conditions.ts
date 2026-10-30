@@ -619,6 +619,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // opponent".
   if (t === 'an opponent has more life than you' || t === 'you have less life than an opponent') return { type: 'life', than: 'an_opponent', op: 'lt' };
   if (t === 'you have more life than each opponent') return { type: 'life', than: 'each_opponent', op: 'gt' };
+  // Survival Cache: "if you have more life than an opponent" — than at least one of them.
+  if (t === 'you have more life than an opponent' || t === 'an opponent has less life than you') return { type: 'life', than: 'an_opponent', op: 'gt' };
   // Sunset Revelry: "if an opponent has more cards in hand than you"; Teachings of the Archaics: "… at least four more
   // cards in hand than you".
   const oppMoreHand = /^an opponent has (?:at least (two|three|four|five) )?more cards in hand than you$/.exec(t);
@@ -817,10 +819,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return c ? { type: 'graveyard', ...c, who: 'any_player' } : null;
   }
   // The Warring Triad: "there are fewer than eight cards in your graveyard"
-  const fewerGy = /^there are fewer than (\w+) cards in your graveyard$/.exec(t);
+  // Shadowborn Demon: "if there are fewer than six creature cards in your graveyard".
+  const fewerGy = /^there are fewer than (\w+) (creature |land |instant |sorcery |artifact |enchantment )?cards in your graveyard$/.exec(t);
   if (fewerGy) {
     const n = parseAmount(fewerGy[1]!);
-    return typeof n === 'number' && n > 0 ? { type: 'graveyard', op: 'le', n: n - 1 } : null;
+    const kind = fewerGy[2]?.trim();
+    return typeof n === 'number' && n > 0 ? { type: 'graveyard', op: 'le', n: n - 1, ...(kind ? { filter: { types: [capitalise(kind)] } } : {}) } : null;
   }
 
   // Starting Town: "it's your first, second, or third turn of the game"

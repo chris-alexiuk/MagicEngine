@@ -311,6 +311,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Braids, Arisen Nightmare: "… each opponent may sacrifice a permanent of their choice that shares a card type with it.
   // For each opponent who doesn't, that player loses 2 life and you draw a card." — one instruction.
   text = text.replace(/(each opponent may [^.]+)\. For each opponent who doesn't, ([^.]+)\./, "$1; for each opponent who doesn't, $2.");
+  // Blast of Genius: "Choose any target. Draw three cards, then discard a card. ~ deals damage equal to the discarded card's
+  // mana value to that permanent or player." — the target is chosen as it's cast anyway (CR 601.2c).
+  text = text.replace(/^Choose any target\. ([^]+?) deals ([^.]+?) to that permanent or player\.$/, '$1 deals $2 to any target.');
+  // Enchanted River's Grasp: "tap enchanted creature and remove all counters from it" — both, to the same creature.
+  text = text.replace(/\b([Tt]ap (?:enchanted|equipped|target) creature) and remove all counters from it\./, '$1. Remove all counters from it.');
   // Give // Take: "Remove all +1/+1 counters from target creature you control. Draw that many cards." — as many as were
   // removed.
   text = text.replace(/\b([Rr]emove all (?:\S+ )?counters from [^.]+)\. Draw that many cards\./, '$1. Draw a card for each counter removed this way.');
@@ -888,8 +893,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Glacial Dragonhunt: "Draw a card, then you may discard a card. When you discard a nonland card this way, …"; Evie Frye:
       // "… then discard a card. When you discard a creature card this way, …" — it triggers only for that kind of card.
       const discardKind = sentences[i + 1] ? /^When you discard an? ((?:non)?[a-z]+) card this way, (.+)$/.exec(sentences[i + 1]!) : null;
-      const discardFilter = discardKind && /\bdiscard a card$/.test(s) ? parseFilter(`${discardKind[1]} card in your hand`, b.clone()) : null;
-      const whenYouDo = sentences[i + 1] ? (/^When you do, (.+)$/.exec(sentences[i + 1]!) ?? (discardFilter && !/\bthat card\b/.test(discardKind![2]!) ? ([sentences[i + 1]!, discardKind![2]!] as unknown as RegExpExecArray) : null)) : null;
+      // Fiery Encore: "Discard a card, then draw a card. When you discard a nonland card this way, ~ deals damage equal to that
+      // card's mana value …" — the discarded card, as it was discarded (CR 608.2h).
+      const discardFilter = discardKind && /\b[Dd]iscard a card(?:, then draw a card)?$/.test(s) ? parseFilter(`${discardKind[1]} card in your hand`, b.clone()) : null;
+      const discardRest = discardKind ? discardKind[2]!.replace(/\bthat card's (mana value|power|toughness)\b/g, "the discarded card's $1") : '';
+      const whenYouDo = sentences[i + 1] ? (/^When you do, (.+)$/.exec(sentences[i + 1]!) ?? (discardFilter && !/\bthat card\b/.test(discardRest) ? ([sentences[i + 1]!, discardRest] as unknown as RegExpExecArray) : null)) : null;
       if (whenYouDo) {
         // "Draw a card, then you may discard a card. When you do, …" — only the discard is optional, and what it leads to.
         const thenMay = /^(.+?), then you may (.+)$/.exec(s);
@@ -1628,7 +1636,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           // Cemetery Recruitment: "Return target creature card from your graveyard to your hand. If it's a Zombie card, …" — the
           // card in the hand it went to.
           (lastMove.to === 'hand' && b.it?.ref === 'target' && /^If it's an? [A-Z][\w-]* card, /.test(s)));
-      if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
+      // Grey Knight Paragon: "destroy target attacking creature. If that creature is a Demon, exile it instead." — asked in
+      // place of the destruction (before it), so about the creature still there.
+      const replacesLastMove = / instead$/.test(s) && previous.length > 0 && previous.every((e) => MOVES.has(e.type)) && out.length === previous.length;
+      if (/^If (?:it|that creature|that permanent)(?:'s| is) an? /.test(s) && !backOnField && !replacesLastMove && JSON.stringify(out).match(/"type":"(\w+)"/g)?.some((m) => MOVES.has(m.slice(8, -1)))) return null;
       // "If [condition], [effect]." with an optional "Otherwise, [effect]." (CR 608.2c).
       // Splash Portal: "If that creature is a Bird, Frog, Otter, or Rat, draw a card." — a list in the condition.
       const listed = /^If ([^,]+(?:, [A-Z][\w-]*)+,? or [A-Z][\w-]*), (.+)$/.exec(s);
@@ -2708,14 +2719,17 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Echoing Truth: "Return target nonland permanent and all other permanents with the same name as that permanent to their
   // owners' hands"; Bile Blight: "Target creature and all other creatures with the same name as that creature get -3/-3".
   // Homing Lightning: "… to target creature and each other creature with the same name as that creature".
-  const andSameName = /^(.*?)\b([Tt]arget [^,]+?) and (?:all other (permanents|creatures)|each other (permanent|creature)) with the same name(?: as that (?:permanent|creature))?\b(.*)$/.exec(s);
+  // Echoing Ruin: "Destroy target artifact and all other artifacts with the same name as that artifact"; Wake of
+  // Destruction: "… lands …".
+  const andSameName = /^(.*?)\b([Tt]arget [^,]+?) and (?:all other (permanents|creatures|artifacts|lands|enchantments)|each other (permanent|creature|artifact|land|enchantment)) with the same name(?: as that (?:permanent|creature|artifact|land|enchantment))?\b(.*)$/.exec(s);
   if (andSameName) andSameName.splice(3, 2, andSameName[3] ?? (andSameName[4] ? `${andSameName[4]}s` : undefined)!);
   if (andSameName) {
     const out = attempt(b, (b) => {
       const fx = parseSentence(`${andSameName[1]}${andSameName[2]}${andSameName[4]}`, b);
       const index = b.targets.length - 1;
       if (!fx || index < 0) return null;
-      const all: Ref = { ref: 'all', filter: { sameNameAs: { ref: 'target', index }, ...(andSameName[3] === 'creatures' ? { types: ['Creature'] } : {}) } };
+      const kind = andSameName[3] === 'permanents' ? undefined : capitalise(andSameName[3]!.replace(/s$/, ''));
+      const all: Ref = { ref: 'all', filter: { sameNameAs: { ref: 'target', index }, ...(kind ? { types: [kind] } : {}) } };
       const me = JSON.stringify({ ref: 'target', index });
       // The one effect on the target, and nothing else about it.
       if (JSON.stringify(fx).split(me).length !== 2) return null;
@@ -4240,10 +4254,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Loran of the Third Path: "You and target opponent each draw a card."
   // Karazikar: "you and the attacking player each draw a card and lose 1 life" — both instructions, for each of them.
-  const youAnd = /^You and (target opponent|target player|that player|defending player|the attacking player|that attacking player) each (.+)$/.exec(s);
+  // Splinter, Aging Champion: "you and another target player each draw a card" — in a game without teams, any other player is
+  // an opponent (CR 102.2).
+  const youAnd = /^You and (target opponent|target player|another target player|that player|defending player|the attacking player|that attacking player) each (.+)$/.exec(s);
   if (youAnd) {
     const r = attempt(b, (b) => {
-      const other = parsePlayerRef(youAnd[1]!, b) ?? (b.named[youAnd[1]!] as Ref | undefined) ?? null;
+      const who = youAnd[1] === 'another target player' ? 'target opponent' : youAnd[1]!;
+      const other = parsePlayerRef(who, b) ?? (b.named[who] as Ref | undefined) ?? null;
       const both = /^(.+?) and ((?:lose|gain|draw|discard|mill|create|sacrifice)s? .+)$/.exec(youAnd[2]!);
       const parts = parseClause(youAnd[2]!, b.clone(), { ref: 'you' }) || !both ? [youAnd[2]!] : [both[1]!, both[2]!];
       const out: EffectNode[] = [];
@@ -5562,6 +5579,8 @@ const VERBS: Record<string, VerbHandler> = {
   },
   // CR 702.151a: "Unattach this permanent."
   unattach(args, who, b, imperative) {
+    // Tamiyo's Compleation: "tap enchanted permanent. If it's an Equipment, unattach it." — what this Aura enchants.
+    if (imperative && args === 'it' && b.it?.ref === 'attached') return [{ type: 'unattach', what: { ref: 'attached' } }];
     return imperative && args === '~' ? [{ type: 'unattach', what: { ref: 'self' } }] : null;
   },
   attach(args, who, b, imperative) {

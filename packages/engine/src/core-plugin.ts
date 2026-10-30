@@ -4366,9 +4366,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const then = (node.then as EffectNode[] | undefined) ?? [];
     const otherwise = (node.else as EffectNode[] | undefined) ?? [];
     const chooser = chooserOf(node, ctx);
-    if (!chooser || !first.every((e) => feasible(e, ctx, chooser))) return otherwise.length ? { expand: otherwise } : true;
-    // CR 603.12: "Sacrifice it. When you do, …" — not optional; what follows happens only if it could be done.
-    if (node.mandatory) return { expand: [...first, ...then] };
+    const can = Boolean(chooser) && first.every((e) => feasible(e, ctx, chooser!));
+    // CR 603.12: "Sacrifice it. When you do, …" — not optional: done as far as it can be (CR 609.3; Fiery Encore: "Discard a
+    // card, then draw a card. When you discard …" still draws with an empty hand); what follows only if it could be done.
+    if (node.mandatory) return { expand: [...first, ...(can ? then : otherwise)] };
+    if (!can || !chooser) return otherwise.length ? { expand: otherwise } : true;
     if (!answer) return { ask: { kind: 'may', player: chooser, text: describeEffects([...first, ...then]), sourceName: sourceName(ctx) } };
     // Cultivator Colossus: "If you do, draw a card and repeat this process."
     return { expand: answer.yes ? [...first, ...then, ...(node.repeat ? [structuredClone(node)] : [])] : otherwise };

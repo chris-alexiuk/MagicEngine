@@ -19,9 +19,10 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   if (/^can't be blocked by more than one creature(?: each combat)?$/.test(p)) return { maxBlockers: 1 };
   // CR 509.1a: blocking more than one attacker.
   // Watcher in the Web: "can block an additional seven creatures each combat".
-  const additional = /^can block (?:an additional(?: (\w+))?|(\w+) additional) creatures?(?: each combat)?$/.exec(p)?.map((x, i, m) => (i === 1 ? m[1] ?? m[2] : x));
+  // Hundred-Handed One: "can block an additional ninety-nine creatures each combat".
+  const additional = /^can block (?:an additional(?: ([\w-]+))?|(\w+) additional) creatures?(?: each combat)?$/.exec(p)?.map((x, i, m) => (i === 1 ? m[1] ?? m[2] : x));
   if (additional) {
-    const n = additional[1] ? parseAmount(additional[1]) : 1;
+    const n = additional[1] === 'ninety-nine' ? 99 : additional[1] ? parseAmount(additional[1]) : 1;
     return typeof n === 'number' ? { extraBlocks: n } : null;
   }
   if (/^can block any number of creatures(?: each combat)?$/.test(p)) return { extraBlocks: 99 };

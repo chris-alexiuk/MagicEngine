@@ -2674,7 +2674,8 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // Eriette of the Charmed Apple: "Each creature that's enchanted by an Aura you control can't attack you …".
   body = body.replace(/^Each creature that's (enchanted by an Aura you control) can't attack you/, "Creatures that are $1 can't attack you");
   // Reverence: "Creatures with power 2 or less can't attack you." — checked as they attack.
-  const ban = /^(.*?creatures(?: with [a-z]+| with power \d+ or (?:less|greater)| named [A-Z][\w ,'-]+?| that are enchanted by an Aura you control)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
+  // Form of the Dragon: "Creatures without flying can't attack you."
+  const ban = /^(.*?creatures(?: with [a-z]+| without [a-z]+| with power \d+ or (?:less|greater)| named [A-Z][\w ,'-]+?| that are enchanted by an Aura you control)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
   if (ban) {
     const pf = parseFilter(ban[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
@@ -3133,7 +3134,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3300,6 +3301,12 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     // Leyline of the Guildpact: "Each nonland permanent you control is all colors." (CR 105.2)
     if (/^(?:is|are) all colors$/.test(part) && !effect.colors) {
       effect.colors = ['W', 'U', 'B', 'R', 'G'];
+      continue;
+    }
+    // Midnight Mangler: "During turns other than yours, this Vehicle is an artifact creature." (CR 301.7: a Vehicle that's a
+    // creature keeps its other types; it uses its printed power and toughness)
+    if (part === 'is an artifact creature' && /\bVehicle\b/.test(b.env.typeLine) && !effect.addTypes) {
+      effect.addTypes = { types: ['Creature'], subtypes: [] };
       continue;
     }
     // Darkest Hour: "All creatures are black."
@@ -4041,7 +4048,7 @@ export const staticPreventionRule: GrammarRule = {
     // cards." (Angel of Suffering); "If a creature would deal combat damage to this creature, prevent that damage and put
     // a +1/+1 counter on this creature." (Ironscale Hydra); "If equipped creature would be dealt damage, …" (Panther Habit).
     const pm = /^If (.+?), prevent that damage(?:(?: and|\.) ([^.]+?))?\.$/.exec(line);
-    if (pm && !/^damage would be dealt to (?:another|an?) /.test(pm[1]!)) {
+    if (pm && !/^(?:(?:non)?combat )?damage would be dealt to (?:another|an?) /.test(pm[1]!)) {
       let head = pm[1]!;
       const b = new Binder(env);
       b.it = { ref: 'self' };
@@ -4058,8 +4065,11 @@ export const staticPreventionRule: GrammarRule = {
       const node: StaticPreventionNode = { type: 'prevent_damage', ...(condition ? { condition } : {}) };
       let who: string | undefined;
       let h: RegExpExecArray | null;
-      if ((h = /^damage would be dealt to (.+)$/.exec(head))) who = h[1];
-      else if ((h = /^(.+?) would be dealt damage$/.exec(head))) who = h[1];
+      // Purity: "If noncombat damage would be dealt to you, prevent that damage."
+      if ((h = /^(noncombat |combat )?damage would be dealt to (.+)$/.exec(head))) {
+        who = h[2];
+        if (h[1]) node.damage = h[1].trim() as 'combat' | 'noncombat';
+      } else if ((h = /^(.+?) would be dealt damage$/.exec(head))) who = h[1];
       else if ((h = /^a source( you control)? would deal damage to (.+)$/.exec(head))) {
         if (h[1]) node.from = { controller: 'you' };
         node.eachSource = true;

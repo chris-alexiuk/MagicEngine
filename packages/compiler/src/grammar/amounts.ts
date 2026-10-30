@@ -530,6 +530,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (lifeAmount) return lifeThisTurn(lifeAmount[1]!);
   // Well of Lost Dreams: "Whenever you gain life, … the amount of life you gained" — how much the trigger event was.
   if (b.eventAmount && /^the amount of life you (?:gained|lost)$/.test(t)) return { kind: 'event' };
+  // Purity: "You gain life equal to the damage prevented this way." (CR 615.5)
+  if (b.eventAmount && /^the damage prevented this way$/.test(t)) return { kind: 'event' };
   // Tymna the Weaver: "the number of opponents that were dealt combat damage this turn"
   if (/^the number of opponents (?:that were |who were )?dealt combat damage this turn$/.test(t)) return { kind: 'players', who: 'opponents', combatDamaged: true };
   // Priest of the Blessed Graf: "the number of opponents who control more lands than you".
@@ -544,6 +546,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (/^the number of tokens you(?:'ve)? created this turn$/.test(t)) return { kind: 'tokens_created_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
+  // Mindshrieker: "Target player mills a card. … where X is the milled card's mana value." — the one card milled.
+  if (b.milled && /^the milled card's mana value$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"
   // The Skullspore Nexus: "the total power of those creatures" — the ones that died together.
   if (b.batchPower && t === 'the total power of those creatures') return { kind: 'event', stat: 'power' };
