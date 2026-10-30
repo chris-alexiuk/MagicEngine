@@ -471,6 +471,11 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
     });
     if (matches) return `${aName} has ${kw.text}walk.`;
   }
+  // Scrapdiver Serpent: "can't be blocked as long as defending player controls an artifact".
+  for (const r of chars(g, attacker).combat) {
+    const f = r.unblockableIfDefenderControls as ObjectFilter | undefined;
+    if (f && g.zones.battlefield.some((id) => g.objects[id]!.controller === blocker.controller && matchesFilter(g, g.objects[id]!, f, { controller: blocker.controller, source: attacker }))) return `${aName} can’t be blocked while you control that.`;
+  }
   // CR 509.1b: restrictions from continuous effects — on the attacker, then on the blocker.
   for (const r of chars(g, attacker).combat) {
     // "can't be blocked by creatures with power less than ~'s power": ~ is the ability's source (Champion of Lambholt).
@@ -1109,6 +1114,7 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
         if (a.kind !== 'static' || a.effect.type !== 'prevent_damage') continue;
         const e = a.effect as StaticPreventionNode;
         if (!e.toSelf || (e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
+        if (e.from && !matchesFilter(g, source, e.from, { controller: recipient.controller, source: recipient, anyZone: true })) continue;
         return { all: true, halves: 0 };
       }
     }

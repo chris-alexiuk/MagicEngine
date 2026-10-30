@@ -1006,6 +1006,9 @@ export class ParserRegistry {
       .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
       // Elenda, Saint of Dusk: "~ gets an additional +5/+5 as long as …" — more of the same, added on.
       .map((l) => l.replace(/\b(gets?) an additional ([+-]\d+\/[+-]\d+)/g, '$1 $2'))
+      // Death's Approach: "Enchanted creature gets -X/-X, where X is the number of creature cards in its controller's
+      // graveyard." — the same as "-1/-1 for each creature card in its controller's graveyard".
+      .map((l) => l.replace(/^((?:Enchanted|Equipped) creature) gets ([+-])X\/([+-])(X|0), where X is the number of ((?:[a-z]+ )*)cards in its controller's (graveyard|hand)\.$/, (_m, who: string, ps: string, ts: string, t: string, kind: string, zone: string) => `${who} gets ${ps}1/${ts}${t === 'X' ? '1' : '0'} for each ${kind}card in its controller's ${zone}.`))
       // Ordeal of Purphoros: "When you sacrifice this Aura, it deals 3 damage to any target." — the Aura does.
       .map((l) => l.replace(/^(When you sacrifice (this Aura|this enchantment|this artifact|~)), it deals /, '$1, $2 deals '))
       // Mongrel Pack: "When this creature dies during combat, …" — dying in the combat phase.

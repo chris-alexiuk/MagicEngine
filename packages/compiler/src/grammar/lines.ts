@@ -2254,11 +2254,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       extra.kicked = true;
     }
     // "… an instant or sorcery spell that targets a creature" — as it's cast.
-    const targets = / that targets (?:a|an) (.+)$/.exec(what);
+    // Reparations: "a spell that targets you or a creature you control".
+    const targets = / that targets (you or )?(?:a|an) (.+)$/.exec(what) ?? / that targets (you)()$/.exec(what);
     if (targets) {
-      const pf = parseFilter(targets[1]!, b);
-      if (!pf || pf.plural) return null;
-      extra.targets = pf.filter;
+      const pf = targets[2] ? parseFilter(targets[2], b) : null;
+      if (targets[2] && (!pf || pf.plural)) return null;
+      if (pf) extra.targets = pf.filter;
+      if (targets[1]) extra.targetsYou = true;
       what = what.slice(0, targets.index);
     }
     if (/ during an opponent's turn$/.test(what)) {
@@ -2586,7 +2588,8 @@ export const continuousRule: GrammarRule = {
         continue;
       }
       // "~ gets +2/+2 as long as there are seven or more cards in your graveyard." (the condition last)
-      const trailing = /^(.+?) as long as (.+)$/.exec(rest);
+      // Scrapdiver Serpent: "can't be blocked as long as defending player controls an artifact" — a combat rule of its own.
+      const trailing = /can't be blocked as long as defending player controls /.test(rest) ? null : /^(.+?) as long as (.+)$/.exec(rest);
       if (trailing && !/^As long as /i.test(rest)) {
         const cond = attempt(b, (b) => {
           // "~ has first strike as long as it's attacking": "it" is the subject.
@@ -2998,6 +3001,11 @@ function parsePlayerRule(body: string): PlayerRuleNode | null {
   if (/^damage doesn't cause you to lose life$/i.test(body)) return { type: 'player_rule', who: 'you', rule: 'damage_no_life_loss' };
   // Stasis: "Players skip their untap steps." (CR 614.10)
   if (body === 'Players skip their untap steps') return { type: 'player_rule', who: 'each', rule: 'skip_untap' };
+  // Eon Hub: "Players skip their upkeep steps."
+  if (body === 'Players skip their upkeep steps') return { type: 'player_rule', who: 'each', rule: 'skip_upkeep' };
+  // Telepathy: "Your opponents play with their hands revealed."; Revelation: "Players play with their hands revealed."
+  const handsRevealed = /^(Players|Your opponents) play with their hands revealed$/.exec(body);
+  if (handsRevealed) return { type: 'player_rule', who: handsRevealed[1] === 'Players' ? 'each' : 'opponents', rule: 'hand_revealed' };
   // Mindlock Orb: "Players can't search libraries."; Stranglehold: "Your opponents can't search libraries."
   const noSearch = /^(Players|Your opponents) can't search libraries$/.exec(body);
   if (noSearch) return { type: 'player_rule', who: noSearch[1] === 'Players' ? 'each' : 'opponents', rule: 'cant_search' };
@@ -4212,13 +4220,19 @@ export const staticPreventionRule: GrammarRule = {
       if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(by[1] === 'Combat damage' ? { combat: true } : {}), from: pf.filter } } as StaticAbility;
     }
     // Energy Field: "Prevent all damage that would be dealt to you by sources you don't control."
-    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control))?( during your turn)?\.$/.exec(line);
+    // Wall of Vapor: "Prevent all damage that would be dealt to this creature by creatures it's blocking."; Armored Transport:
+    // "… combat damage … by creatures blocking it."
+    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|creatures (?:it's blocking|blocking it)))?( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
     const node: StaticPreventionNode = { type: 'prevent_damage' };
     if (m[4]) {
       if (m[2] !== 'to') return null;
-      node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : { controller: 'opponent' };
+      if (/^creatures /.test(m[4])) {
+        const pf = /^(?:~|this creature)$/.test(m[3]!) ? parseFilter(m[4], b) : null;
+        if (!pf?.plural || !pf.filter.combatWithSource) return null;
+        node.from = pf.filter;
+      } else node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : { controller: 'opponent' };
     }
     if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
     if (m[5]) node.condition = { type: 'your_turn', value: true };
@@ -4564,6 +4578,9 @@ export const entersWithCountersRule: GrammarRule = {
     // Polukranos, Unchained: "… enters with six +1/+1 counters on it unless it escaped" (as the parser splits it).
     const unlessEscaped = / unless it escaped\.$/.test(line);
     if (unlessEscaped) line = line.replace(/ unless it escaped\.$/, '.');
+    // Steel Exemplar: "… enters with two +1/+1 counters on it unless two or more colors of mana were spent to cast it."
+    const unlessCond = !unlessEscaped ? / unless ([^.]+)\.$/.exec(line) : null;
+    if (unlessCond) line = line.slice(0, unlessCond.index) + '.';
     const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (twice X|\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);
     if (m) m.splice(2, 1);
@@ -4575,8 +4592,10 @@ export const entersWithCountersRule: GrammarRule = {
     // raid's "… if you attacked this turn".
     const env = envOf(ctx);
     const condText = m[1] ?? m[5];
-    if (m[1] && m[5]) return null;
-    const condition = condText ? (env ? parseCondition(condText, new Binder(env)) : null) : undefined;
+    if ((m[1] && m[5]) || (unlessCond && condText)) return null;
+    const unlessNode = unlessCond ? (env ? parseCondition(unlessCond[1]!, new Binder(env)) : null) : undefined;
+    if (unlessNode === null) return null;
+    const condition = condText ? (env ? parseCondition(condText, new Binder(env)) : null) : unlessNode ? ({ type: 'not', cond: unlessNode } as ConditionNode) : undefined;
     if (condition === null) return null;
     const node: StaticAbility = {
       kind: 'static',
@@ -4801,6 +4820,29 @@ export const enterWithCounterRule: GrammarRule = {
     const m = /^You may have ~ enter with an additional \+1\/\+1 counter on it\.( If you don't, it gains haste\.)?$/.exec(line);
     if (!m) return null;
     const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'as_enters', choice: 'counter', ...(m[1] ? { elseHaste: true } : {}) } };
+    return node;
+  },
+};
+
+/** CR 702.104a (tribute): "As this creature enters, choose an opponent. That player may put an additional N +1/+1 counters on it as it enters." */
+export const tributeRule: GrammarRule = {
+  id: 'tribute',
+  parse(line, original) {
+    const m = /^As ~ enters, choose an opponent\. That player may put an additional (\w+) \+1\/\+1 counters? on it as it enters\.$/.exec(line);
+    const n = m ? parseAmount(m[1]!) : null;
+    if (typeof n !== 'number') return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'as_enters', choice: 'tribute', amount: n } };
+    return node;
+  },
+};
+
+/** Boot Nipper: "This creature enters with your choice of a deathtouch counter or a lifelink counter on it." (CR 614.1c) */
+export const enterWithCounterChoiceRule: GrammarRule = {
+  id: 'enter_with_counter_choice',
+  parse(line, original) {
+    const m = /^~ enters with your choice of an? ([a-z+/0-9 -]+?) counter or an? ([a-z+/0-9 -]+?) counter on it\.$/.exec(line);
+    if (!m) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'as_enters', choice: 'counter_kind', options: [m[1]!, m[2]!].map((c) => c.replace(/ /g, '_')) } };
     return node;
   },
 };
@@ -5303,6 +5345,8 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   exertRule,
   openingHandRule,
   enterWithCounterRule,
+  tributeRule,
+  enterWithCounterChoiceRule,
   perTargetCostRule,
   resolveToHandRule,
   returnIfPaidRule,

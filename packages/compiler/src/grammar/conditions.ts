@@ -378,6 +378,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you cast (?:~|this spell) during your main phase$/.test(t)) return { type: 'cast_in_main_phase' };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~|he|she) was kicked$/.test(t)) return { type: 'kicked' };
+  // CR 702.104b: "if tribute wasn't paid".
+  if (t === "tribute wasn't paid") return { type: 'not', cond: { type: 'tribute_paid' } };
+  if (t === 'tribute was paid') return { type: 'tribute_paid' };
   // Sphinx of Lost Truths: "if it wasn't kicked".
   if (/^(?:it|~|he|she) wasn't kicked$/.test(t)) return { type: 'not', cond: { type: 'kicked' } };
   // Sevinne's Reclamation: "If this spell was cast from a graveyard"; "if this spell was cast from your hand" (a copy wasn't
@@ -597,6 +600,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Fanatic of the Harrowing: "each player discards a card. If you discarded a card this way, draw a card."
   if (t === 'you discarded a card this way') return { type: 'amount', amount: { kind: 'discarded_this_way', mine: true }, op: 'ge', n: 1 };
+  // Viridian Betrayers: "as long as an opponent is poisoned".
+  if (t === 'an opponent is poisoned') return { type: 'poison', who: 'any_opponent', min: 1 };
   // Corrupted Resolve: "Counter target spell if its controller is poisoned."
   const poisoned = t !== 'defending player is poisoned' ? /^(its controller|that player|target player|they|you) (?:is|are) poisoned$/.exec(t) : null;
   if (poisoned) {
@@ -610,7 +615,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'count', who: 'all', filter: { ...pf.filter, controller: 'defending' }, max: 0 };
   }
   // Waterspout Warden: "if another creature entered the battlefield under your control this turn".
-  const anotherEntered = /^another (creature|artifact|land|permanent) entered the battlefield under your control this turn$/.exec(t);
+  // Saddled Rimestag: "as long as you had another creature enter the battlefield under your control this turn".
+  const anotherEntered = /^another (creature|artifact|land|permanent) entered the battlefield under your control this turn$/.exec(t) ?? /^you had another (creature|artifact|land|permanent) enter the battlefield under your control this turn$/.exec(t);
   if (anotherEntered) return { type: 'entered_this_turn', filter: { ...(anotherEntered[1] === 'permanent' ? {} : { types: [capitalise(anotherEntered[1]!)] }), other: true }, min: 1 };
   // Corrupted: "an opponent has three or more poison counters"
   const poison = /^(an opponent|you) ha(?:s|ve) (\w+ or more) poison counters$/.exec(t);
@@ -672,6 +678,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // cards in hand than you".
   const oppMoreHand = /^an opponent has (?:at least (two|three|four|five) )?more cards in hand than you$/.exec(t);
   if (oppMoreHand) return { type: 'hand', than: 'an_opponent', op: 'lt', ...(oppMoreHand[1] ? { by: parseAmount(oppMoreHand[1]) } : {}) };
+  // Pulse of the Forge: "if that player or that planeswalker's controller has more life than you".
+  const moreLife = /^(.+?) has more life than you$/.exec(t);
+  if (moreLife && !/^(?:an?|each|any) /.test(moreLife[1]!)) {
+    const who = parsePlayerRef(moreLife[1]!, b);
+    if (who && who.ref !== 'you' && who.ref !== 'players') return { type: 'amount', amount: { kind: 'life', who }, op: 'gt', n: { kind: 'life', who: { ref: 'you' } } } as ConditionNode;
+  }
   const life = /^(you|an opponent|a player|each player) ha(?:ve|s) (\w+ or (?:more|less|fewer)) life$/.exec(t);
   if (life) {
     const c = compare(life[2]!);
@@ -719,12 +731,16 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 701.38: "if sickness gets more votes", "if psychosis gets more votes or the vote is tied"
   const votes = /^(.+?) gets more votes( or the vote is tied)?$/.exec(t);
   if (votes && b.votes.includes(votes[1]!)) return { type: 'votes', option: votes[1]!, ...(votes[2] ? { orTied: true } : {}) };
+  // CR 706.2: "If the result is 4 or less" — the die rolled by this resolution.
+  const result = /^the result is (\d+)(?: or (less|greater|more))?$/.exec(t);
+  if (result) return { type: 'amount', amount: { kind: 'die_result' }, op: result[2] === 'less' ? 'le' : result[2] ? 'ge' : 'eq', n: Number(result[1]) } as ConditionNode;
   // CR 701.59c: "if evidence was collected"
   if (t === 'evidence was collected') return { type: 'paid', cost: 'collect_evidence' };
   // CR 702.187b (mayhem): "you discarded this card this turn"
   if (/^you discarded (?:~|it) this turn$/.test(t)) return { type: 'discarded_this_turn' };
   // The Raven Man: "if a player discarded a card this turn"; Tinybones: "if an opponent discarded a card this turn".
-  const someoneDiscarded = /^(a player|an opponent|you) discarded a card this turn$/.exec(t);
+  // Recalibrate: "If you've discarded a card this turn".
+  const someoneDiscarded = /^(a player|an opponent|you)(?:'ve| have)? discarded a card this turn$/.exec(t);
   if (someoneDiscarded) return { type: 'discarded_this_turn', who: someoneDiscarded[1] === 'a player' ? 'any' : someoneDiscarded[1] === 'you' ? 'you' : 'opponent' };
   // CR 702.76a (prowl), CR 702.173a (freerunning)
   if (/^a player was dealt combat damage this turn by a source that, at the time it dealt that damage, was under your control and had any of ~'s creature types$/.test(t)) {
@@ -846,6 +862,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(gy[1]!);
     return c ? { type: 'graveyard', ...c } : null;
   }
+  // Steel Exemplar: "two or more colors of mana were spent to cast it" — converge's count (CR 702.44a's colors spent).
+  const colorsSpentN = /^(two|three|four|five) or more colors of mana were spent to cast (?:it|~|this spell)$/.exec(t);
+  if (colorsSpentN) return { type: 'amount', amount: { kind: 'colors_spent' }, op: 'ge', n: parseAmount(colorsSpentN[1]!) as number };
+  // Freestrider Commando: "if it wasn't cast or no mana was spent to cast it".
+  if (t === "it wasn't cast or no mana was spent to cast it") return { type: 'or', any: [{ type: 'not', cond: { type: 'cast_by_you', anyone: true } }, { type: 'amount', amount: { kind: 'mana_spent', of: { ref: 'self' } }, op: 'le', n: 0 }] };
+  // Gorilla Titan: "as long as there are no cards in your graveyard".
+  if (t === 'there are no cards in your graveyard') return { type: 'graveyard', max: 0 };
   // Sheoldred // The True Scriptures: "an opponent has eight or more cards in their graveyard".
   const oppGy = /^an opponent has (\w+ or more) cards in their graveyard$/.exec(t);
   if (oppGy) {
@@ -969,6 +992,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Fortune Teller's Talent: "you've cast a spell this turn"; Essence Channeler: "you've lost life this turn".
   if (/^you(?:'ve)? cast a spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
+  // Impatience: "At the beginning of each player's end step, if that player didn't cast a spell this turn, …".
+  const theyCast = /^(that player|they) (didn't|did not|hasn't|haven't|has|have) cast a spell this turn$/.exec(t);
+  if (theyCast) {
+    const who = parsePlayerRef(theyCast[1]!, b);
+    if (who && who.ref !== 'you' && who.ref !== 'players') return { type: 'amount', amount: { kind: 'spells_cast_this_turn', player: who }, op: /n't|not/.test(theyCast[2]!) ? 'eq' : 'ge', n: /n't|not/.test(theyCast[2]!) ? 0 : 1 } as ConditionNode;
+  }
   // Conduit of Worlds: "If you haven't cast a spell this turn".
   if (/^you (?:haven't|have not|didn't) cast a spell this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_cast_spell' } };
   if (/^you(?:'ve)? lost life this turn$/.test(t)) return { type: 'this_turn', event: 'you_lost_life' };
@@ -1045,7 +1074,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c: ConditionNode = { type: 'had_keyword', keyword: hadKw[2]!.replace(/ /g, '_') };
     return hadKw[1] === 'had' ? c : { type: 'not', cond: c };
   }
+  // Momentum Rumbler: "Whenever this creature attacks, if it doesn't have first strike, …" — as it is now.
+  const hasKw = /^(?:it|~) (has|doesn't have) (flying|haste|deathtouch|lifelink|trample|vigilance|menace|reach|defender|indestructible|first strike|double strike|hexproof)$/.exec(t);
+  if (hasKw && (t.startsWith('~') || b.it?.ref === 'self')) {
+    const c: ConditionNode = { type: 'is', of: { ref: 'self' }, filter: { keywords: [hasKw[2]!.replace(/ /g, '_')] } };
+    return hasKw[1] === 'has' ? c : { type: 'not', cond: c };
+  }
   if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking' } } : { type: 'was_attacking' };
+  // Prophesied End: "Destroy target creature. If it wasn't attacking, its controller draws a card."
+  if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'target') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking', of: b.it } } : { type: 'was_attacking', of: b.it };
   // Guildsworn Prowler: "When this creature dies, if it wasn't blocking, draw a card."
   if (/^it (was|wasn't) blocking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking', blocking: true } } : { type: 'was_attacking', blocking: true };
   // Gunner Conscript: "When this creature dies, if it was enchanted"; Koll, the Forgemaster: "if it was enchanted or
@@ -1106,6 +1143,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (creaturesAttacked) {
     const n = parseAmount(creaturesAttacked[1]!);
     return typeof n === 'number' ? { type: 'attacked_with', n, anyone: true } : null;
+  }
+  // Ichor Shade: "if an artifact or creature was put into a graveyard from the battlefield this turn" — as it last existed.
+  const fromField = /^an? (artifact|creature|enchantment|land|planeswalker|artifact or creature|creature or artifact|permanent) (?:was|were) put into a graveyard from the battlefield this turn$/.exec(t);
+  if (fromField) {
+    const types = fromField[1] === 'permanent' ? ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'] : fromField[1]!.split(' or ').map(capitalise);
+    return { type: 'amount', amount: { kind: 'died_this_turn', types }, op: 'ge', n: 1 } as ConditionNode;
   }
   // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
   // Macabre Reconstruction: "if a creature card was put into your graveyard from anywhere this turn".

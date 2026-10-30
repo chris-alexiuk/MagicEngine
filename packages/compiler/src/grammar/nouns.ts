@@ -113,7 +113,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     return Boolean(who && ((f.controlledBy = who), true));
   }],
   // Tectonic Instability: "tap all lands its controller controls" — the controller of what "it" is.
-  [/ its controller controls$/, (f, _m, b) => {
+  // Weight of Spires: "the number of nonbasic lands that creature's controller controls" — the same.
+  [/ (?:its|that creature's|that permanent's) controller controls$/, (f, _m, b) => {
     if (f.controller || f.controlledBy || !b.it || b.it.ref === 'self') return false;
     f.controlledBy = { ref: 'controller_of', of: b.it };
     return true;
@@ -1072,6 +1073,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if ((t === "each of that player's opponents" || t === "that player's opponents") && thatPlayer) return { ref: 'players', who: 'opponents', opponentsOf: thatPlayer };
   // Kediss: "… deals combat damage to an opponent, it deals that much damage to each other opponent."
   if (t === 'each other opponent' && b.player?.ref === 'trigger_player') return { ref: 'players', who: 'opponents', except: b.player };
+  // Death by Dragons: "Each player other than target player creates …".
+  const otherThanTarget = /^each player other than (target player|target opponent)$/.exec(t);
+  if (otherThanTarget) {
+    const one = parsePlayerRef(otherThanTarget[1]!, b);
+    return one ? { ref: 'players', who: 'each', except: one } : null;
+  }
   // Call the Coppercoats: "Choose any number of target opponents. … those opponents control" — the players chosen.
   if ((t === 'those opponents' || t === 'those players') && b.named[t]) return b.named[t]!;
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.

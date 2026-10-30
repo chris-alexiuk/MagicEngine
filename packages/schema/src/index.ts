@@ -697,7 +697,7 @@ export type AmountExpr = (
   /** CR 700.8: the creatures in your party (up to one each of Cleric, Rogue, Warrior and Wizard). */
   | { kind: 'party' }
   /** CR 305.6 (domain): the number of basic land types among lands you control. */
-  | { kind: 'domain' }
+  | { kind: 'domain'; /** Allied Strategies: "among lands they control" — that player's. */ player?: Ref }
   /** Delirium: the number of card types among cards in your graveyard. */
   // Tarmogoyf: `whose` — all graveyards, or the opponents'; yours without it.
   | { kind: 'card_types'; whose?: 'all' | 'opponents'; discardedThisWay?: true }
@@ -738,6 +738,7 @@ export type AmountExpr = (
   /** Bronze Cudgels: "the number of times this ability has resolved this turn" (this time included). */
   | { kind: 'ability_resolutions' }
   /** Ancient Excavation: "for each card drawn this way" — what this resolution drew for you. */
+  /** The cards this resolution made anyone draw (Communal Brewing: each other player who drew; Laquatus's Creativity). */
   | { kind: 'drawn_this_way' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
   | { kind: 'tokens_created_this_turn' }
@@ -972,6 +973,8 @@ export interface CombatRules {
   mustBeBlocked?: 'one' | 'all';
   /** "can't attack unless defending player controls an Island" (CR 508.1c) */
   attackOnlyIfDefenderControls?: ObjectFilter;
+  /** Scrapdiver Serpent: "can't be blocked as long as defending player controls an artifact" (as landwalk, CR 702.14c). */
+  unblockableIfDefenderControls?: ObjectFilter;
   /** CR 509.1a: "can block an additional creature each combat" (1); "can block any number of creatures" (99). */
   extraBlocks?: number;
   /** Shiny Impetus: "Enchanted creature … is goaded" — by the static ability's controller, while it applies (CR 701.15). */
@@ -1160,7 +1163,9 @@ export interface AsEntersNode extends EffectNode {
   /** word: the Sieges' "As this enchantment enters, choose Khans or Dragons." (`options`; abilities gated by `chosen_word`). */
   /** land_type: Multiversal Passage's "choose a basic land type" (`chosen.landType`; "is the chosen type" adds it). */
   /** number: Talion's "choose a number between 1 and 10" (`options`; `chosen.number`). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number';
+  /** tribute: CR 702.104a — an opponent the controller chooses may put `amount` +1/+1 counters on it (`tributePaid`). */
+  /** counter_kind: Boot Nipper — "enters with your choice of a deathtouch counter or a lifelink counter on it" (`options`). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number' | 'tribute' | 'counter_kind';
   opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */
@@ -1460,6 +1465,10 @@ export const PLAYER_RULES = [
   'cant_draw',
   /** Stasis: "Players skip their untap steps." (CR 614.10) */
   'skip_untap',
+  /** Eon Hub: "Players skip their upkeep steps." (CR 614.10) */
+  'skip_upkeep',
+  /** Telepathy: "Your opponents play with their hands revealed." — everyone sees those hands. */
+  'hand_revealed',
 ] as const;
 export type PlayerRule = (typeof PLAYER_RULES)[number];
 
@@ -1498,14 +1507,14 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose',
     'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times',
+    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid',
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',

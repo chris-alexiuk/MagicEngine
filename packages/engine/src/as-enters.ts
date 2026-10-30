@@ -112,6 +112,10 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
         // Multiversal Passage: "choose a basic land type" (CR 205.3i).
         g.pending = { ...base, text: 'Choose a basic land type.', options: ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] };
         break;
+      case 'counter_kind':
+        // Boot Nipper: "enters with your choice of a deathtouch counter or a lifelink counter on it" (CR 614.1c).
+        g.pending = { ...base, text: `Choose the counter ${nameOf(g, o)} enters with: ${(node.options ?? []).join(' or ')}.`, options: [...(node.options ?? [])] };
+        break;
       case 'word':
         // The Sieges: "choose Khans or Dragons".
         g.pending = { ...base, text: `Choose ${(node.options ?? []).join(' or ')}.`, options: [...(node.options ?? [])] };
@@ -150,6 +154,19 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
       case 'read_ahead':
         g.pending = { ...base, text: `Choose a chapter for ${nameOf(g, o)} to start on (read ahead).`, options: Array.from({ length: node.amount ?? 1 }, (_, i) => String(i + 1)) };
         break;
+      case 'tribute': {
+        // CR 702.104a: "As this creature enters, choose an opponent. That player may put an additional N +1/+1 counters on it."
+        const opponents = livePlayers(g).filter((p) => p !== o.controller);
+        if (!opponents.length) {
+          o.tributePaid = false;
+          g.asEnters.shift();
+          continue;
+        }
+        if (!next.opponent && opponents.length === 1) next.opponent = opponents[0]!;
+        if (!next.opponent) g.pending = { ...base, text: `Choose an opponent to decide ${nameOf(g, o)}'s tribute.`, options: opponents };
+        else g.pending = { ...base, player: next.opponent, text: `Put ${node.amount ?? 1} +1/+1 counters on ${nameOf(g, o)} (tribute)? If you don't, its "tribute wasn't paid" ability applies.`, amount: node.amount ?? 1 };
+        break;
+      }
       case 'copy': {
         // CR 707.5: "You may have ~ enter as a copy of any creature on the battlefield."
         // Or "any creature card in a graveyard" (Body Double).
@@ -255,6 +272,35 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       }
       break;
     }
+    case 'tribute': {
+      // Choosing the opponent first, when there are several.
+      if (!next.opponent) {
+        if (!answer.choice || !p.options?.includes(answer.choice)) throw new RulesError('Choose one of your opponents.');
+        next.opponent = answer.choice;
+        g.pending = null;
+        return;
+      }
+      const n = p.amount ?? 1;
+      o.tributePaid = Boolean(answer.pay);
+      if (answer.pay) {
+        const k = counterBlocked(g, o, '+1/+1') ? 0 : replaceQuantity(g, 'counters', n, { player, object: o, counter: '+1/+1' });
+        if (k > 0) {
+          o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + k;
+          events.push({ type: 'counters', object: o.id, counter: '+1/+1', delta: k, by: player });
+        }
+      }
+      break;
+    }
+    case 'counter_kind': {
+      const counter = answer.choice;
+      if (!counter || !p.options?.includes(counter)) throw new RulesError(`Choose ${p.options?.join(' or ')}.`);
+      const k = counterBlocked(g, o, counter) ? 0 : replaceQuantity(g, 'counters', 1, { player, object: o, counter });
+      if (k > 0) {
+        o.counters[counter] = (o.counters[counter] ?? 0) + k;
+        events.push({ type: 'counters', object: o.id, counter, delta: k, by: player });
+      }
+      break;
+    }
     case 'read_ahead': {
       // CR 702.155b: it enters with the chosen number of lore counters.
       const n = Number(answer.choice);
@@ -294,5 +340,5 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
 
 /** CR 603.6d / 707.5: while a permanent is choosing what to enter as a copy of, its "enters" triggers wait. */
 export function copyChoicePending(g: GameState): boolean {
-  return Boolean(g.asEnters?.some((e) => (e.node.choice === 'copy' || e.node.choice === 'read_ahead' || e.node.choice === 'discard_or_leave' || e.node.choice === 'sacrifice_or_leave') && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
+  return Boolean(g.asEnters?.some((e) => (e.node.choice === 'copy' || e.node.choice === 'read_ahead' || e.node.choice === 'discard_or_leave' || e.node.choice === 'sacrifice_or_leave' || e.node.choice === 'tribute' || e.node.choice === 'counter_kind') && g.objects[e.object]?.zcc === e.zcc && g.objects[e.object]?.zone === 'battlefield'));
 }

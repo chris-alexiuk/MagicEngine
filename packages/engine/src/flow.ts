@@ -493,6 +493,11 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
 }
 
 export function beginStep(g: GameState, step: Step, events: GameEvent[]): void {
+  // CR 614.10: Eon Hub — "Players skip their upkeep steps": nothing in it happens (no "at the beginning of your upkeep").
+  if (step === 'upkeep' && playerRule(g, g.active, 'skip_upkeep')) {
+    beginStep(g, 'draw', events);
+    return;
+  }
   g.step = step;
   g.priority = null;
   g.passed = [];

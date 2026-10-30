@@ -257,6 +257,8 @@ export interface GameObject {
   prototyped?: true;
   /** CR 701.43a: exerted — it won't untap during its controller's next untap step. */
   exerted?: true;
+  /** CR 702.104b: whether tribute was paid as it entered (absent: it had no tribute). */
+  tributePaid?: boolean;
   /** Encore: "attacks that opponent this turn if able" (CR 702.141a). */
   attacksPlayer?: { player: PlayerId; turn: number };
   /** Activations this turn of abilities with a per-turn limit, by ability index. */
@@ -1050,6 +1052,8 @@ export interface GameState {
   prevention: PreventionShield[];
   /** CR 615.12: "Damage can't be prevented this turn" — the turn it applies to. */
   unpreventableTurn?: number;
+  /** Malicious Malfunction: "If a creature would die this turn, exile it instead." — the turn it applies to (CR 614.1a). */
+  exileDyingTurn?: number;
   /** "The next spell you cast this turn can't be countered" / "costs {1} less to cast" — used up by that spell. */
   nextSpell?: { id: string; player: PlayerId; turn: number; filter: ObjectFilter; source: ObjectRef; uncounterable?: true; reduce?: number; keyword?: string; flash?: true }[];
   /** Rules changes for players that last a while: "you gain protection from everything until your next turn". */
@@ -1076,7 +1080,7 @@ export interface GameState {
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
-  asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode }[];
+  asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode; /** Tribute: the opponent chosen to decide. */ opponent?: PlayerId }[];
   /** CR 500.7: extra turns to take, the most recently created first. */
   extraTurns?: PlayerId[];
   /** CR 731.1: the game's day/night designation, once it has one. */

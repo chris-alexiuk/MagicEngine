@@ -514,8 +514,9 @@ export function relatedPick(g: GameState, spec: TargetSpec, candidates: Target[]
   return best;
 }
 
-/** "another target creature": not one chosen for an earlier "target" of the same spell or ability. */
-const another = (spec: TargetSpec) => /\banother target\b/i.test(spec.text ?? '');
+/** "another target creature": not one chosen for an earlier "target" of the same spell or ability.
+ * Arm the Cathars, Relic Crush: "… and up to one other target …" — the same (CR 115.3). */
+const another = (spec: TargetSpec) => /\b(?:another|other) target\b/i.test(spec.text ?? '');
 
 const sameTarget = (a: Target, b: Target) =>
   a.kind === b.kind &&

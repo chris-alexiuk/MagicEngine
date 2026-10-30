@@ -215,6 +215,7 @@ export function moveObject(
   if (from === 'stack' && (o.exileOnLeave === true || (o.exileOnLeave === 'graveyard' && to === 'graveyard'))) to = 'exile';
   if (from === 'battlefield' && o.exileWhenLeaves) to = 'exile';
   if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
+  if (to === 'graveyard' && from === 'battlefield' && g.exileDyingTurn === g.turn && chars(g, o).types.includes('Creature')) to = 'exile';
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
   const instead = to === 'graveyard' ? exiledInstead(g, o, from) : null;
   if (instead) to = 'exile';

@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -384,11 +384,14 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'was_attacking': {
       // Zurgo Stormrender: "if it was attacking" — the creature that left, as it last existed on the battlefield.
-      const r = ctx.trigger?.object;
+      // Prophesied End: "Destroy target creature. If it wasn't attacking, …" — the target.
+      const t0 = (cond.of as Ref | undefined)?.ref === 'target' ? ctx.targets?.[(cond.of as { index: number }).index]?.[0] : undefined;
+      if (cond.of && t0?.kind !== 'object') return false;
+      const r = t0?.kind === 'object' ? { id: t0.id, zcc: t0.zcc } : ctx.trigger?.object;
       // Guildsworn Prowler: "if it wasn't blocking" — as a blocker instead.
       const a = r ? (cond.blocking ? g.combat?.blockers[r.id] : g.combat?.attackers[r.id]) : undefined;
       const last = r ? g.lastKnown?.[r.id] : undefined;
-      const zcc = r && last && (last.zcc === r.zcc || last.zcc === r.zcc - 1) ? last.zcc : r?.zcc;
+      const zcc = t0 ? r?.zcc : r && last && (last.zcc === r.zcc || last.zcc === r.zcc - 1) ? last.zcc : r?.zcc;
       return Boolean(a && a.zcc === zcc);
     }
     case 'was_type': {
@@ -677,6 +680,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return (g.turnLog.combatPhases ?? 0) <= 1;
     // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn" — counting this resolution
     // (and copies of the ability, which are the same ability). Rose Room Treasurer: "the first or second time" (max).
+    // CR 702.104b: "if tribute was paid" — as this permanent entered.
+    case 'tribute_paid':
+      return Boolean(source?.tributePaid);
     // Dragon Whelp: "If this ability has been activated four or more times this turn" — counting this activation.
     case 'activated_times': {
       // Farrelite Priest: a mana ability, resolving at once (CR 605.3b).

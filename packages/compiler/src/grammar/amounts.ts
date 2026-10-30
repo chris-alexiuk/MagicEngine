@@ -283,6 +283,7 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Fists of Flame: "for each card you've drawn this turn"
   if (t === "card you've drawn this turn") return { kind: 'drawn_this_turn' };
   // Ancient Excavation: "discard a card for each card drawn this way".
+  // Laquatus's Creativity: "Target player draws …, then discards a card for each card drawn this way" — by anyone.
   if (t === 'card drawn this way') return { kind: 'drawn_this_way' };
   // Heliod, the Radiant Dawn: "for each card your opponents have drawn this turn".
   if (t === 'card your opponents have drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents' };
@@ -370,6 +371,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   }
   // Domain (CR 305.6): "for each basic land type among lands you control"; delirium-style card types.
   if (t === 'basic land type among lands you control') return { kind: 'domain' };
+  // Allied Strategies: "Target player draws a card for each basic land type among lands they control."
+  if (/^basic land type among lands (?:they control|that player controls)$/.test(t)) return b.player && !['you', 'players', 'each_player'].includes(b.player.ref) ? { kind: 'domain', player: b.player } : null;
   if (t === 'card type among cards in your graveyard') return { kind: 'card_types' };
   // Tarmogoyf: "among cards in all graveyards"; Nighthawk Scavenger: "… in your opponents' graveyards".
   if (t === 'card type among cards in all graveyards') return { kind: 'card_types', whose: 'all' };
@@ -606,6 +609,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const n = parseAmount(minus[2]!);
     const inner = typeof n === 'number' ? parseCount(minus[1]!, b) : null;
     if (inner && typeof n === 'number' && !inner.times && !inner.half) return { ...inner, plus: (inner.plus ?? 0) - n };
+  }
+  // Dark Suspicions: "the number of cards in that player's hand minus the number of cards in your hand" (CR 107.1b).
+  const less = /^(the number of .+?) minus (the number of .+)$/.exec(t);
+  if (less) {
+    const a = parseCount(less[1]!, b);
+    const c = a ? parseCount(less[2]!, b) : null;
+    if (a && c && !a.half && !c.half && a.atMost === undefined && c.atMost === undefined) return { kind: 'sum', parts: [a, { ...c, times: -(c.times ?? 1), ...(c.plus ? { plus: -c.plus } : {}) }] } as AmountExpr;
   }
   // The Rack, Wheel of Torture: "3 minus the number of cards in their hand" (CR 107.1b: a negative result is 0).
   const fromN = /^(\d+|one|two|three|four|five) minus (.+)$/.exec(t);

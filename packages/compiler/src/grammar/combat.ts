@@ -38,10 +38,22 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   }
   // Skrelv, Defector Mite: "Choose a color. … It can't be blocked by creatures of that color this turn." — the color chosen.
   if (p === "can't be blocked by creatures of that color" && b.choseColor) return { cantBeBlockedBy: { types: ['Creature'], colors: ['chosen' as never] } };
+  // Lost in the Spirit World: "This token can't block or be blocked by non-Spirit creatures."
+  const either = /^can't block or be blocked by (.+)$/.exec(p);
+  if (either) {
+    const pf = parseFilter(either[1]!, b);
+    return pf && pf.plural ? { cantBeBlockedBy: pf.filter, cantBlockOf: pf.filter } : null;
+  }
   const by = /^can't be blocked by (.+)$/.exec(p);
   if (by) {
     const pf = parseFilter(by[1]!, b);
     return pf && pf.plural ? { cantBeBlockedBy: pf.filter } : null;
+  }
+  // Scrapdiver Serpent: "can't be blocked as long as defending player controls an artifact" — like landwalk (CR 702.14c).
+  const walkLike = /^can't be blocked as long as defending player controls (?:a|an) (.+)$/.exec(p);
+  if (walkLike) {
+    const pf = parseFilter(walkLike[1]!, b);
+    return pf && !pf.plural && !pf.filter.zone && !pf.filter.controller ? { unblockableIfDefenderControls: pf.filter } : null;
   }
   // "can't attack unless defending player controls an Island" (CR 508.1c)
   const unless = /^can't attack unless defending player controls (?:a|an) (.+)$/.exec(p);

@@ -34,7 +34,8 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   for (const p of g.order) {
     library[p] = g.zones.library[p]?.length ?? 0;
     const h = g.zones.hand[p] ?? [];
-    if (p === viewer) {
+    // Telepathy: a hand played revealed is seen by everyone.
+    if (p === viewer || playerRule(g, p, 'hand_revealed')) {
       hand[p] = [...h];
       h.forEach((id) => visible.add(id));
     } else hand[p] = h.length;

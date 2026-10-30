@@ -486,11 +486,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'devotion':
       return devotion(ctx, e.colors);
     case 'domain': {
-      // CR 305.6: basic land types among lands you control.
+      // CR 305.6: basic land types among lands you control (Allied Strategies: or that player controls).
       const types = new Set<string>();
+      const who = e.player ? refPlayers(ctx, e.player)[0] : ctx.controller;
       for (const id of g.zones.battlefield) {
         const o = g.objects[id]!;
-        if (o.controller !== ctx.controller) continue;
+        if (o.controller !== who) continue;
         const c = chars(g, o);
         if (c.types.includes('Land')) for (const t of ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']) if (c.subtypes.includes(t)) types.add(t);
       }
@@ -567,7 +568,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'ability_resolutions':
       return g.resolving?.abilityCount ?? 0;
     case 'drawn_this_way':
-      return ctx.resolution?.drew?.[ctx.controller] ?? 0;
+      // "for each card drawn this way" — by any player (Communal Brewing; Laquatus's Creativity's target player).
+      return Object.values(ctx.resolution?.drew ?? {}).reduce((n, k) => n + (k ?? 0), 0);
     case 'drawn_this_turn':
       // Heliod, the Radiant Dawn: "each card your opponents have drawn this turn" — all of theirs.
       // Thought Sponge: "the greatest number of cards an opponent has drawn this turn".

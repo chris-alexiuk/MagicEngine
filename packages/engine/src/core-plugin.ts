@@ -478,7 +478,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     const each = perPlayerAmounts(ctx, node.amount, players);
     for (const [i, p] of players.entries()) {
-      const n = each[i]!;
+      // CR 107.1b: "loses X life, where X is … minus …" — a negative result is 0.
+      const n = Math.max(0, each[i]!);
       const ps = ctx.g.players[p]!;
       // CR 119.8: "your life total can't change" — no life is lost.
       if (n > 0 && playerRule(ctx.g, p, 'life_cant_change')) continue;
@@ -503,7 +504,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // each owner chooses for each of theirs, then orders each pile (CR 401.4); they all move at once.
       const memo = ctx.memo as { ids?: ObjectRef[]; where?: Record<string, 'top' | 'bottom'>; order?: Record<string, string[]>; piles?: [PlayerId, 'top' | 'bottom'][] };
       const g = ctx.g;
-      memo.ids ??= refObjects(ctx, ref(node, 'what')).filter((o) => o.zone !== 'stack').map((o) => ({ id: o.id, zcc: o.zcc }));
+      // Sudden Setback: a target spell leaves the stack too.
+      memo.ids ??= refObjects(ctx, ref(node, 'what')).filter((o) => o.zone !== 'stack' || ((node.what as Ref | undefined)?.ref === 'target' && o.id !== ctx.source?.id)).map((o) => ({ id: o.id, zcc: o.zcc }));
       memo.where ??= {};
       const live = () => memo.ids!.filter((r) => g.objects[r.id]?.zcc === r.zcc);
       let answer: ChoiceAnswer | null = ctx.answer ?? null;
@@ -996,10 +998,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
-      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' || node.until === 'source_controlled' ? 'game' : 'eot',
+      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' || node.until === 'source_controlled' || node.until === 'source_present' ? 'game' : 'eot',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
       // Aegis Angel: "for as long as you control this creature" (CR 611.2b).
       ...(node.until === 'source_controlled' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc, player: ctx.controller } } : {}),
+      // Skilled Animator: "for as long as this creature remains on the battlefield".
+      ...(node.until === 'source_present' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
       ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
       ...(typeof node.whileCounter === 'string' ? { whileCounter: node.whileCounter } : {}),
     });
@@ -1248,6 +1252,20 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   attach(node, ctx) {
+    // Resolute Strike: "attach an Equipment you control to it" — the Equipment is chosen as it resolves.
+    if (node.chooseWhat) {
+      const g = ctx.g;
+      const to = refObjects(ctx, ref(node, 'to'))[0];
+      if (!to || to.zone !== 'battlefield') return true;
+      const filter = liveFilter(ctx, node.chooseWhat as ObjectFilter);
+      const candidates = g.zones.battlefield.filter((id) => id !== to.id && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null }) && canAttach(g, g.objects[id]!, to));
+      if (!candidates.length) return true;
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: 1, max: 1, text: `Choose an Equipment to attach to ${nameOf(g, to)}.`, sourceName: sourceName(ctx) } };
+      if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of those Equipment.');
+      attach(g, g.objects[answer.objects[0]!]!, to, ctx.events);
+      return true;
+    }
     const what = refObjects(ctx, ref(node, 'what'))[0];
     // Stonehewer Giant: "… put it onto the battlefield, attach it to a creature you control" — chosen as it resolves.
     if (node.choose) {
@@ -3895,7 +3913,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const filter = bindFilter(ctx, (node.filter ?? {}) as ObjectFilter);
     // Rise of the Witch-king: "return another permanent card" — not one this resolution sacrificed.
     const notMoved = node.notMoved ? new Set(movedThisWay(ctx, { how: String(node.notMoved) }).map((m) => m.id)) : null;
-    const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => !notMoved?.has(id) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
+    // Entrails Feaster: "exile a creature card from a graveyard" — any player's.
+    // Karn, Scion of Urza: "a card you own with a silver counter on it from exile".
+    const pool = node.fromExile ? g.zones.exile.filter((id) => g.objects[id]!.owner === ctx.controller && !g.objects[id]!.faceDown) : node.anyGraveyard ? g.order.flatMap((p) => zoneList(g, 'graveyard', p)) : zoneList(g, 'graveyard', ctx.controller);
+    const candidates = pool.filter((id) => !notMoved?.has(id) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
     // Roots of Wisdom: "return a land card or Elf card from your graveyard to your hand. If you can't, draw a card."
     if (!candidates.length) return Array.isArray(node.cant) ? { expand: structuredClone(node.cant as EffectNode[]) } : true;
     // Technomancer: "any number of …"; Lively Dirge: "… with total mana value 4 or less".
@@ -3912,7 +3933,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       chosen = pool.slice(0, max);
     } else {
       const answer = answerOf(ctx, 'choose_objects');
-      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) in your graveyard${node.distinctNames ? ' with different names' : ''}${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min, max, text: `Choose ${min === max ? max : `up to ${max}`} card(s) ${node.fromExile ? 'you own in exile' : `in ${node.anyGraveyard ? 'a' : 'your'} graveyard`}${node.distinctNames ? ' with different names' : ''}${total ? ` with total mana value ${total.max} or less` : ''} to ${node.to === 'exile' ? 'exile' : `return ${where}`}.`, ...(total ? { totalMV: total } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
       if (answer.objects.length < min || answer.objects.length > max || new Set(answer.objects).size !== answer.objects.length || !answer.objects.every((id) => candidates.includes(id))) {
         throw new RulesError(`Choose ${min === max ? max : `up to ${max}`} of those cards.`);
       }
@@ -4377,6 +4398,59 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // "Each opponent attacking that player does the same": the same effects, done by each of them as "you".
+  // Karn, Scion of Urza: "Reveal the top two cards of your library. An opponent chooses one of them. Put that card into your
+  // hand and exile the other with a silver counter on it." (Murmurs from Beyond: that card into your graveyard, the rest into
+  // your hand.)
+  reveal_choose(node, ctx) {
+    const g = ctx.g;
+    const memo = ctx.memo as { cards?: string[] };
+    if (!memo.cards) {
+      memo.cards = zoneList(g, 'library', ctx.controller).slice(0, Math.max(0, amountOf(ctx, node.amount as Amount)));
+      if (memo.cards.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...memo.cards] });
+    }
+    const cards = memo.cards.filter((id) => g.objects[id]?.zone === 'library');
+    if (!cards.length) return true;
+    const chooser = (node.chooser ? refPlayers(ctx, ref(node, 'chooser'))[0] : undefined) ?? ctx.controller;
+    const to = String(node.chosenTo) as 'hand' | 'graveyard';
+    const rest = String(node.restTo) as 'hand' | 'graveyard' | 'exile';
+    const where = (z: string) => (z === 'exile' ? 'into exile' : `into their owner's ${z}`);
+    let picked = cards.slice(0, 1);
+    if (cards.length > 1) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: chooser, candidates: cards, min: 1, max: 1, text: `Choose one of the revealed cards to put ${where(to)}; the rest go ${where(rest)}.`, revealed: [...cards], sourceName: sourceName(ctx) } };
+      if (answer.objects.length !== 1 || !cards.includes(answer.objects[0]!)) throw new RulesError('Choose one of the revealed cards.');
+      picked = answer.objects;
+    }
+    for (const id of cards) {
+      const chosen = picked.includes(id);
+      moveObject(g, id, chosen ? to : rest, ctx.events);
+      const o = g.objects[id]!;
+      // "exile the other with a silver counter on it"
+      if (!chosen && node.restCounter && o.zone === 'exile') {
+        const counter = String(node.restCounter);
+        o.counters[counter] = (o.counters[counter] ?? 0) + 1;
+        ctx.events.push({ type: 'counters', object: id, counter, delta: 1, by: ctx.controller });
+      }
+    }
+    return true;
+  },
+
+  // Kinship: "you may look at the top card of your library. If it shares a creature type with this creature, you may reveal
+  // it. If you do, …" — you see it either way.
+  kinship(node, ctx) {
+    const g = ctx.g;
+    const top = zoneList(g, 'library', ctx.controller)[0];
+    if (!top || !ctx.source) return true;
+    const shares = matchesFilter(g, g.objects[top]!, { sharesCreatureTypeWith: { ref: 'self' } } as ObjectFilter, { controller: ctx.controller, source: ctx.source, anyZone: true });
+    const answer = answerOf(ctx, 'choose_objects');
+    if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: shares ? [top] : [], min: 0, max: shares ? 1 : 0, text: shares ? 'Kinship: reveal the top card of your library?' : 'Kinship: the top card of your library.', seen: [top] } };
+    if (!answer.objects.length) return true;
+    if (!shares || answer.objects.length !== 1 || answer.objects[0] !== top) throw new RulesError('Reveal the top card of your library, or not.');
+    ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [top] });
+    if (ctx.resolution) ctx.resolution.chosenObject = { id: top, zcc: g.objects[top]!.zcc };
+    return { expand: node.effects as EffectNode[] };
+  },
+
   // Processors: "put a card an opponent owns from exile into that player's graveyard" — ones you choose, each to its owner's
   // graveyard.
   process(node, ctx) {
@@ -4661,6 +4735,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   exile_if_dies(node, ctx) {
     // CR 614.1a: a replacement effect for this turn. "A creature dealt damage this way" — none, if it was all prevented.
     if (node.ifDealt && !ctx.resolution?.damageDealt) return true;
+    // Malicious Malfunction: "If a creature would die this turn, exile it instead." — any creature, this turn.
+    if (node.allCreatures) {
+      ctx.g.exileDyingTurn = ctx.g.turn;
+      return true;
+    }
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.exileIfDiesTurn = ctx.g.turn;
     return true;
   },
@@ -4956,7 +5035,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   // Tempt with Immortality: "return a creature card from your graveyard to the battlefield" — only with one there.
   // Young Necromancer: "you may exile two cards from your graveyard. When you do, …" — only with two there.
   if (e.type === 'return_chosen') {
-    const n = zoneList(g, 'graveyard', chooser).filter((id) => matchesFilter(g, g.objects[id]!, bindFilter(ctx, (e.filter ?? {}) as ObjectFilter), { controller: chooser, source: ctx.source ?? null, anyZone: true })).length;
+    const pool = e.fromExile ? g.zones.exile.filter((id) => g.objects[id]!.owner === chooser && !g.objects[id]!.faceDown) : e.anyGraveyard ? g.order.flatMap((p) => zoneList(g, 'graveyard', p)) : zoneList(g, 'graveyard', chooser);
+    const n = pool.filter((id) => matchesFilter(g, g.objects[id]!, bindFilter(ctx, (e.filter ?? {}) as ObjectFilter), { controller: chooser, source: ctx.source ?? null, anyZone: true })).length;
     return n >= (e.amount !== 'all' && !e.optional ? Math.max(1, amountOf(ctx, (e.amount ?? 1) as Amount)) : 1);
   }
   // Leatherhead: "you may remove a counter from her. When you do, …" — only with a counter there to remove.
@@ -6010,11 +6090,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // "Whenever you cast a kicked spell" (CR 702.33d)
     if (t.kicked && !spell.cast?.kicked) return [];
     // "… a spell that targets a creature you control" — as it was cast (CR 601.2c).
-    if (t.targets) {
+    // Reparations: "a spell that targets you or a creature you control".
+    if (t.targets || t.targetsYou) {
       const entry = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object);
       const hit = entry?.targets.some((list) =>
         list.some((x) => {
-          if (x.kind !== 'object') return false;
+          if (x.kind === 'player') return Boolean(t.targetsYou && x.player === check.controller);
+          if (x.kind !== 'object' || !t.targets) return false;
           const o = check.g.objects[x.id];
           return Boolean(o && o.zcc === x.zcc && matchesFilter(check.g, o, t.targets as ObjectFilter, { controller: check.controller, source: check.source }));
         }),
