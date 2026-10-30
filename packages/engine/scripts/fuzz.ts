@@ -96,8 +96,21 @@ const pool = db.cards.filter((c) => {
   if (f.types.includes('Land') || c.cmc > 6 || c.automation === 'manual') return false;
   if (!c.legal.commander && !c.legal.legacy) return false;
   if (/\{[^}]*(?:P|S|H|\d\/[WUBRG]|C\/)[^}]*\}/.test(f.manaCost) || /\{X\}/.test(f.manaCost)) return false;
+  // CR 712.4: meld cards, but not the combined back faces (no mana cost; never cast).
+  if (c.layout === 'meld') return f.manaCost !== '';
   return ['normal', 'split', 'adventure', 'transform', 'modal_dfc', 'prepare'].includes(c.layout);
 });
+// CR 712.5: each meld card's counterpart (from the meld ability's linked pair), so a deck with one has the other.
+const meldPartner = new Map<string, string>();
+for (const c of db.cards) {
+  if (c.layout !== 'meld') continue;
+  const nodes = JSON.stringify(c.faces.map((f) => f.abilities)).match(/"type":"meld","into":"[^"]*","partner":"([^"]*)"/g) ?? [];
+  for (const m of nodes) {
+    const partner = /"partner":"([^"]*)"/.exec(m)![1]!;
+    meldPartner.set(c.name, partner);
+    meldPartner.set(partner, c.name);
+  }
+}
 // CR 309.2: the dungeons (and Undercity, a token-sized card) players can venture into.
 const DUNGEONS: Record<string, CardDef> = Object.fromEntries(
   [...db.cards, ...db.tokens].filter((c) => c.faces[0]!.types.includes('Dungeon')).map((c) => [c.name, c]),
@@ -113,8 +126,15 @@ function makeDeck(colors: Color[]): string[] {
   const fits = (c: CardDef) => c.colorIdentity.every((x) => colors.includes(x));
   const focus = shuffle(focusPool.filter(fits)).slice(0, 12);
   const spells = [...focus, ...shuffle(pool.filter((c) => fits(c) && !focus.includes(c))).slice(0, 23 - focus.length)];
-  const lands = Array.from({ length: 17 }, (_, i) => BASICS[colors[i % colors.length]!]);
-  return [...lands, ...spells.map((c) => c.name)];
+  const lands: string[] = Array.from({ length: 17 }, (_, i) => BASICS[colors[i % colors.length]!]);
+  const names = spells.map((c) => c.name);
+  for (const n of [...names]) {
+    const partner = meldPartner.get(n);
+    if (!partner || names.includes(partner) || lands.includes(partner) || !byName.has(partner)) continue;
+    if (byName.get(partner)!.faces[0]!.types.includes('Land')) lands[0] = partner;
+    else names[names.findIndex((x) => !meldPartner.has(x))] = partner;
+  }
+  return [...lands, ...names];
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +547,14 @@ function checkInvariants(g: GameState): string | null {
       const err = where(e.object, 'stack');
       if (err) return err;
     }
+  }
+  // CR 712.4a: the other card of a melded permanent is part of that permanent, on no list of its own.
+  for (const o of Object.values(g.objects)) {
+    if (!o.meldedInto) continue;
+    const a = g.objects[o.meldedInto];
+    if (!a || a.zone !== 'battlefield' || o.zone !== 'battlefield' || a.melded?.partner !== o.id) return `${o.id} is melded into ${o.meldedInto}, which isn't melded with it`;
+    if (seen.has(o.id)) return `${o.id} is melded but also listed in a zone`;
+    seen.add(o.id);
   }
   for (const o of Object.values(g.objects)) if (!seen.has(o.id)) return `${o.id} (${o.card}) is in no zone list (${o.zone})`;
   if (!g.over && !g.pending && g.started && g.priority === null) return 'nobody has priority and nothing is pending';

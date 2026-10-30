@@ -45,6 +45,13 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     return pf && pf.plural ? { cantBeBlockedBy: pf.filter, cantBlockOf: pf.filter } : null;
   }
   const by = /^can't be blocked by (.+)$/.exec(p);
+  // Doorman: "can't be blocked by creatures with power 2 or less and/or Walls" — by either.
+  const byEither = by ? /^(.+?) and\/or (.+)$/.exec(by[1]!) : null;
+  if (byEither) {
+    const one = parseFilter(byEither[1]!, b.clone());
+    const two = one ? parseFilter(byEither[2]!, b.clone()) : null;
+    if (one?.plural && two?.plural) return { cantBeBlockedBy: { anyOf: [one.filter, two.filter] } };
+  }
   if (by) {
     const pf = parseFilter(by[1]!, b);
     return pf && pf.plural ? { cantBeBlockedBy: pf.filter } : null;

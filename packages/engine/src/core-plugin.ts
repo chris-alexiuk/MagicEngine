@@ -3,7 +3,7 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, ObjectFilter, PlayerRule, QuantityReplacementNode, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, MeldNode, ObjectFilter, PlayerRule, QuantityReplacementNode, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
@@ -27,7 +27,7 @@ import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEnt
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { cantLose, cantWin, playerLoses } from './flow.js';
-import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner } from './zones.js';
+import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
 /**
@@ -379,11 +379,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return memo.players![i]!;
     };
     let answer = answerOf(ctx, 'choose_objects');
+    const from = ctx.events.length;
+    const noteDrawn = () => {
+      if (ctx.resolution) for (const e of ctx.events.slice(from)) if (e.type === 'drew') (ctx.resolution.drawnIds ??= []).push(e.object);
+    };
     for (let k = memo.done ?? 0; k < total; k++) {
       const p = whose(k);
       const options = dredgeOptions(ctx.g, p);
       if (options.length && !answer) {
         memo.done = k;
+        noteDrawn();
         return { ask: { kind: 'choose_objects', player: p, candidates: options, min: 0, max: 1, text: 'Dredge a card instead of drawing? (Choose none to draw.)' } };
       }
       const chosen = answer?.objects[0] ?? null;
@@ -391,6 +396,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       answer = null;
       drawOrDredge(ctx.g, p, options.length ? chosen : null, ctx.events);
     }
+    noteDrawn();
     // "for each opponent who drew a card this way" (CR 121.2: one that couldn't didn't).
     if (ctx.resolution) {
       const drew = (ctx.resolution.drew ??= {});
@@ -798,8 +804,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   choose_one(node, ctx) {
-    const labels = node.labels as string[];
-    const options = node.options as EffectNode[][];
+    // Contract Hero: "you may sacrifice an artifact or discard a card. If you do, …" — only an action that can be done.
+    const can = (o: EffectNode[]) => !node.feasibleOnly || o.every((e) => feasible(e, ctx));
+    const offered = (node.options as EffectNode[][]).flatMap((o, i) => (can(o) ? [i] : []));
+    const labels = offered.map((i) => (node.labels as string[])[i]!);
+    const options = offered.map((i) => (node.options as EffectNode[][])[i]!);
+    if (!options.length) return true;
+    if (node.feasibleOnly && options.length === 1) return { expand: options[0]! };
     const answer = answerOf(ctx, 'choose_option');
     if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options: labels, text: `Choose: ${labels.join(' or ')}.`, sourceName: sourceName(ctx) } };
     const i = labels.indexOf(answer.choice);
@@ -1185,13 +1196,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     // Thirst for Knowledge: "discard an artifact card" — one of those (each player in turn, CR 101.4).
     if (node.filter) {
-      const filter = node.filter as ObjectFilter;
+      // Soldevi Sage: "Draw three cards, then discard one of them." — one of the cards drawn as this resolved.
+      const { drawnThisWay, ...filter } = node.filter as ObjectFilter;
+      const drawn = drawnThisWay ? (ctx.resolution?.drawnIds ?? []) : null;
       const memo = ctx.memo as { i?: number };
       memo.i ??= 0;
       let picked = answerOf(ctx, 'choose_objects');
       for (; memo.i < players.length; memo.i++) {
         const p = players[memo.i]!;
-        const fits = zoneList(ctx.g, 'hand', p).filter((id) => matchesFilter(ctx.g, ctx.g.objects[id]!, filter, { controller: p, source: ctx.source ?? null, anyZone: true }));
+        const fits = zoneList(ctx.g, 'hand', p).filter((id) => (!drawn || drawn.includes(id)) && matchesFilter(ctx.g, ctx.g.objects[id]!, filter, { controller: p, source: ctx.source ?? null, anyZone: true }));
         // Nantuko Cultivator: "discard any number of land cards" — as many of them as the player likes, none included.
         const k = node.anyNumber ? fits.length : Math.min(n, fits.length);
         const min = node.anyNumber ? 0 : k;
@@ -3192,6 +3205,36 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // CR 701.42a: "exile them, then meld them into …" — this permanent and its counterpart, both yours (CR 712.4a).
+  meld(node, ctx) {
+    const g = ctx.g;
+    const n = node as unknown as MeldNode;
+    const you = ctx.controller;
+    const self = refObjects(ctx, { ref: 'self' })[0];
+    if (!self) return true;
+    const candidates = meldPartners(g, self, n, you).map((o) => o.id);
+    if (!candidates.length) return true;
+    let partnerId = candidates[0]!;
+    if (candidates.length > 1) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: you, candidates, min: 1, max: 1, text: `Choose the ${n.partner} to meld with.`, sourceName: sourceName(ctx) } };
+      if (answer.objects.length !== 1 || !candidates.includes(answer.objects[0]!)) throw new RulesError('Choose one of them.');
+      partnerId = answer.objects[0]!;
+    }
+    const partner = g.objects[partnerId]!;
+    // Mishra, Lost to Phyrexia "enters tapped and attacking" — what Mishra, Claimed by Gix was attacking.
+    const at = n.attacking ? g.combat?.attackers[self.id]?.target : undefined;
+    moveObject(g, self.id, 'exile', ctx.events);
+    moveObject(g, partner.id, 'exile', ctx.events);
+    // CR 701.42b-c: only the two cards of a meld pair can be melded — a token (or a copy) is exiled and that's all.
+    const meldable = (o: GameObject) => o.zone === 'exile' && !o.token && g.cards[o.card]?.layout === 'meld';
+    if (!n.result || !meldable(self) || !meldable(partner)) return true;
+    const key = `meld:${n.into}`;
+    g.cards[key] ??= { id: key, name: n.into, layout: 'meld', cmc: n.result.cmc, colorIdentity: [...n.result.face.colors], faces: [n.result.face], legal: {}, set: '', rarity: '', automation: 'full' };
+    if (meldCards(g, self, partner, key, you, ctx.events, n.tapped ? { tapped: true } : {}) && at) enterAttacking(g, self, undefined, at);
+    return true;
+  },
+
   search(node, ctx) {
     // CR 701.23a: look through the library for cards matching the description.
     const g = ctx.g;
@@ -5100,6 +5143,7 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
   }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  if (e.type === 'choose_one' && e.feasibleOnly) return (e.options as EffectNode[][]).some((o) => o.every((x) => feasible(x, ctx, chooser)));
   // Counterbalance: "you may reveal the top card of your library. If you do, …" — only with a card there.
   if (e.type === 'reveal_top_card') return zoneList(g, 'library', chooser).length > 0;
   // Raff, Weatherlight Stalwart: "you may tap two untapped creatures you control. If you do, …"
@@ -5117,6 +5161,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   if (e.type === 'move_chosen') return g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, (e.filter ?? {}) as ObjectFilter, { controller: chooser, source: ctx.source ?? null })).length >= amountOf(ctx, e.amount ?? 1);
   // CR 119.4: "… or pays 3 life" — only with that much life (and a life total that can change, CR 119.8).
   if (e.type === 'lose_life' && e.paid) return (g.players[chooser]?.life ?? 0) >= amountOf(ctx, e.amount) && !playerRule(g, chooser, 'life_cant_change');
+  // Deep Spawn: "sacrifice this creature unless you mill two cards" — CR 701.17b: not more than the library holds.
+  if (e.type === 'mill') return zoneList(g, 'library', chooser).length >= amountOf(ctx, e.amount);
   // CR 701.68b, 701.61a
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
@@ -5371,7 +5417,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // CR 700.4: "dies" means put into a graveyard from the battlefield. CR 603.10a: these look back in time.
   dies(t, check) {
     const e = check.event;
-    if (e.type !== 'moved' || e.from !== 'battlefield' || e.to !== 'graveyard') return [];
+    // CR 712.21: a melded permanent dies once, though two cards are put into the graveyard.
+    if (e.type !== 'moved' || e.from !== 'battlefield' || e.to !== 'graveyard' || e.meldPart) return [];
     const o = check.g.objects[e.object];
     if (!o) return [];
     const lki = { counters: e.counters ?? {} };
@@ -5381,7 +5428,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // "Whenever one or more other creatures die": once for the creatures that died at the same time.
     if (t.batch) {
       const together = (check.batch ?? [e]).filter((x) => {
-        if (x.type !== 'moved' || x.from !== 'battlefield' || x.to !== 'graveyard') return false;
+        if (x.type !== 'moved' || x.from !== 'battlefield' || x.to !== 'graveyard' || x.meldPart) return false;
         const xo = check.g.objects[x.object];
         return Boolean(xo && subjectMatches(check, t.subject as Ref, xo, { anyZone: true, lastController: x.controller, lookBack: true }));
       });
@@ -5399,7 +5446,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // Kaya's Ghostform: "When enchanted permanent dies or is put into exile" — only to those zones.
     // Dour Port-Mage: "… leave the battlefield without dying" — anywhere but a graveyard (CR 700.4).
     const fits = (x: GameEvent) =>
-      x.type === 'moved' && x.from === 'battlefield' && (!Array.isArray(t.toZones) || (t.toZones as string[]).includes(x.to)) && !(t.withoutDying && x.to === 'graveyard');
+      x.type === 'moved' && x.from === 'battlefield' && !x.meldPart && (!Array.isArray(t.toZones) || (t.toZones as string[]).includes(x.to)) && !(t.withoutDying && x.to === 'graveyard');
     if (!fits(e) || e.type !== 'moved') return [];
     const o = check.g.objects[e.object];
     if (!o) return [];

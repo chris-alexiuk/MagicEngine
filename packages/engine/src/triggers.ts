@@ -51,6 +51,8 @@ interface Candidate {
   controller: PlayerId;
   face: number;
   left: boolean;
+  /** For one that left: the card it was (a melded permanent was its combined back face, CR 712.8g). */
+  card?: string;
 }
 
 export function collectTriggers(g: GameState, events: GameEvent[]): void {
@@ -83,9 +85,10 @@ function collect(g: GameState, events: GameEvent[]): void {
   // Permanents that left the battlefield in this batch can still trigger on leaving (CR 603.10a).
   const left = new Map<ObjectId, Candidate>();
   for (const e of batch) {
-    if (e.type !== 'moved' || e.from !== 'battlefield') continue;
+    // CR 712.21: the second card of a melded permanent isn't another permanent leaving.
+    if (e.type !== 'moved' || e.from !== 'battlefield' || e.meldPart) continue;
     const o = g.objects[e.object];
-    if (o && o.zone !== 'battlefield') left.set(o.id, { o, controller: e.controller, face: e.face, left: true });
+    if (o && o.zone !== 'battlefield') left.set(o.id, { o, controller: e.controller, face: e.face, left: true, card: e.card });
   }
   const present: Candidate[] = abilitySources(g).map((id) => {
     const o = g.objects[id]!;
@@ -120,7 +123,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   const withAbilities = candidates.flatMap((c) => {
     // CR 603.10a: a copy that left had the copied abilities (CR 707.2).
     const last = c.left ? g.lastKnown?.[c.o.id] : undefined;
-    const at = c.left ? (last?.copyOf && last.zcc === c.o.zcc - 1 ? last.copyOf : { card: c.o.card, face: c.face }) : (c.o.copyOf ?? { card: c.o.card, face: c.face });
+    const at = c.left ? (last?.copyOf && last.zcc === c.o.zcc - 1 ? last.copyOf : { card: c.card ?? c.o.card, face: c.face }) : (c.o.copyOf ?? { card: c.o.card, face: c.face });
     // CR 708.2: face down, it has no abilities (bar ward from disguise or cloak).
     const leftFaceDown = c.left && last?.faceDown && last.zcc === c.o.zcc - 1;
     const face =
@@ -232,7 +235,7 @@ function causedBy(g: GameState, cause: NonNullable<TriggerExtraNode['cause']>, e
     return Boolean(o && (!cause.filter || matchesFilter(g, o, cause.filter, { ...ctx, ...extra })));
   };
   const entering = event.type === 'created' || (event.type === 'moved' && event.to === 'battlefield');
-  const leaving = event.type === 'moved' && event.from === 'battlefield';
+  const leaving = event.type === 'moved' && event.from === 'battlefield' && !event.meldPart;
   switch (cause.event) {
     case 'enters':
       return entering && fits(event.object);

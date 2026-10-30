@@ -3,14 +3,14 @@ import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
-import { faceOf, livePlayers, manaValueOf, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
+import { faceOf, livePlayers, manaValueOf, meldPartners, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -155,7 +155,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         }
         // Crawling Sensation: "for the first time each turn" — each card put into a graveyard, in order.
         if (e.to === 'graveyard' && g.objects[e.object]) (log.toGraveyard ??= []).push({ event: e, types: [...types], owner: g.objects[e.object]!.owner, token: Boolean(g.objects[e.object]!.token) });
-        if (e.from === 'battlefield' && e.to === 'graveyard') {
+        if (e.from === 'battlefield' && e.to === 'graveyard' && !e.meldPart) {
           // CR 700.4: it died — as it last existed on the battlefield.
           const lk = g.lastKnown?.[e.object];
           const was = lk?.types ?? types;
@@ -164,8 +164,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         }
         if (e.from === 'graveyard' && g.objects[e.object]) (log.leftGraveyard ??= []).push({ owner: g.objects[e.object]!.owner, types: [...types] });
         if (e.to === 'exile' && !e.token) log.cardExiled = true;
-        if (e.from === 'battlefield' && e.to === 'hand' && g.objects[e.object] && !(log.bouncedToHand ??= []).includes(g.objects[e.object]!.owner)) log.bouncedToHand.push(g.objects[e.object]!.owner);
-        if (e.from === 'battlefield') {
+        if (e.from === 'battlefield' && e.to === 'hand' && !e.meldPart && g.objects[e.object] && !(log.bouncedToHand ??= []).includes(g.objects[e.object]!.owner)) log.bouncedToHand.push(g.objects[e.object]!.owner);
+        if (e.from === 'battlefield' && !e.meldPart) {
           if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
           if (!types.includes('Land')) log.nonlandLeft = true;
           // As it last existed on the battlefield (CR 603.10a).
@@ -689,6 +689,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return (g.turnLog.combatPhases ?? 0) <= 1;
     // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn" — counting this resolution
     // (and copies of the ability, which are the same ability). Rose Room Treasurer: "the first or second time" (max).
+    // CR 712.4a: "if you both own and control ~ and a creature named …".
+    case 'meld_pair':
+      return Boolean(source && meldPartners(g, source, { partner: cond.partner, partnerTypes: cond.partnerTypes }, controller).length);
     // CR 702.104b: "if tribute was paid" — as this permanent entered.
     case 'tribute_paid':
       return Boolean(source?.tributePaid);

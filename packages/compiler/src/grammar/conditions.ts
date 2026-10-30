@@ -67,6 +67,16 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
     const two = one ? parseCondition(`you control ${both[2]}`, b) : null;
     if (one && two) return { type: 'and', all: [one, two] };
   }
+  // CR 712.4a: Gisela, the Broken Blade: "you both own and control ~ and a creature named Bruna, the Fading Light".
+  // Titania, Voice of Gaea: "there are four or more land cards in your graveyard and you both own and control ~ and a land
+  // named Argoth, Sanctum of Nature".
+  const meldPair = /^(?:([^,]+?) and )?you both own and control ~ and an? (creature|land|artifact) named ([A-Z].+)$/.exec(t);
+  if (meldPair) {
+    const pair: ConditionNode = { type: 'meld_pair', partner: meldPair[3]!, partnerTypes: [meldPair[2]![0]!.toUpperCase() + meldPair[2]!.slice(1)] };
+    const also = meldPair[1] ? parseCondition(meldPair[1], b) : null;
+    if (meldPair[1] && !also) return null;
+    return also ? { type: 'and', all: [also, pair] } : pair;
+  }
   // Mine Worker: "you control creatures named Power Plant Worker and Tower Worker"; Throne of Empires: "artifacts named
   // Crown of Empires and Scepter of Empires" — one of each.
   const namedPair = /^you control (creatures|artifacts|lands|permanents) named ([A-Z][^,]+?) and ([A-Z].+)$/.exec(t);
@@ -203,6 +213,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^excess damage was dealt (?:to (?:that creature|that permanent|a permanent|a creature) )?this way$/.test(t)) return { type: 'amount', amount: { kind: 'excess_this_way' }, op: 'ge', n: 1 };
   // Saw in Half: "If that creature dies this way" — put into a graveyard from the battlefield by this (CR 700.4).
   if (/^(?:that creature|it) dies this way$/.test(t)) return { type: 'amount', amount: { kind: 'moved_this_way', how: 'graveyard' }, op: 'ge', n: 1 };
+  // Cinder Cloud: "Destroy target creature. If a white creature dies this way, …" — that creature died, and was white.
+  const colorDies = /^an? (white|blue|black|red|green) creature dies this way$/.exec(t);
+  if (colorDies && b.it?.ref === 'target') {
+    return { type: 'and', all: [{ type: 'amount', amount: { kind: 'moved_this_way', how: 'graveyard', types: ['Creature'] }, op: 'ge', n: 1 }, { type: 'was_type', of: b.it, colors: [COLOR_WORDS[colorDies[1]!]!] }] } as ConditionNode;
+  }
   // Noxious Gearhulk: "If a creature is destroyed this way, you gain life equal to its toughness."
   // Renegade Reaper: "If at least one Angel card is milled this way".
   const movedOne = /^(?:a|an|at least one) (.+?) (?:is|was) (destroyed|exiled|sacrificed|returned|milled) this way$/.exec(t) ?? /^(another .+?) (?:is|was) (returned) this way$/.exec(t);
@@ -876,7 +891,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'graveyard', ...c, filter };
   }
   // Walltop Sentries: "if there's a Lesson card in your graveyard"; "if there is an instant card in your graveyard".
-  const gyOne = /^there(?:'s| is) an? (.+?) card in your graveyard$/.exec(t);
+  // Bloodfire Enforcers: "as long as an instant card and a sorcery card are in your graveyard" — both.
+  const gyBoth = /^an? (\w+) card and an? (\w+) card are in your graveyard$/.exec(t);
+  if (gyBoth) {
+    const one = parseCondition(`an ${gyBoth[1]} card is in your graveyard`, b);
+    const two = one ? parseCondition(`an ${gyBoth[2]} card is in your graveyard`, b) : null;
+    return one && two ? { type: 'and', all: [one, two] } : null;
+  }
+  // Windwright Mage: "as long as an artifact card is in your graveyard"; "you have a Warrior card in your graveyard".
+  const gyOne = /^there(?:'s| is) an? (.+?) card in your graveyard$/.exec(t) ?? /^an? (.+?) card is in your graveyard$/.exec(t) ?? /^you have an? (.+?) card in your graveyard$/.exec(t);
   if (gyOne) {
     const pf = parseFilter(`${gyOne[1]} cards in your graveyard`, b);
     if (!pf || pf.filter.zone !== 'graveyard') return null;
@@ -1148,7 +1171,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Budding Insurgent: "If that permanent was a legendary enchantment, draw a card."
   const wasSuperType = /^that (?:permanent|creature|land|artifact|enchantment|planeswalker) was an? (legendary|snow|basic) (artifact|creature|enchantment|land|planeswalker)$/.exec(t);
   if (wasSuperType && b.it?.ref === 'target') return { type: 'was_type', of: b.it, supertype: capitalise(wasSuperType[1]!), cardType: capitalise(wasSuperType[2]!) } as ConditionNode;
-  const wasKind = /^that (?:permanent|creature|land|artifact|planeswalker) was (?:an? ([A-Z][a-z]+) (planeswalker|creature|land|artifact)|(nonbasic|basic|legendary|nonlegendary))$/.exec(t);
+  // Gideon's Defeat: "Exile target white creature that's attacking or blocking. If it was a Gideon planeswalker, …".
+  const wasKind = /^(?:that (?:permanent|creature|land|artifact|planeswalker)|it) was (?:an? ([A-Z][a-z]+) (planeswalker|creature|land|artifact)|(nonbasic|basic|legendary|nonlegendary))$/.exec(t);
   if (wasKind && b.it?.ref === 'target' && (!wasKind[1] || isSubtype(wasKind[1]))) {
     if (wasKind[1]) return { type: 'was_type', of: b.it, subtype: wasKind[1], cardType: capitalise(wasKind[2]!) };
     const sup = wasKind[3]!.replace(/^non/, '');
@@ -1166,7 +1190,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
   // Vohar, Vodalian Desecrator: "If you discarded an instant or sorcery card this way" — the same as "the discarded card was".
   // Silvan Reveler: "If you discard a land card this way" — the same.
-  const discardedThisWay = /^you discard(?:ed)? (an? .+? card) this way$/.exec(t);
+  // Lumengrid Augur: "If that player discards an artifact card this way".
+  const discardedThisWay = /^(?:you discard(?:ed)?|(?:that player|they) discard(?:s|ed)) (an? .+? card) this way$/.exec(t);
   if (discardedThisWay) return parseCondition(`the discarded card was ${discardedThisWay[1]}`, b);
   const lkiWas = /^the (discarded|sacrificed) (?:card|creature|permanent|artifact) (was|wasn't) (an? )?(.+)$/.exec(t);
   if (lkiWas) {

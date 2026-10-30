@@ -125,6 +125,8 @@ function printedManaValue(g: GameState, o: GameObject): number {
   // CR 718.3b: a prototyped spell or permanent; CR 709.5c: a Room's unlocked doors.
   if ((o.prototyped || o.unlocked) && !o.copyOf && (o.zone === 'battlefield' || o.zone === 'stack')) return costManaValue(faceOf(g, o).manaCost);
   const def = g.cards[(o.copyOf ?? o).card];
+  // CR 712.8g: a permanent copying a melded permanent has mana value 0.
+  if (o.copyOf && def?.layout === 'meld' && o.copyOf.card.startsWith('meld:')) return 0;
   // CR 709.4d: a fused split spell — both halves' mana costs.
   if (o.fused && o.zone === 'stack' && def && !o.copyOf) return costManaValue(fusedFace(def).manaCost);
   // CR 709.3b / 715.3b / 712.8f: a split half, an adventure or a modal double-faced card's face being cast (or, for a
@@ -206,6 +208,8 @@ export function moveObject(
 ): void {
   const o = obj(g, id);
   const from = o.zone;
+  // CR 712.21: a melded permanent leaving the battlefield — one permanent leaves, and both its cards go to the new zone.
+  const meld = from === 'battlefield' ? o.melded : undefined;
   // Grafdigger's Cage: "Creature cards in graveyards and libraries can't enter the battlefield." — it stays where it is.
   if (to === 'battlefield' && (from === 'graveyard' || from === 'library') && enteringBanned(g, o, from)) return;
   // Containment Priest: "If a nontoken creature would enter and it wasn't cast, exile it instead." (CR 614.1a)
@@ -220,9 +224,9 @@ export function moveObject(
   const instead = to === 'graveyard' ? exiledInstead(g, o, from) : null;
   if (instead) to = 'exile';
   // Nissa's Chosen: "put it on the bottom of its owner's library instead".
-  if (instead?.node.libraryBottom) {
+  if (instead?.node.libraryBottom || instead?.node.libraryTop) {
     to = 'library';
-    opts = { ...opts, position: 'bottom' };
+    opts = { ...opts, position: instead.node.libraryTop ? 'top' : 'bottom' };
   }
   // "If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead."
   const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
@@ -355,6 +359,7 @@ export function moveObject(
   delete o.harnessed;
   delete o.chosen;
   delete o.devoured;
+  delete o.melded;
   delete o.exiledBy;
   delete o.skipUntap;
   delete o.classLevel;
@@ -439,6 +444,10 @@ export function moveObject(
     ...(countersBefore ? { counters: countersBefore } : {}),
     ...(to === 'battlefield' && g.resolving?.entry.kind === 'ability' ? { by: { ...g.resolving.entry.source } } : {}),
   });
+  if (meld) {
+    o.card = meld.own;
+    releaseMeldPartner(g, o, meld.partner, to, opts.position, controllerBefore, events);
+  }
   // CR 714.3a: a Saga enters with a lore counter on it.
   if (to === 'battlefield') addLore(g, o, events, true);
   if (shuffleInstead) {
@@ -446,6 +455,75 @@ export function moveObject(
     shuffleInPlace(g, zoneList(g, 'library', o.owner));
     events.push({ type: 'shuffled', player: o.owner });
   }
+}
+
+/** CR 712.21: the other card of a melded permanent that left the battlefield, put into the same zone as a new object. */
+function releaseMeldPartner(g: GameState, a: GameObject, partner: ObjectId, to: ZoneName, position: 'top' | 'bottom' | number | undefined, controller: PlayerId, events: GameEvent[]): void {
+  const b = g.objects[partner];
+  if (!b || b.meldedInto !== a.id || to === 'stack' || to === 'battlefield') return;
+  delete b.meldedInto;
+  b.zone = to;
+  b.zcc++;
+  b.face = 0;
+  b.controller = b.owner;
+  b.tapped = false;
+  b.damage = 0;
+  b.counters = {};
+  b.sick = false;
+  b.timestamp = ++g.clock;
+  delete b.baseController;
+  delete b.arrived;
+  const list = zoneList(g, to, b.owner);
+  // CR 712.21a: put into a library or graveyard together, in an order its owner picks (here: beside the other card).
+  const at = list.indexOf(a.id);
+  if (to === 'library' && position !== 'bottom' && at >= 0) list.splice(at, 0, b.id);
+  else list.push(b.id);
+  if (g.resolving && to !== 'library' && to !== 'hand') (g.resolving.found ??= {})[b.id] = b.zcc;
+  events.push({ type: 'moved', object: b.id, from: 'battlefield', to, controller, card: b.card, face: 0, meldPart: true });
+}
+
+/**
+ * CR 712.4a: "you both own and control ~ and a creature named …" — the permanents that could be melded with `self`: the
+ * named counterpart, owned and controlled by `you` (Mishra, Claimed by Gix: and attacking, as `self` must be).
+ */
+export function meldPartners(g: GameState, self: GameObject, spec: { partner?: unknown; partnerTypes?: unknown; attacking?: unknown }, you: PlayerId): GameObject[] {
+  const attacking = (o: GameObject) => g.combat?.attackers[o.id]?.zcc === o.zcc;
+  const mine = (o: GameObject) => o.zone === 'battlefield' && o.owner === you && o.controller === you && !o.phasedOut && (!spec.attacking || attacking(o));
+  if (!mine(self) || typeof spec.partner !== 'string') return [];
+  const types = (spec.partnerTypes as string[] | undefined) ?? [];
+  return g.zones.battlefield.flatMap((id) => {
+    const o = g.objects[id]!;
+    if (o === self || !mine(o) || nameOf(g, o) !== spec.partner) return [];
+    const c = chars(g, o);
+    return types.every((t) => c.types.includes(t)) ? [o] : [];
+  });
+}
+
+/**
+ * CR 701.42a / 712.4a: puts two exiled meld cards onto the battlefield combined, as one permanent with the combined back
+ * face (`card`, a key into the game's cards) under `controller`'s control. `a` becomes that permanent; `b` is kept off every
+ * zone list as its other card. If the permanent doesn't enter (it's exiled instead), both cards stay in exile.
+ */
+export function meldCards(g: GameState, a: GameObject, b: GameObject, card: string, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean } = {}): boolean {
+  const own = a.card;
+  removeFromCurrentZone(g, b);
+  b.zone = 'battlefield';
+  b.meldedInto = a.id;
+  b.controller = controller;
+  a.card = card;
+  a.face = 0;
+  moveObject(g, a.id, 'battlefield', events, { controller, ...(opts.tapped ? { tapped: true } : {}) });
+  if (a.zone === 'battlefield') {
+    a.melded = { own, partner: b.id };
+    b.zcc++;
+    return true;
+  }
+  a.card = own;
+  delete b.meldedInto;
+  b.zone = 'exile';
+  b.controller = b.owner;
+  zoneList(g, 'exile', b.owner).push(b.id);
+  return false;
 }
 
 /** The zone-change count an object had (or has) on the battlefield: now if it's there, else as it left. */

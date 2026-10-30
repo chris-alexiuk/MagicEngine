@@ -25,6 +25,8 @@ const PERMANENT_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land'
 
 /** Post-modifiers, peeled off the end of a phrase one at a time. */
 const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boolean][] = [
+  // Obelisk of Undoing: "target permanent you both own and control".
+  [/ you both own and control$/, (f) => !f.controller && !f.owner && ((f.controller = 'you'), (f.owner = 'you'), true)],
   // Kassandra, Eagle Bearer: "a creature you control with a legendary Equipment attached to it".
   [/ with (?:an?|one or more) ([a-z]+ (?:Equipment|Aura)) attached to (?:it|them)$/, (f, m, b) => {
     const pf = !f.withAttached ? parseFilter(m[1]!, b.clone()) : null;
@@ -88,6 +90,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f.attackingPlayerRef = who;
     return true;
   }],
+  // Gideon's Defeat: "target white creature that's attacking or blocking".
+  [/ (?:that's|that are|that is) (attacking or blocking|attacking|blocking)$/, (f, m) => !f.combat && ((f.combat = m[1] === 'attacking or blocking' ? 'attacking_or_blocking' : (m[1] as 'attacking' | 'blocking')), true)],
   // Viper, Cruel Conspirator: "Target creature that's attacking alone" (CR 506.5).
   [/ that's attacking alone$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingAlone = true), true)],
   // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
@@ -1005,11 +1009,13 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       }
       const tm = /^(?:(up to )?((?!another\b|other\b)(?:one hundred|\w+)) )?(another |other )?target (.+)$/i.exec(t);
       // Curse of the Swine: "Exile X target creatures." — as many targets as the X announced (CR 601.2b–c).
+      // Rats' Feast: "Exile X target cards from a single graveyard."
       if (tm && tm[2] === 'X') {
-        const pf = parseFilter(tm[4]!, b);
-        if (!pf || !pf.plural || pf.filter.ownedBy || / from a single graveyard$/.test(tm[4]!)) return null;
+        const single = / from a single graveyard$/.test(tm[4]!);
+        const pf = parseFilter(single ? `${tm[4]!.replace(/ from a single graveyard$/, '')} in a graveyard` : tm[4]!, b);
+        if (!pf || !pf.plural || pf.filter.ownedBy) return null;
         if (tm[3]) pf.filter.other = true;
-        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(tm[1] ? { upTo: true } : {}) };
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(tm[1] ? { upTo: true } : {}), ...(single ? { sameOwner: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
       }
       // Sudden Spoiling: "creatures target player controls" — not a number of targets; a bare plural below.

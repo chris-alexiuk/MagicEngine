@@ -2395,7 +2395,10 @@ export const triggeredRule: GrammarRule = {
         // CR 603.4: "When …, if [condition], [effect]."
         let condition: ConditionNode | null = null;
         let eminence = false;
-        const iff = /^if ([^,]+), (.+)$/s.exec(effectText);
+        // CR 712.4a: Gisela, the Broken Blade: "if you both own and control ~ and a creature named Bruna, the Fading Light,
+        // exile them, …" — the counterpart's name has a comma.
+        const meldIf = /^if ((?:[^,]+ and )?you both own and control ~ and an? (?:creature|land|artifact) named .+?), ((?:exile them|you may pay [^.]+\. If you do, exile them), then meld them into [^.]+\.)$/s.exec(effectText);
+        const iff = meldIf ?? /^if ([^,]+), (.+)$/s.exec(effectText);
         // Boromir: "Whenever an opponent casts a spell, if no mana was spent to cast it, counter that spell." — the mana
         // spent can't change, so it's checked with the cast (CR 603.4).
         if (iff && (iff[1] === 'no mana was spent to cast it' || iff[1] === 'no mana was spent to cast that spell') && trig.trigger.type === 'cast') {
@@ -4359,6 +4362,8 @@ export const exileInsteadRule: GrammarRule = {
     if (/^If ~ would die, exile it instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true } });
     // Nissa's Chosen: "If this creature would die, put it on the bottom of its owner's library instead."
     if (/^If ~ would die, put it on the bottom of its owner's library instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true }, libraryBottom: true });
+    // Gravebane Zombie: "If this creature would die, put it on top of its owner's library instead."
+    if (/^If ~ would die, put it on top of its owner's library instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true }, libraryTop: true });
     const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line) ?? /^If (?:a|an|another) (.+?) would die, instead exile it and you gain (\w+) life\.$/.exec(line);
     if (dies) {
       const pf = parseFilter(dies[1]!, new Binder(env));

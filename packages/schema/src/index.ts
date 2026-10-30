@@ -448,6 +448,8 @@ export interface ObjectFilter {
   powerAboveOthers?: true;
   /** The Darkness Crystal: "exiled with ~" — cards its abilities exiled (CR 607.2a). */
   exiledWithSource?: true;
+  /** Soldevi Sage: "Draw three cards, then discard one of them." — a card drawn as this effect resolved. */
+  drawnThisWay?: true;
   /** Kutzil: "with power greater than its base power" (CR 208.4b: base power is set by layers 7a–7b). */
   powerAboveBase?: true;
   /** CR 702.78a (conspire): "that each share a color with it" — the source. */
@@ -1354,6 +1356,8 @@ export interface ExileInsteadNode extends EffectNode {
   withCounter?: string;
   /** Nissa's Chosen: "put it on the bottom of its owner's library instead" — there, not exile. */
   libraryBottom?: true;
+  /** Gravebane Zombie: "put it on top of its owner's library instead". */
+  libraryTop?: true;
   /** The Darkness Crystal: "instead exile it and you gain 2 life". */
   gainLife?: number;
   /** Kalitas, Traitor of Ghet: "instead exile that card and create a 2/2 black Zombie creature token" — for the source's controller. */
@@ -1518,6 +1522,23 @@ export interface PlayerRuleNode extends EffectNode {
   fromZone?: 'hand' | 'exile';
 }
 
+/**
+ * CR 701.42a / 712.4a: "exile them, then meld them into <name>" — this permanent and its counterpart (`partner`: the meld
+ * card named so, which you must own and control too; `partnerTypes`: "a creature named …") are exiled and put onto the
+ * battlefield combined, as one permanent with the characteristics of the combined back face (`result`, copied from the
+ * back face's card when the card pool is compiled, CR 712.8g). `attacking`: Mishra, Claimed by Gix — only if both are
+ * attacking, and it "enters tapped and attacking".
+ */
+export interface MeldNode extends EffectNode {
+  type: 'meld';
+  into: string;
+  partner?: string;
+  partnerTypes?: string[];
+  result?: { face: FaceDef; cmc: number };
+  attacking?: true;
+  tapped?: true;
+}
+
 /** A token as created: a face definition plus a name (CR 111.4). */
 export interface TokenSpec {
   face: FaceDef;
@@ -1535,14 +1556,14 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose', 'fateseal', 'extirpate',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose', 'fateseal', 'extirpate', 'meld',
     'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
     'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid',
+    'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair',
   ],
   statics: [
     'x_color',

@@ -53,6 +53,7 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
     target.set(id, compileCard(card, id, registry));
   }
 
+  linkMelds([...cards.values()]);
   const byName = (a: CardDef, b: CardDef) => a.name.localeCompare(b.name);
   return {
     db: {
@@ -154,7 +155,53 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
     });
     return { ...card, faces, automation: automationOf(faces) };
   };
-  return { ...db, schema: SCHEMA_VERSION, cards: db.cards.map(reparse), tokens: db.tokens.map(reparse) };
+  const cards = db.cards.map(reparse);
+  linkMelds(cards);
+  return { ...db, schema: SCHEMA_VERSION, cards, tokens: db.tokens.map(reparse) };
+}
+
+/**
+ * CR 712.4a / 712.5: a meld ability names the combined back face its pair melds into — a card of its own in the data, whose
+ * face is copied into the ability (CR 712.8g: the melded permanent has only that face's characteristics) — and the
+ * counterpart, when the ability doesn't (the card that "Melds with" this one, in its reminder text). An ability whose back
+ * face is missing, or isn't fully automated itself, is left unparsed.
+ */
+export function linkMelds(cards: CardDef[]): void {
+  const named = new Map(cards.map((c) => [c.name, c]));
+  const melds = (v: unknown, out: Record<string, unknown>[] = []): Record<string, unknown>[] => {
+    if (Array.isArray(v)) for (const x of v) melds(x, out);
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if (o.type === 'meld' && typeof o.into === 'string') out.push(o);
+      for (const x of Object.values(o)) melds(x, out);
+    }
+    return out;
+  };
+  for (const card of cards) {
+    if (card.layout !== 'meld') continue;
+    let changed = false;
+    for (const face of card.faces) {
+      const kept = face.abilities.filter((a) => {
+        const nodes = melds(a);
+        if (!nodes.length) return true;
+        const ok = nodes.every((node) => {
+          const result = named.get(node.into as string);
+          const partner = (node.partner as string | undefined) ?? cards.find((c) => c !== card && c.layout === 'meld' && c.faces[0]?.oracle.includes(`(Melds with ${card.name}.)`))?.name;
+          if (!result || result.layout !== 'meld' || result.automation !== 'full' || !partner) return false;
+          node.partner = partner;
+          node.result = { face: result.faces[0], cmc: result.cmc };
+          return true;
+        });
+        if (!ok) face.unparsed.push(a.text);
+        return ok;
+      });
+      if (kept.length !== face.abilities.length) {
+        face.abilities = kept;
+        changed = true;
+      }
+    }
+    if (changed) card.automation = automationOf(card.faces);
+  }
 }
 
 function automationOf(faces: FaceDef[]): Automation {

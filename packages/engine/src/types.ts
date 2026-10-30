@@ -285,6 +285,13 @@ export interface GameObject {
   chosen?: { color?: Color; creatureType?: string; cardName?: string; cardType?: string; player?: PlayerId; word?: string; landType?: string; number?: number };
   /** CR 702.82b: how many creatures it devoured as it entered ("for each creature it devoured"). */
   devoured?: number;
+  /**
+   * CR 712.4a: a melded permanent — one object represented by two cards. It has its combined back face (`card` is that
+   * face's key while it's melded); `own` is this object's own card and `partner` the other card's object, which is kept
+   * off every zone list (`meldedInto` this one) until the permanent leaves the battlefield (CR 712.21).
+   */
+  melded?: { own: string; partner: ObjectId };
+  meldedInto?: ObjectId;
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -601,6 +608,8 @@ export interface Resolution {
   discarded?: Record<PlayerId, number>;
   /** Cards each player drew as this resolved (Cut a Deal: "for each opponent who drew a card this way"). */
   drew?: Record<PlayerId, number>;
+  /** The cards drawn as this resolved (Soldevi Sage: "then discard one of them"). */
+  drawnIds?: ObjectId[];
   /** "the color of your choice", "the creature type of your choice" — chosen as this resolves. */
   chosen?: { color?: Color; colors?: Color[]; creatureType?: string; landType?: string };
   /** Patriarch's Bidding: the creature types each player chose as this resolved ("of a type chosen this way"). */
@@ -902,6 +911,11 @@ export type GameEvent =
       counters?: Record<string, number>;
       /** Kodama of the East Tree: the permanent whose ability put it onto the battlefield. */
       by?: ObjectRef;
+      /**
+       * CR 712.21: the second card of a melded permanent that left the battlefield — put into the zone like a card (it
+       * triggers "a card is put into a graveyard"), but it isn't another permanent leaving (nor dying).
+       */
+      meldPart?: true;
     }
   | { type: 'control_changed'; object: ObjectId; controller: PlayerId }
   | { type: 'prevented'; source: ObjectId; amount: number; to?: DamageRecipient }
