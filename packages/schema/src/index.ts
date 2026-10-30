@@ -198,7 +198,7 @@ export interface ActivatedAbility extends AbilityBase, Program {
    */
   /** Throne of Eldraine: "Spend only mana of the chosen color to activate this ability" — its whole mana cost in that color. */
   payOnly?: 'chosen';
-  costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true };
+  costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true; /** Loreseeker's Stone: "costs {1} more". */ more?: true };
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
   /** CR 702.142a: a boast ability (Birgi's "boast twice" raises its limit). */
@@ -734,7 +734,7 @@ export type AmountExpr = (
   /** Littjara Kinseekers: "three or more creatures that share a creature type" — the most of them with one type in common. */
   | { kind: 'most_sharing_type'; filter: ObjectFilter }
   /** Fists of Flame: "for each card you've drawn this turn" */
-  | { kind: 'drawn_this_turn'; who?: 'opponents' }
+  | { kind: 'drawn_this_turn'; who?: 'opponents'; /** Thought Sponge: the most any one of them drew. */ max?: true }
   /** Ancient Excavation: "for each card drawn this way" — what this resolution drew for you. */
   | { kind: 'drawn_this_way' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
@@ -825,6 +825,8 @@ export const RULE_FLAGS = [
   'assigns_no_combat_damage',
   /** Melira's Keepers: "This creature can't have counters put on it."; Melira: "… -1/-1 counters …"; Blightbeetle: "… +1/+1 …". */
   'no_counters', 'no_minus_counters', 'no_plus_counters',
+  /** Bound by Moonsilver: "Enchanted creature can't … transform." (CR 701.27) */
+  'cant_transform',
 ] as const;
 export type RuleFlag = (typeof RULE_FLAGS)[number];
 
@@ -1503,7 +1505,7 @@ export const CORE_NODES = {
   ],
   statics: [
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
-    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play',
+    'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal',
   ],
   triggers: [
     'enters', 'dies', 'leaves', 'attacks', 'blocks', 'becomes_blocked', 'deals_combat_damage', 'phase', 'cast', 'gain_life', 'draw', 'damage_prevented',

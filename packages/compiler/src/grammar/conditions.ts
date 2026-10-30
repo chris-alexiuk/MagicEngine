@@ -538,7 +538,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^that creature's power is greater than (?:~|this creature)'s(?: power)?$/.test(t) && b.it?.ref === 'trigger_object') return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power'] };
   // CR 702.100a (evolve): "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness"
   // Evolving Adaptive: "if that creature has greater power or toughness than this creature" — the same.
-  if ((t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" || /^(?:that creature|it) has greater power or toughness than (?:~|this creature)$/.test(t)) && b.it) {
+  // Sharp-Eyed Rookie: "if its power is greater than this creature's power or its toughness is greater than this creature's
+  // toughness".
+  if ((t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" || /^(?:that creature|it) has greater power or toughness than (?:~|this creature)$/.test(t) || /^its power is greater than ~'s power or its toughness is greater than ~'s toughness$/.test(t)) && b.it) {
     return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power', 'toughness'] };
   }
   // CR 725: "you're the monarch"
@@ -979,6 +981,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
   const enteredYours = /^an? (\w+) entered the battlefield under your control this turn$/.exec(t);
   if (enteredYours && TYPE_NOUNS[enteredYours[1]!]) return { type: 'this_turn', event: 'entered_yours', filter: { types: [TYPE_NOUNS[enteredYours[1]!]!] } };
+  // Lictor: "if a creature entered the battlefield under an opponent's control this turn".
+  const enteredTheirs = /^an? (\w+) entered the battlefield under an opponent's control this turn$/.exec(t);
+  if (enteredTheirs && TYPE_NOUNS[enteredTheirs[1]!]) return { type: 'this_turn', event: 'entered_yours', opponents: true, filter: { types: [TYPE_NOUNS[enteredTheirs[1]!]!] } };
   // Lilypad Village: "a Bird, Frog, Otter, or Rat entered the battlefield under your control this turn".
   const enteredKinds = /^an? ((?:[A-Z][a-z]+, )+(?:or )?[A-Z][a-z]+|[A-Z][a-z]+ or [A-Z][a-z]+|[A-Z][a-z]+) entered the battlefield under your control this turn$/.exec(t);
   if (enteredKinds) {
@@ -1060,6 +1065,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(attackedWith[1]!);
     return typeof n === 'number' ? { type: 'attacked_with', n } : null;
   }
+  // Deepway Navigator: "As long as you attacked with three or more Merfolk this turn".
+  const attackedWithKind = /^you attacked with (\w+) or more ([A-Z][\w-]*) this turn$/.exec(t);
+  if (attackedWithKind) {
+    const n = parseAmount(attackedWithKind[1]!);
+    const st = subtypeOf(attackedWithKind[2]!);
+    if (typeof n === 'number' && st) return { type: 'attacked_with', n, subtype: st };
+  }
   // Case of the Gateway Express: "Three or more creatures attacked this turn." — anyone's.
   const creaturesAttacked = /^(\w+) or more creatures attacked this turn$/.exec(t);
   if (creaturesAttacked) {
@@ -1072,6 +1084,30 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (toYards) {
     const n = toYards[1] ? 1 : parseAmount(toYards[2]!);
     return typeof n === 'number' ? { type: 'to_graveyard_this_turn', n, ...(toYards[3] ? { cardType: capitalise(toYards[3].trim()) } : {}), ...(toYards[4] === 'your graveyard' ? { yours: true } : {}) } : null;
+  }
+  // Skullcage: "unless they have exactly three or exactly four cards in hand".
+  const exactHand = /^(?:they|that player) (?:has|have) exactly (\w+)(?: or exactly (\w+))? cards? in (?:hand|their hand)$/.exec(t);
+  if (exactHand && b.player) {
+    const count = parseCount('the number of cards in their hand', b.clone());
+    const ns = [exactHand[1], exactHand[2]].filter(Boolean).map((w) => parseAmount(w!));
+    if (count && ns.every((n) => typeof n === 'number')) {
+      const one = ns.map((n) => ({ type: 'amount', amount: count, op: 'eq', n }) as ConditionNode);
+      return one.length === 1 ? one[0]! : { type: 'or', any: one };
+    }
+  }
+  // Cactuar: "if this creature didn't enter the battlefield this turn".
+  if (/^~ didn't enter (?:the battlefield )?this turn$/.test(t)) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } } };
+  // Fear of Immobility: "tap up to one target creature. If an opponent controls that creature, put a stun counter on it."
+  if (/^an opponent controls (?:that creature|that permanent|it)$/.test(t)) {
+    const of = b.named[t.replace(/^an opponent controls /, '')] ?? (b.it && b.it.ref !== 'self' ? b.it : null);
+    if (of) return { type: 'is', of, filter: { controller: 'opponent' } };
+  }
+  // Hidetsugu's Second Rite: "If target player has exactly 10 life" — the target named here, for "that player" after.
+  const exactLife = /^(target player|target opponent|that player|you) (?:has|have) exactly (\w+) life$/.exec(t);
+  if (exactLife) {
+    const n = parseAmount(exactLife[2]!);
+    const who = typeof n === 'number' ? parsePlayerRef(exactLife[1]!, b) : null;
+    if (who && typeof n === 'number') return { type: 'amount', amount: { kind: 'life', who }, op: 'eq', n };
   }
   // The End: "if your life total is 5 or less".
   const lifeAtMost = /^your life total is (\d+) or (less|greater)$/.exec(t);
@@ -1173,6 +1209,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Unstoppable Slasher: "if it had no counters on it" — any kind.
   if (t === 'it had no counters on it' && b.it) return { type: 'counters', of: b.it, max: 0 };
   if (t === '~ has counters on it') return { type: 'counters', of: { ref: 'self' }, min: 1 };
+  // Shatterskull Charger: "if this creature doesn't have a +1/+1 counter on it".
+  const lacks = /^(?:~|it) doesn't have an? (\S+) counter on it$/.exec(t);
+  if (lacks && (t.startsWith('~') || !b.it || b.it.ref === 'self')) return { type: 'counters', of: { ref: 'self' }, counter: lacks[1]!.replace(/−/g, '-'), max: 0 };
   // Marcus, Mutant Mayor: "if that creature has a +1/+1 counter on it" — the creature the trigger is about, now.
   const thatHas = /^(?:that creature|it) has (?:an?|one or more) (\S+) counters? on it$/.exec(t);
   if (thatHas && b.it?.ref === 'trigger_object') return { type: 'counters', of: b.it, counter: thatHas[1]!, min: 1 };

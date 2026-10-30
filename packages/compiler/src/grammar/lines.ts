@@ -601,7 +601,10 @@ export const activatedRule: GrammarRule = {
         changed = true;
       }
       // Baru, Wurmspeaker: "This ability costs {X} less to activate, where X is the greatest power among Wurms you control."
-      const reduce = / This ability costs \{(\d+|X)\} less to activate(?: for each ([^.]+?)| if ([^.]+?)| (during your turn)|, where X is ([^.]+?))\.$/.exec(effectText);
+      // Loreseeker's Stone: "This ability costs {1} more to activate for each card in your hand."
+      const reduce = / This ability costs \{(\d+|X)\} (less|more) to activate(?: for each ([^.]+?)| if ([^.]+?)| (during your turn)|, where X is ([^.]+?))\.$/.exec(effectText);
+      const more = reduce?.[2] === 'more';
+      if (reduce) reduce.splice(2, 1);
       if (reduce && (reduce[1] === 'X') === Boolean(reduce[5])) {
         const rb = new Binder(env);
         const per = reduce[2] ? parseForEach(reduce[2], rb) : reduce[5] ? parseCount(reduce[5], rb) : undefined;
@@ -609,7 +612,7 @@ export const activatedRule: GrammarRule = {
         if (reduce[1] === 'X') reduce[1] = '1';
         const condition = reduce[3] ? parseCondition(reduce[3], rb) : undefined;
         if ((reduce[2] && !per) || (reduce[3] && !condition) || node.costReduction) return null;
-        node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}) };
+        node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}), ...(more ? { more: true as const } : {}) };
         effectText = effectText.slice(0, reduce.index) + (effectText.endsWith('.') && !effectText.slice(0, reduce.index).endsWith('.') ? '.' : '');
         changed = true;
       }
@@ -911,12 +914,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Rose, Cutthroat Raider: "At end of combat on your turn".
     if (t === 'end of combat on your turn') return { trigger: { type: 'phase', step: 'end_of_combat', whose: 'you' }, it: { ref: 'self' }, player: null };
     // Righteous Authority: "At the beginning of the draw step of enchanted creature's controller, that player draws …".
-    const ofEnchanted = /^the beginning of the (upkeep|draw step|end step) of enchanted creature's controller$/.exec(t);
+    // Erosion, Power Taint, Curse Artifact, Soul Tithe: "… of enchanted land's / enchantment's / artifact's / permanent's
+    // controller".
+    const ofEnchanted = /^the beginning of the (upkeep|draw step|end step) of enchanted (creature|land|artifact|enchantment|permanent)'s controller$/.exec(t);
     if (ofEnchanted) {
       // Apathy, Unstable Mutation: "… untap that creature", "put a -1/-1 counter on that creature" — the enchanted creature.
-      b.named['that creature'] = { ref: 'attached' };
+      b.named[`that ${ofEnchanted[2]}`] = { ref: 'attached' };
       // Paralyze: "untap the creature".
-      b.named['the creature'] = { ref: 'attached' };
+      b.named[`the ${ofEnchanted[2]}`] = { ref: 'attached' };
       return { trigger: { type: 'phase', step: STEP_WORDS[ofEnchanted[1]!]!, whose: 'attached_controller' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
     }
     // Frontier Siege, Carpet of Flowers: "At the beginning of each of your main phases" — precombat and postcombat both (CR 505.1).
@@ -1070,6 +1075,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     b.itOnField = true;
     return { trigger: { type: 'dealt_damage', subject: { ref: 'all', filter: pf.filter } }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // Briarbridge Patrol: "Whenever this creature deals damage to one or more creatures" — once for all of them at a time.
+  const toCreatures = /^(~|enchanted creature|equipped creature) deals (combat )?damage to one or more creatures$/.exec(t);
+  if (toCreatures) {
+    const subject: Ref = toCreatures[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    return { trigger: { type: 'deals_damage', subject, to: 'creatures', ...(toCreatures[2] ? { combat: true } : {}) }, it: subject, player: null };
   }
   // "Whenever ~ deals damage to a player", "… to an opponent": "that player" is the player dealt damage.
   const damageTo = /^(~|enchanted creature|equipped creature) deals (combat )?damage to (a player|an opponent|a creature)$/.exec(t);
@@ -1281,8 +1292,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // attacks with creatures, if two or more of those creatures are attacking you and/or planeswalkers you control".
   // Lulu, Stern Guardian: "Whenever an opponent attacks you"; Cunning Rhetoric: "… you and/or one or more planeswalkers you
   // control" — once, as they declare attackers.
-  const oppAttacksYou = /^an opponent attacks you( and\/or one or more planeswalkers you control)?$/.exec(t);
+  // Orim's Prayer: "Whenever one or more creatures attack you" — the same.
+  const oppAttacksYou = /^an opponent attacks you( and\/or one or more planeswalkers you control)?$/.exec(t.replace(/^one or more creatures attack you$/, 'an opponent attacks you'));
   if (oppAttacksYou) {
+    // Sabotage Strategist: "Whenever one or more creatures attack you, those creatures get -1/-0 until end of turn."
+    if (/^one or more creatures attack you$/.test(t)) b.named['those creatures'] = { ref: 'all', filter: { types: ['Creature'], combat: 'attacking', attackingYou: true } };
     return { trigger: { type: 'you_attack', opponent: true, atYou: oppAttacksYou[1] ? 'or_planeswalkers' : 'you', min: 1 }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   const oppAttacks =
@@ -1476,6 +1490,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   }
   // Mirkwood Bats: "Whenever you create or sacrifice a token"; "Whenever you create a token", "… one or more creature
   // tokens" — tokens are created on the battlefield (CR 111.1), so as they enter under your control.
+  // Akim, the Soaring Wind: "Whenever you create one or more tokens for the first time each turn".
+  if (t === 'you create one or more tokens for the first time each turn' && word === 'Whenever') {
+    return { trigger: { type: 'enters', subject: { ref: 'all', filter: { token: true, controller: 'you' } }, batch: true, firstEachTurn: true }, it: null, player: null };
+  }
   const createOrSac = /^you create or sacrifice a token$/.test(t);
   const create = createOrSac ? null : /^you create (a|an|one or more) (?:(.+?) )?tokens?$/.exec(t);
   if ((create || createOrSac) && word === 'Whenever') {
@@ -2422,6 +2440,9 @@ const STATIC_FLAGS: Record<string, RuleFlag[]> = {
   "can't block alone": ['cant_block_alone'],
   "can't attack or block alone": ['cant_attack_alone', 'cant_block_alone'],
   "can't attack or block": ['cant_attack', 'cant_block'],
+  // Bound by Moonsilver
+  "can't attack, block, or transform": ['cant_attack', 'cant_block', 'cant_transform'],
+  "can't transform": ['cant_transform'],
   // CR 602.5: Arrest
   "can't attack or block, and its activated abilities can't be activated": ['cant_attack', 'cant_block', 'cant_activate'],
   "can't block, and its activated abilities can't be activated": ['cant_block', 'cant_activate'],
@@ -3042,6 +3063,8 @@ function untargetableBy(text: string): KeywordInstance | null {
 function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   // Jetmir, Nexus of Revels: "Creatures you control also get +1/+0 and have trample as long as …" — "also" adds nothing.
   body = body.replace(/^(.+?) also (?=(?:gets?|ha(?:s|ve)) )/, '$1 ');
+  // Zoetic Glyph: "Enchanted artifact is a Golem creature with base power and toughness 5/4 in addition to its other types."
+  body = body.replace(/^(Enchanted (?:artifact|land|permanent)) is an? ([A-Z][\w-]* )?creature with base power and toughness (\d+\/\d+) in addition to its other types$/, (_m, who: string, kind: string | undefined) => `${who} is a ${kind ?? ''}creature in addition to its other types and has base power and toughness ${/(\d+\/\d+)/.exec(_m)![1]}`);
   // Tajuru Paragon: "~ is also a Cleric, Rogue, Warrior, and Wizard." (CR 205.1b: in addition to its other types).
   body = body.replace(/^~ is also an? ((?:[A-Z][\w-]*, )+and [A-Z][\w-]*|[A-Z][\w-]*)$/, (m, list: string) => `~ is a ${list.replace(/,? and /g, ' ').replace(/,/g, '')} in addition to its other types`);
   // Canopy Cover: "Enchanted creature can't be the target of spells or abilities your opponents control." (the Aura's
@@ -4465,6 +4488,15 @@ export const entersWithCountersRule: GrammarRule = {
       return node;
     }
     // Diregraf Colossus: "~ enters with a +1/+1 counter on it for each Zombie card in your graveyard" — counted as it enters.
+    // Sheriff of Safe Passage: "~ enters with a +1/+1 counter on it plus an additional +1/+1 counter on it for each other
+    // creature you control." — one, and one for each.
+    const plusEach = /^~ enters(?: the battlefield)? with (?:a|an) (\S+) counter on it plus an additional \1 counter on it for each (.+?)\.$/.exec(line);
+    if (plusEach) {
+      const env = envOf(ctx);
+      const each = env ? parseForEach(plusEach[2]!, new Binder(env)) : null;
+      if (!each || each.plus || each.times || each.kind !== 'count') return null;
+      return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: plusEach[1]!.replace(/−/g, '-'), amount: 1, perEach: { ...each, plus: 1 } } } satisfies StaticAbility;
+    }
     // Myriad Construct: "If this creature was kicked, it enters with a +1/+1 counter on it for each …".
     const perEachIf = /^If (.+?), (?:~|it) (enters(?: the battlefield)? with .+)$/.exec(line);
     const perEach = /^~ enters(?: the battlefield)? with (a|an|one|two|three) (\S+) counters? on (?:it|him|her) for each (?!time it was kicked|color of mana spent)(.+?)\.$/.exec(perEachIf ? `~ ${perEachIf[2]}` : line);
@@ -4782,11 +4814,24 @@ export const exertRule: GrammarRule = {
 /** CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield." (leylines) */
 export const openingHandRule: GrammarRule = {
   id: 'opening_hand',
-  parse(line, original) {
+  parse(line, original, ctx) {
     // Gemstone Caverns: "If this card is in your opening hand and you're not the starting player, you may begin the game with
     // ~ on the battlefield with a luck counter on it. If you do, exile a card from your hand." (CR 103.6a)
     const caverns = /^If (?:~|this card) is in your opening hand and you're not the starting player, you may begin the game with (?:it|~) on the battlefield with a (\S+) counter on it\. If you do, exile a card from your hand\.$/.exec(line);
     if (caverns) return { kind: 'static', text: original, effect: { type: 'begin_on_battlefield', notStarting: true, counter: caverns[1]!, exileFromHand: 1 } } satisfies StaticAbility;
+    // CR 103.6b: the Chancellors, Providence, Sphinx of Foresight: "You may reveal this card from your opening hand. If you do,
+    // at the beginning of the first upkeep, …" — a delayed trigger made as the game begins.
+    const revealA = /^You may reveal (?:~|this card) from your opening hand\. If you do, at the beginning of (the first upkeep|your first upkeep|your first main phase of the game), (.+)$/.exec(line);
+    const revealB = /^You may reveal (?:~|this card) from your opening hand\. If you do, (.+) at the beginning of your first upkeep\.$/.exec(line);
+    const reveal = revealA ? { when: revealA[1]!, text: revealA[2]! } : revealB ? { when: 'your first upkeep', text: `${revealB[1]}.` } : null;
+    if (reveal) {
+      const env = envOf(ctx);
+      if (!env) return null;
+      const effects = attempt(new Binder(env), (b) => parseEffectText(reveal.text.replace(/^\w/, (x) => x.toUpperCase()), b));
+      if (!effects?.length || JSON.stringify(effects).includes('"ref":"target"')) return null;
+      const when = reveal.when === 'your first main phase of the game' ? { step: 'main1', whose: 'you' } : { step: 'upkeep', ...(reveal.when === 'your first upkeep' ? { whose: 'you' } : {}) };
+      return { kind: 'static', text: original, effect: { type: 'opening_reveal', ...when, effects } } satisfies StaticAbility;
+    }
     if (!/^If (?:~|this card) is in your opening hand, you may begin the game with (?:it|~) on the battlefield\.$/.test(line)) return null;
     return { kind: 'static', text: original, effect: { type: 'begin_on_battlefield' } } satisfies StaticAbility;
   },

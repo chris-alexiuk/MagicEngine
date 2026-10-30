@@ -173,9 +173,13 @@ export class ParserRegistry {
         // abilities." — two statics about the same creature.
         const isThenIt = /^(Enchanted creature) (is an? [A-Z][\w-]* with base power and toughness \d+\/\d+)\. It (can't attack(?: or block)?(?: and loses all abilities)?)\.$/.exec(l);
         if (isThenIt) return [`${isThenIt[1]} ${isThenIt[2]}.`, `${isThenIt[1]} ${isThenIt[3]}.`];
+        // Fog on the Barrow-Downs: "Enchanted creature is a Spirit and can't attack or block." — two statics.
+        const isAnd = /^(Enchanted creature) (is an? [A-Z][\w-]*) and (can't attack or block|can't block|can't attack)\.$/.exec(l);
+        if (isAnd) return [`${isAnd[1]} ${isAnd[2]}.`, `${isAnd[1]} ${isAnd[3]}.`];
         // Gift of Fangs: "Enchanted creature gets +2/+2 as long as it's a Vampire. Otherwise, it gets -2/-2."
-        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*)\. Otherwise, it gets ([+-]\d+\/[+-]\d+)\.$/.exec(l);
-        if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} gets ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
+        // Bonds of Faith: "… as long as it's a Human. Otherwise, it can't attack or block."
+        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*)\. Otherwise, it (gets [+-]\d+\/[+-]\d+|can't attack or block|can't block)\.$/.exec(l);
+        if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
         // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
         const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);
         if (turnOtherwise) return [`During your turn, ${turnOtherwise[1]} has ${turnOtherwise[2]}.`, `During turns other than yours, ${turnOtherwise[1]} has ${turnOtherwise[3]}.`];
@@ -1014,6 +1018,16 @@ export class ParserRegistry {
       // Runic Repetition: "Return target exiled card with flashback you own to your hand."; Rootcoil Creeper: "… target card
       // with flashback you own from exile to your hand."
       .map((l) => l.replace(/\btarget exiled (cards?(?: with [a-z]+)?) you own\b/g, 'target $1 you own in exile').replace(/\b(target cards?(?: with [a-z]+)? you own) from exile (to your hand)\b/g, '$1 in exile $2'))
+      // Vengevine: "Whenever you cast a spell, if it's the second creature spell you cast this turn, …" — the same as "Whenever
+      // you cast your second creature spell each turn" (the spell stays the second one).
+      .map((l) => l.replace(/^Whenever you cast a spell, if it's the (first|second|third) ([a-z]+) spell you cast this turn, /, 'Whenever you cast your $1 $2 spell each turn, '))
+      // Soul Tithe: "At the beginning of the upkeep of enchanted permanent's controller, that player sacrifices it unless they pay
+      // {X}, where X is its mana value." — "it" is the enchanted permanent.
+      .map((l) => l.replace(/^(At the beginning of the upkeep of enchanted permanent's controller, that player sacrifices) it unless they pay \{X\}, where X is its mana value\.$/, "$1 that permanent unless they pay {X}, where X is that permanent's mana value."))
+      // Hurkyl's Final Meditation: "During turns other than yours, this spell costs {3} more to cast."
+      .map((l) => l.replace(/^During turns other than yours, (this spell|~) costs (\{\d+\}) (more|less) to cast\.$/, "This spell costs $2 $3 to cast if it's not your turn."))
+      // Captain America, Liberator: "for each Equipment attached to him" — the character itself.
+      .map((l) => l.replace(/\b(for each (?:Equipment|Aura) attached to) (?:him|her)\b/g, '$1 ~'))
       // Strategic Betrayal: "Target opponent exiles a creature they control and their graveyard."
       .map((l) => l.replace(/^(Target (?:player|opponent) exiles an? [a-z]+ they control) and their graveyard\.$/, "$1. Then exile that player's graveyard."))
       // Tombfire: "Target player exiles all cards with flashback from their graveyard." — those in that player's graveyard.

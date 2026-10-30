@@ -405,7 +405,16 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         const self = source && declared.some((d) => d.id === source.id && d.zcc === (ctx.sourceZcc ?? source.zcc));
         return Boolean(self) && declared.filter((d) => d.id !== source!.id).length >= Number(cond.n ?? 1);
       }
-      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => cond.anyone || g.objects[id]?.controller === controller).length;
+      // Deepway Navigator: "with three or more Merfolk" — by the card's own types (a changeling is every type, CR 702.73a);
+      // read from the face, not the characteristics this static is helping to work out.
+      const ofKind = (id: ObjectId) => {
+        if (!cond.subtype) return true;
+        const o = g.objects[id];
+        if (!o) return false;
+        const face = faceOf(g, o);
+        return face.subtypes.includes(String(cond.subtype)) || face.keywords.some((k) => k.id === 'changeling');
+      };
+      const n = Object.keys(g.turnLog.attacks ?? {}).filter((id) => (cond.anyone || g.objects[id]?.controller === controller) && ofKind(id)).length;
       return n >= Number(cond.n ?? 1);
     }
     case 'to_graveyard_this_turn': {
@@ -739,7 +748,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (g.players[controller]?.landsPlayedThisTurn ?? 0) > 0;
         // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"
         case 'entered_yours':
-          return (log.entered?.[controller] ?? []).some((id) => {
+          // Lictor: "under an opponent's control".
+          return (cond.opponents ? livePlayers(g).filter((p) => p !== controller).flatMap((p) => log.entered?.[p] ?? []) : (log.entered?.[controller] ?? [])).some((id) => {
             const o = g.objects[id];
             const types = (cond.filter as ObjectFilter | undefined)?.types ?? [];
             if (!o) return false;

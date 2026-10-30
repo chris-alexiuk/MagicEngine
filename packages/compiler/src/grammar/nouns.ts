@@ -848,6 +848,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       if (it?.ref === 'self' && /^(?:that|those) creatures?$/i.test(t) && !/\b(?:Creature|Vehicle)\b/.test(b.env.typeLine)) return null;
       // Rivalry: "… this enchantment deals 2 damage to them" — one permanent is never "them" (that player is, when named).
       if (it?.ref === 'self' && /^(?:them|they)$/i.test(t)) return null;
+      // Nor "those creatures" (Sabotage Strategist: the creatures attacking you).
+      if (it?.ref === 'self' && /^those /i.test(t)) return null;
       // Fiery Annihilation: "Exile up to one target Equipment attached to that creature. If that creature would die this turn,
       // …" — an Equipment target isn't "that creature": the creature target before it is.
       if (it?.ref === 'target' && /^that creature$/i.test(t)) {
@@ -1119,7 +1121,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   }
   // Blightning: "That player or that planeswalker's controller discards two cards." — after "target player or planeswalker".
   if (/^that player or that (?:planeswalker|permanent|battle)'s (?:controller|protector)$/.test(t) && b.it?.ref === 'target' && !/'s protector$/.test(t)) return { ref: 'player_or_controller', of: b.it };
-  const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t);
+  // Searing Blood: "When that creature dies this turn, ~ deals 3 damage to the creature's controller." — the same as "that".
+  const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t.replace(/^the (creature|permanent)'s (controller|owner)$/, 'that $1\'s $2'));
   // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
   const of = owner ? (owner[1] && b.named[owner[1]]) || (owner[1] ? demonstrative(owner[1], b) : b.it) : null;
   if (owner && of) return { ref: owner[2] === 'controller' ? 'controller_of' : 'owner_of', of };

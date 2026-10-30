@@ -1,5 +1,6 @@
 import type { GameEvent, GameObject, GameState } from './types.js';
 import { faceOf } from './zones.js';
+import { hasRule } from './characteristics.js';
 
 /**
  * Day and night (CR 731, CR 702.145). The game has neither until something makes it day or night;
@@ -21,7 +22,7 @@ function transformBound(g: GameState, events: GameEvent[]): void {
     const o = g.objects[id]!;
     const def = g.cards[o.card];
     if (!def || def.faces.length !== 2 || o.faceDown) continue;
-    if ((g.dayNight === 'night' && o.face === 0 && has(g, o, 'daybound')) || (g.dayNight === 'day' && o.face === 1 && has(g, o, 'nightbound'))) {
+    if (((g.dayNight === 'night' && o.face === 0 && has(g, o, 'daybound')) || (g.dayNight === 'day' && o.face === 1 && has(g, o, 'nightbound'))) && !hasRule(g, o, 'cant_transform')) {
       o.face = o.face === 0 ? 1 : 0;
       events.push({ type: 'transformed', object: o.id, face: o.face });
     }

@@ -564,6 +564,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return ctx.resolution?.drew?.[ctx.controller] ?? 0;
     case 'drawn_this_turn':
       // Heliod, the Radiant Dawn: "each card your opponents have drawn this turn" — all of theirs.
+      // Thought Sponge: "the greatest number of cards an opponent has drawn this turn".
+      if (e.who === 'opponents' && e.max) return Math.max(0, ...livePlayers(g).filter((p) => p !== ctx.controller).map((p) => g.turnLog.drawn?.[p] ?? 0));
       if (e.who === 'opponents') return livePlayers(g).filter((p) => p !== ctx.controller).reduce((n, p) => n + (g.turnLog.drawn?.[p] ?? 0), 0);
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
     case 'tokens_created_this_turn':

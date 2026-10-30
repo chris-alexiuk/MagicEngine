@@ -1,5 +1,5 @@
 import { isDungeon } from './dungeons.js';
-import type { CardDef } from '@mtg/schema';
+import type { CardDef, EffectNode } from '@mtg/schema';
 import { newTurnLog } from './conditions.js';
 import { beginTurn } from './flow.js';
 import { emptyPool } from './mana.js';
@@ -158,9 +158,20 @@ function bottomCount(g: GameState, player: PlayerId): number {
   return Math.max(0, taken - (g.config.freeMulligan ? 1 : 0));
 }
 
-/** CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield." */
+/**
+ * CR 103.6a: "If this card is in your opening hand, you may begin the game with it on the battlefield."; CR 103.6b: "You may
+ * reveal this card from your opening hand." (the Chancellors) — the cards a player may act with.
+ */
 function openingBattlefieldCards(g: GameState, player: PlayerId): ObjectId[] {
-  return zoneList(g, 'hand', player).filter((id) => Boolean(openingEffect(g, id, player)));
+  return zoneList(g, 'hand', player).filter((id) => Boolean(openingEffect(g, id, player) || openingReveal(g, id)));
+}
+
+/** CR 103.6b: the card's "If you do, at the beginning of the first upkeep, …" (what revealing it from the opening hand does). */
+function openingReveal(g: GameState, id: ObjectId): { step: 'upkeep' | 'main1'; whose?: 'you'; effects: EffectNode[] } | null {
+  for (const a of g.cards[g.objects[id]!.card]?.faces[0]?.abilities ?? []) {
+    if (a.kind === 'static' && a.effect.type === 'opening_reveal') return a.effect as unknown as { step: 'upkeep' | 'main1'; whose?: 'you'; effects: EffectNode[] };
+  }
+  return null;
 }
 
 /** The card's "begin the game on the battlefield" ability, if it can be used by this player (CR 103.6a; Gemstone Caverns: not the starting player). */
@@ -263,6 +274,26 @@ export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnsw
     }
     // CR 103.6a: the player puts those cards onto the battlefield.
     for (const id of answer.objects) {
+      // CR 103.6b: revealed instead — what it does waits for the step it names (a delayed triggered ability, CR 603.7).
+      const reveal = openingEffect(g, id, player) ? null : openingReveal(g, id);
+      if (reveal) {
+        const o = g.objects[id]!;
+        events.push({ type: 'revealed', player, objects: [id] });
+        g.delayed.push({
+          id: `d${g.nextId++}`,
+          controller: player,
+          source: { id, zcc: o.zcc },
+          sourceName: g.cards[o.card]?.faces[0]?.name ?? o.card,
+          text: `${g.cards[o.card]?.faces[0]?.name ?? o.card} (revealed from the opening hand)`,
+          step: reveal.step,
+          ...(reveal.whose ? { whose: 'you' as const } : {}),
+          createdTurn: g.turn,
+          createdStep: g.step,
+          effects: structuredClone(reveal.effects),
+          targets: [],
+        });
+        continue;
+      }
       moveObject(g, id, 'battlefield', events, { controller: player });
       const counter = openingEffect(g, id, player)?.counter;
       if (counter) {

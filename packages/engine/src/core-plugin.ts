@@ -518,7 +518,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           answer = null;
           continue;
         }
-        return { ask: { kind: 'choose_option', player: o.owner, options: [top, 'bottom'], text: `Put ${nameOf(g, o)} ${node.secondFromTop ? 'second from the top' : 'on the top'} or on the bottom of your library?`, sourceName: sourceName(ctx) } };
+        // Not Forgotten: "on your choice of the top or bottom of its owner's library" — the controller chooses.
+        const chooser = node.chooser === 'you' ? ctx.controller : o.owner;
+        return { ask: { kind: 'choose_option', player: chooser, options: [top, 'bottom'], text: `Put ${nameOf(g, o)} ${node.secondFromTop ? 'second from the top' : 'on the top'} or on the bottom of ${chooser === o.owner ? 'your' : "its owner's"} library?`, sourceName: sourceName(ctx) } };
       }
       // Each pile of two or more: its owner orders it (first chosen goes on top).
       memo.order ??= {};
@@ -1301,6 +1303,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (o.zone !== 'battlefield' || !def || def.layout !== 'transform' || def.faces.length !== 2) continue;
       // CR 702.145b/e: "This permanent can't transform except due to its daybound ability."
       if (dayNightCard(ctx.g, o)) continue;
+      // Bound by Moonsilver: "can't transform".
+      if (hasRule(ctx.g, o, 'cant_transform')) continue;
       const next = o.face === 0 ? 1 : 0;
       // CR 701.27d: not into an instant or sorcery face.
       if (def.faces[next]!.types.some((t) => t === 'Instant' || t === 'Sorcery')) continue;
@@ -1420,11 +1424,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         return {
           ask: {
             kind: 'choose_objects',
-            player: ctx.controller,
+            // Chittering Rats: "target opponent puts a card from their hand on top of their library" — their choice.
+            player: node.theirChoice ? p : ctx.controller,
             candidates,
             min: node.optional ? 0 : n,
             max: Math.min(n, candidates.length),
-            text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
+            text: node.then === 'library_top' && (p === ctx.controller || node.theirChoice) ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
             ...(node.then === 'library_top' ? { ordered: true as const } : {}),
             ...(node.revealHand ? { revealed: [...hand] } : {}),
             ...(node.lookHand ? { seen: [...hand] } : {}),
@@ -5136,6 +5141,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
         const xo = xid ? check.g.objects[xid] : undefined;
         return xo ? [refTo(xo)] : [];
       });
+      // Akim: "for the first time each turn" — no token was created for you earlier this turn.
+      if (t.firstEachTurn && (check.g.turnLog.tokensCreated?.[check.controller] ?? 0) !== all.length) return [];
       return all[0] === e ? [{ amount: all.length, created }] : [];
     }
     return [{ object: refTo(o), player: o.controller }];
@@ -5407,6 +5414,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       const hit = check.g.objects[e.to.object];
       if (!src || !hit || !subjectMatches(check, t.subject as Ref, src, { anyZone: true }) || !chars(check.g, hit).types.includes('Creature')) return [];
       return [{ object: refTo(hit), amount: e.amount }];
+    }
+    // Briarbridge Patrol: "deals damage to one or more creatures" — once for the batch.
+    if (t.to === 'creatures') {
+      const src = check.g.objects[e.source];
+      if (e.to.kind !== 'permanent' || !src || !subjectMatches(check, t.subject as Ref, src, { anyZone: true })) return [];
+      const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.to.kind === 'permanent' && (!t.combat || x.combat) && Boolean(check.g.objects[x.to.object] && chars(check.g, check.g.objects[x.to.object]!).types.includes('Creature')));
+      return hits[0] === e ? [{ object: refTo(src), amount: hits.reduce((n, x) => n + x.amount, 0) }] : [];
     }
     // "Whenever ~ deals damage to a player" / "to an opponent": once for each player dealt damage; No Mercy: "to you".
     if (t.to === 'player' || t.to === 'opponent' || t.to === 'you') {
@@ -5987,7 +6001,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play'],
+  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

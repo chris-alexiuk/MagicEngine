@@ -257,6 +257,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^Exile all cards from all opponents' hands and graveyards\.$/, "Exile all cards from all opponents' hands. Exile all cards from all opponents' graveyards.");
   // Foul-Tongue Shriek: "Target opponent loses 1 life for each attacking creature you control. You gain that much life."
   text = text.replace(/\b((?:[Tt]arget (?:player|opponent)|[Ee]ach opponent) loses [^.]*?\blife\b[^.]*?)(?:\. You| and you) gain that much life\./, '$1. You gain life equal to the life lost this way.');
+  // Graceful Reprieve: "When target creature dies this turn, return that card to the battlefield …" — the target is chosen
+  // as the spell is cast; the ability waits for it.
+  text = text.replace(/^When target (creature|creature you control|permanent) dies this turn, /, (_m, what: string) => `Choose target ${what}. When that ${what.split(' ')[0]} dies this turn, `);
+  // Trade Route Envoy: "draw a card if you control a creature with a counter on it. If you don't draw a card this way, put a
+  // +1/+1 counter on this creature." — the counter when the condition fails.
+  text = text.replace(/\b([Dd])raw a card if (you control [^.]+)\. If you don't draw a card this way, ([^.]+)\./, (_m, d: string, cond: string, rest: string) => `${d === 'D' ? 'If' : 'if'} ${cond}, draw a card. Otherwise, ${rest}.`);
   // Skull Rend: "~ deals 2 damage to each opponent. Those players each discard two cards at random." — each opponent.
   text = text.replace(/\b(deals \d+ damage to each opponent)\. Those players each discard /, '$1. Each opponent discards ');
   // Ian the Reckless: "… deal damage equal to its power to you and any target" — the same as "to any target and you".
@@ -900,7 +906,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // if she was still there to exile.
       // Shadow of the Goblin: "discard a card. If you do, draw a card." — only with a card to discard.
       // Dawn of a New Age: "remove a hope counter from this enchantment. If you do, draw a card." — only with one there.
-      if (ifDone && (/^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from ~$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
+      // Clockwork Hydra: "remove a +1/+1 counter from it. If you do, it deals 1 damage to any target." — itself.
+      const fromIt = /^Remove (?:a|an|one|two|three) \S+ counters? from it$/.test(s) && (b.it?.ref === 'self' || (b.it?.ref === 'trigger_object' && b.itIsSource));
+      if (ifDone && (fromIt || /^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from ~$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -1280,6 +1288,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Stronghold Arena: "you may reveal the top card of your library and put it into your hand. If you do, you lose life
+      // equal to its mana value."
+      if (/^[Yy]ou may reveal the top card of your library and put (?:that card|it) into your hand$/.test(s) && /^If you do, you (lose|gain) life equal to its mana value$/.test(sentences[i + 1] ?? '')) {
+        const lg = /^If you do, you (lose|gain) life/.exec(sentences[i + 1]!)![1]!;
+        out.push({ type: 'may', effects: [{ type: 'reveal_top', life: lg }] });
+        i += 1;
+        b.it = { ref: 'created' };
+        continue;
+      }
       // CR 118.12: "You may sacrifice a creature. If you do, …" — the first part is done only if possible.
       const mayDo = /^You may (.+)$/.exec(s);
       // Bloodchief Ascension: "you may have that player lose 2 life. If you do, …" — what they do.
@@ -1427,7 +1444,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Dark Confidant: "Reveal the top card of your library and put that card into your hand. You lose life equal to its
       // mana value." (Augury Adept: "You gain life equal to …")
       if (/^[Rr]eveal the top card of your library and put (?:that card|it) into your hand$/.test(s)) {
-        const life = sentences[i + 1] ? /^You (lose|gain) life equal to its mana value$/.exec(sentences[i + 1]!) : null;
+        // Ruin Raider: "You lose life equal to the card's mana value."
+        const life = sentences[i + 1] ? /^You (lose|gain) life equal to (?:its|the card's|that card's) mana value$/.exec(sentences[i + 1]!) : null;
         out.push({ type: 'reveal_top', ...(life ? { life: life[1] } : {}) });
         if (life) i += 1;
         // Yuriko: "Each opponent loses life equal to that card's mana value." — the card put into your hand.
@@ -1536,7 +1554,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           const pf = parseFilter(`${revealIf[1]} card in your library`, b);
           if (!pf || pf.plural) return null;
           const { zone: _z, owner: _o, ...filter } = pf.filter;
-          const then = parseSentence(capitalise(revealIf[2]!), b);
+          // Nissa's Revelation: "If it's a creature card, you draw cards equal to its power …" — the revealed card's.
+          b.it = { ref: 'chosen_object' };
+          let then = parseSentence(capitalise(revealIf[2]!), b) ?? parseEffectText(`${capitalise(revealIf[2]!)}.`, b);
+          // "… you draw cards equal to its power and you gain life equal to its toughness" — the card may be drawn, so what
+          // else counts it comes first (nothing else happens in between).
+          if (then && then.length > 1 && then[0]!.type === 'draw' && JSON.stringify(then.slice(1)).includes('"chosen_object"') && then.slice(1).every((e) => e.type === 'gain_life' || e.type === 'lose_life')) then = [...then.slice(1), then[0]!];
           return then && !JSON.stringify(then).includes('"ref":"self"') ? [...(topFirstFx ?? []), { type: 'reveal_top_card' }, { type: 'if', cond: { type: 'is', of: { ref: 'chosen_object' }, filter }, effects: then } as EffectNode] : null;
         });
         if (r) {
@@ -4095,13 +4118,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // "Target creature's owner puts it on their choice of the top or bottom of their library."
   // Temporal Cleansing: "The owner of target nonland permanent puts it into their library second from the top or on the
   // bottom."; Wan Shi Tong: "target nonland permanent's owner puts it …".
+  // Moonsnare Prototype: "The owner of target nonland permanent puts it on their choice of …"; Not Forgotten: "Put target card
+  // from a graveyard on your choice of the top or bottom of its owner's library." — you choose.
+  const yours = /^Put (.+?) on your choice of the top or bottom of its owner's library$/.exec(s);
   const topOrBottom =
-    /^(.+?)'s owner puts it on their choice of the top or bottom of their library$/.exec(s) ??
-    /^(?:[Tt]he owner of (.+?)|(.+?)'s owner) puts it into their library (second from the top) or on the bottom$/.exec(s);
+    /^(?:[Tt]he owner of (.+?)|(.+?)'s owner) puts it on their choice of the top or bottom of their library()$/.exec(s) ??
+    /^(?:[Tt]he owner of (.+?)|(.+?)'s owner) puts it into their library (second from the top) or on the bottom$/.exec(s) ??
+    (yours ? ([s, yours[1], undefined, ''] as unknown as RegExpExecArray) : null);
   if (topOrBottom) {
     const r = attempt(b, (b) => {
       const what = parseObjectRef(topOrBottom[1] ?? topOrBottom[2]!, b);
-      return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: 'choice', ...(topOrBottom[3] ? { secondFromTop: true } : {}) }] : null;
+      // Not a spell: it would leave the stack (Swat Away, Endless Detour aren't read).
+      if (!what || what.plural || (what.targeted && b.targets[b.targets.length - 1]?.filter?.zone === 'stack') || JSON.stringify(b.targets[b.targets.length - 1] ?? {}).includes('"stack"')) return null;
+      return [{ type: 'move', what: what.ref, to: 'library', position: 'choice', ...(topOrBottom[3] ? { secondFromTop: true } : {}), ...(yours ? { chooser: 'you' } : {}) }];
     });
     if (r) return r;
   }
@@ -5071,7 +5100,12 @@ const VERBS: Record<string, VerbHandler> = {
     }
     return [node];
   },
-  sacrifice(args, who, b) {
+  sacrifice(args, who, b, imperative) {
+    // Slow Motion: "that player sacrifices that creature unless they pay {2}" — its controller sacrifices it.
+    if (!imperative && who.ref !== 'you' && /^that (?:creature|permanent|land|artifact|enchantment)$/.test(args)) {
+      const what = parseObjectRef(args, b);
+      if (what && !what.plural && what.ref.ref !== 'self') return [{ type: 'sacrifice', what: what.ref, byController: true }];
+    }
     // Sporogenic Infection: "a creature of their choice other than enchanted creature".
     args = args.replace(/ of (?:their|your) choice (other than )/, ' $1');
     // All Is Dust: "Each player sacrifices all permanents they control that are one or more colors." — their own.
@@ -5132,6 +5166,12 @@ const VERBS: Record<string, VerbHandler> = {
     return [{ type: 'sacrifice', what: what.ref, ...(own ? { byController: true } : {}) }];
   },
   put(args, who, b, imperative) {
+    // Chittering Rats: "target opponent puts a card from their hand on top of their library." — they choose which.
+    if (!imperative && who.ref !== 'you' && /^a card from (?:their|his or her) hand on top of (?:their|his or her) library$/.test(args)) {
+      // Sadistic Augermage: "each player puts …" — each of them, in turn.
+      if (who.ref === 'players') return [{ type: 'players_do', players: who, effects: [{ type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount: 1, then: 'library_top' }] }];
+      return [{ type: 'choose_from_hand', who, filter: {}, amount: 1, then: 'library_top', theirChoice: true }];
+    }
     if (!imperative) return null;
     // "Put a land card from your hand onto the battlefield (tapped)." — chosen as it resolves.
     // Ghalta, Last March of the Ents: "put any number of creature cards from your hand onto the battlefield".
@@ -5607,14 +5647,19 @@ const VERBS: Record<string, VerbHandler> = {
   },
   // CR 601.2d: "Distribute three +1/+1 counters among one, two, or three target creatures (you control)."
   distribute(args, who, b, imperative) {
-    const m = imperative ? /^(\w+) (\S+) counters among (any number of|one or two|one, two, or three|up to (\w+)) (target .+)$/.exec(args) : null;
+    // Cloudspire Skycycle: "among one or two other target Vehicles and/or creatures you control".
+    const m = imperative ? /^(\w+) (\S+) counters among (any number of|one or two|one, two, or three|up to (\w+)) ((?:other )?target .+)$/.exec(args) : null;
     if (!m) return null;
     const amount = parseAmount(m[1]!);
     const most = m[3] === 'any number of' ? 100 : m[3] === 'one or two' ? 2 : m[3] === 'one, two, or three' ? 3 : parseAmount(m[4]!);
     if (typeof amount !== 'number' || typeof most !== 'number') return null;
-    const pf = parseFilter(m[5]!.replace(/^target /, ''), b);
+    const other = /^other /.test(m[5]!);
+    const pf = parseFilter(m[5]!.replace(/^(?:other )?target /, '').replace(/ and\/or /g, ' or '), b);
     if (!pf || !pf.plural || pf.filter.zone) return null;
+    if (other) pf.filter.other = true;
     const what = b.addTarget({ what: 'object', filter: pf.filter, text: m[5]!, count: Math.min(most, amount), upTo: true, min: 1 });
+    // Rhino, Terrible Trampler: "… among up to three other target creatures. They gain trample until end of turn."
+    b.it = what;
     return [{ type: 'add_counters', what, counter: m[2]!.replace(/−/g, '-'), amount, divided: true }];
   },
   // CR 706: "roll a d4 and create a number of Treasure tokens equal to the result"
@@ -5948,7 +5993,8 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // "It doesn't untap during its controller's next untap step." (CR 502.3)
   // Sleep: "Those creatures don't untap during that player's next untap step"; Sudden Storm: "… their controllers' next
   // untap steps".
-  const stay = /^(.+?) (?:doesn't|don't) untap during (?:its controller's|their controllers'|their controller's|that player's|your) next untap steps?$/i.exec(c);
+  // Exhaustion: "Creatures and lands target opponent controls don't untap during their next untap step." — that player's.
+  const stay = /^(.+?) (?:doesn't|don't) untap during (?:its controller's|their controllers'|their controller's|that player's|your|their) next untap steps?$/i.exec(c);
   if (stay) {
     const what = parseObjectRef(stay[1]!, b);
     return what ? [{ type: 'skip_untap', what: what.ref }] : null;

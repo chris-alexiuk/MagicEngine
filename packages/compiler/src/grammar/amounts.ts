@@ -413,6 +413,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = (b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim()).replace(/^the total number of (?=(?:[a-z]+ (?:and|or) [a-z]+ |[a-z]+ )?cards )/, 'the number of ');
   // CR 702.179a: The Speed Demon: "where X is your speed".
   if (t === 'your speed') return { kind: 'speed' };
+  // Cryptborn Horror: "the total life lost by your opponents this turn".
+  if (t === 'the total life lost by your opponents this turn' || t === 'the total amount of life your opponents have lost this turn') return { kind: 'life_this_turn', who: 'opponents', stat: 'lost' };
   // Ral Zarek, Guest Lecturer: "where X is the number of coins that came up heads" (CR 705.2).
   if (t === 'the number of coins that came up heads') return { kind: 'flips_won' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.
@@ -471,6 +473,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (theirLife && b.player?.ref === 'players') return { kind: 'life_this_turn', who: 'you', player: b.player, ...(theirLife[1] === 'lost' ? { stat: 'lost' as const } : {}) };
   // Volcanic Torrent: "the number of spells you've cast this turn".
   if (t === "the number of spells you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Thunder Salvo: "the number of other spells you've cast this turn" — not counting this spell.
+  if (t === "the number of other spells you've cast this turn" && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine ?? '')) return { kind: 'spells_cast_this_turn', plus: -1 };
   // Hobgoblin Bandit Lord: "the number of Goblins that entered the battlefield under your control this turn".
   // Gyome, Master Chef: "the number of nontoken creatures you had enter the battlefield under your control this turn".
   const enteredThisTurn = /^the number of (.+?) (?:that entered|you had enter) the battlefield under your control this turn$/.exec(t);
@@ -544,6 +548,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // Proft's Eidetic Memory: "the number of cards you've drawn this turn"
   if (/^the number of cards you've drawn this turn$/.test(t)) return { kind: 'drawn_this_turn' };
+  // Thought Sponge: "the greatest number of cards an opponent has drawn this turn".
+  if (t === 'the greatest number of cards an opponent has drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents', max: true };
   // Thalisse, Reverent Medium: "the number of tokens you created this turn"
   if (/^the number of tokens you(?:'ve)? created this turn$/.test(t)) return { kind: 'tokens_created_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
@@ -658,7 +664,7 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Morbid Curiosity: "the mana value of the sacrificed permanent" — the same.
   const lkiOf = /^the (power|toughness|mana value) of the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)$/.exec(t);
   const lki =
-    /^the (sacrificed|discarded) (?:creature|artifact|permanent|card|land)'s (power|toughness|mana value)$/.exec(t) ??
+    /^the (sacrificed|discarded) (?:creature|artifact|enchantment|permanent|card|land)'s (power|toughness|mana value)$/.exec(t) ??
     /^the (exiled) (?:creature|artifact|permanent)'s (power|toughness|mana value)$/.exec(t) ??
     (lkiOf ? ([t, lkiOf[2], lkiOf[1]] as unknown as RegExpExecArray) : null);
   if (lki) {

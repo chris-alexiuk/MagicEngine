@@ -1027,7 +1027,7 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
     const ctx = { g, controller: player, source: o, events: [], targets, x: 0, memo: {} };
     const applies = (!r.condition || evalCondition(r.condition, ctx)) && (!r.yourTurn || g.active === player);
     const n = applies ? r.amount * (r.per ? Math.max(0, amountOf(ctx, r.per)) : 1) : 0;
-    if (n > 0) mana.generic = Math.max(0, mana.generic - n);
+    if (n > 0) mana.generic = r.more ? mana.generic + n : Math.max(0, mana.generic - n);
   }
   abilityCostReductions(g, o, ability, mana, player);
   // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability" — generic mana must be that color
