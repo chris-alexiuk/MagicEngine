@@ -227,14 +227,32 @@ export function blockTax(g: GameState, blockers: readonly ObjectId[]): string {
     for (const a of objectAbilities(g, src)) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'attack_tax') continue;
       const e = (a as StaticAbility).effect as AttackTaxNode;
-      if (!e.blocks || !staticConditionHolds(g, e, src)) continue;
+      if (!(e.blocks || e.alsoBlocks) || !staticConditionHolds(g, e, src)) continue;
+      const cost = taxCost(g, e, src);
+      if (cost === null) continue;
+      const subject = e.subject ? taxSubject(g, e, src) : undefined;
       for (const b of each) {
         const o = g.objects[b];
-        if (o && (!e.filter || matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) out += e.cost;
+        if (subject !== undefined && b !== subject) continue;
+        if (o && (!e.filter || matchesFilter(g, o, e.filter, { controller: src.controller, source: src }))) out += cost;
       }
     }
   }
   return out;
+}
+
+/** An attack or block tax's cost per creature ({X} counted now), or null when it comes to nothing. */
+function taxCost(g: GameState, e: AttackTaxNode, src: GameObject): string | null {
+  if (!e.x) return e.cost;
+  const n = amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, e.x);
+  return n > 0 ? `{${n}}` : null;
+}
+
+/** The one creature a tax is about: the permanent itself, or the creature it's attached to. */
+function taxSubject(g: GameState, e: AttackTaxNode, src: GameObject): ObjectId | undefined {
+  if (e.subject === 'self') return src.id;
+  const to = src.attachedTo && g.objects[src.attachedTo.id];
+  return to && to.zcc === src.attachedTo!.zcc && to.zone === 'battlefield' ? to.id : undefined;
 }
 
 export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; target: AttackTarget }[]): string {
@@ -246,9 +264,14 @@ export function attackTax(g: GameState, attacks: readonly { attacker: ObjectId; 
       const e = (a as StaticAbility).effect as AttackTaxNode;
       if (e.banned || e.blocks || !staticConditionHolds(g, e, src)) continue;
       // Sphere of Safety: {X} each, X counted now.
-      const n = e.x ? amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, e.x) : 0;
-      if (e.x && n <= 0) continue;
-      const cost = e.x ? `{${n}}` : e.cost;
+      const cost = taxCost(g, e, src);
+      if (cost === null) continue;
+      // Brainwash, Phyrexian Marauder: only that creature, whoever it attacks.
+      if (e.subject) {
+        const subject = taxSubject(g, e, src);
+        if (subject && attacks.some((x) => x.attacker === subject)) out += cost;
+        continue;
+      }
       for (const { attacker, target } of attacks) {
         const at = target.kind === 'player' ? target.player === src.controller : Boolean(e.planeswalkers) && g.objects[target.object]?.controller === src.controller;
         const o = g.objects[attacker];
@@ -985,13 +1008,15 @@ export function dealDamage(
   amount: number,
   combat: boolean,
   events: GameEvent[],
+  /** Pinpoint Avalanche: "The damage can't be prevented." — this damage (CR 615.12). */
+  cantBePrevented = false,
 ): number {
   // CR 614.1b: Pariah — dealt to another permanent or player instead.
   if (amount > 0 && hasRedirects(g)) to = redirectDamage(g, source, to, combat);
   // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
   amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).
-  const unpreventable = g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
+  const unpreventable = cantBePrevented || g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
   if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
   // CR 615.5: what a prevention effect does with the damage it prevented happens right after.
   if (preventedFollowUps.length) runPreventedFollowUps(g, source, to, events);

@@ -116,11 +116,11 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
     const inner = each ? movedThisWay(`${theirs[1]} ${theirs[2]} this way`, b) : null;
     return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
   }
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned|shuffled into a library) this way$/.exec(text.trim());
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
   if (!m) return null;
   const another = /^another /.test(m[1]!);
   const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library';
+  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2] === 'put into your hand' ? 'hand' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library' | 'hand';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
   // Bonehoard Dracosaur: "a nonland card exiled this way" — a bare "nonland" is read as "nonland permanent".
   const pf = parseFilter(noun, b.clone()) ?? (/^non[a-z]+$/.test(noun) ? parseFilter(`${noun} permanent`, b.clone()) : null);
@@ -413,6 +413,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const t = (b.named['that spell'] ? text.trim().replace(/^the spell's /, "that spell's ") : text.trim()).replace(/^the total number of (?=(?:[a-z]+ (?:and|or) [a-z]+ |[a-z]+ )?cards )/, 'the number of ');
   // CR 702.179a: The Speed Demon: "where X is your speed".
   if (t === 'your speed') return { kind: 'speed' };
+  // Ral Zarek, Guest Lecturer: "where X is the number of coins that came up heads" (CR 705.2).
+  if (t === 'the number of coins that came up heads') return { kind: 'flips_won' };
   // Magebane Lizard: "the number of noncreature spells they've cast this turn" — that player's, of that kind.
   const kindCast = /^the number of (.+?) spells (they've|that player has|you've) cast this turn$/.exec(t);
   if (kindCast) {
@@ -577,6 +579,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const n = parseAmount(minus[2]!);
     const inner = typeof n === 'number' ? parseCount(minus[1]!, b) : null;
     if (inner && typeof n === 'number' && !inner.times && !inner.half) return { ...inner, plus: (inner.plus ?? 0) - n };
+  }
+  // The Rack, Wheel of Torture: "3 minus the number of cards in their hand" (CR 107.1b: a negative result is 0).
+  const fromN = /^(\d+|one|two|three|four|five) minus (.+)$/.exec(t);
+  if (fromN) {
+    const n = parseAmount(fromN[1]!);
+    const inner = typeof n === 'number' ? parseCount(fromN[2]!, b) : null;
+    if (inner && typeof n === 'number' && !inner.half && inner.atMost === undefined) return { ...inner, times: -(inner.times ?? 1), plus: n - (inner.plus ?? 0) };
   }
   // Sea Gate Restoration: "the number of cards in your hand plus one"
   const plusAfter = /^(.+) plus (one|two|three|four|five)$/.exec(t);

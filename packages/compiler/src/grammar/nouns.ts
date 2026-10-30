@@ -202,6 +202,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   }],
   // Kozilek's Command: "up to X target cards from graveyards".
   [/ (?:from|in) (?:all )?graveyards$/, (f) => !f.zone && ((f.zone = 'graveyard'), true)],
+  // Runic Repetition: "target exiled card with flashback you own"; Rootcoil Creeper: "target card with flashback you own from
+  // exile" — read as "… you own in exile".
+  [/ you own (?:from|in) exile$/, (f) => !f.zone && !f.owner && ((f.zone = 'exile'), (f.owner = 'you'), true)],
   [/ (?:from|in) your library$/, (f) => !f.zone && ((f.zone = 'library'), (f.owner = 'you'), true)],
   [/ (?:from|in) your hand$/, (f) => !f.zone && ((f.zone = 'hand'), (f.owner = 'you'), true)],
   [/ on the battlefield$/, (f) => !f.zone && ((f.zone = 'battlefield'), true)],
@@ -332,6 +335,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Wave Goodbye: "each creature without a +1/+1 counter on it"
   [/ without (?:a|an) (\S+) counters? on (?:it|them)$/, (f, m) => !f.notCounter && ((f.notCounter = m[1]!.replace(/−/g, '-')), true)],
   [/ without (?:a counter|counters) on (?:it|them)$/, (f) => !f.notCounter && ((f.notCounter = 'any'), true)],
+  // Zenith Flare: "cards with a cycling ability in your graveyard" — typecycling is a cycling ability (CR 702.29e).
+  [/ with a cycling ability$/, (f) => !f.keywords && ((f.keywords = ['cycling', 'typecycling']), true)],
   [/ without ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   // Shalai: "each creature you control that doesn't have hexproof"
   [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
@@ -350,7 +355,8 @@ function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge'
 function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: string, b: Binder): boolean {
   // Skrelv's Hive: "creatures you control with toxic" — a keyword that takes a number, whatever the number.
   // Arcbound Overseer: "each creature you control with modular".
-  if (/^(?:toxic|ward|annihilator|afflict|bushido|rampage|modular|fading|vanishing|bloodthirst|absorb|frenzy|flanking|renown|tribute|afterlife|amplify|graft|dethrone|exalted|crew|backup|training)$/.test(text) && !f[key]) {
+  // Halimar Tidecaller: "target card with awaken"; Runic Repetition: "exiled card with flashback" — one with a cost, whatever it is.
+  if (/^(?:toxic|ward|annihilator|afflict|bushido|rampage|modular|fading|vanishing|bloodthirst|absorb|frenzy|flanking|renown|tribute|afterlife|amplify|graft|dethrone|exalted|crew|backup|training|awaken|flashback|kicker|madness|mutate|foretell|disturb|suspend|emerge|escape|unearth|embalm|evoke|dash|buyback|retrace|blitz)$/.test(text) && !f[key]) {
     f[key] = [text];
     return true;
   }
@@ -953,7 +959,9 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
         // target is chosen (not another target, chosen at the same time).
         if (!pf || pf.plural !== count > 1 || (pf.filter.ownedBy && (pf.filter.ownedBy as Ref).ref !== 'trigger_player')) return null;
         if (tm[3]) pf.filter.other = true;
-        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), ...(single ? { sameOwner: true } : {}) };
+        // Nullmage Advocate: "two target cards from an opponent's graveyard" — one opponent's graveyard.
+        const oneOpponent = count > 1 && / from an opponent's graveyard$/.test(tm[4]!);
+        const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), ...(single || oneOpponent ? { sameOwner: true } : {}) };
         if (count > 1) spec.count = count;
         if (tm[1]) spec.upTo = true;
         return set(b, { ref: b.addTarget(spec), plural: count > 1, targeted: true });
@@ -1088,6 +1096,17 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   if (t === 'that player' || t === 'they') return b.player;
   // CR 303.4: an Aura attached to a player (Curses).
   if (t === 'enchanted player') return { ref: 'enchanted_player' };
+  // Refuse: "~ deals damage to target spell's controller equal to that spell's mana value." — the spell is the target.
+  const targetsController = /^target (spell|creature|permanent|artifact|enchantment|planeswalker)'s controller$/.exec(t);
+  if (targetsController) {
+    const of = parseObjectRef(`target ${targetsController[1]}`, b);
+    if (!of || of.plural || of.ref.ref !== 'target') return null;
+    b.it = of.ref;
+    b.named = { ...b.named, [`that ${targetsController[1]}`]: of.ref };
+    return { ref: 'controller_of', of: of.ref };
+  }
+  // Souls of the Faultless: "attacking player" — the active player, the one who attacked (CR 506.2), in combat.
+  if ((t === 'attacking player' || t === 'the attacking player') && !b.named[t]) return { ref: 'active_player' };
   // "As ~ enters, choose a player." — "the chosen player" (CR 614.12).
   // Haunt the Network: "Choose target opponent. … Then the chosen player loses X life" — that target.
   if (t === 'the chosen player') return b.named[t] ?? { ref: 'chosen_player' };
@@ -1181,7 +1200,8 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
     for (const part of parts) {
       // Bonfire of the Damned: "target player or planeswalker and each creature that player or that planeswalker's
       // controller controls" — the first part is a target a later part names.
-      if (parts.length > 1 && /^target (?:player|opponent) or planeswalker$/.test(part)) {
+      // Ian the Reckless: "any target and you".
+      if (parts.length > 1 && /^(?:target (?:player|opponent) or planeswalker|any target)$/.test(part)) {
         const one = parseRecipients(part, b);
         if (!one) return null;
         out.push(...one);

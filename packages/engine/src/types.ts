@@ -80,7 +80,7 @@ export interface PlayerState {
   /** CR 122.1: other counters a player can have — energy (CR 107.14), experience, rad. */
   counters?: Record<string, number>;
   /** CR 614.10: "skips their next turn / untap step / draw step / combat phase" — how many are still to be skipped. */
-  skipNext?: { turn?: number; untap?: number; draw?: number; combat?: number; combatThisTurn?: number };
+  skipNext?: { turn?: number; untap?: number; draw?: number; combat?: number; combatThisTurn?: number; /** False Peace: "skips all combat phases of their next turn" — turns still to come. */ combatTurn?: number; /** …the turn it applies to, once begun. */ combatAllTurn?: number };
   pool: ManaPool;
   /** CR 106.6: mana that can be spent only on certain things; it empties with the pool (CR 500.5). */
   restricted?: RestrictedMana[];
@@ -923,7 +923,7 @@ export type GameEvent =
   | { type: 'scried'; player: PlayerId; top: number; bottom: number }
   /** CR 701.61a */
   | { type: 'foraged'; player: PlayerId }
-  | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number }
+  | { type: 'surveilled'; player: PlayerId; top: number; graveyard: number; /** The first time this turn. */ first?: true }
   /** CR 701.20a: cards shown to every player. */
   | { type: 'revealed'; player: PlayerId; objects: ObjectId[] }
   /** CR 614.12: a choice made as a permanent entered. */

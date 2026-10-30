@@ -482,7 +482,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
           : opt.id === 'fuse'
             ? fusedFace(g.cards[o.card]!)
             : face;
-    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast, [opt.id]);
+    const choice = opt.allModes ? defaultEntwined(g, player, o, face) : defaultSpellChoice(g, player, o, asCast, opt.kind === 'additional' && !opt.required && opt.id !== 'additional' ? [opt.id, 'additional'] : [opt.id]);
     const costs = defaultCostChoices(g, player, o, [...additionalCosts(face), ...(opt.cost.other ?? [])]);
     if (!choice || !costs) continue;
     out.push({ type: 'cast', player, object: o.id, autoTap: true, ...choice, ...withCosts(costs), ...(opt.kind === 'alternative' ? { alt: opt.id } : { extras: [opt.id] }) });
@@ -643,9 +643,12 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
   const modal = programs.find((p) => p.modes);
   // "Choose one that hasn't been chosen this turn": not those.
   const used = modal && 'text' in modal ? usedModes(g, source, modal as Program & { text: string }) : [];
+  // Pyrrhic Strike: "choose both instead" once its additional cost is paid.
+  const bonus = modal?.modes?.bonus;
+  const least = modal ? (bonus?.exact && holds?.(bonus.condition) ? Math.max(modal.modes!.max, bonus.max) : modal.modes!.min) : 0;
   const modeSets: (number[] | undefined)[] = modal
     ? modal.modes!.options
-        .map((_, i) => Array.from({ length: Math.max(1, modal.modes!.min) }, (_, k) => (modal.modes!.repeat ? i : i + k)))
+        .map((_, i) => Array.from({ length: Math.max(1, least) }, (_, k) => (modal.modes!.repeat ? i : i + k)))
         .filter((m) => m.every((i) => i < modal.modes!.options.length && !used.includes(i)))
     : [undefined];
   // Modes the engine runs come first; one it can't read is still a legal choice.

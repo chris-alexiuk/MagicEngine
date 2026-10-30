@@ -33,6 +33,8 @@ export interface TurnLog {
   castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
   /** Valiant Rescuer: the cycling abilities activated this turn, in order (who, which card, the stack entry). */
   cycled?: { player: PlayerId; source: ObjectId; entry: string }[];
+  /** Whispering Snitch: the players who've surveilled this turn. */
+  surveilled?: PlayerId[];
   /** Forge Anew: the players who activated an equip ability this turn. */
   equipped?: PlayerId[];
   noncreatureCast: PlayerId[];

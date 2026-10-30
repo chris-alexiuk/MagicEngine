@@ -3,7 +3,7 @@ import { faceDownFace } from './face-down.js';
 import type { CardDef, CastOptionNode, ExileInsteadNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
 import { onEnterBattlefield } from './registry.js';
-import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
+import { abilitiesOf, chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
 import { applyLifeGain, counterBlocked, replaceQuantity } from './quantities.js';
@@ -592,6 +592,12 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
 /** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
 /** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
 function exiledInstead(g: GameState, o: GameObject, from: ZoneName): { node: ExileInsteadNode; source: GameObject } | null {
+  // Can't Stay Away: it gains "If this creature would die, exile it instead." — a granted ability of its own.
+  if (from === 'battlefield' && o.zone === 'battlefield' && chars(g, o).keywords.some((k) => k.id === 'ability')) {
+    for (const a of abilitiesOf(g, o)) {
+      if (a.kind === 'static' && a.effect.type === 'exile_instead' && (a.effect as ExileInsteadNode).dies && (a.effect as ExileInsteadNode).filter?.isSource) return { node: a.effect as ExileInsteadNode, source: o };
+    }
+  }
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const a of objectAbilities(g, source)) {

@@ -262,6 +262,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   }
   // Lieutenant (Loyal Apprentice): "if you control your commander" — a commander you own (CR 903.3).
   if (t === 'you control your commander') return { type: 'count', who: 'you', filter: { commander: true, owner: 'you' }, min: 1 };
+  // Crimson Honor Guard: "unless they control a commander" — anyone's commander, controlled by that player.
+  const theyCommander = /^(?:they|that player) (?:controls?|control) a commander$/.exec(t);
+  if (theyCommander && b.player && b.player.ref !== 'you' && b.player.ref !== 'players') return { type: 'amount', amount: { kind: 'count', filter: { commander: true, controlledBy: b.player } }, op: 'ge', n: 1 };
   // Jace, Wielder of Mysteries: "if your library has no cards in it"
   if (/^your library has no cards in it$/.test(t)) return { type: 'amount', amount: { kind: 'cards', zone: 'library', who: 'you' }, op: 'eq', n: 0 };
   // Mechanized Production: "you control eight or more artifacts with the same name as one another"; Sceptre of Eternal
@@ -340,6 +343,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // The Mastery cycle: "You may pay {1}{B} rather than pay this spell's mana cost. … If the {1}{B} cost was paid, …" — the
   // alternative cost (its option is "alt").
   if (/^the (?:\{[^}]+\})+ cost was paid$/.test(t)) return { type: 'paid', cost: 'alt' };
+  // Littjara Kinseekers: "if you control three or more creatures that share a creature type".
+  const sharing = /^you control (\w+) or more creatures that share a creature type$/.exec(t);
+  if (sharing && typeof parseAmount(sharing[1]!) === 'number') return { type: 'amount', amount: { kind: 'most_sharing_type', filter: { types: ['Creature'], controller: 'you' } }, op: 'ge', n: parseAmount(sharing[1]!) as number };
+  // Chrome Courier: "If you put an artifact card into your hand this way"; Town Greeter: "If you put a Town card …".
+  const putHand = /^you put an? (.+? card) into your hand this way$/.exec(t);
+  if (putHand) {
+    const amount = movedThisWay(`${putHand[1]} put into your hand this way`, b);
+    if (amount) return { type: 'amount', amount, op: 'ge', n: 1 };
+  }
   // Spelunking: "If you put a Cave onto the battlefield this way" — what the effect before put there.
   const putThisWay = /^you put an? (.+?) onto the battlefield this way$/.exec(t);
   if (putThisWay) {
@@ -386,6 +398,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Merry, Esquire of Rohan: "~ has first strike as long as it's equipped" — "it" being this creature.
   const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
+  // Awaken the Sleeper: "Gain control of target creature …. If it's equipped, …" — an Equipment is attached to that creature.
+  const otherAttached = /^(?:it's|that creature is) (equipped|enchanted)$/.exec(t);
+  if (otherAttached && b.it && b.it.ref === 'target')
+    return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [otherAttached[1] === 'equipped' ? 'Equipment' : 'Aura'], attachedToRef: b.it } }, op: 'ge', n: 1 };
   if (/^~ is monstrous$/.test(t)) return { type: 'monstrous' };
   // Tadeas, Juniper Ascendant: "As long as ~ isn't attacking".
   const notAttacking = /^(~|it) (?:isn't|is not) (attacking|blocking)$/.exec(t);
@@ -415,13 +431,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Arachnus Web: "if enchanted creature's power is 4 or greater" — what this Aura is attached to.
   const hasStat = /^(it|~|that creature|enchanted creature|equipped creature) has (power|toughness|mana value) (\w+) or (greater|more|less|fewer)$/.exec(t);
   // Viv Vision: "draw a card if her power is 4 or greater" — a named character's own.
-  const statIs = /^(its|her|his|~'s|that creature's|that card's|enchanted creature's|equipped creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : /^(?:enchanted|equipped) creature$/.test(hasStat[1]!) ? `${hasStat[1]}'s` : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
+  // Savage Swipe: "if its power is 2" — exactly.
+  const statIs = /^(its|her|his|~'s|that creature's|that card's|enchanted creature's|equipped creature's) (power|toughness|mana value) is (\w+)(?: or (greater|more|less|fewer))?$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : /^(?:enchanted|equipped) creature$/.test(hasStat[1]!) ? `${hasStat[1]}'s` : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
   if (statIs) {
     const of = statIs[1] === "~'s" || statIs[1] === 'her' || statIs[1] === 'his' ? ({ ref: 'self' } as Ref) : /^(?:enchanted|equipped) creature's$/.test(statIs[1]!) ? ({ ref: 'attached' } as Ref) : b.it;
     const n = parseAmount(statIs[3]!);
     if (of && typeof n === 'number') {
       const key = statIs[2] === 'mana value' ? 'manaValue' : (statIs[2] as 'power' | 'toughness');
-      return { type: 'is', of, filter: { [key]: { op: /greater|more/.test(statIs[4]!) ? 'ge' : 'le', n } } };
+      return { type: 'is', of, filter: { [key]: { op: !statIs[4] ? 'eq' : /greater|more/.test(statIs[4]) ? 'ge' : 'le', n } } };
     }
   }
   // Witch's Oven: "If the sacrificed creature's toughness was 4 or greater" — as it last existed (CR 608.2h).
@@ -520,7 +537,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Pelt Collector: "if that creature's power is greater than this creature's".
   if (/^that creature's power is greater than (?:~|this creature)'s(?: power)?$/.test(t) && b.it?.ref === 'trigger_object') return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power'] };
   // CR 702.100a (evolve): "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness"
-  if (t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" && b.it) {
+  // Evolving Adaptive: "if that creature has greater power or toughness than this creature" — the same.
+  if ((t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" || /^(?:that creature|it) has greater power or toughness than (?:~|this creature)$/.test(t)) && b.it) {
     return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power', 'toughness'] };
   }
   // CR 725: "you're the monarch"
@@ -1110,6 +1128,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (oppDrew) {
     const c = count(oppDrew[1]!);
     return c?.min ? { type: 'this_turn', event: 'opponent_drew', min: c.min } : null;
+  }
+  // Knight of Grace: "as long as any player controls a black permanent" — anyone's.
+  const anyControls = /^any player controls (an? .+)$/.exec(t);
+  if (anyControls) {
+    const pf = parseFilter(anyControls[1]!, b.clone());
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller) return { type: 'count', who: 'all', filter: pf.filter, min: 1 };
   }
   // Blasphemous Edict: "there are thirteen or more creatures on the battlefield" — everyone's.
   const onField = /^there are (\w+ or more) (.+?) on the battlefield$/.exec(t);

@@ -252,6 +252,8 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
       const p = ctx.resolution?.chosenOpponent;
       return p && live.includes(p) ? [p] : [];
     }
+    case 'active_player':
+      return g.combat && live.includes(g.active) ? [g.active] : [];
     case 'enchanted_player': {
       // CR 303.4: the player the source Aura is attached to (as it last existed, if it has left).
       const s = ctx.source;
@@ -321,7 +323,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -535,6 +537,16 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const pool = zone === 'battlefield' ? g.zones.battlefield : zone === 'graveyard' || zone === 'hand' || zone === 'library' ? zoneList(g, zone, ctx.controller) : zone === 'exile' ? g.zones.exile : [];
       const mvs = new Set(pool.filter((id) => matchesFilter(g, g.objects[id]!, f, { controller: ctx.controller, source: ctx.source ?? null, anyZone: zone !== 'battlefield' })).map((id) => manaValueOf(g, g.objects[id]!)));
       return mvs.size;
+    }
+    case 'most_sharing_type': {
+      // Littjara Kinseekers: a changeling shares every creature type (CR 702.73a).
+      const counts = new Map<string, number>();
+      const filter = bindFilter(ctx, e.filter as ObjectFilter);
+      for (const id of g.zones.battlefield) {
+        const o = g.objects[id]!;
+        if (matchesFilter(g, o, filter, { controller: ctx.controller, source })) for (const k of creatureTypesOf(chars(g, o))) counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+      return Math.max(0, ...counts.values());
     }
     case 'distinct_powers': {
       // Golden Ratio: "each different power among creatures you control".
@@ -858,7 +870,9 @@ export function movedThisWay(ctx: EffectContext, e: { how: string; types?: strin
                   ? m.effect === 'discard' && m.from === 'hand'
                   : how === 'library'
                     ? m.to === 'library'
-                    : m.effect === 'mill' && m.from === 'library';
+                    : how === 'hand'
+                      ? m.to === 'hand' && m.from !== 'battlefield'
+                      : m.effect === 'mill' && m.from === 'library';
     // Arid Archway: "If another Desert was returned this way" — not the source itself.
     if (e.other && ctx.source && m.id === ctx.source.id) return false;
     if (e.subtypes && !e.subtypes.some((t) => (m.subtypes ?? []).includes(t))) return false;

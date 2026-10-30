@@ -101,13 +101,15 @@ function parseProgramText(text: string, b: Binder): Program | null {
   const bonus =
     /^Choose (one|two)\. If (.+?) as you cast ~, you may choose (both|any number|two|three) instead\.$/.exec(head!.trim()) ??
     // CR 702.194b: "Choose one. If this spell was cast using teamwork, choose both instead."
-    /^Choose (one|two)\. If ~ (was cast using teamwork), choose (both|any number|three) instead\.$/.exec(head!.trim());
+    /^Choose (one|two)\. If ~ (was cast using teamwork), choose (both|any number|three) instead\.$/.exec(head!.trim()) ??
+    // Pyrrhic Strike: "Choose one. If this spell's additional cost was paid, choose both instead."
+    /^Choose (one|two)\. If (~'s additional cost was paid), choose (both|any number|three) instead\.$/.exec(head!.trim());
   if (bonus) {
     const cond = bonus[2] === 'was cast using teamwork' ? ({ type: 'paid', cost: 'teamwork' } as ConditionNode) : parseCondition(bonus[2]!, b);
     const inner = cond && parseProgram([`Choose ${bonus[1]} —`, ...bullets].join('\n'), b);
     if (!cond || !inner?.modes) return null;
     const max = bonus[3] === 'both' || bonus[3] === 'two' ? 2 : bonus[3] === 'three' ? 3 : inner.modes.options.length;
-    return { ...inner, modes: { ...inner.modes, bonus: { condition: cond, max } } };
+    return { ...inner, modes: { ...inner.modes, bonus: { condition: cond, max, ...(/, you may choose /.test(head!) ? {} : { exact: true as const }) } } };
   }
   // CR 706.3: a die roll and its results table ("1—9 | Draw a card.", "20 | …"), all one ability (CR 706.3b).
   const ROW = /^(\d+)(?:—(\d+)|(\+))? \| (.+)$/;
@@ -1178,6 +1180,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const kind = oppDealt[1]?.trim();
     return { trigger: { type: 'player_dealt_damage', who: 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
+  // Master of Barbs: "Whenever one or more opponents are dealt noncombat damage" — once for all of them at a time.
+  const oppsDealt = /^one or more opponents are dealt (combat |noncombat )?damage$/.exec(t);
+  if (oppsDealt) {
+    const kind = oppsDealt[1]?.trim();
+    return { trigger: { type: 'player_dealt_damage', who: 'opponent', oneOrMore: true, ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) }, it: { ref: 'self' }, player: null };
+  }
   // Valgavoth, Harrower of Souls: "Whenever an opponent loses life for the first time during each of their turns"; The Master
   // of Lake-town: "Whenever a player loses life".
   const loses = /^(an opponent|you|a player) loses? life( for the first time each turn| for the first time during each of their turns| during their turn)?$/.exec(t);
@@ -1647,6 +1655,17 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const subject: Ref = hitsCreature[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
     return { trigger: { type: 'deals_combat_damage', subject, to: 'creature' }, it: subject, player: null };
   }
+  // Sosuke, Son of Seshiro: "Whenever a Warrior you control deals combat damage to a creature" — "that creature" is the one
+  // dealt damage.
+  const othersHit = /^(a|an|another) (.+?) deals combat damage to a creature$/.exec(t);
+  if (othersHit) {
+    const pf = parseFilter(othersHit[2]!, b.clone());
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    if (othersHit[1] === 'another') pf.filter.other = true;
+    b.eventAmount = true;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'deals_combat_damage', subject: { ref: 'all', filter: pf.filter }, to: 'creature' }, it: { ref: 'trigger_object' }, player: null };
+  }
   // "Whenever a creature you control becomes blocked", "Whenever a permanent you control is turned face up"
   const otherEvent = /^(?:a|an|another) (.+?) (becomes blocked|is turned face up)$/.exec(t);
   if (otherEvent) {
@@ -1905,6 +1924,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 701.22 / 701.25: "Whenever you scry", "Whenever you surveil", "Whenever you scry or surveil"
   const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
+  // Whispering Snitch: "Whenever you surveil for the first time each turn".
+  if (t === 'you surveil for the first time each turn') return { trigger: { type: 'scry', kinds: ['surveil'], first: true }, it: { ref: 'self' }, player: null };
   // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
   // Exemplar of Light: "Whenever you put one or more +1/+1 counters on this creature" — counters you put on (CR 122.6).
   // Generous Patron: "Whenever you put one or more counters on a creature you don't control" — of any kind.
@@ -1994,6 +2015,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     const yours = / during each of your turns$/.test(t);
     return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}), ...(yours ? { while: { type: 'your_turn', value: true } } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
+  }
+  // Kavu Predator, Punishing Fire: "Whenever an opponent gains life" — that player, and how much.
+  if (t === 'an opponent gains life') {
+    b.eventAmount = true;
+    return { trigger: { type: 'gain_life', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // "Whenever you draw your second card each turn"
   // Alandra: "your fifth card each turn"; Tamiyo, Inquisitive Student: "When you draw your third card in a turn"; King T'Challa:
@@ -2686,6 +2712,19 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // CR 509.1d: Archangel of Tithes: "creatures can't block unless their controller pays {1} for each of those creatures".
   const block = /^creatures can't block unless their controller pays ((?:\{(?:\d+|[WUBRGC])\})+) for each (?:of those creatures|creature they control that's blocking)$/i.exec(body);
   if (block) return { type: 'attack_tax', cost: block[1]!, blocks: true };
+  // Brainwash: "Enchanted creature can't attack unless its controller pays {3}."; Oppressive Rays: "… can't attack or block
+  // unless …"; Phyrexian Marauder: "This creature can't attack unless you pay {1} for each +1/+1 counter on it."; Cowed by
+  // Wisdom: "… pays {1} for each card in your hand."
+  const one = /^(~|This creature|Enchanted creature) can't (attack|block|attack or block) unless (?:you pay|its controller pays) \{(\d+)\}(?: for each (.+))?$/.exec(body);
+  if (one) {
+    const subject = one[1] === 'Enchanted creature' ? 'attached' : 'self';
+    if (subject === 'self' && !/\bCreature\b/.test(b.env.typeLine ?? '')) return null;
+    const per = one[4] ? parseForEach(one[4], b) : null;
+    if (one[4] && !per) return null;
+    const n = Number(one[3]);
+    const x = per ? (n === 1 ? per : { ...per, times: n * (per.times ?? 1) }) : undefined;
+    return { type: 'attack_tax', cost: x ? '{X}' : `{${n}}`, ...(x ? { x } : {}), subject, ...(one[2] === 'block' ? { blocks: true } : one[2] === 'attack or block' ? { alsoBlocks: true } : {}) };
+  }
   const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX])\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
   if (!m || /X/.test(m[3]!) !== Boolean(m[4])) return null;
   const x = m[4] ? parseCount(m[4], b) : undefined;

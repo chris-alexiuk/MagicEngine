@@ -257,6 +257,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^Exile all cards from all opponents' hands and graveyards\.$/, "Exile all cards from all opponents' hands. Exile all cards from all opponents' graveyards.");
   // Foul-Tongue Shriek: "Target opponent loses 1 life for each attacking creature you control. You gain that much life."
   text = text.replace(/\b((?:[Tt]arget (?:player|opponent)|[Ee]ach opponent) loses [^.]*?\blife\b[^.]*?)(?:\. You| and you) gain that much life\./, '$1. You gain life equal to the life lost this way.');
+  // Skull Rend: "~ deals 2 damage to each opponent. Those players each discard two cards at random." — each opponent.
+  text = text.replace(/\b(deals \d+ damage to each opponent)\. Those players each discard /, '$1. Each opponent discards ');
+  // Ian the Reckless: "… deal damage equal to its power to you and any target" — the same as "to any target and you".
+  text = text.replace(/\b(deals?(?: \S+)? damage(?: equal to [^.]+?)?) to you and (any target|target [a-z ]+?)\./g, '$1 to $2 and you.');
   // Kaya, Orzhov Usurper: "Kaya deals damage to target player equal to the number of cards that player owns in exile and you
   // gain that much life." — that number, however much damage is dealt (2019-01-25 ruling).
   text = text.replace(/\b(deals damage to [^.]+? equal to (the number of [^.]+?)) and you gain that much life\./, '$1. You gain life equal to $2.');
@@ -704,10 +708,26 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       s = s.replace(/^([Rr]eturn all .+?) (to their owners' hands) (except for .+)$/, '$1 $3 $2');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
       s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
+      // Urza's Rage: "If this spell was kicked, instead it deals 10 damage to that permanent or player and the damage can't be
+      // prevented." — the new damage, and then that it can't be prevented.
+      const sureInstead = /^(If [^,]+, .+? damage .+?) and the damage can't be prevented instead$/.exec(s);
+      if (sureInstead) {
+        s = `${sureInstead[1]} instead`;
+        sentences.splice(i + 1, 0, "The damage can't be prevented");
+      }
       // Wings of Velis Vel: "Until end of turn, target creature has base power and toughness 4/4, gains all creature types,
       // and gains flying." — a list of three.
       s = s.replace(/^(Until end of turn, .+? ha(?:s|ve) base power and toughness \d+\/\d+), (gains? [^,]+),? and (gains? .+)$/, '$1 and $2 and $3');
       if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s) && !/, search your library for .+ instead of one$/.test(s)) previous = [];
+      // Pinpoint Avalanche: "~ deals 4 damage to target creature. The damage can't be prevented." (CR 615.12) — that damage;
+      // after an "instead" (Urza's Rage), the replacing damage.
+      if (/^The damage can't be prevented$/.test(s) && i > 0) {
+        const last = out[out.length - 1];
+        const dealt = last?.type === 'if' && (last.effects as EffectNode[]).every((x) => x.type === 'deal_damage') ? (last.effects as EffectNode[]) : out.slice(out.findLastIndex((x) => x.type !== 'deal_damage') + 1);
+        if (!dealt.length || dealt.some((x) => x.type !== 'deal_damage')) return null;
+        for (const x of dealt) x.unpreventable = true;
+        continue;
+      }
       const ifBefore = prevIf;
       prevIf = null;
       // "Then each player draws a card." — "then" only orders what's already in order.
@@ -1669,7 +1689,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // "If this spell was kicked, it deals 5 damage instead." — the same damage, a new amount.
         // "…, it deals 4 damage to that creature instead." names the same recipient.
         // Crater's Claws: "~ deals X plus 2 damage instead if you control a creature with power 4 or greater."
-        const more = /^(?:it|~) deals (X plus \d+|\S+) damage(?: to (?:that creature|that permanent|that player|it|them|each of them))?$/i.exec(instead);
+        const more = /^(?:it|~) deals (X plus \d+|\S+) damage(?: to (?:that creature|that permanent|that player|that permanent or player|it|them|each of them))?$/i.exec(instead);
         const plusX = more ? /^X plus (\d+)$/.exec(more[1]!) : null;
         const n = plusX ? { kind: 'x' as const, plus: Number(plusX[1]) } : more ? parseAmount(more[1]!) : null;
         if (!yes && n !== null && previous.every((x) => x.type === 'deal_damage')) yes = previous.map((x) => ({ ...structuredClone(x), amount: n }));
@@ -2109,6 +2129,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           out.push(...now);
           continue;
         }
+        // Spinal Embrace: "At the beginning of the next end step, sacrifice it. If you do, you gain life equal to its toughness."
+        // — what follows the delayed action waits with it.
+        if (/^If you do, /.test(sentences[i + 1] ?? '')) {
+          const both = attempt(b, (b) => parseEffectText(`${capitalise(what)}. ${sentences[i + 1]!}.`, b));
+          if (!both) return null;
+          out.push({ type: 'delayed', step, effects: both });
+          i++;
+          continue;
+        }
         // Berserk: "… destroy that creature if it attacked this turn" — a condition on the delayed effect.
         const inner = parseSentence(capitalise(what), b) ?? (/ if [^,]+$/.test(what) ? attempt(b, (b) => parseEffectText(`${capitalise(what)}.`, b)) : null);
         if (!inner) return null;
@@ -2451,6 +2480,8 @@ const pointsBack = (what: string, instruction: string) => {
   const t = instruction.trim();
   // Only an instruction that introduces the thing ("target creature gets …", "sacrifices a creature …"); not one that
   // creates something new ("create X tokens, where X is that spell's mana value").
+  // Refuse: "~ deals damage to target spell's controller equal to that spell's mana value." — the target spell's.
+  if (/^that spell's /.test(what) && /\btarget spell's\b/i.test(t)) return true;
   return POINTS_BACK.test(what) && !/^(?:it\b|~|this (?:creature|permanent|artifact|enchantment|land|spell)\b)/i.test(t) && !/\bcreates?\b/i.test(t) && /\btarget\b|\bsacrific(?:es?|ed)\b/i.test(t);
 };
 
@@ -3590,6 +3621,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Winds of Change: "Each player shuffles the cards from their hand into their library, then draws that many cards."
   // Whirlpool Warrior: "shuffle the cards from your hand into your library, then draw that many cards" — you.
   if (/^[Ss]huffle (?:the cards from your hand|your hand) into your library, then draw that many cards$/.test(s)) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'all', to: 'shuffle' }];
+  // Credit Voucher: "Shuffle any number of cards from your hand into your library, then draw that many cards."
+  if (/^[Ss]huffle any number of cards from your hand into your library, then draw that many cards$/.test(s)) return [{ type: 'wheel', who: { ref: 'you' }, mode: 'any', to: 'shuffle' }];
   const shuffleWheel = /^(.+?) shuffles? (?:the cards from (?:their|your) hand|(?:their|your) hand) into (?:their|your) library, then draws? that many cards$/.exec(s);
   if (shuffleWheel) {
     const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
@@ -4844,9 +4877,16 @@ const VERBS: Record<string, VerbHandler> = {
     const amount = m && parseAmount(m[1]!);
     return amount !== null && amount !== undefined ? [{ type: 'gain_life', amount, who }] : null;
   },
-  lose(args, who) {
+  lose(args, who, b) {
     // Final Act: "Each opponent loses all counters." (CR 122.1: poison, energy, experience, …)
     if (args === 'all counters') return [{ type: 'player_counters_lost', who }];
+    // Devouring Greed: "Target player loses 2 life plus 2 life for each Spirit sacrificed this way."
+    const plusEach = /^(\d+) life plus (\d+) life for each (.+)$/.exec(args);
+    if (plusEach) {
+      const per = parseForEach(plusEach[3]!, b);
+      if (!per || per.plus || per.half) return null;
+      return [{ type: 'lose_life', amount: { ...per, times: Number(plusEach[2]) * (per.times ?? 1), plus: Number(plusEach[1]) }, who }];
+    }
     // Debt to the Deathless: "Each opponent loses two times X life."
     if (/^(?:twice|two times) X life$/.test(args)) return [{ type: 'lose_life', amount: { kind: 'x', times: 2 }, who }];
     const m = /^(\S+) life$/.exec(args);
@@ -5262,6 +5302,17 @@ const VERBS: Record<string, VerbHandler> = {
       b.it = { ref: 'created' };
       return [{ type: 'exile_top', amount, who: owner, ...(top[5] ? { faceDown: true } : {}) }];
     }
+    // Blot Out, End of the Hunt: "Target opponent exiles a creature or planeswalker they control with the greatest mana value
+    // among creatures and planeswalkers they control."; Debt to the Kami: "Target opponent exiles a creature they control." —
+    // chosen as a sacrifice is (CR 701.21a), but exiled.
+    const theirs = !imperative && who.ref !== 'you' ? /^((?:a|an|one|two|three) .+?) (?:they|that player) controls?( with the greatest .+)?$/.exec(args) : null;
+    if (theirs && !/ from /.test(theirs[1]!)) {
+      const chosen = VERBS.sacrifice!(`${theirs[1]}${theirs[2] ?? ''}`, who, b, false);
+      const node = chosen?.length === 1 && chosen[0]!.type === 'sacrifice_choice' && !chosen[0]!.anyNumber ? chosen[0]! : null;
+      if (!node) return null;
+      if (b.it?.ref === 'sacrificed_this_way') b.it = null;
+      return [{ ...node, exile: true }];
+    }
     if (!imperative) return null;
     // Imprint (Chrome Mox, Isochron Scepter): "exile a nonartifact, nonland card from your hand" — chosen as it resolves.
     const fromHand = /^(a|an) ((?:.+? )?card\b.*?) from your hand$/.exec(args);
@@ -5676,8 +5727,10 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
   const dies = /^If (.+?) would die this turn, exile it instead$/.exec(c);
   if (dies) {
     // "a creature dealt damage this way": what the spell's damage was dealt to.
-    if (/^an? (?:creature|permanent|creature or planeswalker) dealt damage this way$/.test(dies[1]!)) {
-      return b.damaged ? [{ type: 'exile_if_dies', what: b.damaged }] : null;
+    // Torch the Tower: "If a permanent dealt damage by ~ would die this turn" — the same, from this spell.
+    if (/^an? (?:creature|permanent|creature or planeswalker) dealt damage (?:this way|by ~)$/.test(dies[1]!)) {
+      // Only if damage was dealt (none prevented it all).
+      return b.damaged ? [{ type: 'exile_if_dies', what: b.damaged, ifDealt: true }] : null;
     }
     // "If that creature or planeswalker would die this turn" — the object the sentence before was about.
     const what = parseObjectRef(dies[1]!.replace(/^that (creature|permanent) or planeswalker$/, 'that $1'), b);
@@ -5903,11 +5956,17 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 614.10: "Target opponent skips their next combat phase", "You skip your next turn", "you skip your next two turns",
   // "each opponent skips their next untap step", "Target player skips their next draw step"; Moment of Silence: "… their
   // next combat phase this turn".
-  const skipNext = /^(.+?) skips? (?:their|your|his or her) next (?:(two|three) )?(turns?|untap steps?|draw steps?|combat phases?)( this turn)?$/i.exec(c);
+  const skipNext = /^(.+?) skips? (?:their|your|his or her) next (?:(two|three|X) )?(turns?|untap steps?|draw steps?|combat phases?)( this turn)?$/i.exec(c);
   if (skipNext && (!skipNext[2]) === !/s$/.test(skipNext[3]!) && (!skipNext[4] || /^combat/.test(skipNext[3]!))) {
     const who = parsePlayerRef(skipNext[1]!, b);
     const what = /^turn/.test(skipNext[3]!) ? 'turn' : /^untap/.test(skipNext[3]!) ? 'untap' : /^draw/.test(skipNext[3]!) ? 'draw' : 'combat';
     if (who) return [{ type: 'skip_next', who, what, ...(skipNext[2] ? { amount: parseAmount(skipNext[2]) } : {}), ...(skipNext[4] ? { thisTurn: true } : {}) }];
+  }
+  // False Peace, Empty City Ruse: "Target player skips all combat phases of their next turn." (CR 614.10)
+  const skipAllCombat = /^(.+?) skips? all combat phases of (?:their|your) next turn$/i.exec(c);
+  if (skipAllCombat) {
+    const who = parsePlayerRef(skipAllCombat[1]!, b);
+    if (who) return [{ type: 'skip_next', who, what: 'combat_turn' }];
   }
   // CR 725.1: "you become the monarch", "target player becomes the monarch".
   const monarch = /^(.+?) becomes? the monarch$/i.exec(c);
@@ -6315,9 +6374,14 @@ function parseDamage(c: string, b: Binder): EffectNode[] | null {
   // Crackle with Power: "~ deals five times X damage to each of up to X targets."
   // Let the Galaxy Burn: "~ deals X plus 2 damage to each creature …".
   // Ingris Stingerquill: "Whenever a creature you control attacks, that creature deals 1 damage to each opponent."
-  const m = /^(~|[Ii]t|[Tt]hat creature) deals ((?:twice|(?:three|four|five) times) X|X plus \d+|\S+) damage to (.+)$/.exec(c);
+  const m = /^(~|[Ii]t|[Tt]hat creature|[Ee]nchanted creature|[Ee]quipped creature) deals ((?:twice|(?:three|four|five) times) X|X plus \d+|\S+) damage to (.+)$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
+    // Enslave: "At the beginning of your upkeep, enchanted creature deals 1 damage to its owner." — the creature it's attached to.
+    if (/^(?:enchanted|equipped) creature$/i.test(m[1]!)) {
+      if (!/\b(?:Aura|Equipment)\b/.test(b.env.typeLine ?? '')) return null;
+      b.it = { ref: 'attached' };
+    }
     const fromIt = m[1] !== '~' && b.it?.ref === 'trigger_object' && b.itOnField && !b.itIsSource;
     if (/^that creature$/i.test(m[1]!) && !fromIt) return null;
     // Super State: "Whenever enchanted creature deals combat damage to an opponent, it deals that much damage to each other

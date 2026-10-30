@@ -61,6 +61,11 @@ export function grantableStatic(a: AbilityNode): boolean {
     const e = a.effect as unknown as Record<string, unknown>;
     return Boolean(e.toSelf) && Object.keys(e).every((k) => ['type', 'toSelf', 'damage'].includes(k));
   }
+  // Can't Stay Away: gains "If this creature would die, exile it instead." (CR 614.1a)
+  if (a.kind === 'static' && !a.gate && a.effect.type === 'exile_instead') {
+    const e = a.effect as unknown as Record<string, unknown>;
+    return e.dies === true && JSON.stringify(e.filter) === '{"isSource":true}' && Object.keys(e).every((k) => ['type', 'dies', 'filter'].includes(k));
+  }
   if (a.kind !== 'static' || a.gate || a.effect.type !== 'continuous') return false;
   const e = a.effect as ContinuousEffectNode;
   if (e.affected.ref !== 'self' || e.condition) return false;

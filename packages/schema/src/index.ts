@@ -154,7 +154,7 @@ export interface ModeChoice {
   max: number;
   options: ModeOption[];
   /** "If you control a commander as you cast this spell, you may choose both instead." */
-  bonus?: { condition: ConditionNode; max: number };
+  bonus?: { condition: ConditionNode; max: number; /** Pyrrhic Strike, teamwork: "choose both instead" — not "may". */ exact?: true };
   /** CR 700.2d: "You may choose the same mode more than once." */
   repeat?: true;
   /**
@@ -599,6 +599,8 @@ export type Ref =
   | { ref: 'exiled_with' }
   /** CR 303.4: "enchanted player" — the player an Aura is attached to. */
   | { ref: 'enchanted_player' }
+  /** Souls of the Faultless: "attacking player" — the player whose turn it is, who attacked (CR 506.2). */
+  | { ref: 'active_player' }
   /** "the token", "those tokens": what the effect just created. */
   | { ref: 'created' }
   /** Spectacular Showdown: "each creature that had a double strike counter put on it this way" (`counter`: of that kind). */
@@ -729,6 +731,8 @@ export type AmountExpr = (
   | { kind: 'distinct_mana_values'; filter: ObjectFilter }
   /** Golden Ratio: "for each different power among creatures you control" (on the battlefield). */
   | { kind: 'distinct_powers'; filter: ObjectFilter }
+  /** Littjara Kinseekers: "three or more creatures that share a creature type" — the most of them with one type in common. */
+  | { kind: 'most_sharing_type'; filter: ObjectFilter }
   /** Fists of Flame: "for each card you've drawn this turn" */
   | { kind: 'drawn_this_turn'; who?: 'opponents' }
   /** Ancient Excavation: "for each card drawn this way" — what this resolution drew for you. */
@@ -741,7 +745,7 @@ export type AmountExpr = (
   | { kind: 'discarded_this_way'; max?: true; filter?: ObjectFilter; /** Fanatic of the Harrowing: "If you discarded a card this way" — yours only. */ mine?: true }
   /** "for each creature destroyed this way", "the number of cards exiled this way": what this resolution moved (CR 608.2h). */
   // Combustible Gearhulk: `stat` — "the total mana value of those cards" rather than how many.
-  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'discarded' | 'library'; types?: string[]; notTypes?: string[]; subtypes?: string[]; other?: true; token?: boolean; stat?: 'mana_value'; yours?: true; /** Deadly Tempest: what that player controlled. */ controlledBy?: Ref }
+  | { kind: 'moved_this_way'; how: 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'discarded' | 'library' | /** Chrome Courier: "put … into your hand this way" — from anywhere but the battlefield. */ 'hand'; types?: string[]; notTypes?: string[]; subtypes?: string[]; other?: true; token?: boolean; stat?: 'mana_value'; yours?: true; /** Deadly Tempest: what that player controlled. */ controlledBy?: Ref }
   /** "You gain life equal to the damage dealt this way": what this resolution's damage effects dealt. */
   | { kind: 'damage_this_way' }
   /** CR 120.10: "the amount of excess damage dealt to that creature this way". */
@@ -1220,6 +1224,11 @@ export interface AttackTaxNode extends EffectNode {
   banned?: true;
   /** CR 509.1d: Archangel of Tithes' "creatures can't block unless their controller pays {1} for each of those creatures". */
   blocks?: true;
+  /** Brainwash: "Enchanted creature can't attack unless its controller pays {3}"; Phyrexian Marauder: "This creature can't
+   * attack unless you pay {1} for each +1/+1 counter on it." — only that creature, whoever it attacks. */
+  subject?: 'self' | 'attached';
+  /** Oppressive Rays: "can't attack or block unless …" — the same cost to block. */
+  alsoBlocks?: true;
 }
 
 export interface CostModifierNode extends EffectNode {
@@ -1505,7 +1514,7 @@ export const CORE_NODES = {
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

@@ -439,6 +439,8 @@ export function endStep(g: GameState, events: GameEvent[]): void {
 function takeSkip(g: GameState, kind: 'untap' | 'draw' | 'combat'): boolean {
   const sk = g.players[g.active]?.skipNext;
   if (!sk) return false;
+  // False Peace: every combat phase of that turn.
+  if (kind === 'combat' && sk.combatAllTurn === g.turn) return true;
   if (kind === 'combat' && sk.combatThisTurn !== undefined) {
     const now = sk.combatThisTurn === g.turn;
     delete sk.combatThisTurn;
@@ -460,6 +462,12 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   g.turn++;
   g.active = player;
   g.players[player]!.turnsBegun = (g.players[player]!.turnsBegun ?? 0) + 1;
+  // False Peace: "skips all combat phases of their next turn" — this one.
+  const skips = g.players[player]!.skipNext;
+  if (skips?.combatTurn) {
+    skips.combatTurn--;
+    skips.combatAllTurn = g.turn;
+  }
   g.extraCleanup = false;
   // CR 305.2: one land per turn — the count restarts each turn.
   for (const p of Object.values(g.players)) p.landsPlayedThisTurn = 0;

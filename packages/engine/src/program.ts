@@ -29,9 +29,12 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
       usedModes = true;
       // "If you control a commander as you cast this spell, you may choose both instead."
       // CR 702.42a: entwine chooses every mode.
-      const max = allModes ? p.modes.options.length : p.modes.bonus && holds?.(p.modes.bonus.condition) ? Math.max(p.modes.max, p.modes.bonus.max) : p.modes.max;
-      if (chosen.length < p.modes.min || chosen.length > max) {
-        throw new RulesError(`Choose ${p.modes.min === max ? p.modes.min : `${p.modes.min}–${max}`} mode(s).`);
+      const bonus = !allModes && p.modes.bonus && holds?.(p.modes.bonus.condition);
+      const max = allModes ? p.modes.options.length : bonus ? Math.max(p.modes.max, p.modes.bonus!.max) : p.modes.max;
+      // Pyrrhic Strike: "If this spell's additional cost was paid, choose both instead." — both.
+      const min = bonus && p.modes.bonus!.exact ? max : p.modes.min;
+      if (chosen.length < min || chosen.length > max) {
+        throw new RulesError(`Choose ${min === max ? min : `${min}–${max}`} mode(s).`);
       }
       // CR 700.2d: "You may choose the same mode more than once" — each time is its own instance, with its own targets.
       if ((!p.modes.repeat && new Set(chosen).size !== chosen.length) || chosen.some((m) => !p.modes!.options[m])) {

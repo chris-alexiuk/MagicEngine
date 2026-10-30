@@ -726,7 +726,7 @@ function cast(
       : c.type === 'cast_in_main_phase'
         ? g.active === player && (g.step === 'main1' || g.step === 'main2')
         : c.type === 'paid'
-        ? (extras.includes(String(c.cost)) || altId === c.cost) !== Boolean(c.not)
+        ? (extras.includes(String(c.cost)) || altId === c.cost || (c.cost === 'additional' && added.some((a) => !a.required))) !== Boolean(c.not)
         : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
   // CR 702.47: cards spliced onto it add their rules text (and their splice costs, below).
   const splices = spliceCards(g, player, o, castFace, costChoices.splice);
@@ -894,7 +894,8 @@ function cast(
   else if (during?.exileOnLeave || permittedExile || (graveyardKey && graveyardPermissionExiles(g, graveyardKey))) o.exileOnLeave = 'graveyard';
   // CR 702.40a: storm counts the spells cast before this one this turn.
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
-  const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : [])];
+  // Cinder Strike: "if this spell's additional cost was paid" — an optional additional cost, whichever it was.
+  const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : []), ...(added.some((a) => !a.required) && !extras.includes('additional') ? ['additional'] : [])];
   // CR 702.174a: the gift's cost is choosing an opponent.
   const opponents = livePlayers(g).filter((p) => p !== player);
   const giftTo = paid.includes('gift') ? (costChoices.giftTo ?? opponents[0]) : undefined;

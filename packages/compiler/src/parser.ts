@@ -83,6 +83,10 @@ export class ParserRegistry {
     // CR 702.148a: cleave — the text with its square-bracketed words, and (cast for the cleave cost) without them.
     const cleaved = /^Cleave (?:\{[^}]+\})+/m.test(text) && /\[[^\]]+\]/.test(text) ? text.replace(/ ?\[[^\]]+\]/g, '') : undefined;
     if (cleaved !== undefined) text = text.replace(/\[([^\]]+)\]/g, '$1');
+    // Torch the Tower: "… deals 2 damage to target creature …. / If a permanent dealt damage by Torch the Tower would die
+    // this turn, exile it instead." — the spell's own damage, read with the sentences before it.
+    const selfName = ctx.faceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(`\\n(If a (?:creature|permanent) dealt damage by ${selfName} would die this turn, exile it instead\\.)$`), ' $1');
     // Battle Angels of Tyr: "Flying, myriad" — a keyword line is read once each of its keywords is (myriad's ability is
     // attached below).
     const lineKeywords = new Map<string, KeywordInstance[]>();
@@ -298,6 +302,19 @@ export class ParserRegistry {
               zone: 'stack',
             } as AbilityNode);
           }
+          continue;
+        }
+      }
+      // Devouring Greed: "As an additional cost to cast this spell, you may sacrifice any number of Spirits." — on its own line, for
+      // "… for each Spirit sacrificed this way" below.
+      const sacAlone = /^As an additional cost to cast (?:this spell|~), you may sacrifice any number of (.+?)\.$/.exec(line);
+      if (sacAlone) {
+        const base = this.parseBlock([`As an additional cost to cast this spell, sacrifice X ${sacAlone[1]}.`], env, line);
+        const cost = base?.kind === 'static' && base.effect.type === 'additional_cost' ? (base.effect as unknown as { cost: { type: string; amount?: unknown } }).cost : null;
+        if (cost?.type === 'sacrifice' && cost.amount === 'X') {
+          cost.amount = 'any';
+          base!.text = line;
+          result.abilities.push(base!);
           continue;
         }
       }
@@ -994,6 +1011,19 @@ export class ParserRegistry {
       // Rushblade Commander: "Warriors your team controls have haste." — in a game without teams, your team is just you
       // (as Surge's "you or one of your teammates").
       .map((l) => l.replace(/\byour team (controls|gained)\b/g, (_m, v: string) => (v === 'controls' ? 'you control' : 'you gained')))
+      // Runic Repetition: "Return target exiled card with flashback you own to your hand."; Rootcoil Creeper: "… target card
+      // with flashback you own from exile to your hand."
+      .map((l) => l.replace(/\btarget exiled (cards?(?: with [a-z]+)?) you own\b/g, 'target $1 you own in exile').replace(/\b(target cards?(?: with [a-z]+)? you own) from exile (to your hand)\b/g, '$1 in exile $2'))
+      // Strategic Betrayal: "Target opponent exiles a creature they control and their graveyard."
+      .map((l) => l.replace(/^(Target (?:player|opponent) exiles an? [a-z]+ they control) and their graveyard\.$/, "$1. Then exile that player's graveyard."))
+      // Tombfire: "Target player exiles all cards with flashback from their graveyard." — those in that player's graveyard.
+      .map((l) => l.replace(/^Target (player|opponent) exiles all (.+?) from their graveyard\.$/, "Exile all $2 from target $1's graveyard."))
+      // Nullmage Advocate: "Return two target cards from an opponent's graveyard to their hand." — that opponent's, the cards'
+      // owner's.
+      .map((l) => l.replace(/\b(target cards? from an opponent's graveyard) to their hand\b/g, "$1 to their owner's hand"))
+      // Ivory Gargoyle: "return it … at the beginning of the next end step and you skip your next draw step." — the skip
+      // as the trigger resolves, whether or not it returns (2008-10-01 ruling).
+      .map((l) => l.replace(/^(When (?:this creature|~) dies, return it to the battlefield under its owner's control at the beginning of the next end step) and you skip your next draw step\.$/, '$1. You skip your next draw step.'))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {

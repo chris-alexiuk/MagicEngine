@@ -316,12 +316,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // Ram Through: "If the creature you control has trample, excess damage is dealt to that creature's controller
       // instead." (CR 120.4a: the damage event is modified first)
       // Flame Spill: "Excess damage is dealt to that creature's controller instead." (CR 120.4a)
+      const sure = Boolean(node.unpreventable);
       if (o && node.excessToController && (node.excessAlways || hasKeyword(ctx.g, source, 'trample')) && n > before) {
-        dealt += dealDamage(ctx.g, source, to, before, false, ctx.events);
-        dealt += dealDamage(ctx.g, source, { kind: 'player', player: o.controller }, n - before, false, ctx.events);
+        dealt += dealDamage(ctx.g, source, to, before, false, ctx.events, sure);
+        dealt += dealDamage(ctx.g, source, { kind: 'player', player: o.controller }, n - before, false, ctx.events, sure);
         continue;
       }
-      const d = dealDamage(ctx.g, source, to, n, false, ctx.events);
+      const d = dealDamage(ctx.g, source, to, n, false, ctx.events, sure);
       dealt += d;
       // CR 120.10: "the amount of excess damage dealt to that creature this way".
       if (ctx.resolution && d > before) ctx.resolution.excess = (ctx.resolution.excess ?? 0) + (d - before);
@@ -764,13 +765,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // CR 614.10: "Target opponent skips their next combat phase", "You skip your next turn", "… their next untap step",
   // "… their next draw step" (Moment of Silence: "… their next combat phase this turn").
   skip_next(node, ctx) {
-    const what = node.what as 'turn' | 'untap' | 'draw' | 'combat';
+    const what = node.what as 'turn' | 'untap' | 'draw' | 'combat' | 'combat_turn';
     const n = node.amount === undefined ? 1 : amountOf(ctx, node.amount);
     for (const p of refPlayers(ctx, ref(node, 'who'))) {
       const ps = ctx.g.players[p];
       if (!ps || n <= 0) continue;
       const sk = (ps.skipNext ??= {});
       if (node.thisTurn) sk.combatThisTurn = ctx.g.turn;
+      else if (what === 'combat_turn') sk.combatTurn = (sk.combatTurn ?? 0) + n;
       else sk[what] = (sk[what] ?? 0) + n;
     }
     return true;
@@ -3282,7 +3284,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const lki = (ctx.resolution.lkiThisWay ??= {});
         lki.sacrificed = [...(lki.sacrificed ?? []), lkiStats(g, o)];
       }
-      sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
+      // Blot Out: "Target opponent exiles a creature … they control" — chosen the same way, but exiled.
+      if (node.exile) {
+        const src = ctx.source;
+        moveObject(g, o.id, 'exile', ctx.events);
+        // CR 607.2a: "exiled with ~".
+        if (src && src.id !== o.id && src.zone !== 'stack' && g.objects[o.id]?.zone === 'exile') g.objects[o.id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
+      } else sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
     };
     // Scapeshift: "Sacrifice any number of lands."
     if (node.anyNumber) {
@@ -4040,7 +4048,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             memo.counts.push(0);
             continue;
           }
-          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: 0, max, text: `${node.to === 'bottom' ? 'Put' : 'Discard'} ${node.mode === 'up_to' ? `up to ${max}` : 'any number of'} cards${node.to === 'bottom' ? ' on the bottom of your library' : ''}, then draw that many.` } };
+          return { ask: { kind: 'choose_objects', player: p, candidates: hand, min: 0, max, text: `${node.to === 'bottom' ? 'Put' : node.to === 'shuffle' ? 'Shuffle' : 'Discard'} ${node.mode === 'up_to' ? `up to ${max}` : 'any number of'} cards${node.to === 'bottom' ? ' on the bottom of your library' : node.to === 'shuffle' ? ' into your library' : ''}, then draw that many.` } };
         }
         chosen = answer.objects;
         if (chosen.length > max || new Set(chosen).size !== chosen.length || !chosen.every((id) => hand.includes(id))) throw new RulesError(`Choose up to ${max} cards in your hand.`);
@@ -4616,7 +4624,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   exile_if_dies(node, ctx) {
-    // CR 614.1a: a replacement effect for this turn.
+    // CR 614.1a: a replacement effect for this turn. "A creature dealt damage this way" — none, if it was all prevented.
+    if (node.ifDealt && !ctx.resolution?.damageDealt) return true;
     for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield') o.exileIfDiesTurn = ctx.g.turn;
     return true;
   },
@@ -5045,10 +5054,14 @@ function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reor
   library.unshift(...top);
   if (answer.kind === 'scry') library.push(...away);
   else for (const id of away) moveObject(ctx.g, id, 'graveyard', ctx.events);
+  // Whispering Snitch: "Whenever you surveil for the first time each turn".
+  const log = ctx.g.turnLog;
+  const firstSurveil = answer.kind !== 'scry' && !(log.surveilled ?? []).includes(ctx.controller);
+  if (answer.kind !== 'scry' && firstSurveil) log.surveilled = [...(log.surveilled ?? []), ctx.controller];
   ctx.events.push(
     answer.kind === 'scry'
       ? { type: 'scried', player: ctx.controller, top: top.length, bottom: away.length }
-      : { type: 'surveilled', player: ctx.controller, top: top.length, graveyard: away.length },
+      : { type: 'surveilled', player: ctx.controller, top: top.length, graveyard: away.length, ...(firstSurveil ? { first: true as const } : {}) },
   );
   return true;
 }
@@ -5437,6 +5450,11 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'opponent' ? e.to.player === check.controller : e.to.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     if ((t.combat && !e.combat) || (t.noncombat && e.combat)) return [];
     const player = e.to.player;
+    // Master of Barbs: "Whenever one or more opponents are dealt noncombat damage" — once for the batch.
+    if (t.oneOrMore) {
+      const all = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player !== check.controller && (!t.combat || x.combat) && (!t.noncombat || !x.combat));
+      return all[0] === e ? [{ amount: all.reduce((n, x) => n + x.amount, 0) }] : [];
+    }
     const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player && (!t.combat || x.combat) && (!t.noncombat || !x.combat));
     if (together[0] !== e) return [];
     return [{ player, amount: together.reduce((n, x) => n + x.amount, 0) }];
@@ -5496,7 +5514,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   },
   gain_life(t, check) {
     const e = check.event;
-    if (e.type !== 'life' || e.delta <= 0 || check.sourceLeft || e.player !== check.controller) return [];
+    if (e.type !== 'life' || e.delta <= 0 || check.sourceLeft || (t.who === 'opponent' ? e.player === check.controller : e.player !== check.controller)) return [];
     // "Whenever you gain life for the first time each turn"
     if (t.first && !e.firstGain) return [];
     return [{ player: e.player, amount: e.delta }];
@@ -5724,6 +5742,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (check.sourceLeft || (e.type !== 'scried' && e.type !== 'surveilled' && e.type !== 'foraged')) return [];
     if (e.player !== check.controller || !(t.kinds as string[]).includes(e.type === 'scried' ? 'scry' : e.type === 'foraged' ? 'forage' : 'surveil')) return [];
+    if (t.first && !(e.type === 'surveilled' && e.first)) return [];
     return [{ player: e.player }];
   },
   // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
