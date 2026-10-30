@@ -393,6 +393,8 @@ export interface ObjectFilter {
   other?: true;
   tapped?: boolean;
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
+  /** Fight to the Death: "blocked creatures"; "unblocked creatures" — attacking creatures, blocked or not (CR 509.1h). */
+  blockedState?: 'blocked' | 'unblocked';
   /** CR 506.5: "attacking alone" — the only attacking creature. */
   attackingAlone?: true;
   /** Sting, the Glinting Dagger: "blocking or blocked by a Goblin or Orc" — a creature it blocks or that blocks it matches. */
@@ -1474,7 +1476,7 @@ export const CORE_NODES = {
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result',
-    'become_prepared', 'become_unprepared', 'end_turn', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
+    'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],
   conditions: [

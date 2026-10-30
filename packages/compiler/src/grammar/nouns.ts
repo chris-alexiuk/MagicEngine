@@ -324,6 +324,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Shalai: "each creature you control that doesn't have hexproof"
   [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   [/ with ([a-z ,]+(?:and\/or [a-z ]+)?)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
+  // Slitherwisp: "another spell that has flash".
+  [/ that (?:has|have) ([a-z]+)$/, (f, m, b) => keywordList(f, 'keywords', m[1]!, b)],
 ];
 
 function compare(f: ObjectFilter, what: string, n: number | 'X', op: 'le' | 'ge' | 'eq'): boolean {
@@ -662,6 +664,11 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
     else if (w === 'enchanted' && f.enchanted === undefined) f.enchanted = true;
     else if (w === 'equipped') f.equipped = true;
     else if (w === 'blocking') f.combat = 'blocking';
+    // Fight to the Death: "all blocked creatures"; "each unblocked creature" (CR 509.1h).
+    else if ((w === 'blocked' || w === 'unblocked') && !f.combat) {
+      f.combat = 'attacking';
+      f.blockedState = w;
+    }
     else if (SUPERTYPE_WORDS[w]) (f.supertypes ??= []).push(SUPERTYPE_WORDS[w]!);
     else if (TYPE_NOUNS[w] && w === TYPE_NOUNS[w]!.toLowerCase()) adjTypes.push(TYPE_NOUNS[w]!);
     else if (w === 'token') f.token = true;

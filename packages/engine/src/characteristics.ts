@@ -978,6 +978,8 @@ export function matchesFilter(
     if (f.attackingAlone && Object.keys(g.combat?.attackers ?? {}).length !== 1) return false;
     if (f.combat === 'blocking' && !blocking) return false;
     if (f.combat === 'attacking_or_blocking' && !attacking && !blocking) return false;
+    // Neither until blockers are declared (CR 509.1h).
+    if (f.blockedState && (!g.combat?.blockersDone || Boolean(g.combat.attackers[o.id]?.blocked) !== (f.blockedState === 'blocked'))) return false;
     if (f.attackingYou) {
       const t = g.combat?.attackers[o.id]?.target;
       if (t?.kind !== 'player' || t.player !== ctx.controller) return false;

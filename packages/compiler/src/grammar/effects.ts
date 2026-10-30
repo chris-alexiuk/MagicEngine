@@ -1210,8 +1210,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // trigger, made only if you did.
         if (first && !rest && !repeat && / at the beginning of the next end step$/.test(then[1]!)) rest = attempt(b, (b) => parseEffectText(`${capitalise(then[1]!)}.`, b));
         if (!first || !rest) return null;
-        out.push({ type: 'may_do', effects: first, then: rest, ...(repeat ? { repeat: true } : {}) });
-        i += 1 + both;
+        // Pippin's Bravery: "You may sacrifice a Food. If you do, target creature gets +4/+4 until end of turn. Otherwise,
+        // that creature gets +2/+2 until end of turn." (CR 608.2c)
+        const otherwiseNext = !both && !repeat ? /^Otherwise, (.+)$/.exec(sentences[i + 2] ?? '') : null;
+        const elseFx = otherwiseNext ? parseSentence(capitalise(otherwiseNext[1]!), b) : null;
+        if (otherwiseNext && !elseFx) return null;
+        out.push({ type: 'may_do', effects: first, then: rest, ...(repeat ? { repeat: true } : {}), ...(elseFx ? { else: elseFx } : {}) });
+        i += 1 + both + (elseFx ? 1 : 0);
         continue;
       }
       // Curses: "Create a Gold token. Each opponent attacking that player does the same." — each of
@@ -1448,6 +1453,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           previous = guarded;
           continue;
         }
+      }
+      // Sunpearl Kirin: "return up to one other target nonland permanent you control to its owner's hand. If it was a token,
+      // draw a card." — what was returned, as it last was (a token ceases to exist in the hand, CR 111.8).
+      const wasToken = /^If it was a token, (.+)$/.exec(s);
+      const bounced = out[out.length - 1];
+      if (wasToken && bounced?.type === 'move' && bounced.to === 'hand' && (bounced.what as Ref | undefined)?.ref === 'target') {
+        const then = parseSentence(capitalise(wasToken[1]!), b);
+        if (!then) return null;
+        out.push({ type: 'if', cond: { type: 'amount', amount: { kind: 'moved_this_way', how: 'returned', token: true }, op: 'ge', n: 1 } as ConditionNode, effects: then });
+        continue;
       }
       // "If it's a Spirit, …" after the object was destroyed, exiled or bounced would ask about a card that has left: not
       // read here.
@@ -4170,6 +4185,31 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     b.player = who;
     b.named = { ...b.named, 'the chosen player': who, 'that opponent': who };
     return [{ type: 'choose_opponent' }];
+  }
+  // Tatsunari, Toad Rider: "Tatsunari and target Frog you control can't be blocked this turn except by creatures with flying
+  // or reach." — the same for each.
+  const andTarget = /^~ and ((?:up to one )?(?:another )?target [^,]+?) (can't be blocked .+|get [+-].+|gain .+)$/.exec(s);
+  if (andTarget) {
+    const r = attempt(b, (b) => {
+      const one = (pred: string) => pred.replace(/^get /, 'gets ').replace(/^gain /, 'gains ');
+      const self = parseSentence(`~ ${one(andTarget[2]!)}`, b);
+      const other = self ? parseSentence(`${andTarget[1]} ${one(andTarget[2]!)}`, b) : null;
+      return self && other ? [...self, ...other] : null;
+    });
+    if (r) return r;
+  }
+  // Ignite Memories: "Target player reveals a card at random from their hand. ~ deals damage to that player equal to that
+  // card's mana value."
+  const revealRandom = /^(.+?) reveals a card at random from their hand$/.exec(s);
+  if (revealRandom) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(revealRandom[1]!.replace(/^\w/, (x) => x.toLowerCase()), b);
+      if (!who) return null;
+      b.player = who;
+      b.named = { ...b.named, 'that card': { ref: 'chosen_object' }, 'the revealed card': { ref: 'chosen_object' } };
+      return [{ type: 'reveal_random', who }];
+    });
+    if (r) return r;
   }
   // Vial Smasher the Fierce: "choose an opponent at random. … to that player …" (CR 608.2d — nobody chooses).
   if (/^[Cc]hoose an opponent at random$/.test(s)) {

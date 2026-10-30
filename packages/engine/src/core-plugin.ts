@@ -1839,6 +1839,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // Ignite Memories: "Target player reveals a card at random from their hand." — it's "that card" after (CR 701.20a).
+  reveal_random(node, ctx) {
+    const g = ctx.g;
+    const p = refPlayers(ctx, ref(node, 'who'))[0];
+    if (!p || !ctx.resolution) return true;
+    const hand = zoneList(g, 'hand', p);
+    if (!hand.length) return true;
+    const id = hand[Math.floor(nextRandom(g) * hand.length)]!;
+    ctx.resolution.chosenObject = { id, zcc: g.objects[id]!.zcc };
+    ctx.events.push({ type: 'revealed', player: p, objects: [id] });
+    return true;
+  },
+
   // CR 723.1: "End the turn." (Time Stop, Sundial of the Infinite) — the rest of the effect first; then the stack is exiled
   // and the turn skips to its cleanup step (flow.ts).
   end_turn(_node, ctx) {

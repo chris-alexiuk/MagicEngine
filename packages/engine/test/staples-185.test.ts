@@ -1135,6 +1135,16 @@ const CARDS = [
   makeCard({ name: 'Ginger Lite', type_line: 'Legendary Artifact Creature — Food Noble', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "At the beginning of each upkeep, if you're the monarch, create a Gingerbrute token." }),
   makeCard({ name: 'Tadeas Lite', type_line: 'Legendary Creature — Human Monk', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Reach\nTadeas Lite has hexproof unless it's attacking.\nWhenever a creature you control with reach attacks, untap it and it can't be blocked by creatures with greater power this combat." }),
   makeCard({ name: 'Shadowfax Lite', type_line: 'Legendary Creature — Horse', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever Shadowfax Lite attacks, you may put a creature card with lesser power from your hand onto the battlefield tapped and attacking.' }),
+  makeCard({ name: 'Fight Death Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Destroy all blocking creatures and all blocked creatures.' }),
+  makeCard({ name: 'Snag Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Prevent all combat damage that would be dealt by unblocked creatures this turn.' }),
+  makeCard({ name: 'Slitherwisp Lite', type_line: 'Creature — Elemental Nightmare', mana_cost: '{0}', power: '3', toughness: '1', oracle_text: 'Flash\nWhenever you cast another spell that has flash, you draw a card and each opponent loses 1 life.' }),
+  makeCard({ name: 'Flash Cub Lite', type_line: 'Creature — Bear', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Flash' }),
+  makeCard({ name: 'Ignite Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Target player reveals a card at random from their hand. Ignite Lite deals damage to that player equal to that card's mana value." }),
+  makeCard({ name: 'Pippin Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'You may sacrifice a Food. If you do, target creature gets +4/+4 until end of turn. Otherwise, that creature gets +2/+2 until end of turn.' }),
+  makeCard({ name: 'Kirin Lite', type_line: 'Creature — Kirin', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: "Flash\nFlying\nWhen this creature enters, return up to one other target nonland permanent you control to its owner's hand. If it was a token, draw a card." }),
+  makeCard({ name: 'Tatsunari Lite', type_line: 'Legendary Creature — Human Ninja', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "{0}: Tatsunari Lite and target Frog you control can't be blocked this turn except by creatures with flying or reach." }),
+  makeCard({ name: 'Froggy Lite', type_line: 'Creature — Frog', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Make Bear Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create a 2/2 green Bear creature token.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -9725,6 +9735,73 @@ describe('Sieges', () => {
     });
     expect([offered.includes(pony), offered.includes(brute2), offered.every((id) => chars(r, r.objects[id]!).power < 3)]).toEqual([true, false, true]);
     expect([r.objects[pony]!.zone, Boolean(r.combat?.attackers[pony]), r.objects[brute2]!.zone]).toEqual(['battlefield', true, 'hand']);
+  });
+
+  it('Fight to the Death, Snag, Slitherwisp, Ignite Memories, Pippin\'s Bravery, Sunpearl Kirin, Tatsunari', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'bob')) moveObject(g, id, 'graveyard', []);
+    const [a1, a2] = [give(g, 'alice', 'Ogre', 'battlefield', { sick: false }), give(g, 'alice', 'Ogre', 'battlefield', { sick: false })];
+    const blocker = give(g, 'bob', 'Zombie', 'battlefield');
+    const bystander = give(g, 'bob', 'Cub', 'battlefield');
+    // Before blockers, nothing is blocked or unblocked (CR 509.1h).
+    g = attackWith(g, [a1, a2]);
+    if (g.pending?.kind !== 'declare_blockers') g = toAttack(g);
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker, attacker: a1 }] } } as never);
+    const life = g.players.bob!.life;
+    g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Snag Lite', 'hand') });
+    g = settle(g);
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Fight Death Lite', 'hand') }));
+    expect([g.objects[a1]!.zone, g.objects[blocker]!.zone, g.objects[a2]!.zone, g.objects[bystander]!.zone]).toEqual(['graveyard', 'graveyard', 'battlefield', 'battlefield']);
+    g = drive(toStep(g, 'end', 'alice'), () => null);
+    expect(g.players.bob!.life).toBe(life);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(h, 'alice', 'Slitherwisp Lite', 'battlefield');
+    const [hand, bobLife] = [h.zones.hand.alice!.length, h.players.bob!.life];
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Flash Cub Lite', 'hand') }));
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Cub', 'hand') }));
+    expect([h.zones.hand.alice!.length - hand, bobLife - h.players.bob!.life]).toEqual([1, 1]);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of [...k.zones.hand.bob!]) moveObject(k, id, 'graveyard', []);
+    give(k, 'bob', 'Ogre Three', 'hand');
+    const kl = k.players.bob!.life;
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Ignite Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(kl - k.players.bob!.life).toBe(3);
+
+    for (const food of [false, true]) {
+      let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const cub = give(m, 'alice', 'Cub', 'battlefield');
+      if (food) give(m, 'alice', 'Food Card', 'battlefield');
+      m = act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Pippin Lite', 'hand'), targets: [[{ kind: 'object', object: cub }]] });
+      m = drive(m, (x) => (x.pending?.kind === 'may' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } }) : x.pending?.kind === 'choose_objects' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: x.pending.candidates.slice(0, 1) } }) : null));
+      expect(chars(m, m.objects[cub]!).power).toBe(food ? 5 : 3);
+    }
+
+    for (const token of [false, true]) {
+      let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const back = token ? null : give(n, 'alice', 'Cub', 'battlefield');
+      if (token) n = settle(act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Make Bear Lite', 'hand') }));
+      const it = back ?? n.zones.battlefield.find((id) => n.objects[id]!.token && n.objects[id]!.controller === 'alice')!;
+      const before = n.zones.library.alice!.length;
+      n = act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Kirin Lite', 'hand') });
+      n = drive(n, (x) => (x.pending?.kind === 'trigger_targets' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: it }]] } }) : null));
+      expect(before - n.zones.library.alice!.length).toBe(token ? 1 : 0);
+      expect(token ? n.objects[it]?.zone !== 'battlefield' : n.objects[it]!.zone === 'hand').toBe(true);
+    }
+
+    let p = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of p.zones.battlefield.filter((id) => p.objects[id]!.controller === 'bob')) moveObject(p, id, 'graveyard', []);
+    const toad = give(p, 'alice', 'Tatsunari Lite', 'battlefield', { sick: false });
+    const frog = give(p, 'alice', 'Froggy Lite', 'battlefield', { sick: false });
+    const [ground, bird] = [give(p, 'bob', 'Ogre', 'battlefield'), give(p, 'bob', 'Bird Lite', 'battlefield')];
+    p = settle(act(p, { type: 'activate', player: 'alice', object: toad, ability: 0, targets: [[{ kind: 'object', object: frog }]] }));
+    p = attackWith(p, [toad, frog]);
+    if (p.pending?.kind !== 'declare_blockers') p = toAttack(p);
+    expect(illegal(p, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: ground, attacker: toad }] } } as never)).toMatch(/can’t be blocked/);
+    expect(illegal(p, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: ground, attacker: frog }] } } as never)).toMatch(/can’t be blocked/);
+    p = act(p, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: bird, attacker: frog }] } } as never);
+    expect(p.combat?.attackers[frog]?.blocked).toBe(true);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
