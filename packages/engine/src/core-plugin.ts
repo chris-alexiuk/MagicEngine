@@ -582,7 +582,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const movedOnto: ObjectRef[] = [];
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
-        moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : 'top' });
+        // Unexpectedly Absent: "just beneath the top X cards" — X+1th from the top.
+        moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : node.beneath !== undefined ? Math.max(0, amountOf(ctx, node.beneath as Amount)) + 1 : 'top' });
       } else if (to === 'battlefield') {
         // Unless it says otherwise, a permanent is put onto the battlefield under its owner's control.
         const controller = node.under === 'you' ? ctx.controller : o.owner;
@@ -1430,12 +1431,35 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const id of [...chosen].reverse()) moveObject(g, id, 'library', ctx.events, { position: 'top' });
       return true;
     }
+    // See Beyond: "shuffle a card from your hand into your library" (CR 701.24a).
+    if (node.then === 'library_shuffle') {
+      const owners = new Set<PlayerId>();
+      for (const id of chosen) {
+        moveObject(g, id, 'library', ctx.events);
+        owners.add(g.objects[id]!.owner);
+      }
+      for (const p of owners) {
+        shuffleInPlace(g, zoneList(g, 'library', p));
+        ctx.events.push({ type: 'shuffled', player: p });
+      }
+      return true;
+    }
     // Fire Prophecy: "You may put a card from your hand on the bottom of your library."
     if (node.then === 'library_bottom') {
       for (const id of chosen) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
       return true;
     }
+    // Kitesail Freebooter: "Exile that card until this creature leaves the battlefield." — not at all if it already left
+    // (CR 610.3c); back to its owner's hand afterward.
+    const srcHere = ctx.source && ctx.source.zone === 'battlefield' && (ctx.sourceZcc === undefined || ctx.source.zcc === ctx.sourceZcc);
+    if (node.then === 'exile' && node.until === 'source_leaves' && !srcHere) return true;
     for (const id of chosen) {
+      if (node.then === 'exile' && node.until === 'source_leaves') {
+        moveObject(g, id, 'exile', ctx.events);
+        const now = g.objects[id]!;
+        if (now.zone === 'exile') (g.exiledUntil ??= []).push({ source: { id: ctx.source!.id, zcc: ctx.source!.zcc }, object: { id, zcc: now.zcc }, returnTo: 'hand' });
+        continue;
+      }
       if (node.then === 'exile') {
         moveObject(g, id, 'exile', ctx.events);
         // Imprint (Chrome Mox): "the exiled card" is the one this ability exiled (CR 607.2a).

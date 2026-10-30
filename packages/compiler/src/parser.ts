@@ -706,6 +706,16 @@ export class ParserRegistry {
           continue;
         }
       }
+      // Dust Animus: "If you control five or more untapped lands, this creature enters with two +1/+1 counters and a lifelink
+      // counter on it." — one replacement effect per kind of counter, both applying as it enters (CR 614.1c).
+      const twoKinds = !node && block.length === 1 ? /^((?:If [^,]+, )?(?:[Tt]his creature|~) enters(?: the battlefield)? with )(\w+ \S+ counters?) and (an? \S+ counter) on it\.$/.exec(line) : null;
+      if (twoKinds) {
+        const each = [`${twoKinds[1]}${twoKinds[2]} on it.`, `${twoKinds[1]}${twoKinds[3]} on it.`].map((p) => this.parseBlock([p], env, line));
+        if (each.every((n) => n?.kind === 'static')) {
+          for (const n of each) result.abilities.push(n!);
+          continue;
+        }
+      }
       // Drownyard Lurker: "When you cast or cycle Drownyard Lurker, create …" — two triggered abilities, one from the stack
       // and one from the graveyard (CR 702.29c).
       const castOrCycle = !node && block.length === 1 ? /^When you cast or cycle (.+?), (.+)$/.exec(line) : null;

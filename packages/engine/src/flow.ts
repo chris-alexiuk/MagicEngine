@@ -95,7 +95,8 @@ function returnExiledUntil(g: GameState, events: GameEvent[]): boolean {
     g.exiledUntil = g.exiledUntil.filter((l) => l !== link);
     const o = g.objects[link.object.id];
     if (!o || o.zone !== 'exile' || o.zcc !== link.object.zcc) continue;
-    moveObject(g, o.id, 'battlefield', events, { controller: o.owner });
+    if (link.returnTo === 'hand') moveObject(g, o.id, 'hand', events);
+    else moveObject(g, o.id, 'battlefield', events, { controller: o.owner });
     changed = true;
   }
   return changed;

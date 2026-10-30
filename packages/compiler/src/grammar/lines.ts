@@ -3129,7 +3129,9 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   const normalized = m[2]!
     .replace(/, and it loses /, ' and loses ')
     .replace(/^(is an? (?:colorless )?land) with (QUOTED_\d+)(?= and |$)/, '$1 and has $2');
-  const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't |must be ))/g, ' and ').replace(/ and and /g, ' and ');
+  // Stasis Field: "has base power and toughness 0/2, has defender, and loses all other abilities".
+  const predicates = normalized.replace(/, (?=(?:and )?(?:ha(?:s|ve) |gets? |is |are |can't |must be |loses all other abilities$))/g, ' and ').replace(/ and and /g, ' and ');
+  let loseOtherAbilities = false;
   let loseOthers = false;
   // Treefolk Umbra: "gets +0/+2 and assigns combat damage equal to its toughness rather than its power".
   for (const part of predicates.split(/ and (?=ha(?:s|ve) |gets? |can't |can attack |can block |must be |attacks? each |blocks? each |doesn't |is |are |loses? |assigns? combat damage )/)) {
@@ -3138,6 +3140,12 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (/^loses all other (?:abilities, card types, and creature types|card types and abilities)$/.test(part) && !effect.loseAbilities) {
       effect.loseAbilities = true;
       loseOthers = true;
+      continue;
+    }
+    // "has defender, and loses all other abilities" — what this effect grants stays (layer 6, in this effect's order).
+    if (/^loses? all other abilities$/.test(part) && !effect.loseAbilities) {
+      effect.loseAbilities = true;
+      loseOtherAbilities = true;
       continue;
     }
     // Archetype of Endurance: "… lose hexproof and can't have or gain hexproof".
@@ -3339,6 +3347,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
   }
   // "all other card types" only makes sense with the types the effect sets.
   if (loseOthers && !effect.setTypes) return null;
+  if (loseOtherAbilities && !effect.keywords?.length) return null;
   // Sandwurm Convergence: "Creatures with flying can't attack you …" is checked as they attack (parseAttackTax), with
   // whatever abilities they have by then.
   if (effect.combat?.cantAttackYou && subject.ref.ref === 'all') return null;

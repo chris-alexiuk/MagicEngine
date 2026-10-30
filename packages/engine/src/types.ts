@@ -1057,7 +1057,7 @@ export interface GameState {
   castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[] }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   /** `monarch`: Palace Jailer's "until an opponent becomes the monarch" (the monarch when it was exiled, then as it changes). */
-  exiledUntil?: { source: ObjectRef; object: ObjectRef; monarch?: { controller: PlayerId; was: PlayerId | null } }[];
+  exiledUntil?: { source: ObjectRef; object: ObjectRef; monarch?: { controller: PlayerId; was: PlayerId | null }; /** Kitesail Freebooter: back to its owner's hand (the zone it came from, CR 610.3). */ returnTo?: 'hand' }[];
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
