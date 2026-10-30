@@ -1028,6 +1028,8 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
     const applies = (!r.condition || evalCondition(r.condition, ctx)) && (!r.yourTurn || g.active === player);
     const n = applies ? r.amount * (r.per ? Math.max(0, amountOf(ctx, r.per)) : 1) : 0;
     if (n > 0) mana.generic = r.more ? mana.generic + n : Math.max(0, mana.generic - n);
+    // Kami of Jealous Thirst: "costs {4}{B} less" — the colored part too (CR 601.2f).
+    if (applies && r.mana) reduceCostBy(mana, parseManaCost(r.mana));
   }
   abilityCostReductions(g, o, ability, mana, player);
   // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability" — generic mana must be that color
@@ -1255,6 +1257,12 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[index] = g.turn;
   if (ability.maxPerTurn || ability.boast) (o.activations ??= {})[index] = { turn: g.turn, n: activationsThisTurn(g, o, index) + 1 };
   if (ability.oncePerGame) (o.activatedOnce ??= {})[index] = true;
+  // Dragon Whelp: "If this ability has been activated four or more times this turn, …" — counted as it's activated.
+  if (JSON.stringify(ability.effects ?? []).includes('"activated_times"')) {
+    const key = `${o.id}:${o.zcc}:${ability.text}`;
+    const counts = (g.turnLog.abilityActivations ??= {});
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
   const lki = costLKI(g, cost, choices.costs);
   payOtherCosts(g, player, o, cost, events, choices.costs);
 

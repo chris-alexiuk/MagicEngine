@@ -323,7 +323,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -558,8 +558,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'discarded_this_turn': {
       // Counting what this resolution just discarded too ("Discard your hand, then draw a card for each …").
       const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
-      return (g.turnLog.discarded ?? []).filter((d) => d.player === ctx.controller).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === ctx.controller).length;
+      // Dream Salvage: "the number of cards target opponent discarded this turn".
+      const who = e.player ? (refPlayers(ctx, e.player as Ref)[0] ?? null) : ctx.controller;
+      if (!who) return 0;
+      return (g.turnLog.discarded ?? []).filter((d) => d.player === who).length + fresh.filter((ev) => ev.type === 'discarded' && ev.player === who).length;
     }
+    // Bronze Cudgels: "the number of times this ability has resolved this turn".
+    case 'ability_resolutions':
+      return g.resolving?.abilityCount ?? 0;
     case 'drawn_this_way':
       return ctx.resolution?.drew?.[ctx.controller] ?? 0;
     case 'drawn_this_turn':
@@ -619,6 +625,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const moved = movedThisWay(ctx, e);
       // Combustible Gearhulk: "the total mana value of those cards".
       if (e.stat === 'mana_value') return moved.reduce((n, m) => n + (g.objects[m.id] ? manaValueOf(g, g.objects[m.id]!) : 0), 0);
+      // Foul Renewal: "the toughness of the card returned this way" — as it is now, in its new zone.
+      if (e.stat === 'power' || e.stat === 'toughness') return moved.reduce((n, m) => n + (g.objects[m.id] ? Math.max(0, chars(g, g.objects[m.id]!)[e.stat as 'power' | 'toughness'] ?? 0) : 0), 0);
       return moved.length;
     }
     // Haliya: "the life you've gained this turn"; Neheb: "the life your opponents have lost this turn".

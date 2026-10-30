@@ -61,6 +61,15 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
     const two = one ? parseCondition(`you control ${both[2]}`, b) : null;
     if (one && two) return { type: 'and', all: [one, two] };
   }
+  // Mine Worker: "you control creatures named Power Plant Worker and Tower Worker"; Throne of Empires: "artifacts named
+  // Crown of Empires and Scepter of Empires" — one of each.
+  const namedPair = /^you control (creatures|artifacts|lands|permanents) named ([A-Z][^,]+?) and ([A-Z].+)$/.exec(t);
+  if (namedPair) {
+    const kind = namedPair[1]!.replace(/s$/, '');
+    const one = parseCondition(`you control a ${kind} named ${namedPair[2]}`, b);
+    const two = one ? parseCondition(`you control a ${kind} named ${namedPair[3]}`, b) : null;
+    if (one && two) return { type: 'and', all: [one, two] };
+  }
   const single = parseOne(t, b);
   if (single) return single;
   // "you have 30 or more life and an opponent has 10 or less life"
@@ -80,6 +89,12 @@ export function parseCondition(text: string, b: Binder): ConditionNode | null {
 }
 
 function parseOne(t: string, b: Binder): ConditionNode | null {
+  // Dragon Whelp: "If this ability has been activated four or more times this turn".
+  const activatedN = /^this ability has been activated (\w+) or more times this turn$/.exec(t);
+  if (activatedN) {
+    const n = parseAmount(activatedN[1]!);
+    if (typeof n === 'number') return { type: 'activated_times', min: n };
+  }
   // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn. If it's the second time, …";
   // Rose Room Treasurer: "if this is the first or second time this ability has resolved this turn".
   const nth = /^(?:this is|it's) the (first|second|third|fourth|fifth)(?: or (second|third|fourth))? time(?: this ability has resolved this turn)?$/.exec(t);
@@ -344,7 +359,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // alternative cost (its option is "alt").
   if (/^the (?:\{[^}]+\})+ cost was paid$/.test(t)) return { type: 'paid', cost: 'alt' };
   // Littjara Kinseekers: "if you control three or more creatures that share a creature type".
-  const sharing = /^you control (\w+) or more creatures that share a creature type$/.exec(t);
+  // Synchronized Eviction: "if you control at least two creatures that share a creature type" — the same.
+  const sharing = /^you control (\w+) or more creatures that share a creature type$/.exec(t) ?? /^you control at least (\w+) creatures that share a creature type$/.exec(t);
   if (sharing && typeof parseAmount(sharing[1]!) === 'number') return { type: 'amount', amount: { kind: 'most_sharing_type', filter: { types: ['Creature'], controller: 'you' } }, op: 'ge', n: parseAmount(sharing[1]!) as number };
   // Chrome Courier: "If you put an artifact card into your hand this way"; Town Greeter: "If you put a Town card …".
   const putHand = /^you put an? (.+? card) into your hand this way$/.exec(t);
@@ -362,12 +378,16 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you cast (?:~|this spell) during your main phase$/.test(t)) return { type: 'cast_in_main_phase' };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~|he|she) was kicked$/.test(t)) return { type: 'kicked' };
+  // Sphinx of Lost Truths: "if it wasn't kicked".
+  if (/^(?:it|~|he|she) wasn't kicked$/.test(t)) return { type: 'not', cond: { type: 'kicked' } };
   // Sevinne's Reclamation: "If this spell was cast from a graveyard"; "if this spell was cast from your hand" (a copy wasn't
   // cast, CR 707.10).
   // Anti-Venom: "When Anti-Venom enters, if he was cast" — by anyone (CR 601.2: it was a spell before it entered).
   // Mirror of Life Trapping: "Whenever a creature enters, if it was cast" — the entering creature.
   if (/^(?:~|it|he|she) was cast$/.test(t)) return { type: 'cast_by_you', anyone: true, ...(!t.startsWith('~') && b.it && b.it.ref !== 'self' ? { of: b.it } : {}) };
   // Otterball Antics: "If this spell was cast from anywhere other than your hand" — cast, and not from there.
+  // Twinned Vision: "If this spell wasn't cast from your hand" — a copy wasn't cast at all (CR 707.10), so it holds.
+  if (t === "~ wasn't cast from your hand") return { type: 'not', cond: { type: 'cast_by_you', fromHand: true } };
   if (t === '~ was cast from anywhere other than your hand') return { type: 'and', all: [{ type: 'cast_by_you' }, { type: 'not', cond: { type: 'cast_by_you', fromHand: true } }] };
   const castFrom = /^~ was cast from (your hand|a graveyard|exile)$/.exec(t);
   if (castFrom) return { type: 'cast_by_you', ...(castFrom[1] === 'your hand' ? { fromHand: true } : { from: castFrom[1] === 'exile' ? 'exile' : 'graveyard' }) };
@@ -398,6 +418,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Merry, Esquire of Rohan: "~ has first strike as long as it's equipped" — "it" being this creature.
   const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
+  // Warchanter Skald: "if it's enchanted or equipped" — either.
+  if ((t === "it's enchanted or equipped" || t === '~ is enchanted or equipped') && (!b.it || b.it.ref === 'self')) return { type: 'or', any: [{ type: 'has_attached', subtype: 'Aura' }, { type: 'has_attached', subtype: 'Equipment' }] };
   // Awaken the Sleeper: "Gain control of target creature …. If it's equipped, …" — an Equipment is attached to that creature.
   const otherAttached = /^(?:it's|that creature is) (equipped|enchanted)$/.exec(t);
   if (otherAttached && b.it && b.it.ref === 'target')
@@ -425,6 +447,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^it's your turn$/.test(t)) return { type: 'your_turn', value: true };
   // Great Train Heist: "If it's your combat phase, there is an additional combat phase after this phase."
   if (/^it's your combat phase$/.test(t)) return { type: 'step', combat: true, yours: true };
+  // Mongrel Pack: "When this creature dies during combat" — in the combat phase (any player's).
+  if (t === 'it died during combat') return { type: 'step', combat: true };
   if (/^it's your (?:precombat )?main phase$/.test(t)) return { type: 'step', main: true, yours: true };
   // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
   // Level Up: "if it has power 10 or greater" — the same.
@@ -441,6 +465,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       return { type: 'is', of, filter: { [key]: { op: !statIs[4] ? 'eq' : /greater|more/.test(statIs[4]) ? 'ge' : 'le', n } } };
     }
   }
+  // Sigil Captain: "if that creature is 1/1" — exactly that power and toughness.
+  const ptIs = /^(it|that creature) is (\d+)\/(\d+)$/.exec(t);
+  if (ptIs && b.it) return { type: 'is', of: b.it, filter: { power: { op: 'eq', n: Number(ptIs[2]) }, toughness: { op: 'eq', n: Number(ptIs[3]) } } };
   // Witch's Oven: "If the sacrificed creature's toughness was 4 or greater" — as it last existed (CR 608.2h).
   const sacStat = /^the sacrificed (?:creature|artifact|permanent)'s (power|toughness|mana value) (?:was|is) (\w+) or (greater|more|less)$/.exec(t);
   if (sacStat) {
@@ -1034,6 +1061,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c: ConditionNode = { type: 'was_type', subtype: wasSub[2]! };
     return wasSub[1] === 'was' ? c : { type: 'not', cond: c };
   }
+  // Zephyr Sentinel: "return up to one other target creature you control to its owner's hand. If it was a Soldier, …".
+  if (wasSub && wasSub[1] === 'was' && isSubtype(wasSub[2]!) && b.it?.ref === 'target') return { type: 'was_type', subtype: wasSub[2]!, of: b.it };
   // Uglúk of the White Hand: "If that creature was a Goblin or Orc".
   const wasEither = /^(?:that creature|it) was an? ([A-Z][a-z]+) or (?:an? )?([A-Z][a-z]+)$/.exec(t);
   if (wasEither && isSubtype(wasEither[1]!) && isSubtype(wasEither[2]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object')))
@@ -1138,6 +1167,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Timely Reinforcements: "if you control fewer creatures than an opponent" — the same test.
   const fewerThan = /^you control fewer (.+?) than an opponent$/.exec(t);
   if (fewerThan) t = `an opponent controls more ${fewerThan[1]} than you`;
+  // Unified Will: "if you control more creatures than that spell's controller" — the other way round.
+  const youMore = /^you control more (.+?) than (that spell's controller|that player|defending player|target opponent|an opponent)$/.exec(t);
+  if (youMore) {
+    const pf = parseFilter(youMore[1]!, b);
+    if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
+    const player = youMore[2] !== 'an opponent' ? parsePlayerRef(youMore[2]!, b) : null;
+    if (youMore[2] !== 'an opponent' && (!player || player.ref === 'you' || player.ref === 'players')) return null;
+    return { type: 'opponent_has_more', filter: pf.filter, ...(player ? { player } : {}), youMore: true };
+  }
   const more = /^(an opponent|that player|defending player) controls (?:at least (two|three|four) )?more (.+?) than you(?: do)?$/.exec(t);
   if (more) {
     const pf = parseFilter(more[3]!, b);
@@ -1195,6 +1233,23 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(lastTurn[1]!);
     return typeof n === 'number' ? { type: 'spells_last_turn', perPlayerMin: n } : null;
   }
+  // Sigardian Paladin: "As long as you've put one or more +1/+1 counters on a creature this turn".
+  if (t === "you've put one or more +1/+1 counters on a creature this turn") return { type: 'this_turn', event: 'you_put_plus_counters' };
+  // Fairgrounds Trumpeter: "if a +1/+1 counter was put on a permanent under your control this turn".
+  if (t === 'a +1/+1 counter was put on a permanent under your control this turn') return { type: 'this_turn', event: 'plus_counters_on_yours' };
+  // Charging Cinderhorn: "if no creatures attacked this turn" — no player attacked with any.
+  if (t === 'no creatures attacked this turn') return { type: 'not', cond: { type: 'this_turn', event: 'anyone_attacked' } };
+  // Spellpyre Phoenix: "if you cycled two or more cards this turn" (CR 702.29e: activated a cycling ability).
+  const cycledN = /^you(?:'ve)? cycled (a card|(?:two|three|four) or more cards) this turn$/.exec(t);
+  if (cycledN) {
+    const n = cycledN[1] === 'a card' ? 1 : parseAmount(cycledN[1]!.split(' ')[0]!);
+    if (typeof n === 'number') return { type: 'this_turn', event: 'you_cycled', min: n };
+  }
+  // First Response: "if you lost life last turn" — the previous turn's log.
+  const prevTurn = /^(you|an opponent) lost life last turn$/.exec(t);
+  if (prevTurn) return { type: 'this_turn', event: prevTurn[1] === 'you' ? 'you_lost_life' : 'opponent_lost_life', lastTurn: true };
+  // Command the Stage: "if an opponent was dealt noncombat damage last turn".
+  if (t === 'an opponent was dealt noncombat damage last turn') return { type: 'this_turn', event: 'opponent_noncombat_damaged', lastTurn: true };
 
   // "if it had no -1/-1 counters on it" (persist, CR 702.79a) — about the object as it last existed.
   const counters = /^it had no (\S+) counters on it$/.exec(t);

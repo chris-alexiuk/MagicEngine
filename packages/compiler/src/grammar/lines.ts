@@ -268,6 +268,9 @@ export function choiceCost(item: string, b: Binder | null): EffectNode | null {
 }
 
 function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
+  // Processors (Void Attendant): "Put a card an opponent owns from exile into that player's graveyard".
+  const processed = /^[Pp]ut (a card|two cards) (?:an opponent owns|your opponents own) from exile into (?:that player's graveyard|their owners' graveyards)$/.exec(item);
+  if (processed) return { type: 'process', amount: processed[1] === 'a card' ? 1 : 2 };
   // Chatterfang: "Sacrifice X Squirrels" — as many as the X announced.
   const sacX = /^[Ss]acrifice X (.+)$/.exec(item);
   if (sacX && b) {
@@ -511,6 +514,8 @@ const noChoices = (e: EffectNode): boolean =>
     ? [...((e.effects as EffectNode[]) ?? []), ...((e.else as EffectNode[]) ?? [])].every(noChoices)
     : NO_CHOICE.has(e.type) ||
       (e.type === 'sacrifice' && (e.what as Ref | undefined)?.ref === 'self') ||
+      // Barbed Sextant: "Draw a card at the beginning of the next turn's upkeep." — set up now, done later (CR 603.7).
+      (e.type === 'delayed' && !(e as { targets?: unknown }).targets) ||
       // Temple of Cyclical Time: "Remove a time counter from this land." — one named kind (no choice of kind).
       (e.type === 'remove_counters' && e.counter !== undefined && !e.upTo && !e.ifCant);
 
@@ -614,6 +619,15 @@ export const activatedRule: GrammarRule = {
         if ((reduce[2] && !per) || (reduce[3] && !condition) || node.costReduction) return null;
         node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}), ...(more ? { more: true as const } : {}) };
         effectText = effectText.slice(0, reduce.index) + (effectText.endsWith('.') && !effectText.slice(0, reduce.index).endsWith('.') ? '.' : '');
+        changed = true;
+      }
+      // Kami of Jealous Thirst: "This ability costs {4}{B} less to activate if you've drawn three or more cards this turn."
+      const reduceMana = !node.costReduction ? / This ability costs ((?:\{(?:\d+|[WUBRGC])\})*\{[WUBRGC]\}(?:\{(?:\d+|[WUBRGC])\})*) less to activate if ([^.]+?)\.$/.exec(effectText) : null;
+      if (reduceMana) {
+        const condition = parseCondition(reduceMana[2]!, new Binder(env));
+        if (!condition) return null;
+        node.costReduction = { amount: 0, mana: reduceMana[1]!, condition };
+        effectText = effectText.slice(0, reduceMana.index) + (effectText.endsWith('.') && !effectText.slice(0, reduceMana.index).endsWith('.') ? '.' : '');
         changed = true;
       }
       // "Activate only if you control an Island." (CR 602.5b); Temple of Civilization: "Activate only if you attacked with
@@ -1579,6 +1593,21 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // "It" is the object either event was about — the source itself (CR 603.10a looks back for "dies"); a spell that
     // targets it is "that spell".
     return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: /becomes the target/.test(either[3]!) && either[1] === '~' ? { ref: 'self' } : { ref: 'trigger_object' }, player: one.player ?? two.player };
+  }
+  // Null Profusion, Recycle: "Whenever you play a card" — cast a spell or play a land (CR 601.1, 305.1).
+  if (t === 'you play a card') {
+    const one = parseTrigger(word, 'you cast a spell', b);
+    const two = one ? parseTrigger(word, 'you play a land', b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: null };
+  }
+  // Powerstone Minefield: "Whenever a creature attacks or blocks" — any creature, either way.
+  const anyAttacksOrBlocks = /^(a creature|a creature you control|another creature|another creature you control) attacks or blocks$/.exec(t);
+  if (anyAttacksOrBlocks) {
+    const one = parseTrigger(word, `${anyAttacksOrBlocks[1]} attacks`, b);
+    const two = one ? parseTrigger(word, `${anyAttacksOrBlocks[1]} blocks`, b) : null;
+    if (!one || !two) return null;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: { ref: 'trigger_object' }, player: null };
   }
   // Giggling Skitterspike: "Whenever this creature attacks, blocks, or becomes the target of a spell".
   const three = /^~ (enters|attacks|blocks|dies), (attacks|blocks|dies|becomes tapped), or (attacks|blocks|dies|becomes the target of a spell(?: or ability)?)$/.exec(t);
@@ -3770,7 +3799,7 @@ export const costModifierRule: GrammarRule = {
     // Warden of Evos Isle: "Creature spells with flying you cast cost {1} less to cast." — the quality before "you cast".
     // Cunning Nightbonder: "Spells with flash you cast cost {1} less to cast".
     rest = rest.replace(/^(.*?\bspells) (with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender|flash)) (you cast) /i, '$1 $3 $2 ');
-    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater|with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender|flash)) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
+    const others = /^(.*?)\b(?:spells?) (?:(you|your opponents|each opponent) casts? )?((?:of the chosen type|with power \d+ or greater|with mana value \d+ or greater|with (?:flying|trample|haste|vigilance|deathtouch|lifelink|reach|menace|defender|flash)|that share a creature type with (?:this creature|~)) )?costs? (\{[^}]+\}) (less|more) to cast$/i.exec(rest);
     if (others && (duringYours || perEach) && others[2] !== 'you') return null;
     if (others) {
       const suffix = others[3] ? ` ${others[3].trim()}` : '';
@@ -4239,6 +4268,8 @@ export const exileInsteadRule: GrammarRule = {
     const make = (node: Omit<ExileInsteadNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'exile_instead', ...node } });
     // Gloomshrieker: "If this creature would die, exile it instead." — this one.
     if (/^If ~ would die, exile it instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true } });
+    // Nissa's Chosen: "If this creature would die, put it on the bottom of its owner's library instead."
+    if (/^If ~ would die, put it on the bottom of its owner's library instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true }, libraryBottom: true });
     const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line) ?? /^If (?:a|an|another) (.+?) would die, instead exile it and you gain (\w+) life\.$/.exec(line);
     if (dies) {
       const pf = parseFilter(dies[1]!, new Binder(env));

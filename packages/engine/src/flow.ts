@@ -456,6 +456,8 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   delete g.inExtra;
   // Remember last turn's spells (werewolves, CR 702.145-style conditions); start a fresh log.
   g.lastTurnSpells = g.turnLog.spellsCast;
+  // First Response: "if you lost life last turn".
+  g.lastTurnLog = g.turnLog;
   // CR 731.2: how many spells the previous turn's active player cast, for day and night.
   const previousCasts = g.turn > 0 ? (g.turnLog.spellsCast[g.active] ?? 0) : undefined;
   g.turnLog = newTurnLog();

@@ -686,7 +686,7 @@ export type PendingChoice =
   | { kind: 'pay'; player: PlayerId; cost: string; text: string; sourceName: string; x?: { max?: number } }
   /** CR 701.23a: the player looks through their library for cards matching the description. */
   /** sameLandType: the cards found must share a land type (Myriad Landscape). */
-  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true; totalMV?: { max: number; of: Record<ObjectId, number> }; distinctNames?: true }
+  | { kind: 'search'; player: PlayerId; candidates: ObjectId[]; count: number; mustFind: boolean; text: string; sameLandType?: true; totalMV?: { max: number; of: Record<ObjectId, number> }; distinctNames?: true; /** Krosan Verge, Shard Convergence: one card for each description — the descriptions each candidate fits. */ kinds?: Record<ObjectId, number[]> }
   /** CR 701.21a: the player chooses permanents they control to sacrifice. */
   | { kind: 'sacrifice'; player: PlayerId; candidates: ObjectId[]; count: number }
   /** CR 701.34a: any number of permanents and players that have counters. */
@@ -796,6 +796,8 @@ export interface CostChoices {
   reveal?: ObjectId[];
   /** CR 701.68a: the creature you control that gets the -1/-1 counters when you blight. */
   blighted?: ObjectId[];
+  /** Processors: the cards an opponent owns put from exile into their owners' graveyards. */
+  processed?: ObjectId[];
   /** CR 701.61a: forage by sacrificing a Food (in `sacrifice`) rather than exiling three cards (in `exile`). */
   forageFood?: boolean;
   /** Forge Anew, Bruenor Battlehammer: pay {0} rather than this equip ability's cost (the first equip ability this turn). */
@@ -1094,6 +1096,8 @@ export interface GameState {
   /** The phases being added now: whether a main phase follows this combat, and the step the turn goes back to. */
   inExtra?: { main: boolean; then: Step; mainNow?: true };
   lastTurnSpells: Record<PlayerId, number>;
+  /** The previous turn's log ("if you lost life last turn"). */
+  lastTurnLog?: TurnLog;
   winner: PlayerId | null;
   over: boolean;
   rng: number;

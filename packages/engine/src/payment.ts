@@ -15,7 +15,7 @@ import { cantLoseLife, lifeLoss, replaceQuantity } from './quantities.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters'];
+export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -256,6 +256,12 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const ok = exileCostCandidates(g, player, o, c);
       const chosen = choices.exile ?? [];
       if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(c.from === 'battlefield' ? `Choose ${n} permanent(s) you control to exile.` : `Choose ${n} other card(s) in your ${c.from === 'hand' ? 'hand' : 'graveyard'} to exile.`);
+    } else if (c.type === 'process') {
+      // Void Attendant: "Put a card an opponent owns from exile into that player's graveyard" — that many such cards.
+      const n = Number(c.amount ?? 1);
+      const ok = processCostCandidates(g, player);
+      const chosen = choices.processed ?? [];
+      if (chosen.length !== n || new Set(chosen).size !== n || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${n} card(s) an opponent owns in exile.`);
     } else if (c.type === 'blight') {
       // CR 701.68b: with no creature to put the counters on, you can't blight.
       const chosen = choices.blighted ?? [];
@@ -422,6 +428,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
         // A spell's costs are paid before it moves to the stack (then onto the battlefield): two zone changes on.
         if (x?.zone === 'exile' && c.from === 'battlefield') x.exiledBy = { id: o.id, zcc: o.zone === 'battlefield' ? o.zcc : o.zone === 'stack' ? o.zcc + 1 : o.zcc + 2 };
       }
+    } else if (c.type === 'process') {
+      for (const id of choices.processed ?? []) moveObject(g, id, 'graveyard', events);
     } else if (c.type === 'blight') {
       const target = choices.blighted?.[0] ? g.objects[choices.blighted[0]] : undefined;
       if (target) blight(g, player, target, Number(c.amount ?? 1), events);
@@ -506,12 +514,18 @@ export function runManaAbility(
 
   // CR 605.3b: mana abilities don't use the stack; they resolve immediately.
   const before = events.length;
+  // Farrelite Priest: "If this ability has been activated four or more times this turn" — counting this activation.
+  const counted = JSON.stringify(ability.effects).includes('"activated_times"') ? `${o.id}:${o.zcc}:${ability.text}` : undefined;
+  if (counted) {
+    const counts = (g.turnLog.abilityActivations ??= {});
+    counts[counted] = (counts[counted] ?? 0) + 1;
+  }
   const queue = [...ability.effects];
   // CR 106.12b: "it produces three times as much of that mana instead" — for an ability tapping the permanent.
   const times = ability.cost.tap && o.zone === 'battlefield' ? manaMultiplier(g, player, o) : 1;
   while (queue.length) {
     const e = queue.shift()!;
-    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}) });
+    const ok = runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}), ...(counted ? { manaAbilityKey: counted } : {}) });
     if (ok === true && e.type === 'add_mana') for (let k = 1; k < times; k++) runEffect(e, { g, controller: player, source: o, ...(choice !== undefined ? { choice } : {}), events, targets: [], x: costChoices.counters ?? 0, memo: {}, ...(lki ? { trigger: { lkiThisWay: lki } } : {}) });
     // "{T}: Add {G}. If you control another Mutant, you gain 1 life." — an "if" expands in place.
     if (typeof ok === 'object' && 'expand' in ok) queue.unshift(...ok.expand);
@@ -636,4 +650,9 @@ export function payDuringResolution(g: GameState, player: PlayerId, mana: string
   if (cost.unsupported.length) throw new RulesError(`Paying ${mana} isn’t supported yet.`);
   if (!payFromPool(spendablePool(g, player, OTHER_PURPOSE), cost, x)) autoTap(g, player, cost, x, events);
   if (!payMana(g, player, cost, x, OTHER_PURPOSE)) throw new RulesError(`You can’t pay ${mana}.`);
+}
+
+/** Processors' costs: cards in exile an opponent of `player` owns. */
+export function processCostCandidates(g: GameState, player: PlayerId): ObjectId[] {
+  return g.zones.exile.filter((id) => g.objects[id]!.owner !== player && g.players[g.objects[id]!.owner] !== undefined);
 }

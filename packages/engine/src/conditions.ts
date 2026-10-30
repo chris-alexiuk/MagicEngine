@@ -3,14 +3,14 @@ import { chars, matchesFilter, power, toughness } from './characteristics.js';
 import type { EffectContext } from './registry.js';
 import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
-import { faceOf, livePlayers, manaValueOf, nameOf, pairedPartner, zoneList } from './zones.js';
+import { faceOf, livePlayers, manaValueOf, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -94,6 +94,10 @@ export interface TurnLog {
   toGraveyard?: { event: GameEvent; types: string[]; owner: PlayerId; token: boolean }[];
   /** Danny Pink: the first counters event this turn for each object, keyed "id:zcc". */
   firstCounters?: Record<string, GameEvent>;
+  /** Fairgrounds Trumpeter: controllers of permanents +1/+1 counters were put on this turn. */
+  plusCountersOn?: PlayerId[];
+  /** Sigardian Paladin: players who put +1/+1 counters on a creature this turn. */
+  plusCountersBy?: PlayerId[];
   /** Damage dealt this turn by each source, keyed "id:zcc". */
   dealtDamage?: Record<string, number>;
   /** How many times each creature has been declared as an attacker this turn. */
@@ -106,6 +110,8 @@ export interface TurnLog {
   freeOnce?: string[];
   /** Alliance-style "if this is the second time this ability has resolved this turn": resolutions so far, by ability (source id:zcc:text). */
   abilityResolutions?: Record<string, number>;
+  /** Dragon Whelp: how many times each ability has been activated this turn (by source and text). */
+  abilityActivations?: Record<string, number>;
   /** Rose, Cutthroat Raider: the players each player attacked with creatures this turn. */
   playersAttackedBy?: Record<PlayerId, PlayerId[]>;
   /** Port Razer: the players each creature (as this object) attacked this turn. */
@@ -221,6 +227,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
       case 'counters': {
         const o = g.objects[e.object];
         if (o && e.delta > 0) (log.firstCounters ??= {})[`${o.id}:${o.zcc}`] ??= e;
+        if (o && e.delta > 0 && e.counter === '+1/+1' && o.zone === 'battlefield') notePlusCounters(g, o, e.by ?? o.controller);
         break;
       }
       case 'damage':
@@ -385,6 +392,18 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return Boolean(a && a.zcc === zcc);
     }
     case 'was_type': {
+      // Zephyr Sentinel: "return up to one other target creature you control to its owner's hand. If it was a Soldier, …" —
+      // the target as it last existed on the battlefield, if this resolution moved it.
+      // Death's Caress: "Destroy target creature. If that creature was a Human, …" — as it is if it's still there
+      // (indestructible), else as it last existed.
+      const ofTarget = (cond.of as Ref | undefined)?.ref === 'target' ? ctx.targets?.[(cond.of as { index: number }).index]?.[0] : undefined;
+      if (cond.of) {
+        if (!ofTarget || ofTarget.kind !== 'object') return false;
+        const now = g.objects[ofTarget.id];
+        if (now && now.zcc === ofTarget.zcc && now.zone === 'battlefield') return cond.subtype ? chars(g, now).subtypes.includes(String(cond.subtype)) : chars(g, now).types.includes(String(cond.cardType) as never);
+        const lk = g.lastKnown?.[ofTarget.id];
+        return Boolean(lk && lk.zcc === ofTarget.zcc && (cond.subtype ? lk.subtypes?.includes(String(cond.subtype)) : lk.types?.includes(String(cond.cardType))));
+      }
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;
       if (!last || !(last.zcc === r!.zcc || last.zcc === r!.zcc - 1)) return false;
@@ -429,6 +448,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // Archaeomancer's Map: "that player" — the one the trigger is about.
       const others = cond.player ? refPlayers(ctx, cond.player as Ref) : livePlayers(g);
       // Isolated Watchtower: "at least two more lands than you".
+      // Unified Will: "if you control more creatures than that spell's controller".
+      if (cond.youMore) return others.some((p) => p !== controller && mine > count(p));
       return others.some((p) => p !== controller && count(p) >= mine + Number(cond.by ?? 1));
     }
     case 'votes': {
@@ -656,6 +677,14 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       return (g.turnLog.combatPhases ?? 0) <= 1;
     // Omnath, Locus of Creation: "if this is the first time this ability has resolved this turn" — counting this resolution
     // (and copies of the ability, which are the same ability). Rose Room Treasurer: "the first or second time" (max).
+    // Dragon Whelp: "If this ability has been activated four or more times this turn" — counting this activation.
+    case 'activated_times': {
+      // Farrelite Priest: a mana ability, resolving at once (CR 605.3b).
+      if (ctx.manaAbilityKey) return (g.turnLog.abilityActivations?.[ctx.manaAbilityKey] ?? 0) >= Number(cond.min ?? 1);
+      const entry = g.resolving?.entry;
+      if (entry?.kind !== 'ability') return false;
+      return (g.turnLog.abilityActivations?.[`${entry.source.id}:${entry.source.zcc}:${entry.text}`] ?? 0) >= Number(cond.min ?? 1);
+    }
     case 'ability_resolutions': {
       const n = g.resolving?.abilityCount ?? 0;
       return cond.max !== undefined ? n <= (cond.max as number) : n === (cond.n as number);
@@ -701,14 +730,28 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'not':
       return !evalCondition(cond.cond as ConditionNode, ctx);
     case 'this_turn': {
-      const log = g.turnLog;
+      // First Response: "if you lost life last turn" — the previous turn's log (none before the first turn).
+      const log = cond.lastTurn ? g.lastTurnLog : g.turnLog;
+      if (!log) return false;
       switch (cond.event) {
         case 'creature_died':
           return log.creatureDied;
         case 'opponent_damaged':
           return (log.damagedPlayers ?? []).some((p) => p !== controller);
+        // Command the Stage: "if an opponent was dealt noncombat damage last turn".
+        case 'opponent_noncombat_damaged':
+          return Object.entries(log.noncombatDamageTaken ?? {}).some(([p, n]) => p !== controller && n > 0);
         case 'you_attacked':
           return log.attacked.includes(controller);
+        // Sigardian Paladin: "As long as you've put one or more +1/+1 counters on a creature this turn".
+        case 'you_put_plus_counters':
+          return (log.plusCountersBy ?? []).includes(controller);
+        // Fairgrounds Trumpeter: "if a +1/+1 counter was put on a permanent under your control this turn".
+        case 'plus_counters_on_yours':
+          return (log.plusCountersOn ?? []).includes(controller);
+        // Charging Cinderhorn: "if no creatures attacked this turn".
+        case 'anyone_attacked':
+          return log.attacked.length > 0;
         case 'you_gained_life':
           return log.gainedLife.includes(controller);
         case 'you_activated_loyalty':
@@ -744,6 +787,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         }
         case 'you_lost_life':
           return log.lostLife.includes(controller);
+        // Spellpyre Phoenix: "if you cycled two or more cards this turn".
+        case 'you_cycled':
+          return (log.cycled ?? []).filter((c) => c.player === controller).length >= Number(cond.min ?? 1);
         case 'you_played_land':
           return (g.players[controller]?.landsPlayedThisTurn ?? 0) > 0;
         // Sentinel Sarah Lyons: "an artifact entered the battlefield under your control this turn"

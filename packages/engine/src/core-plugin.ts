@@ -575,7 +575,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const answer = ids.length > 1 ? answerOf(ctx, 'choose_objects') : null;
       if (ids.length > 1 && !answer) {
         const where = node.position === 'top' ? 'top' : 'bottom';
-        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: ids, min: ids.length, max: ids.length, text: `Order these cards for the ${where} of your library (first chosen goes on top of the others).`, ordered: true } };
+        return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: ids, min: ids.length, max: ids.length, text: `Order these cards for the ${where} of ${ids.every((id) => ctx.g.objects[id]!.owner === ctx.controller) ? 'your' : "their owner's"} library (first chosen goes on top of the others).`, ordered: true } };
       }
       const order = answer?.objects ?? ids;
       if (order.length !== ids.length || !order.every((id) => ids.includes(id)) || new Set(order).size !== order.length) throw new RulesError('Put each of those cards in order.');
@@ -1419,7 +1419,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     } else {
       if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
       // Cracked Skull: "look at target player's hand. You may choose a nonland card from it." — seen whatever is in it.
-      if (!candidates.length) return node.lookHand && hand.length ? { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `Looking at: ${p}'s hand.`, seen: [...hand] } } : true;
+      if (!candidates.length) return node.lookHand && hand.length ? { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `Looking at: ${p}'s hand.`, seen: [...hand] } } : node.ifNone ? { expand: node.ifNone as EffectNode[] } : true;
       if (candidates.length > n || node.optional) {
         return {
           ask: {
@@ -1429,7 +1429,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             candidates,
             min: node.optional ? 0 : n,
             max: Math.min(n, candidates.length),
-            text: node.then === 'library_top' && (p === ctx.controller || node.theirChoice) ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
+            text: node.then === 'reveal' ? 'Choose a card to reveal from your hand.' : node.then === 'library_top' && (p === ctx.controller || node.theirChoice) ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
             ...(node.then === 'library_top' ? { ordered: true as const } : {}),
             ...(node.revealHand ? { revealed: [...hand] } : {}),
             ...(node.lookHand ? { seen: [...hand] } : {}),
@@ -1439,6 +1439,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         };
       }
       chosen = candidates;
+    }
+    // Traumatic Revelation: "If you don't, incubate 3." — nothing was chosen.
+    if (!chosen.length && node.ifNone) return { expand: node.ifNone as EffectNode[] };
+    // Priest of the Wakening Sun: "you may reveal a Dinosaur card from your hand" — shown, and kept.
+    if (node.then === 'reveal') {
+      if (chosen.length) ctx.events.push({ type: 'revealed', player: p, objects: [...chosen] });
+      return true;
     }
     // "put two cards from your hand on top of your library in any order": the first chosen ends up on top.
     if (node.then === 'library_top') {
@@ -3151,7 +3158,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           ctx.events.push({ type: 'searched', player, owner });
           return true;
         }
-        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}), ...(node.totalMV !== undefined ? { totalMV: totalMVLimit(ctx, node.totalMV, candidates) } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}) } };
+        // Krosan Verge: "a Forest card and a Plains card" — which description each candidate fits.
+        const descs = node.filters as ObjectFilter[] | undefined;
+        const kinds = descs ? Object.fromEntries(candidates.map((id) => [id, descs.flatMap((f, i) => (matchesFilter(g, g.objects[id]!, { ...liveFilter(ctx, f), zone: g.objects[id]!.zone as never }, { controller: player, source: ctx.source ?? null }) ? [i] : []))])) : undefined;
+        return { ask: { kind: 'search', player: hijack.chooser ?? player, candidates, count, mustFind, text: describeSearch(node, count), ...(node.sameLandType ? { sameLandType: true as const } : {}), ...(node.totalMV !== undefined ? { totalMV: totalMVLimit(ctx, node.totalMV, candidates) } : {}), ...(node.distinctNames ? { distinctNames: true as const } : {}), ...(kinds ? { kinds } : {}) } };
       }
       if (zones.includes('library')) ctx.events.push({ type: 'searched', player, owner });
       chosen = answer.objects;
@@ -3913,7 +3923,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const moved: ObjectRef[] = [];
     for (const id of chosen) {
       if (node.to === 'hand' || node.to === 'exile') moveObject(g, id, node.to, ctx.events);
-      else moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}) });
+      // Cauldron's Gift: "with an additional +1/+1 counter on it".
+      else moveObject(g, id, 'battlefield', ctx.events, { controller: ctx.controller, ...(node.tapped ? { tapped: true } : {}), ...(node.counters ? { counters: node.counters as Record<string, number> } : {}) });
       moved.push({ id, zcc: g.objects[id]!.zcc });
     }
     if (ctx.resolution) ctx.resolution.created = moved;
@@ -4366,6 +4377,24 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   // "Each opponent attacking that player does the same": the same effects, done by each of them as "you".
+  // Processors: "put a card an opponent owns from exile into that player's graveyard" — ones you choose, each to its owner's
+  // graveyard.
+  process(node, ctx) {
+    const g = ctx.g;
+    const n = amountOf(ctx, node.amount ?? 1);
+    const candidates = processCandidates(ctx);
+    if (!candidates.length || n <= 0) return true;
+    let chosen = candidates.length <= n ? candidates : null;
+    if (!chosen) {
+      const answer = answerOf(ctx, 'choose_objects');
+      if (!answer) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates, min: n, max: n, text: `Choose ${n === 1 ? 'a card' : `${n} cards`} your opponents own in exile to put into their owners' graveyards.` } };
+      if (answer.objects.length !== n || new Set(answer.objects).size !== n || !answer.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose ${n} of those cards.`);
+      chosen = answer.objects;
+    }
+    for (const id of chosen) moveObject(g, id, 'graveyard', ctx.events);
+    return true;
+  },
+
   players_do(node, ctx) {
     const players = refPlayers(ctx, ref(node, 'players'));
     return { expand: players.flatMap((p) => (node.effects as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
@@ -4408,7 +4437,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       createdTurn: g.turn,
       createdStep: g.step,
       // Storm King's Thunder: "copy that spell X times" — the X of the spell or ability that created it.
-      effects: bindX(freezeTargetAmounts(node.effects as EffectNode[], ctx), ctx.x),
+      // Brass Infiniscope: "When you next cast a spell with {X} in its mana cost …, gain half X life" — that spell's X instead.
+      effects: (node.on as { filter?: ObjectFilter } | undefined)?.filter?.xInCost ? freezeTargetAmounts(node.effects as EffectNode[], ctx) : bindX(freezeTargetAmounts(node.effects as EffectNode[], ctx), ctx.x),
       // CR 603.7c / 400.7: a target this resolution moved ("put it onto the battlefield … exile it at the beginning of
       // the next end step") is followed to the object it became.
       targets: ctx.targets.map((list) => list.map((t) => (t.kind === 'object' && ctx.resolution?.found?.[t.id] !== undefined ? { ...t, zcc: ctx.resolution.found[t.id]! } : t))),
@@ -4871,8 +4901,15 @@ function lifeExchange(ctx: EffectContext, node: EffectNode): [PlayerId, number][
   return plan.every(([p, to]) => lifeCanBecome(ctx.g, p, to)) ? plan : null;
 }
 
+/** Cards in exile an opponent of the controller owns (processors). */
+function processCandidates(ctx: EffectContext): ObjectId[] {
+  return ctx.g.zones.exile.filter((id) => ctx.g.objects[id]!.owner !== ctx.controller && ctx.g.players[ctx.g.objects[id]!.owner] !== undefined);
+}
+
 function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
+  // Ruin Processor: "you may put a card an opponent owns from exile into that player's graveyard. If you do, …" — that many.
+  if (e.type === 'process') return processCandidates({ ...ctx, controller: chooser }).length >= amountOf(ctx, e.amount ?? 1);
   // Gravestorm: "target opponent may exile a card from their graveyard" — what each of them would do, as themselves.
   if (e.type === 'players_do') return refPlayers(ctx, ref(e, 'players')).every((p) => (e.effects as EffectNode[]).every((x) => feasible(x, { ...ctx, controller: p }, p)));
   // "Exchange control of this creature and target creature an opponent controls. If you do, …" (CR 701.12a).

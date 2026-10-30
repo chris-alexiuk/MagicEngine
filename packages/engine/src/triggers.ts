@@ -393,7 +393,9 @@ function putOnStackNow(g: GameState, t: PendingTrigger, events: GameEvent[], ans
       text: ability.text,
       program: { specs: [], effects: ability.effects },
       targets: t.boundTargets,
-      x: 0,
+      // Brass Infiniscope: "When you next cast a spell with {X} in its mana cost this turn, … gain half X life" — that
+      // spell's X.
+      x: ability.trigger.type === 'cast' && t.info.x !== undefined ? t.info.x : 0,
       trigger: t.info,
     });
     events.push({ type: 'triggered', source: t.source.id, text: ability.text, controller: t.controller });
@@ -681,7 +683,8 @@ function collectDelayed(g: GameState, batch: GameEvent[]): void {
           source: d.source,
           sourceName: d.sourceName,
           ability: { kind: 'triggered', text: d.text, trigger: { type: 'cast', who: 'you' }, effects: d.effects },
-          info: { ...d.info, object: { id: spell.id, zcc: spell.zcc }, player: e.player },
+          // Brass Infiniscope: "… gain half X life" — that spell's X.
+          info: { ...d.info, object: { id: spell.id, zcc: spell.zcc }, player: e.player, ...((x) => (x ? { x } : {}))(g.stack.find((s) => s.kind === 'spell' && s.object === spell.id)?.x) },
           boundTargets: d.targets,
         });
       }

@@ -9,7 +9,7 @@ import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addCost, additionalMana, addModeCosts, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf } from './actions.js';
-import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, lifeCost, unblockedAttackers } from './payment.js';
+import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, processCostCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { defaultTargets, targetCandidates, targetingAs } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -509,6 +509,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
   const returned: ObjectId[] = [];
   const reveal: ObjectId[] = [];
   const blighted: ObjectId[] = [];
+  const processed: ObjectId[] = [];
   let forageFood = false;
   // "Remove any number of storage counters": all of them, by default.
   let counters: number | undefined;
@@ -542,6 +543,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       const pick = exileCostCandidates(g, player, source, c).filter((id) => !exile.includes(id)).slice(0, n);
       if (pick.length < n) return null;
       exile.push(...pick);
+    } else if (c.type === 'process') {
+      const pick = processCostCandidates(g, player).filter((id) => !processed.includes(id)).slice(0, n);
+      if (pick.length < n) return null;
+      processed.push(...pick);
     } else if (c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, source, c)) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     // CR 701.17b: "Mill a card" as a cost needs a card to mill.
@@ -624,10 +629,10 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
       if (total < Number(c.power)) return null;
     }
   }
-  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}), ...(removed.length ? { removed } : {}) };
+  return { ...(sacrifice.length ? { sacrifice } : {}), ...(discard.length ? { discard } : {}), ...(crew.length ? { crew } : {}), ...(exile.length ? { exile } : {}), ...(returned.length ? { returned } : {}), ...(reveal.length ? { reveal } : {}), ...(blighted.length ? { blighted } : {}), ...(processed.length ? { processed } : {}), ...(forageFood ? { forageFood } : {}), ...(counters !== undefined ? { counters } : {}), ...(removed.length ? { removed } : {}) };
 }
 
-const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.forageFood || costs.waterbend || costs.removed || costs.counters !== undefined || costs.freeEquip ? { costs } : {});
+const withCosts = (costs: CostChoices) => (costs.sacrifice || costs.discard || costs.crew || costs.exile || costs.convoke || costs.delve || costs.improvise || costs.returned || costs.reveal || costs.blighted || costs.processed || costs.forageFood || costs.waterbend || costs.removed || costs.counters !== undefined || costs.freeEquip ? { costs } : {});
 
 /** What convoke/improvise/delve choices would leave of the cost (mirrors payWithHelpers). */
 function payWithHelpersDry(g: GameState, help: CostChoices, cost: ReturnType<typeof parseManaCost>): void {

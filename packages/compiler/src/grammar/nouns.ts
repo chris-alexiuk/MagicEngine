@@ -105,7 +105,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     return Boolean(who && ((f.ownedBy = who), true));
   }],
   // "all creatures target player controls", "each creature that player controls"
-  [/ (target player|target opponent|that player|the chosen player|chosen player|they|those opponents|those players) controls?$/, (f, m, b) => {
+  // Biomantic Mastery: "… for each creature another target player controls" — a second player, not the first (CR 115.3).
+  [/ (another target player|another target opponent|target player|target opponent|that player|the chosen player|chosen player|they|those opponents|those players) controls?$/, (f, m, b) => {
     if (/control$/.test(m[0]) !== ['they', 'those opponents', 'those players'].includes(m[1]!)) return false;
     if (f.controller || f.controlledBy) return false;
     const who = parsePlayerRef(m[1]!, b);
@@ -317,6 +318,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with (power|toughness|mana value) (?:X or greater|greater than or equal to X)$/, (f, m) => compare(f, m[1]!, 'X', 'ge')],
   // Steel Hellkite: "each nonland permanent with mana value X"
   [/ with mana value X$/, (f) => compare(f, 'mana value', 'X', 'eq')],
+  // Ent-Draught Basin: "target creature with power X".
+  [/ with (power|toughness) X$/, (f, m) => compare(f, m[1]!, 'X', 'eq')],
   // Urza's Saga: "an artifact card with mana cost {0} or {1}"
   [/ with mana cost ((?:\{[^}]+\})+)(?: or ((?:\{[^}]+\})+))?$/, (f, m) => !f.manaCostIs && ((f.manaCostIs = [m[1]!, ...(m[2] ? [m[2]] : [])]), true)],
   [/ with (power|toughness|mana value) (\d+)$/, (f, m) => compare(f, m[1]!, Number(m[2]), 'eq')],
@@ -336,7 +339,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ without (?:a|an) (\S+) counters? on (?:it|them)$/, (f, m) => !f.notCounter && ((f.notCounter = m[1]!.replace(/−/g, '-')), true)],
   [/ without (?:a counter|counters) on (?:it|them)$/, (f) => !f.notCounter && ((f.notCounter = 'any'), true)],
   // Zenith Flare: "cards with a cycling ability in your graveyard" — typecycling is a cycling ability (CR 702.29e).
-  [/ with a cycling ability$/, (f) => !f.keywords && ((f.keywords = ['cycling', 'typecycling']), true)],
+  // Vile Manifestation: "each card with cycling in your graveyard" — the same.
+  [/ with (?:a cycling ability|cycling)$/, (f) => !f.keywords && ((f.keywords = ['cycling', 'typecycling']), true)],
   [/ without ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
   // Shalai: "each creature you control that doesn't have hexproof"
   [/ that (?:doesn't|don't) have ([a-z ,]+)$/, (f, m, b) => keywordList(f, 'notKeywords', m[1]!, b)],
@@ -413,6 +417,13 @@ function categoryOf(word: string): Category | null {
 export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   // Sonar Strike: "target attacking, blocking, or tapped creature" — any of the three.
   if (text.trim() === 'attacking, blocking, or tapped creature') return { filter: { anyOf: [{ combat: 'attacking_or_blocking', types: ['Creature'] }, { tapped: true, types: ['Creature'] }] }, plural: false };
+  // Mindsparker: "a white or blue instant or sorcery spell" — either color and either type.
+  const colorsTypes = /^((?:an? )?(?:white|blue|black|red|green) or (?:white|blue|black|red|green)) (instant|sorcery|artifact|creature|enchantment) or (instant|sorcery|artifact|creature|enchantment) (spells?|cards?|permanents?)$/.exec(text.trim());
+  if (colorsTypes) {
+    const one = parseFilter(`${colorsTypes[1]} ${colorsTypes[3]} ${colorsTypes[4]}`, b);
+    const t = TYPE_NOUNS[colorsTypes[2]!];
+    if (one && t && !one.filter.anyOf && one.filter.types?.length === 1) return { ...one, filter: { ...one.filter, types: [t, ...one.filter.types] } };
+  }
   // Long Feng, Grand Secretariat: "another creature you control or a land you control" — both yours.
   let rest = text.trim().replace(/^(creature|artifact|enchantment|land|planeswalker) (you control|an opponent controls) or an? (creature|artifact|enchantment|land|planeswalker) \2$/, '$1 or $3 $2');
   // Paradox Surveyor: "a land card or a card with {X} in its mana cost" — a quality after a bare "card" is that
@@ -1081,6 +1092,13 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // the player the trigger is about.
   if (/^another target player$/.test(t) && b.player?.ref === 'trigger_player') {
     const ref = b.addTarget({ what: 'player', text: t, notTriggerPlayer: true });
+    b.player = ref;
+    return ref;
+  }
+  // Biomantic Mastery: "another target player" after a first one — a different player.
+  const anotherPlayer = /^another target (player|opponent)$/.exec(t);
+  if (anotherPlayer && b.targets.some((x) => x.what === 'player')) {
+    const ref = b.addTarget({ what: 'player', text: t, ...(anotherPlayer[1] === 'opponent' ? { player: 'opponent' as const } : {}) });
     b.player = ref;
     return ref;
   }

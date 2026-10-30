@@ -289,6 +289,14 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
           return seen.has(name) ? false : (seen.add(name), true);
         });
       }
+      // Krosan Verge: one card for each description.
+      if (p.kinds) {
+        const used = new Set<number>();
+        pool = pool.filter((id) => {
+          const k = (p.kinds![id] ?? []).find((x) => !used.has(x));
+          return k === undefined ? false : (used.add(k), true);
+        });
+      }
       // Protean Hulk: keep under the total mana value.
       if (p.totalMV) {
         let left = p.totalMV.max;

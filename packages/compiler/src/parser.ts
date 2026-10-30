@@ -164,6 +164,13 @@ export class ParserRegistry {
           const parts = l.split(/(?<=\.) (?=As long as it's )/);
           return [parts[0]!, ...parts.slice(1).map((x) => x.replace(/^As long as it's ([^,]+), it /, `As long as ${subj} is $1, it `))];
         }
+        // Relic Axe: "Equipped creature gets +1/+1. If it's a Warrior, it gets +2/+1 instead." — the base bonus, and the rest of
+        // it as long as it's a Warrior.
+        const ifInstead = /^((?:Equipped|Enchanted) creature) gets \+(\d+)\/\+(\d+)\. If it's an? ([A-Z][a-z]+), it gets \+(\d+)\/\+(\d+) instead\.$/.exec(l);
+        if (ifInstead) {
+          const [p1, t1, p2, t2] = [ifInstead[2], ifInstead[3], ifInstead[5], ifInstead[6]].map(Number) as [number, number, number, number];
+          if (p2 >= p1 && t2 >= t1) return [`${ifInstead[1]} gets +${p1}/+${t1}.`, `As long as ${ifInstead[1]!.toLowerCase()} is a ${ifInstead[4]}, it gets +${p2 - p1}/+${t2 - t1}.`];
+        }
         // Scion of Draco: "Each creature you control has vigilance if it's white, hexproof if it's blue, …" — one static for each
         // color.
         const byColor = /^Each creature you control has (.+)\.$/.exec(l);
@@ -999,6 +1006,13 @@ export class ParserRegistry {
       .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
       // Elenda, Saint of Dusk: "~ gets an additional +5/+5 as long as …" — more of the same, added on.
       .map((l) => l.replace(/\b(gets?) an additional ([+-]\d+\/[+-]\d+)/g, '$1 $2'))
+      // Ordeal of Purphoros: "When you sacrifice this Aura, it deals 3 damage to any target." — the Aura does.
+      .map((l) => l.replace(/^(When you sacrifice (this Aura|this enchantment|this artifact|~)), it deals /, '$1, $2 deals '))
+      // Mongrel Pack: "When this creature dies during combat, …" — dying in the combat phase.
+      .map((l) => l.replace(/^When (this creature|~) dies during combat, /, 'When $1 dies, if it died during combat, '))
+      // Ravaging Riftwurm: "If this creature was kicked, it enters with three additional time counters on it." — added to
+      // the ones vanishing gives it (each replacement adds its own, CR 614.1c).
+      .map((l) => l.replace(/^(If (?:this creature|~) was kicked, it enters with (?:an?|one|two|three|four|five)) additional /, '$1 '))
       // Fallaji Wayfarer: "~ is all colors. This ability doesn't affect its color identity." — color identity is the deck's
       // business (CR 903.4), already set from the card.
       .map((l) => l.replace(/\. This ability doesn't affect its color identity\.$/, '.'))

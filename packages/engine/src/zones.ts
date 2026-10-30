@@ -218,6 +218,11 @@ export function moveObject(
   if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
   const instead = to === 'graveyard' ? exiledInstead(g, o, from) : null;
   if (instead) to = 'exile';
+  // Nissa's Chosen: "put it on the bottom of its owner's library instead".
+  if (instead?.node.libraryBottom) {
+    to = 'library';
+    opts = { ...opts, position: 'bottom' };
+  }
   // "If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead."
   const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
   if (shuffleInstead) to = 'library';
@@ -400,7 +405,9 @@ export function moveObject(
     if (g.dayNight === 'night' && !o.faceDown && def?.faces.length === 2 && def.faces[0]!.keywords.some((k) => k.id === 'daybound') && o.face === 0) o.face = 1;
     const face = faceOf(g, o);
     // CR 702.44a: sunburst — a +1/+1 counter (a charge counter if it isn't a creature) for each color spent to cast it.
-    if (face.keywords.some((k) => k.id === 'sunburst') && o.cast?.colors) {
+    // Solar Array: "that spell gains sunburst" — an effect on the spell that goes on applying to the permanent (CR 400.7a).
+    const grantedSunburst = g.effects.some((e) => e.keywords?.some((k) => k.id === 'sunburst') && e.objects.some((r) => r.id === id && r.zcc === o.zcc));
+    if ((face.keywords.some((k) => k.id === 'sunburst') || grantedSunburst) && o.cast?.colors) {
       const kind = face.types.includes('Creature') ? '+1/+1' : 'charge';
       o.counters[kind] = (o.counters[kind] ?? 0) + entering(kind, o.cast.colors);
     }
@@ -410,6 +417,8 @@ export function moveObject(
     if (face.loyalty !== undefined && /^\d+$/.test(face.loyalty)) o.counters.loyalty = entering('loyalty', Math.max(0, Number(face.loyalty) - compleated));
     // CR 310.4b: a battle enters with defense counters equal to its printed defense.
     if (face.defense !== undefined && /^\d+$/.test(face.defense)) o.counters.defense = entering('defense', Number(face.defense));
+    // CR 122.6: entering with counters is having them put on it (Sigardian Paladin, Fairgrounds Trumpeter).
+    if ((o.counters['+1/+1'] ?? 0) > 0) notePlusCounters(g, o, o.controller);
     onEnterBattlefield(g, o, events);
   }
   events.push({
@@ -666,4 +675,11 @@ function attachmentKinds(g: GameState, o: GameObject): { enchanted?: true; equip
     if (sub.includes('Equipment')) out.equipped = true;
   }
   return out;
+}
+
+/** "if a +1/+1 counter was put on a permanent under your control this turn", "you've put … on a creature this turn". */
+export function notePlusCounters(g: GameState, o: GameObject, by: PlayerId | undefined): void {
+  const log = g.turnLog;
+  if (!(log.plusCountersOn ??= []).includes(o.controller)) log.plusCountersOn.push(o.controller);
+  if (by && chars(g, o).types.includes('Creature') && !(log.plusCountersBy ??= []).includes(by)) log.plusCountersBy.push(by);
 }

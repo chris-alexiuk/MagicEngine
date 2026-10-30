@@ -30,6 +30,8 @@ export interface EffectContext {
   source?: GameObject;
   /** Zone-change count of the source when the ability was put on the stack ("~" means that object only). */
   sourceZcc?: number;
+  /** Farrelite Priest: a mana ability's key for "if this ability has been activated four or more times this turn". */
+  manaAbilityKey?: string;
   /** Player's choice for this effect (e.g. which mana option), when it needs one. */
   choice?: number | ManaColor | ManaMix;
   events: GameEvent[];

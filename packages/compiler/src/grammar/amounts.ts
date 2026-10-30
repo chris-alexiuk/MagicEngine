@@ -116,11 +116,12 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
     const inner = each ? movedThisWay(`${theirs[1]} ${theirs[2]} this way`, b) : null;
     return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
   }
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
+  // Liliana's Indignation: "each creature card put into your graveyard this way" (after a mill).
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|put into your graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
   if (!m) return null;
   const another = /^another /.test(m[1]!);
   const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = (m[2] === 'put into a graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2] === 'put into your hand' ? 'hand' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library' | 'hand';
+  const how = (m[2] === 'put into a graveyard' || m[2] === 'put into your graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2] === 'put into your hand' ? 'hand' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library' | 'hand';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
   // Bonehoard Dracosaur: "a nonland card exiled this way" — a bare "nonland" is read as "nonland permanent".
   const pf = parseFilter(noun, b.clone()) ?? (/^non[a-z]+$/.test(noun) ? parseFilter(`${noun} permanent`, b.clone()) : null);
@@ -319,9 +320,13 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (t === 'opponent you attacked' || t === 'opponent you attacked this turn') return { kind: 'opponents_attacked', thisTurn: true };
   // CR 702.44a / converge: "for each color of mana spent to cast it"
   if (/^color of mana spent to cast (?:it|~|this spell)$/.test(t)) return { kind: 'colors_spent' };
+  // Verazol, the Split Current: "for each mana spent to cast it".
+  if (/^mana spent to cast (?:it|~|this creature)$/.test(t) && (!b.it || b.it.ref === 'self')) return { kind: 'mana_spent', of: { ref: 'self' } };
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
+  // Outlaw Stitcher: "for each spell you've cast this turn other than the first" — one fewer.
+  if (t === "spell you've cast this turn other than the first") return { kind: 'spells_cast_this_turn', plus: -1 };
   // Hollow One: "for each card you've cycled or discarded this turn" — cycling discards the card (CR 702.29a), so each is one
   // discard.
   if (t === "card you've discarded this turn" || t === "card you've cycled or discarded this turn") return { kind: 'discarded_this_turn' };
@@ -446,6 +451,18 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   }
   // Dihada's Ploy: "the number of cards you've discarded this turn".
   if (/^the number of cards you(?:'ve)? discarded this turn$/.test(t)) return { kind: 'discarded_this_turn' };
+  // Flesh // Blood: "Exile target creature card from a graveyard. Put X +1/+1 counters on target creature, where X is the
+  // power of the card you exiled." — that target, in exile.
+  const exiledStat = /^the (power|toughness|mana value) of the card you exiled$/.exec(t);
+  if (exiledStat && b.it?.ref === 'target' && b.targets[b.it.index]?.filter?.zone === 'graveyard') return { kind: 'stat', stat: exiledStat[1] === 'mana value' ? 'mana_value' : (exiledStat[1] as 'power' | 'toughness'), of: b.it };
+  // Bronze Cudgels: "where X is the number of times this ability has resolved this turn".
+  if (t === 'the number of times this ability has resolved this turn') return { kind: 'ability_resolutions' };
+  // Dream Salvage: "the number of cards target opponent discarded this turn".
+  const theyDiscarded = /^the number of cards (target opponent|target player|that player) (?:has )?discarded this turn$/.exec(t);
+  if (theyDiscarded) {
+    const player = parsePlayerRef(theyDiscarded[1]!, b);
+    return player && player.ref !== 'players' ? { kind: 'discarded_this_turn', player } : null;
+  }
   // Prismabasher: "the number of colors among permanents you control" (CR 105.2).
   const colorsAmong = /^the number of colors among (other )?(.+)$/.exec(t);
   if (colorsAmong) {
@@ -554,6 +571,10 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (/^the number of tokens you(?:'ve)? created this turn$/.test(t)) return { kind: 'tokens_created_this_turn' };
   // Combustible Gearhulk: "you mill three cards, then … the total mana value of those cards".
   if (b.milled && /^the total mana value of (?:those cards|the milled cards|the cards milled this way)$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
+  // Foul Renewal: "Return target creature card from your graveyard to your hand. … where X is the toughness of the card
+  // returned this way." — none if it wasn't (CR 608.2b).
+  const returnedStat = /^the (power|toughness|mana value) of the card returned this way$/.exec(t);
+  if (returnedStat) return { kind: 'moved_this_way', how: 'hand', stat: returnedStat[1] === 'mana value' ? 'mana_value' : (returnedStat[1] as 'power' | 'toughness') };
   // Mindshrieker: "Target player mills a card. … where X is the milled card's mana value." — the one card milled.
   if (b.milled && /^the milled card's mana value$/.test(t)) return { kind: 'moved_this_way', how: 'milled', stat: 'mana_value' };
   // Ghalta: "the total power of creatures you control"
@@ -800,7 +821,8 @@ export function scaleBy(effects: EffectNode[], expr: AmountExpr): EffectNode[] |
     if (typeof v === 'number') {
       if (v === 0) return 0;
       scaled++;
-      return { ...expr, times: (expr.times ?? 1) * v };
+      // Outlaw Stitcher: "two +1/+1 counters … for each spell you've cast this turn other than the first" — 2 × (n − 1).
+      return { ...expr, times: (expr.times ?? 1) * v, ...(expr.plus ? { plus: expr.plus * v } : {}) };
     }
     return v;
   };
