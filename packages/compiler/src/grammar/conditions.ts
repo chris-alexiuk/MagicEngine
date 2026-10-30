@@ -462,12 +462,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [otherAttached[1] === 'equipped' ? 'Equipment' : 'Aura'], attachedToRef: b.it } }, op: 'ge', n: 1 };
   if (/^~ is monstrous$/.test(t)) return { type: 'monstrous' };
   // Tadeas, Juniper Ascendant: "As long as ~ isn't attacking".
-  const notAttacking = /^(~|it) (?:isn't|is not) (attacking|blocking)$/.exec(t);
-  if (notAttacking && (notAttacking[1] === '~' || b.it?.ref === 'self')) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
+  // Intrepid Ace: "as long as it isn't attacking or blocking".
+  const notAttacking = /^(~|it) (?:isn't|is not) (attacking or blocking|attacking|blocking)$/.exec(t);
+  const notCombat = notAttacking ? ((notAttacking[2] === 'attacking or blocking' ? 'attacking_or_blocking' : notAttacking[2]) as 'attacking' | 'blocking' | 'attacking_or_blocking') : undefined;
+  if (notAttacking && (notAttacking[1] === '~' || b.it?.ref === 'self')) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { combat: notCombat } } };
   // Tahngarth's Rage: "Enchanted creature gets -2/-1 as long as it isn't attacking."
-  if (notAttacking && notAttacking[1] === 'it' && b.it?.ref === 'attached') return { type: 'not', cond: { type: 'is', of: { ref: 'attached' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
+  if (notAttacking && notAttacking[1] === 'it' && b.it?.ref === 'attached') return { type: 'not', cond: { type: 'is', of: { ref: 'attached' }, filter: { combat: notCombat } } };
   // Gift of Fangs: "as long as it isn't a Vampire" — what the static ability is about.
-  const isnt = /^(~|it|(?:enchanted|equipped) (?:creature|permanent)) isn't (an? [A-Z][\w-]*|(?:white|blue|black|red|green))$/.exec(t);
+  const isnt = /^(~|it|(?:enchanted|equipped) (?:creature|permanent)) isn't (an? [A-Z][\w-]*|an? (?:artifact|enchantment|land)|(?:white|blue|black|red|green))$/.exec(t);
   if (isnt) {
     const subject = isnt[1] === 'it' ? (b.it ? { ref: b.it } : null) : parseObjectRef(isnt[1]!, b.clone(), 'static');
     const filter = subject ? stateFilter(isnt[2]!, b) : null;
@@ -530,6 +532,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Tezzeret: "If it's an artifact creature, put a +1/+1 counter on it." — what it is now (the sentence loop makes sure an
   // earlier effect didn't move it).
   // Tezzeret, Cruel Captain's emblem: "If it's not a creature, it becomes a 0/0 Robot artifact creature."
+  // Mistform Wall: "This creature has defender as long as it's a Wall." — its own subtype (layer 4, before abilities).
+  const selfSub = b.it?.ref === 'self' ? /^it(?:'s| is) an? ([A-Z][a-z]+)$/.exec(t) : null;
+  if (selfSub && isSubtype(selfSub[1]!)) return { type: 'is', of: { ref: 'self' }, filter: { subtypes: [selfSub[1]!] } };
   const itsA = /^(?:it|that creature|that permanent)(?:'s| is)( not)? (an? .+)$/.exec(t);
   if (itsA && b.it && b.it.ref !== 'self') {
     // Currency Converter: "If it's a land card", "If it's a nonland card".
@@ -556,7 +561,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return itsColor[1] ? { type: 'not', cond } : cond;
   }
   // Hexgold Slash: "If that creature has toxic, …".
-  const itsKeyword = /^(?:it|that creature) has (flying|toxic|trample|deathtouch|haste|lifelink|vigilance|reach|defender|menace|first strike|double strike|madness|flashback|cycling)$/.exec(t);
+  const itsKeyword = /^(?:it|that creature) has (flying|toxic|trample|deathtouch|haste|lifelink|vigilance|reach|defender|menace|first strike|double strike|madness|flashback|cycling|infect|wither|shadow|horsemanship|indestructible|hexproof|shroud|fear|intimidate)$/.exec(t);
   if (itsKeyword && b.it && b.it.ref !== 'self') return { type: 'is', of: b.it, filter: { keywords: [itsKeyword[1]!.replace(' ', '_')] } };
   // Gimli's Fury: "If it's legendary, it also gains trample until end of turn."
   const itsLegendary = /^(?:it|that creature|that permanent)(?:'s| is)( not)? legendary$/.exec(t);
@@ -943,7 +948,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     return amount ? { type: 'amount', amount, op: 'ge', n: n as number } : null;
   }
   // Visions of Beyond: "a graveyard has twenty or more cards in it" — any player's.
-  const anyGy = /^a graveyard has (\w+ or more) cards in it$/.exec(t);
+  // Swimmer in Nightmares: "there are ten or more cards in a single graveyard".
+  const anyGy = /^a graveyard has (\w+ or more) cards in it$/.exec(t) ?? /^there are (\w+ or more) cards in a single graveyard$/.exec(t);
   if (anyGy) {
     const c = compare(anyGy[1]!);
     return c ? { type: 'graveyard', ...c, who: 'any_player' } : null;
@@ -1311,6 +1317,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === "you created a token this turn" || t === "you've created a token this turn") return { type: 'this_turn', event: 'you_created_token' };
   if (t === 'a permanent was put into your hand from the battlefield this turn') return { type: 'this_turn', event: 'bounced_to_your_hand' };
   if (/^(?:it|~) dealt combat damage to a player this turn$/.test(t) && (!b.it || b.it.ref === 'self' || b.it.ref === 'trigger_object')) return { type: 'this_turn', event: 'self_dealt_combat_damage' };
+  // Whirling Dervish: "if this creature dealt damage to an opponent this turn".
+  if (/^(?:it|~) dealt damage to an opponent this turn$/.test(t) && (!b.it || b.it.ref === 'self')) return { type: 'this_turn', event: 'self_dealt_damage_to_opponent' };
   // "If an opponent cast a blue spell this turn", "… cast three or more spells this turn"
   const oppCast = /^an opponent (?:has )?cast (a|an|\w+ or more) (.*?)spells? this turn$/.exec(t);
   if (oppCast) {
@@ -1392,6 +1400,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const lacks = /^(?:~|it) doesn't have an? (\S+) counter on it$/.exec(t);
   if (lacks && (t.startsWith('~') || !b.it || b.it.ref === 'self')) return { type: 'counters', of: { ref: 'self' }, counter: lacks[1]!.replace(/−/g, '-'), max: 0 };
   // Marcus, Mutant Mayor: "if that creature has a +1/+1 counter on it" — the creature the trigger is about, now.
+  // Rite of the Serpent: "Destroy target creature. If that creature had a +1/+1 counter on it, …".
+  const thatHad = /^(?:that creature|it) had (?:an?|one or more) (\S+) counters? on it$/.exec(t);
+  if (thatHad && b.it?.ref === 'target') return { type: 'was_type', of: b.it, counter: thatHad[1]! };
   const thatHas = /^(?:that creature|it) has (?:an?|one or more) (\S+) counters? on it$/.exec(t);
   if (thatHas && b.it?.ref === 'trigger_object') return { type: 'counters', of: b.it, counter: thatHas[1]!, min: 1 };
   // Depletion lands: "there are no depletion counters on ~", "~ has no time counters on it"

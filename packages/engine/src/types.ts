@@ -123,6 +123,8 @@ export interface LKIStats {
   supertypes?: string[];
   colors?: string[];
   token?: true;
+  /** Its creature types (every one, with changeling — CR 702.73a). */
+  creatureTypes?: string[];
 }
 
 export interface CostLKI {

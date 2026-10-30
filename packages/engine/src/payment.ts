@@ -11,6 +11,7 @@ import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
 import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 import { cantLoseLife, lifeLoss, replaceQuantity } from './quantities.js';
+import { nextRandom } from './rng.js';
 
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
@@ -63,6 +64,33 @@ export function discardCandidates(g: GameState, player: PlayerId, source: GameOb
   return zoneList(g, 'hand', player).filter(
     (id) => id !== source.id && (!filter || matchesFilter(g, g.objects[id]!, { ...filter, zone: 'hand' }, { controller: player, source })),
   );
+}
+
+/**
+ * "Discard a card at random" costs (Pyromancy, Acceptable Losses): the cards are picked at random as the cost is paid
+ * (CR 701.9b), whatever was chosen for them; choices for the other discard costs keep their places.
+ */
+export function withRandomDiscards(g: GameState, player: PlayerId, source: GameObject, cost: Cost, choices: CostChoices = {}): CostChoices {
+  const costs = (cost.other ?? []).filter((c) => c.type === 'discard');
+  if (!costs.some((c) => c.random)) return choices;
+  const given = choices.discard ?? [];
+  const total = costs.reduce((n, c) => n + Number(c.amount ?? 1), 0);
+  const chosen = costs.filter((c) => !c.random).reduce((n, c) => n + Number(c.amount ?? 1), 0);
+  const out: ObjectId[] = [];
+  let k = 0;
+  for (const c of costs) {
+    const n = Number(c.amount ?? 1);
+    if (!c.random) {
+      out.push(...given.slice(k, k + n));
+      k += n;
+      continue;
+    }
+    // Entries given for a random discard (one for every discard cost) are passed over.
+    if (given.length >= total && given.length > chosen) k += n;
+    const pool = discardCandidates(g, player, source, c.filter as ObjectFilter | undefined).filter((id) => !out.includes(id) && !given.slice(k).includes(id));
+    for (let i = 0; i < n && pool.length; i++) out.push(pool.splice(Math.floor(nextRandom(g) * pool.length), 1)[0]!);
+  }
+  return { ...choices, discard: out };
 }
 
 function checkChosen(chosen: ObjectId[] | undefined, candidates: ObjectId[], n: number, what: string): ObjectId[] {

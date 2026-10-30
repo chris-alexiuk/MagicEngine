@@ -1015,6 +1015,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       ...(node.loseAbilities ? { loseAbilities: true as const } : {}),
       // PuPu UFO: "this creature's base power becomes equal to …" — its base toughness stays.
       ...(node.setPower !== undefined ? { setPower: amountOf(ctx, node.setPower), ...(node.powerOnly ? {} : { setToughness: amountOf(ctx, node.setToughness ?? 0) }) } : {}),
+      // Wall of Tombstones: "this creature's base toughness becomes equal to …" — its base power stays.
+      ...(node.setPower === undefined && node.setToughness !== undefined ? { setToughness: amountOf(ctx, node.setToughness) } : {}),
       // Druid Class: 'becomes a creature with … "This creature's power and toughness are each equal to …"' — counted as it goes.
       ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
@@ -3075,6 +3077,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
 
 
   unless_pays(node, ctx) {
+    // Rhystic Shield: "… unless any player pays {1}" — each player in turn order may pay it; once one does, it isn't done.
+    if (node.anyPlayer) {
+      const memo = ctx.memo as { i?: number };
+      const players = apnap(ctx.g);
+      memo.i ??= 0;
+      let answer = answerOf(ctx, 'pay');
+      for (; memo.i < players.length; memo.i++) {
+        const p = players[memo.i]!;
+        if (!answer) return { ask: { kind: 'pay', player: p, cost: String(node.cost), text: `pay ${String(node.cost)}, or else: ${describeEffects(node.effects as EffectNode[])}`, sourceName: sourceName(ctx) } };
+        if (answer.pay) {
+          payDuringResolution(ctx.g, p, String(node.cost), ctx.events);
+          return { expand: [] };
+        }
+        answer = null;
+      }
+      return { expand: node.effects as EffectNode[] };
+    }
     // CR 118.12a: "[Do something] unless [a player] pays [cost]" — that player chooses whether to pay.
     const payer = refPlayers(ctx, ref(node, 'payer'))[0];
     // "{X}, where X is this creature's power": counted now.
@@ -6266,7 +6285,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
 
 
 /** A `modify` that sets any of these changes characteristics (CR 613.1: layers 4–7) — see CR 611.2c. */
-const CHARACTERISTIC_FIELDS = ['power', 'keywords', 'loseKeywords', 'cantHave', 'types', 'allCreatureTypes', 'colors', 'addColors', 'creatureTypes', 'landTypes', 'loseAbilities', 'setPower', 'livePower', 'switchPT'] as const;
+const CHARACTERISTIC_FIELDS = ['power', 'keywords', 'loseKeywords', 'cantHave', 'types', 'allCreatureTypes', 'colors', 'addColors', 'creatureTypes', 'landTypes', 'loseAbilities', 'setPower', 'setToughness', 'livePower', 'switchPT'] as const;
 
 export const corePlugin: MechanicPlugin = {
   id: 'core',

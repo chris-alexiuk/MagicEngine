@@ -521,9 +521,17 @@ export interface ObjectFilter {
   sharesCardTypeWithExiled?: true;
   /** Shared Animosity: "that shares a creature type with it" (CR 205.3m) — it being this object. */
   sharesCreatureTypeWith?: Ref;
+  /** Endemic Plague: "that share a creature type with the sacrificed creature" — as it was sacrificed (CR 608.2h). */
+  sharesCreatureTypeWithSacrificed?: true;
   /** Mirror Box: "with the same name as that creature" — the name it has (CR 201.2); `sameName` is set by the engine. */
   sameNameAs?: Ref;
   sameName?: string;
+  /**
+   * Radiance (Wojek Siren): "target creature and each other creature that shares a color with it" — that object, and each
+   * that shares a color with it as the effect applies; `radiance` is set by the engine.
+   */
+  radianceOf?: Ref;
+  radiance?: { id: string; colors: string[] };
   /** Tibalt's Trickery: "a nonland card with a different name than that spell" — `differentName` is set by the engine. */
   differentNameAs?: Ref;
   differentName?: string;

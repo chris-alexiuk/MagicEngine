@@ -1152,6 +1152,7 @@ export function matchesFilter(
   if (f.sharesCreatureTypes && !creatureTypesOf(c).some((t) => f.sharesCreatureTypes!.includes(t))) return false;
   if (f.sameName !== undefined && nameOf(g, o) !== f.sameName) return false;
   if (f.sameNameAs && f.sameName === undefined) return false;
+  if (f.radianceOf && !(f.radiance && (f.radiance.id === o.id || c.colors.some((x) => f.radiance!.colors.includes(x))))) return false;
   if (f.differentName !== undefined && nameOf(g, o) === f.differentName) return false;
   if (f.otherThan && f.notObject === undefined && !((f.otherThan as { ref?: string }).ref === 'self' && ctx.source && ctx.source.id !== o.id)) return false;
   if (f.notObject !== undefined && f.notObject === o.id) return false;
@@ -1288,7 +1289,8 @@ const COLOR_NAMES: Record<Color, string> = { W: 'white', U: 'blue', B: 'black', 
 /** CR 608.2h: an object's characteristics as it is now, remembered for after it's sacrificed or discarded. */
 export function lkiStats(g: GameState, o: GameObject): LKIStats {
   const c = chars(g, o);
-  return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors], ...(o.token ? { token: true as const } : {}) };
+  const creatureTypes = c.types.includes('Creature') || c.keywords.some((k) => k.id === 'changeling') ? creatureTypesOf(c) : [];
+  return { power: c.power, toughness: c.toughness, mana_value: manaValueOf(g, o), types: [...c.types], subtypes: [...c.subtypes], supertypes: [...c.supertypes], colors: [...c.colors], ...(o.token ? { token: true as const } : {}), ...(creatureTypes.length ? { creatureTypes: [...creatureTypes] } : {}) };
 }
 
 /** Spells whose conditional self-rules are being evaluated (a guard against a condition that reads the spell itself). */

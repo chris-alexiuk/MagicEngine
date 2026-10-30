@@ -280,6 +280,14 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     if (!pf || !pf.plural || pf.filter.zone) return null;
     return { type: 'sacrifice', filter: pf.filter, amount: 'X' };
   }
+  // Vicious Betrayal, Corpse Cobble: "As an additional cost to cast this spell, sacrifice any number of creatures.";
+  // Soulblast: "… sacrifice all creatures you control."
+  const sacAny = /^[Ss]acrifice (any number of|all) (.+?)( you control)?$/.exec(item);
+  if (sacAny && b && (sacAny[1] === 'any number of' || sacAny[3])) {
+    const pf = parseFilter(sacAny[2]!, b);
+    if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
+    return { type: 'sacrifice', filter: pf.filter, amount: sacAny[1] === 'all' ? 'all' : 'any' };
+  }
   const sac = /^[Ss]acrifice (a|an|one|two|three|four|five|six|seven|eight|nine|ten|another) (other )?(.+)$/.exec(item);
   if (sac && b) {
     // Mondrak: "Sacrifice two other artifacts and/or creatures"
@@ -290,8 +298,9 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     if (sac[1] === 'another' || sac[2]) pf.filter.other = true;
     return { type: 'sacrifice', filter: pf.filter, amount };
   }
-  const discard = /^[Dd]iscard (a|one|two|three) cards?$/.exec(item);
-  if (discard) return { type: 'discard', amount: parseAmount(discard[1]!) };
+  // Pyromancy: "Discard a card at random" — the card is picked at random (CR 701.9b).
+  const discard = /^[Dd]iscard (a|one|two|three) cards?( at random)?$/.exec(item);
+  if (discard) return { type: 'discard', amount: parseAmount(discard[1]!), ...(discard[2] ? { random: true } : {}) };
   const discardMV = /^[Dd]iscard a card with mana value (\d+)$/.exec(item);
   if (discardMV) return { type: 'discard', amount: 1, filter: { manaValue: { op: 'eq', n: Number(discardMV[1]) } } };
   // CR 701.59a: "Collect evidence 6"
@@ -495,7 +504,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     // Kozilek, the Great Distortion: "Discard a card with mana value X" — the X announced as it's activated (the engine
     // binds it to the discarded card, CR 601.2b via 602.2b).
     else if (/^[Dd]iscard a card with mana value X$/.test(item) && !planeswalker) (cost.other ??= []).push({ type: 'discard', amount: 1, filter: { manaValue: { op: 'eq', n: 'X' } } });
-    else if (choiceCost(item, b)) (cost.other ??= []).push(choiceCost(item, b)!);
+    // ("sacrifice any number of …" / "all …" is read only as a spell's additional cost.)
+    else if (choiceCost(item, b) && !['any', 'all'].includes(String(choiceCost(item, b)!.amount))) (cost.other ??= []).push(choiceCost(item, b)!);
     // Jarad: "Sacrifice a Swamp and a Forest"; Mount Doom: "Sacrifice Mount Doom and a legendary artifact" — each its own.
     else if (/^[Ss]acrifice (?:~|(?:a|an) [^,]+?) and (?:a|an) [^,]+$/.test(item)) {
       const m = /^[Ss]acrifice (~|(?:a|an) [^,]+?) and ((?:a|an) [^,]+)$/.exec(item)!;
@@ -4296,6 +4306,17 @@ export const staticPreventionRule: GrammarRule = {
     // Energy Field: "Prevent all damage that would be dealt to you by sources you don't control."
     // Wall of Vapor: "Prevent all damage that would be dealt to this creature by creatures it's blocking."; Armored Transport:
     // "… combat damage … by creatures blocking it."
+    // Desert Nomads: "Prevent all damage that would be dealt to this creature by Deserts."; Wall of Putrid Flesh: "… by
+    // enchanted creatures"; Argothian Treefolk: "… by artifact sources" — any source of that kind (a spell too).
+    const bySelf = env ? /^Prevent all (combat )?damage that would be dealt to (?:~|this creature) by ((?:[a-z]+ )+(?:sources|creatures)|[A-Z][a-z]+s)\.$/.exec(line) : null;
+    if (bySelf && !/^(?:sources you|sources your|creatures (?:it's|blocking))/.test(bySelf[2]!)) {
+      const sources = /^(.+?) sources$/.exec(bySelf[2]!);
+      const pf = parseFilter(sources ? `${sources[1]} permanents` : bySelf[2]!, new Binder(env!));
+      if (pf?.plural && !pf.filter.zone && !pf.filter.controller) {
+        const node: StaticPreventionNode = { type: 'prevent_damage', toSelf: true, from: pf.filter, ...(bySelf[1] ? { damage: 'combat' as const } : {}) };
+        return { kind: 'static', text: original, effect: node };
+      }
+    }
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|sources you control|creatures(?: it's blocking| blocking it)?))?( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);

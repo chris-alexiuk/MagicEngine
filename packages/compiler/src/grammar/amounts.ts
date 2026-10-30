@@ -600,6 +600,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Ghalta: "the total power of creatures you control"
   // The Skullspore Nexus: "the total power of those creatures" — the ones that died together.
   if (b.batchPower && t === 'the total power of those creatures') return { kind: 'event', stat: 'power' };
+  // Corpse Cobble: "the total power of the sacrificed creatures" — all of them, as they were sacrificed (CR 608.2h).
+  const lkiTotal = /^the total (power|toughness|mana value) of the (sacrificed|discarded) (?:creatures|cards|permanents)$/.exec(t);
+  if (lkiTotal) return { kind: 'cost_lki', cost: lkiTotal[2] as 'sacrificed' | 'discarded', stat: lkiTotal[1] === 'mana value' ? 'mana_value' : (lkiTotal[1] as 'power' | 'toughness') };
   const totalPower = /^the total (power|toughness|mana value) of (other )?(.+)$/.exec(t);
   if (totalPower) {
     // Summon: Bahamut: "the total mana value of other permanents you control" — other than the source.

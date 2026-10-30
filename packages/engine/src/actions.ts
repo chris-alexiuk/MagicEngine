@@ -27,7 +27,7 @@ import { reduceCostBy, parseManaCost, type ManaCost } from './mana.js';
 import { lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
-import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, payOtherCosts, runManaAbility } from './payment.js';
+import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, payOtherCosts, runManaAbility, sacrificeCandidates, withRandomDiscards } from './payment.js';
 import { settlePhyrexian } from './autotap.js';
 import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
@@ -814,6 +814,13 @@ function cast(
       ...(targetLifeTax(g, player, targets) > 0 ? [{ type: 'pay_life', amount: targetLifeTax(g, player, targets) }] : []),
     ].map((c) => (c.amount === 'X' ? { ...c, amount: x } : c)),
   };
+  // Soulblast: "sacrifice all creatures you control" — every one of them; there's nothing to choose (CR 601.2b).
+  const sacAll = (additional.other ?? []).find((c) => c.type === 'sacrifice' && c.amount === 'all');
+  if (sacAll) {
+    const all = sacrificeCandidates(g, player, sacAll, o);
+    costChoices = { ...costChoices, sacrifice: [...(costChoices.sacrifice ?? []).filter((id) => !all.includes(id)), ...all] };
+    additional.other = additional.other!.map((c) => (c === sacAll ? { ...c, amount: all.length } : c));
+  }
   // Torgaar, Plumb the Forbidden: "you may sacrifice any number of creatures" — as many as were chosen (CR 601.2b).
   const fixedSacrifices = (additional.other ?? []).filter((c) => c.type === 'sacrifice' && c.amount !== 'any').reduce((n, c) => n + Number(c.amount ?? 1), 0);
   const anySacrificed = (additional.other ?? []).some((c) => c.type === 'sacrifice' && c.amount === 'any') ? Math.max(0, (costChoices.sacrifice?.length ?? 0) - fixedSacrifices) : 0;
@@ -827,6 +834,7 @@ function cast(
     if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perSacrificed) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anySacrificed);
     if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perExiled) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anyExiled);
   }
+  costChoices = withRandomDiscards(g, player, o, additional, costChoices);
   checkOtherCosts(g, player, o, additional, costChoices);
   // CR 119.4: all the life it costs at once.
   const lifeTotal = (additional.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
@@ -1198,6 +1206,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (cost.untap && !o.tapped) throw new RulesError(`${name} is already untapped.`);
   // CR 302.6: the untap symbol too.
   if (cost.untap && !canActivateTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
+  choices = { ...choices, costs: withRandomDiscards(g, player, o, cost, choices.costs) };
   checkOtherCosts(g, player, o, cost, choices.costs);
 
   // CR 602.2b (following CR 601.2b–c): modes and targets.

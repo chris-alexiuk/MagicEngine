@@ -45,8 +45,9 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     return pf && pf.plural ? { cantBeBlockedBy: pf.filter, cantBlockOf: pf.filter } : null;
   }
   const by = /^can't be blocked by (.+)$/.exec(p);
-  // Doorman: "can't be blocked by creatures with power 2 or less and/or Walls" — by either.
-  const byEither = by ? /^(.+?) and\/or (.+)$/.exec(by[1]!) : null;
+  // Doorman: "can't be blocked by creatures with power 2 or less and/or Walls"; Temple Thief: "… by enchanted creatures or
+  // enchantment creatures" — by either.
+  const byEither = by ? /^(.+?) and\/or (.+)$/.exec(by[1]!) ?? (!parseFilter(by[1]!, b.clone()) ? /^(.+? creatures) or (.+? creatures)$/.exec(by[1]!) : null) : null;
   if (byEither) {
     const one = parseFilter(byEither[1]!, b.clone());
     const two = one ? parseFilter(byEither[2]!, b.clone()) : null;
@@ -70,7 +71,8 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   }
   // Spectral Grasp: "can't block creatures you control".
   // Zurgo Bellstriker: "can't block creatures with power 2 or greater".
-  const cantBlockOf = /^can't block (creatures (?:you control|your opponents control|with power \d+ or (?:greater|less)))$/.exec(p);
+  // Hunted Ghoul: "can't block Humans"; Orcish Veteran: "can't block white creatures with power 2 or greater".
+  const cantBlockOf = /^can't block ((?:[a-z]+ )*creatures (?:you control|your opponents control|with power \d+ or (?:greater|less))|(?:(?:white|blue|black|red|green|artifact|nonartifact|colorless) )+creatures(?: with (?:power \d+ or (?:greater|less)|flying))?|[A-Z][a-z]+s)$/.exec(p);
   if (cantBlockOf) {
     const pf = parseFilter(cantBlockOf[1]!, b);
     return pf && pf.plural ? { cantBlockOf: pf.filter } : null;

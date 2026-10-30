@@ -186,6 +186,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ other than (?:enchanted|equipped) creature$/, (f) => !f.otherThan && !f.other && ((f.otherThan = { ref: 'attached' }), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Braids, Arisen Nightmare: "a permanent … that shares a card type with it" — what was sacrificed.
+  // Endemic Plague: "all creatures that share a creature type with the sacrificed creature".
+  [/ that shares? a creature type with the sacrificed creature$/, (f) => !f.sharesCreatureTypeWithSacrificed && ((f.sharesCreatureTypeWithSacrificed = true), true)],
   [/ that shares a card type with the sacrificed permanent$/, (f) => !f.sharesCardTypeWithSacrificed && ((f.sharesCardTypeWithSacrificed = true), true)],
   [/ that shares? a card type with the exiled card$/, (f) => !f.sharesCardTypeWithExiled && ((f.sharesCardTypeWithExiled = true), true)],
   // Relentless Assault: "Untap all creatures that attacked this turn."

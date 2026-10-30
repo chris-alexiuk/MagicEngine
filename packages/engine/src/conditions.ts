@@ -122,6 +122,8 @@ export interface TurnLog {
   loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
   combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; legendary?: boolean; source?: ObjectId; zcc?: number }[];
+  /** Damage of any kind dealt to players this turn, by source (Whirling Dervish). */
+  playerDamagers?: { player: PlayerId; source: ObjectId; zcc: number; controller: PlayerId }[];
 }
 
 export function newTurnLog(): TurnLog {
@@ -234,6 +236,8 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         if (e.to.kind === 'player' && !log.damagedPlayers.includes(e.to.player)) log.damagedPlayers.push(e.to.player);
         if (e.to.kind === 'player') (log.damageTaken ??= {})[e.to.player] = (log.damageTaken[e.to.player] ?? 0) + e.amount;
         if (e.to.kind === 'player' && !e.combat) (log.noncombatDamageTaken ??= {})[e.to.player] = (log.noncombatDamageTaken[e.to.player] ?? 0) + e.amount;
+        // Whirling Dervish: "if this creature dealt damage to an opponent this turn" — any damage, by this object.
+        if (e.to.kind === 'player' && g.objects[e.source]) (log.playerDamagers ??= []).push({ player: e.to.player, source: e.source, zcc: g.objects[e.source]!.zcc, controller: g.objects[e.source]!.controller });
         if (e.to.kind === 'player' && e.combat && g.objects[e.source]) {
           const s = g.objects[e.source]!;
           const c = chars(g, s);
@@ -406,6 +410,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         const lk = g.lastKnown?.[ofTarget.id];
         const was = now && now.zcc === ofTarget.zcc && now.zone === 'battlefield' ? chars(g, now) : lk && lk.zcc === ofTarget.zcc ? { types: lk.types ?? [], subtypes: lk.subtypes ?? [], supertypes: lk.supertypes ?? [], colors: lk.colors ?? [] } : null;
         if (!was) return false;
+        // Rite of the Serpent: "If that creature had a +1/+1 counter on it" — as it last existed (CR 608.2h).
+        if (typeof cond.counter === 'string') {
+          const counters = now && now.zcc === ofTarget.zcc && now.zone === 'battlefield' ? now.counters : (lk?.counters ?? {});
+          return (counters[cond.counter] ?? 0) > 0;
+        }
         // Filigree Fracture: "If that permanent was blue or black" — any of them.
         if (Array.isArray(cond.colors)) return (cond.colors as string[]).some((c) => (was.colors as string[]).includes(c));
         // Liliana's Defeat: "a Liliana planeswalker" (both); Choking Sands: "nonbasic" (CR 205.4).
@@ -839,6 +848,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (log.crimes ?? []).includes(controller);
         // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
         // battlefield just now (one zone change ago if it has left).
+        case 'self_dealt_damage_to_opponent':
+          return Boolean(source && (log.playerDamagers ?? []).some((d) => d.source === source.id && d.player !== controller && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
         case 'self_dealt_combat_damage':
           return Boolean(source && (log.combatDamagers ?? []).some((d) => d.source === source.id && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
         // Barrin, Tolarian Archmage: "if a permanent was put into your hand from the battlefield this turn".

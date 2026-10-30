@@ -212,7 +212,8 @@ export class ParserRegistry {
         // Gift of Fangs: "Enchanted creature gets +2/+2 as long as it's a Vampire. Otherwise, it gets -2/-2."
         // Bonds of Faith: "… as long as it's a Human. Otherwise, it can't attack or block."
         // Tahngarth's Rage: "Enchanted creature gets +3/+0 as long as it's attacking. Otherwise, it gets -2/-1."
-        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*|attacking)\. Otherwise, it (gets [+-]\d+\/[+-]\d+|can't attack or block|can't block)\.$/.exec(l);
+        // Nyx Infusion: "… as long as it's an enchantment. Otherwise, it gets -2/-2."; Serra's Boon: "… as long as it's white."
+        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*|an? (?:artifact|enchantment|land)|attacking|white|blue|black|red|green)\. Otherwise, it (gets [+-]\d+\/[+-]\d+|can't attack or block|can't block)\.$/.exec(l);
         if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
         // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
         const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);

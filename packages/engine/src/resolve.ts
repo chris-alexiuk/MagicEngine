@@ -836,6 +836,12 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const { subtypesChosenThisWay: _c, ...rest } = f;
     return bindFilter(ctx, { ...rest, subtypes: [...new Set(ctx.resolution?.chosenTypes ?? [])].length ? [...new Set(ctx.resolution!.chosenTypes!)] : ['\u0000none'] });
   }
+  if (f.sharesCreatureTypeWithSacrificed) {
+    // Endemic Plague: the creature types of the creature sacrificed to cast it, as it last existed (CR 608.2h).
+    const was = ctx.resolution?.entry.costLKI?.sacrificed?.[0] ?? ctx.resolution?.lkiThisWay?.sacrificed?.[0];
+    const { sharesCreatureTypeWithSacrificed: _s, ...rest } = f;
+    return bindFilter(ctx, { ...rest, sharesCreatureTypes: [...(was?.creatureTypes ?? [])] });
+  }
   if (f.sharesCardTypeWithSacrificed) {
     // Braids: the card types of the permanent sacrificed first in this resolution, as it last existed (CR 608.2h).
     const was = ctx.resolution?.lkiThisWay?.sacrificed?.[0]?.types ?? [];
@@ -843,8 +849,12 @@ export function bindFilter(ctx: EffectContext, f: ObjectFilter): ObjectFilter {
     const types = PERMANENT_CARD_TYPES.filter((t) => was.includes(t));
     return bindFilter(ctx, { ...rest, types: rest.types ? rest.types.filter((t) => types.includes(t)) : types });
   }
-  if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs && !f.differentNameAs) return f;
+  if (!f.sharesCreatureTypeWith && !f.otherThan && !f.sameNameAs && !f.differentNameAs && !f.radianceOf) return f;
   const out: ObjectFilter = { ...f };
+  if (f.radianceOf) {
+    const [o] = refObjects(ctx, f.radianceOf as Ref);
+    out.radiance = o ? { id: o.id, colors: [...chars(ctx.g, o).colors] } : { id: '', colors: [] };
+  }
   if (f.sameNameAs) {
     const [o] = refObjects(ctx, f.sameNameAs as Ref);
     out.sameName = o ? nameOf(ctx.g, o) : '\u0000';
