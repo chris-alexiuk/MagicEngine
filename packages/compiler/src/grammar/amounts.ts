@@ -654,6 +654,13 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   const diedStat = /^the (power|toughness) of the creature that died$/.exec(t);
   if (diedStat && b.named['that creature']?.ref === 'trigger_object') return { kind: 'stat', stat: diedStat[1] as 'power' | 'toughness', of: { ref: 'trigger_object' } };
   // "its power", "~'s toughness", "that creature's power", "the sacrificed creature's power".
+  // Soul's Grace: "You gain life equal to target creature's power." — the target, chosen as it's cast (CR 601.2c).
+  const targetStat = /^(target (?:creature|artifact|permanent)(?: you control| an opponent controls)?)'s (power|toughness|mana value)$/.exec(t);
+  if (targetStat) {
+    const of = parseObjectRef(targetStat[1]!, b);
+    if (!of || of.plural || of.ref.ref !== 'target') return null;
+    return { kind: 'stat', stat: targetStat[2] === 'mana value' ? 'mana_value' : (targetStat[2] as 'power' | 'toughness'), of: of.ref };
+  }
   const stat = /^(.+?)(?:'s?)? (power|toughness|mana value)$/.exec(t);
   if (stat) {
     const subject = stat[1] === 'its' ? 'it' : stat[1]!.replace(/'s?$/, '');

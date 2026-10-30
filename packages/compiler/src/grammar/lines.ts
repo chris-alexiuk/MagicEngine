@@ -857,6 +857,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const base = parseTrigger(word, yourTurn[1]!, b);
     if (base && base.trigger.type !== 'phase' && !base.trigger.while) return { ...base, trigger: { ...base.trigger, while: { type: 'your_turn', value: true } } };
   }
+  // Wax-Wane Witness: "Whenever you gain or lose life during your turn" — either event, each time.
+  if (t === 'you gain or lose life') return { trigger: { type: 'either', of: [{ type: 'gain_life', who: 'you' }, { type: 'lose_life', who: 'you' }] }, it: { ref: 'self' }, player: { ref: 'you' } };
   // Emberwilde Captain: "Whenever an opponent attacks you while you're the monarch".
   const oppWhile = /^(an opponent attacks you) while (.+)$/.exec(t);
   if (oppWhile) {
@@ -1314,6 +1316,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Angelic Guardian: "Whenever one or more creatures you control attack, they gain indestructible until end of turn."
     b.named['they'] = b.named['those creatures'];
     b.named['them'] = b.named['those creatures'];
+    // Vrestin, Menoptra Leader: "put a +1/+1 counter on each of them".
+    b.named['each of them'] = b.named['those creatures'];
     // Poetic Ingenuity: "Whenever one or more Dinosaurs you control attack, create that many Treasure tokens."
     b.eventAmount = true;
     return { trigger: { type: 'you_attack', filter }, it: { ref: 'self' }, player: null };
@@ -3905,7 +3909,7 @@ export const quantityReplacementRule: GrammarRule = {
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
     // Gisela, Blade of Goldnight: "… that source deals double that damage to that player or permanent instead."
-    const damage = /^If (a|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target|an opponent), (?:it|that source) deals (.+?) (?:to that (?:permanent or player|player or permanent|player) )?instead\.$/.exec(line);
+    const damage = /^If (a|an|another) (.*?)(?:source|(creature))( you control)? would deal (noncombat )?damage to (a permanent or player|an opponent or a permanent an opponent controls|the chosen player or a permanent they control|any target|an opponent), (?:it|that source) deals (.+?) (?:to that (?:permanent or player|player or permanent|player) )?instead\.$/.exec(line);
     if (damage) {
       const creature = Boolean(damage.splice(3, 1)[0]);
       const op = quantityOp(damage[6]!);
@@ -3914,7 +3918,8 @@ export const quantityReplacementRule: GrammarRule = {
       const adjective = damage[2]!.trim();
       if (adjective) {
         // Mechanized Warfare: "a red or artifact source you control" — either.
-        const each = adjective.split(' or ').map((w): ObjectFilter | null => (COLOR_WORDS[w] ? { colors: [COLOR_WORDS[w]!] } : w === 'artifact' ? { types: ['Artifact'] } : null));
+        // Pyromancer's Swath: "an instant or sorcery source you control".
+        const each = adjective.replace(/^(?:an? )/, '').split(' or ').map((w): ObjectFilter | null => (COLOR_WORDS[w] ? { colors: [COLOR_WORDS[w]!] } : w === 'artifact' || w === 'instant' || w === 'sorcery' ? { types: [w.replace(/^\w/, (c) => c.toUpperCase())] } : null));
         if (each.some((f) => !f)) return null;
         if (each.length === 1) Object.assign(filter, each[0]);
         else filter.anyOf = each as ObjectFilter[];

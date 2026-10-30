@@ -1177,6 +1177,16 @@ const CARDS = [
   makeCard({ name: 'Freebooter Lite', type_line: 'Creature — Human Pirate', mana_cost: '{0}', power: '1', toughness: '2', oracle_text: 'Flying\nWhen this creature enters, target opponent reveals their hand. You choose a noncreature, nonland card from it. Exile that card until this creature leaves the battlefield.' }),
   makeCard({ name: 'Sculler Lite', type_line: 'Artifact Creature — Zombie', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: "When this creature enters, target opponent reveals their hand and you choose a nonland card from it. Exile that card.\nWhen this creature leaves the battlefield, return the exiled card to its owner's hand." }),
   makeCard({ name: 'Quarry Lite', type_line: 'Creature — Giant', mana_cost: '{0}', power: '5', toughness: '6', oracle_text: "When this creature enters, put target creature into its owner's library just beneath the top X cards of that library, where X is the number of Plains you control." }),
+  makeCard({ name: 'Abeyance Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "Until end of turn, target player can't cast instant or sorcery spells, and that player can't activate abilities that aren't mana abilities.\nDraw a card." }),
+  makeCard({ name: 'Soul Grace Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: "You gain life equal to target creature's power." }),
+  makeCard({ name: 'Scout Warning Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'The next creature card you play this turn can be played as though it had flash.' }),
+  makeCard({ name: 'Swath Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If an instant or sorcery source you control would deal damage to a permanent or player, it deals that much damage plus 2 to that permanent or player instead.' }),
+  makeCard({ name: 'Wax Witness Lite', type_line: 'Creature — Bat Cleric', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever you gain or lose life during your turn, this creature gets +1/+0 until end of turn.' }),
+  makeCard({ name: 'Vrestin Lite', type_line: 'Legendary Creature — Insect Scout', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Whenever you attack with one or more Insects, put a +1/+1 counter on each of them.' }),
+  makeCard({ name: 'Bug Lite', type_line: 'Creature — Insect', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Kestia Lite', type_line: 'Legendary Enchantment Creature — Nymph', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Whenever an enchanted creature or enchantment creature you control attacks, draw a card.' }),
+  makeCard({ name: 'Knollridge Lite', type_line: 'Creature — Giant Wizard', mana_cost: '{0}', power: '2', toughness: '5', oracle_text: "When this creature enters, each player's life total becomes the highest life total among all players." }),
+  makeCard({ name: 'Muldrak Lite', type_line: 'Legendary Creature — Human Scout', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'At the beginning of your end step, each player who controls the fewest creatures creates a 4/3 blue Salamander Warrior creature token.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -10104,6 +10114,82 @@ describe('Sieges', () => {
     r = act(r, { type: 'cast', player: 'alice', object: give(r, 'alice', 'Quarry Lite', 'hand') });
     r = drive(r, (x) => (x.pending?.kind === 'trigger_targets' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: sunk }]] } }) : null));
     expect(r.zones.library.bob!.indexOf(sunk)).toBe(3);
+  });
+
+  it("Abeyance, Soul's Grace, Scout's Warning", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    const pinger = give(g, 'bob', 'Pinger Human Lite', 'battlefield');
+    const cycler = give(g, 'bob', 'Zero Cycler Lite', 'hand');
+    const salve = give(g, 'bob', 'Salve', 'hand');
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Abeyance Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect(g.priority).toBe('bob');
+    const offers = legalActions(g, 'bob');
+    expect(offers.length).toBeGreaterThan(0);
+    expect([offers.some((a) => a.type === 'activate' && a.object === pinger), offers.some((a) => a.type === 'activate' && a.object === cycler), offers.some((a) => a.type === 'cast' && a.object === salve)]).toEqual([false, false, false]);
+    g = drive(toStep(g, 'main1', 'alice'), () => null);
+    expect(legalActions(g, 'alice').length).toBeGreaterThan(0);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const big = give(h, 'bob', 'Ogre', 'battlefield');
+    const life = h.players.alice!.life;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Soul Grace Lite', 'hand'), targets: [[{ kind: 'object', object: big }]] }));
+    expect(h.players.alice!.life - life).toBe(5);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(k, 'alice', 'Cub', 'hand');
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Scout Warning Lite', 'hand') }));
+    k = act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Salve', 'hand') });
+    expect(legalActions(k, 'alice').some((a) => a.type === 'cast' && a.object === cub)).toBe(true);
+  });
+
+  it("Pyromancer's Swath, Wax-Wane Witness, Vrestin, Kestia, Arbiter of Knollridge, Gor Muldrak", () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Swath Lite', 'battlefield');
+    const ogre = give(g, 'bob', 'Ogre Three', 'battlefield');
+    const pinger = give(g, 'alice', 'Pinger Human Lite', 'battlefield');
+    const life = g.players.bob!.life;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]] }));
+    g = settle(act(g, { type: 'activate', player: 'alice', object: pinger, ability: 0, targets: [[{ kind: 'object', object: ogre }]] }));
+    expect([life - g.players.bob!.life, g.objects[ogre]!.damage]).toEqual([5, 1]);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const bat = give(h, 'alice', 'Wax Witness Lite', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Salve', 'hand') }));
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(chars(h, h.objects[bat]!).power).toBe(3);
+    h = drive(toStep(h, 'main1', 'bob'), () => null);
+    h = settle(act(h, { type: 'cast', player: 'bob', object: give(h, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(chars(h, h.objects[bat]!).power).toBe(1);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of k.zones.battlefield.filter((id) => k.objects[id]!.controller === 'bob')) moveObject(k, id, 'graveyard', []);
+    give(k, 'alice', 'Vrestin Lite', 'battlefield');
+    const [bug, cub] = [give(k, 'alice', 'Bug Lite', 'battlefield', { sick: false }), give(k, 'alice', 'Cub', 'battlefield', { sick: false })];
+    k = drive(attackWith(k, [bug, cub]), () => null);
+    expect([k.objects[bug]!.counters['+1/+1'], k.objects[cub]!.counters['+1/+1'] ?? 0]).toEqual([1, 0]);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of m.zones.battlefield.filter((id) => m.objects[id]!.controller === 'bob')) moveObject(m, id, 'graveyard', []);
+    const kestia = give(m, 'alice', 'Kestia Lite', 'battlefield', { sick: false });
+    const plain = give(m, 'alice', 'Cub', 'battlefield', { sick: false });
+    const lib = m.zones.library.alice!.length;
+    m = drive(attackWith(m, [kestia, plain]), () => null);
+    expect(lib - m.zones.library.alice!.length).toBe(1);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    n.players.bob!.life = 33;
+    n.players.alice!.life = 12;
+    n = settle(act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Knollridge Lite', 'hand') }));
+    expect([n.players.alice!.life, n.players.bob!.life]).toEqual([33, 33]);
+
+    let p = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of p.zones.battlefield.filter((id) => p.objects[id]!.controller === 'bob')) moveObject(p, id, 'graveyard', []);
+    give(p, 'alice', 'Muldrak Lite', 'battlefield');
+    give(p, 'alice', 'Cub', 'battlefield');
+    p = drive(settle(toStep(p, 'end', 'alice')), () => null);
+    const salamanders = (who: string) => p.zones.battlefield.filter((id) => p.objects[id]!.token && p.objects[id]!.controller === who).length;
+    expect([salamanders('alice'), salamanders('bob')]).toEqual([0, 1]);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

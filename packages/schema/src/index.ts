@@ -587,7 +587,7 @@ export type Ref =
   /** `attacking`: only those attacking that player with a creature ("each opponent attacking that player"). */
   /** `except`: Kediss's "each other opponent" — not the player the trigger was about. */
   /** `lostLife`: Papalymo Totolymo's "each opponent who lost life this turn". */
-  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref; discardedNone?: true; /** Feed the Infection: "each opponent who has three or more poison counters". */ poisonAtLeast?: number; /** Depopulate: "each player who controls a multicolored creature". */ controlsSome?: ObjectFilter }
+  | { ref: 'players'; who: 'each' | 'opponents'; attacking?: Ref; except?: Ref; lostLife?: true; controlsNone?: ObjectFilter; opponentsOf?: Ref; discardedNone?: true; /** Feed the Infection: "each opponent who has three or more poison counters". */ poisonAtLeast?: number; /** Depopulate: "each player who controls a multicolored creature". */ controlsSome?: ObjectFilter; /** Gor Muldrak: "each player who controls the fewest creatures" (ties all count). */ controlsMost?: { filter: ObjectFilter; fewest?: true } }
   | { ref: 'controller_of'; of: Ref }
   /** Blightning, Bonfire of the Damned: "that player or that planeswalker's controller" — a target player, or the controller of a
    * target permanent. */

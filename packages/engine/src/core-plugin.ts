@@ -817,7 +817,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'end_of_your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') : g.turn;
     g.castBans = [
       ...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn),
-      { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}), ...(node.fromZones ? { fromZones: node.fromZones as string[] } : {}) },
+      { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}), ...(node.fromZones ? { fromZones: node.fromZones as string[] } : {}), ...(node.activate === 'non_mana' ? { activateNonMana: true as const } : {}) },
     ];
     return true;
   },

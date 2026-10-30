@@ -35,7 +35,7 @@ export function castProhibition(g: GameState, player: PlayerId, face: FaceDef, s
   const matches = (filter: ObjectFilter | undefined, controller: PlayerId, source: GameObject | null, o: GameObject = spell) =>
     !filter || matchesFilter(g, o, filter, { controller, source, anyZone: true });
   for (const ban of g.castBans ?? []) {
-    if (ban.lastTurn < g.turn || !ban.players.includes(player)) continue;
+    if (ban.lastTurn < g.turn || !ban.players.includes(player) || ban.activateNonMana) continue;
     if (ban.fromZones && !ban.fromZones.includes(spell.zone)) continue;
     if (matches(ban.filter, ban.controller, null)) return `${face.name} can't be cast: ${g.players[player]?.name ?? player} can't cast ${ban.filter ? 'spells like it' : 'spells'} now.`;
   }
@@ -82,6 +82,8 @@ function anyProhibitions(g: GameState): boolean {
  */
 export function activationProhibited(g: GameState, player: PlayerId, source: GameObject, mana: boolean): boolean {
   if (!anyProhibitions(g)) return false;
+  // Abeyance: "Until end of turn, … that player can't activate abilities that aren't mana abilities."
+  if (!mana && (g.castBans ?? []).some((b) => b.activateNonMana && b.lastTurn >= g.turn && b.players.includes(player))) return true;
   for (const id of abilitySources(g)) {
     const src = g.objects[id]!;
     for (const a of objectAbilities(g, src)) {

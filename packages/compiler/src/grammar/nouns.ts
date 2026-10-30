@@ -418,6 +418,19 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
     });
     if (r) return r;
   }
+  // Kestia, the Cultivator: "an enchanted creature or enchantment creature you control" — either, both yours.
+  const eitherCreature = /^(enchanted|equipped|attacking|tapped|untapped|legendary|artifact|enchantment|token) creature or (enchanted|equipped|attacking|tapped|untapped|legendary|artifact|enchantment|token) creature( you control| an opponent controls)?$/.exec(rest);
+  if (eitherCreature && eitherCreature[1] !== eitherCreature[2]) {
+    const r = attempt(b, (b) => {
+      const one = parseFilter(`${eitherCreature[1]} creature${eitherCreature[3] ?? ''}`, b);
+      const two = one ? parseFilter(`${eitherCreature[2]} creature${eitherCreature[3] ?? ''}`, b) : null;
+      if (!one || !two || one.filter.anyOf || two.filter.anyOf) return null;
+      const { controller, ...a } = one.filter;
+      const { controller: _c, ...c } = two.filter;
+      return { filter: { ...(controller ? { controller } : {}), anyOf: [a, c] }, plural: false } as ParsedFilter;
+    });
+    if (r) return r;
+  }
   // Ajani Unrelenting: "each creature except for tokens you control"; Flame Sweep: "… except for creatures you control with
   // flying"; Cyclone Summoner: "all permanents … except for Giants, Wizards, and lands"; Mageta: "all creatures except for ~".
   const except = /^(.+?),? except for (.+)$/.exec(rest);
@@ -1002,6 +1015,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // Feed the Infection: "each opponent who has three or more poison counters".
   const poisoned = /^each (opponent|player) who has (\w+) or more poison counters$/.exec(t);
   if (poisoned && typeof parseAmount(poisoned[2]!) === 'number') return { ref: 'players', who: poisoned[1] === 'player' ? 'each' : 'opponents', poisonAtLeast: parseAmount(poisoned[2]!) as number };
+  // Gor Muldrak: "each player who controls the fewest creatures"; No Witnesses: "Each player who controls the most creatures".
+  const extreme = /^each (opponent|player) who controls the (most|fewest) (.+)$/i.exec(text.trim());
+  if (extreme) {
+    const pf = parseFilter(extreme[3]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone && !pf.filter.controller) return { ref: 'players', who: extreme[1]!.toLowerCase() === 'player' ? 'each' : 'opponents', controlsMost: { filter: pf.filter, ...(extreme[2] === 'fewest' ? { fewest: true } : {}) } };
+  }
   // Depopulate: "each player who controls a multicolored creature".
   const having = /^each (opponent|player) who controls (?:a|an) (.+)$/i.exec(text.trim());
   if (having) {

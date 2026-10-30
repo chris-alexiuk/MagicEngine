@@ -223,6 +223,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // Kaya, Orzhov Usurper: "Kaya deals damage to target player equal to the number of cards that player owns in exile and you
   // gain that much life." — that number, however much damage is dealt (2019-01-25 ruling).
   text = text.replace(/\b(deals damage to [^.]+? equal to (the number of [^.]+?)) and you gain that much life\./, '$1. You gain life equal to $2.');
+  // Abeyance: "Until end of turn, target player can't cast instant or sorcery spells, and that player can't activate
+  // abilities that aren't mana abilities." — two prohibitions for that player.
+  text = text.replace(/^(Until end of turn, (?:target player|target opponent) can't cast [^,.]+), and that player (can't activate abilities that aren't mana abilities)\./, '$1. Until end of turn, that player $2.');
   // Ashling, the Extinguisher: "choose target creature that player controls. The player sacrifices that creature." — its
   // controller, that player.
   text = text.replace(/\b([Cc]hoose target (?:creature|permanent) that player controls)\. The player sacrifices that (?:creature|permanent)\./, '$1. Its controller sacrifices it.');
@@ -4010,6 +4013,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^[Ee]xile all opponents' graveyards$/.test(s)) return parseSentence("Exile each opponent's graveyard", b);
   // CR 615.12: "Damage can't be prevented this turn."
   if (/^Damage can't be prevented this turn$/.test(s)) return [{ type: 'damage_unpreventable' }];
+  // Abeyance: "Until end of turn, that player can't activate abilities that aren't mana abilities." (CR 602.5)
+  const noActivate = /^(?:Until end of turn, (.+?) can't activate abilities that aren't mana abilities|(.+?) can't activate abilities that aren't mana abilities this turn)$/.exec(s);
+  if (noActivate) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef((noActivate[1] ?? noActivate[2])!.replace(/^\w/, (x) => x.toLowerCase()), b);
+      return who ? [{ type: 'prohibit_casting', who, until: 'eot', activate: 'non_mana' }] : null;
+    });
+    if (r) return r;
+  }
   // CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …"
   // Single Combat: "Players can't cast creature or planeswalker spells until the end of your next turn."
   const cantCast = /^(?:(Until your next turn|Until end of turn|This turn|Until the end of your next turn), )?(.+?) can't cast (.+?)(?: (this turn|until your next turn|until the end of your next turn))?$/.exec(s);
@@ -4328,6 +4340,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // this turn costs {2} less to cast", "… costs {X} less to cast, where X is the number of Wizards you control".
   // Archway of Innovation: "The next spell you cast this turn has improvise."
   // Quicken: "The next sorcery spell you cast this turn can be cast as though it had flash."
+  // Scout's Warning: "The next creature card you play this turn can be played as though it had flash." — a creature card is
+  // cast, never played as a land.
+  s = s.replace(/^([Tt]he next creature) card you play this turn can be played as though it had flash$/, '$1 spell you cast this turn can be cast as though it had flash');
   const next = /^[Tt]he next (?:(.+?) )?spell you cast this turn (can't be countered|can be cast as though it had flash|has (?:improvise|convoke|delve)|costs \{(\d+|X)\} less to cast(?:, where X is (.+?)(?: as this ability resolves)?)?)$/.exec(s);
   if (next) {
     let filter: ObjectFilter = {};
@@ -4365,6 +4380,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // total" — "it" is your life total (nothing else becomes a life total).
   if (/^It becomes equal to your starting life total$/.test(s)) return [{ type: 'set_life', who: { ref: 'you' }, value: 'starting' }];
   // Eternity Vessel: "your life total become the number of charge counters on this artifact" (after "you may have").
+  // Arbiter of Knollridge: "each player's life total becomes the highest life total among all players".
+  const highestLife = /^(Each player's|Your) life total becomes the highest life total among all players$/i.exec(s);
+  if (highestLife) return [{ type: 'set_life', who: /^each/i.test(highestLife[1]!) ? { ref: 'players', who: 'each' } : { ref: 'you' }, amount: { kind: 'life', who: { ref: 'players', who: 'each' }, most: true } }];
   const lifeCount = /^Your life total becomes? (the number of .+)$/.exec(s);
   if (lifeCount) {
     const n = attempt(b, (b) => parseCount(lifeCount[1]!, b));
@@ -5563,8 +5581,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // Fateful Absence: "Destroy target creature or planeswalker. Its controller investigates."
   const theyInvestigate = /^(.+?) investigates$/i.exec(c);
   if (theyInvestigate) {
-    const who = parsePlayerRef(theyInvestigate[1]!, b);
-    const clue = who && who.ref !== 'players' ? parseTokenPhrase('a Clue token', b) : null;
+    // No Witnesses: "Each player who controls the most creatures investigates." — each of them.
+    const who = parsePlayerRef(theyInvestigate[1]!.replace(/^Each /, 'each '), b);
+    const clue = who && (who.ref !== 'players' || who.controlsMost) ? parseTokenPhrase('a Clue token', b) : null;
     if (clue) return [{ type: 'create_token', amount: 1, token: clue.face, who }];
   }
   // CR 701.65a: "Airbend target nonland permanent", "airbend up to one other target creature or spell".

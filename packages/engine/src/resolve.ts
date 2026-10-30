@@ -223,6 +223,13 @@ export function refPlayers(ctx: EffectContext, ref: Ref): PlayerId[] {
           (ref.poisonAtLeast === undefined || g.players[p]!.poison >= ref.poisonAtLeast) &&
           (!ref.controlsSome || controlledCount(ctx, p, ref.controlsSome as ObjectFilter) > 0),
       );
+      // Gor Muldrak: "each player who controls the fewest creatures" — among all players (CR 101.4), ties included.
+      if (ref.controlsMost) {
+        const m = ref.controlsMost as { filter: ObjectFilter; fewest?: true };
+        const counts = new Map(live.map((p) => [p, controlledCount(ctx, p, m.filter)] as const));
+        const best = m.fewest ? Math.min(...counts.values()) : Math.max(...counts.values());
+        return all.filter((p) => counts.get(p) === best);
+      }
       if (!ref.attacking) return all;
       // "each opponent attacking that player": controls a creature attacking them (CR 506.2).
       const defenders = refPlayers(ctx, ref.attacking);

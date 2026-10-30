@@ -1054,7 +1054,7 @@ export interface GameState {
   /** `filter`: a rule for some spells only (Teferi, Time Raveler: "you may cast sorcery spells as though they had flash"). */
   playerEffects?: { player: PlayerId; rule: PlayerRule; lastTurn: number; filter?: ObjectFilter; amount?: number; timestamp?: number }[];
   /** CR 101.2: "Target player can't cast spells this turn", "Until your next turn, your opponents can't cast …". */
-  castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[] }[];
+  castBans?: { players: PlayerId[]; filter?: ObjectFilter; controller: PlayerId; lastTurn: number; fromZones?: string[]; /** Abeyance: "can't activate abilities that aren't mana abilities" — activations, not casting. */ activateNonMana?: true }[];
   /** CR 610.3: objects exiled "until ~ leaves the battlefield", and the permanent they wait on. */
   /** `monarch`: Palace Jailer's "until an opponent becomes the monarch" (the monarch when it was exiled, then as it changes). */
   exiledUntil?: { source: ObjectRef; object: ObjectRef; monarch?: { controller: PlayerId; was: PlayerId | null }; /** Kitesail Freebooter: back to its owner's hand (the zone it came from, CR 610.3). */ returnTo?: 'hand' }[];
