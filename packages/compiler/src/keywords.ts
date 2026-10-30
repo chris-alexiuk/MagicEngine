@@ -164,7 +164,8 @@ export class KeywordRegistry {
   parseLine(line: string): KeywordInstance[] | null {
     const whole = this.parseChunk(line, false);
     if (whole) return [whole];
-    const parts = line.split(/,\s*/);
+    // Aether Membrane: "Defender; reach" — the same as a comma list.
+    const parts = line.split(/[,;]\s*/);
     if (parts.length < 2) return null;
     const out: KeywordInstance[] = [];
     for (const part of parts) {

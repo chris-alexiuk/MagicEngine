@@ -101,6 +101,25 @@ export function manaBecomes(g: GameState, player: PlayerId): string | undefined 
   return undefined;
 }
 
+/**
+ * Worship: "damage that would reduce your life total to less than 1 reduces it to 1 instead"; Elderscale Wurm: "… less than 7
+ * reduces it to 7 instead" — the highest floor that applies (0: none).
+ */
+export function damageFloor(g: GameState, player: PlayerId): number {
+  let floor = 0;
+  for (const e of g.playerEffects ?? []) if (e.player === player && e.rule === 'damage_floor' && e.lastTurn >= g.turn && !e.filter) floor = Math.max(floor, 1);
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const a of objectAbilities(g, source)) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'player_rule') continue;
+      const e = (a as StaticAbility).effect as PlayerRuleNode;
+      if (e.rule !== 'damage_floor' || e.filter || !rulesFor(e.who, source, player) || !staticConditionHolds(g, e, source)) continue;
+      floor = Math.max(floor, e.amount ?? 1);
+    }
+  }
+  return floor;
+}
+
 export function playerRule(g: GameState, player: PlayerId, rule: PlayerRule): number {
   let n = 0;
   // "Until your next turn, … you gain protection from everything" — from an effect, not a static ability.

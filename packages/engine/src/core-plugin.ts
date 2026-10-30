@@ -509,13 +509,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const r of live()) {
         if (memo.where[r.id]) continue;
         const o = g.objects[r.id]!;
+        // Temporal Cleansing: "puts it into their library second from the top or on the bottom".
+        const top = node.secondFromTop ? 'second from the top' : 'top';
         if (answer?.kind === 'choose_option' && !memo.piles) {
-          if (answer.choice !== 'top' && answer.choice !== 'bottom') throw new RulesError('Choose top or bottom.');
-          memo.where[r.id] = answer.choice;
+          if (answer.choice !== top && answer.choice !== 'bottom') throw new RulesError(`Choose ${top} or bottom.`);
+          memo.where[r.id] = answer.choice === 'bottom' ? 'bottom' : 'top';
           answer = null;
           continue;
         }
-        return { ask: { kind: 'choose_option', player: o.owner, options: ['top', 'bottom'], text: `Put ${nameOf(g, o)} on the top or the bottom of your library?`, sourceName: sourceName(ctx) } };
+        return { ask: { kind: 'choose_option', player: o.owner, options: [top, 'bottom'], text: `Put ${nameOf(g, o)} ${node.secondFromTop ? 'second from the top' : 'on the top'} or on the bottom of your library?`, sourceName: sourceName(ctx) } };
       }
       // Each pile of two or more: its owner orders it (first chosen goes on top).
       memo.order ??= {};
@@ -539,7 +541,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (const [key, ids] of Object.entries(memo.order)) {
         const pos = key.split('|')[1] as 'top' | 'bottom';
         // To the top, the last one put there ends up on top.
-        for (const id of pos === 'top' ? [...ids].reverse() : ids) if (g.objects[id]?.zone !== 'library') moveObject(g, id, 'library', ctx.events, { position: pos });
+        for (const id of pos === 'top' ? [...ids].reverse() : ids) if (g.objects[id]?.zone !== 'library') moveObject(g, id, 'library', ctx.events, { position: pos === 'top' && node.secondFromTop ? 2 : pos });
       }
       return true;
     }

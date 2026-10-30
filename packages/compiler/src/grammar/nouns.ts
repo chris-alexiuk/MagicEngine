@@ -129,6 +129,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   // Prehistoric Pet: "can't be blocked by creatures with greater power" — than the attacking creature.
   [/ with greater power$/, (f) => !f.powerAboveSource && ((f.powerAboveSource = true), true)],
+  // Shadowfax, Lord of Horses: "a creature card with lesser power" — than this creature.
+  // Not Kamiz's "… It connives. Then choose another attacking creature with lesser power" — lesser than that one.
+  [/ with lesser power$/, (f, _m, b) => (!b.it || b.it.ref === 'self') && !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   // Agent of Treachery: "permanents you don't own" (CR 108.3: the other players own them).
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],

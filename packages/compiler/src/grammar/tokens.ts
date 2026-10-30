@@ -5,7 +5,7 @@ import { isQuoted, quotedText } from './quoted.js';
 import { COLOR_WORDS, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** CR 111.10: predefined tokens, by the name effects use ("a Treasure token"). */
-const PREDEFINED: Record<string, { typeLine: string; text: string; colors?: Color[]; name?: string; pt?: [string, string] }> = {
+const PREDEFINED: Record<string, { typeLine: string; text: string; colors?: Color[]; name?: string; pt?: [string, string]; manaCost?: string }> = {
   Treasure: { typeLine: 'Artifact — Treasure', text: '{T}, Sacrifice this token: Add one mana of any color.' }, // CR 111.10a
   Food: { typeLine: 'Artifact — Food', text: '{2}, {T}, Sacrifice this token: You gain 3 life.' }, // CR 111.10b
   Gold: { typeLine: 'Artifact — Gold', text: 'Sacrifice this token: Add one mana of any color.' }, // CR 111.10c
@@ -35,6 +35,14 @@ const PREDEFINED: Record<string, { typeLine: string; text: string; colors?: Colo
   Mutagen: { typeLine: 'Artifact — Mutagen', text: '{1}, {T}, Sacrifice this token: Put a +1/+1 counter on target creature. Activate only as a sorcery.' },
   Vibranium: { typeLine: 'Artifact — Vibranium', text: "Indestructible\n{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." },
   Heartwood: { typeLine: 'Artifact — Heartwood', text: '{T}: Add {R} or {G}.', colors: ['R', 'G'] },
+  // Ginger, Queen of Sweets: "(It's a {1} 1/1 Food Golem artifact creature with haste, …)" — a mana cost of its own.
+  Gingerbrute: {
+    typeLine: 'Artifact Creature — Food Golem',
+    name: 'Gingerbrute',
+    manaCost: '{1}',
+    pt: ['1', '1'],
+    text: "Haste\n{1}: This token can't be blocked this turn except by creatures with haste.\n{2}, {T}, Sacrifice this token: You gain 3 life.",
+  },
 };
 
 export interface ParsedToken {
@@ -87,7 +95,9 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   const predefined = PREDEFINED[words];
   if (predefined) {
     if (m[3] || m[6] || m[7]) return null;
-    return { amount, tapped, face: tokenFace(b, predefined.name ?? words.replace(/ Role$/, ''), predefined.typeLine, predefined.text, predefined.colors ?? [], predefined.pt) };
+    const face = tokenFace(b, predefined.name ?? words.replace(/ Role$/, ''), predefined.typeLine, predefined.text, predefined.colors ?? [], predefined.pt);
+    if (predefined.manaCost) face.manaCost = predefined.manaCost;
+    return { amount, tapped, face };
   }
 
   // Colors, then subtypes, then card types.

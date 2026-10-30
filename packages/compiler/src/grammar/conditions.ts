@@ -384,6 +384,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const attached = /^~ is (equipped|enchanted)$/.exec(t) ?? (/^it's (equipped|enchanted)$/.test(t) && (!b.it || b.it.ref === 'self') ? /^it's (equipped|enchanted)$/.exec(t) : null);
   if (attached) return { type: 'has_attached', subtype: attached[1] === 'equipped' ? 'Equipment' : 'Aura' };
   if (/^~ is monstrous$/.test(t)) return { type: 'monstrous' };
+  // Tadeas, Juniper Ascendant: "As long as ~ isn't attacking".
+  const notAttacking = /^(~|it) (?:isn't|is not) (attacking|blocking)$/.exec(t);
+  if (notAttacking && (notAttacking[1] === '~' || b.it?.ref === 'self')) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
   // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human", "enchanted permanent is a creature".
   const is = /^(~|(?:enchanted|equipped) (?:creature|permanent|artifact|land)) is (?!not\b)(.+)$/.exec(t);
   if (is) {

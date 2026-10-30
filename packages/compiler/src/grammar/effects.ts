@@ -220,6 +220,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^Exile all cards from all opponents' hands and graveyards\.$/, "Exile all cards from all opponents' hands. Exile all cards from all opponents' graveyards.");
   // Foul-Tongue Shriek: "Target opponent loses 1 life for each attacking creature you control. You gain that much life."
   text = text.replace(/\b((?:[Tt]arget (?:player|opponent)|[Ee]ach opponent) loses [^.]*?\blife\b[^.]*?)(?:\. You| and you) gain that much life\./, '$1. You gain life equal to the life lost this way.');
+  // Kaya, Orzhov Usurper: "Kaya deals damage to target player equal to the number of cards that player owns in exile and you
+  // gain that much life." — that number, however much damage is dealt (2019-01-25 ruling).
+  text = text.replace(/\b(deals damage to [^.]+? equal to (the number of [^.]+?)) and you gain that much life\./, '$1. You gain life equal to $2.');
+  // Druidic Ritual: "Then return up to one creature card and up to one land card from your graveyard to your hand." — each
+  // chosen as it resolves.
+  text = text.replace(/\b([Rr]eturn) up to one ((?:(?!target\b)[\w-]+ )+?card) and up to one ((?:(?!target\b)[\w-]+ )+?card) from your graveyard to your hand\./, '$1 up to one $2 from your graveyard to your hand. Return up to one $3 from your graveyard to your hand.');
   // Mogg Infestation: "Destroy all creatures target player controls. For each creature that died this way, that player
   // creates two 1/1 red Goblin creature tokens."
   text = text.replace(/\. For each creature that died this way, (that player|you) (creates? [^.]+)\./, '. $1 $2 for each creature put into a graveyard this way.');
@@ -3741,6 +3747,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Allies at Last: "Up to two target creatures you control each deal damage equal to their power to target creature an
+  // opponent controls."; Terrific Team-Up: "They each deal …" — each of them a source of its own damage, all at once (CR 120.3).
+  const theyEach = /^(.+?) each deal damage equal to their power to (?!another\b)(.+)$/.exec(s);
+  if (theyEach) {
+    const r = attempt(b, (b) => {
+      const from = parseObjectRef(theyEach[1] === 'They' ? 'they' : theyEach[1]!, b);
+      if (!from?.plural || !['target', 'all'].includes(from.ref.ref)) return null;
+      const to = parseRecipients(theyEach[2]!, b);
+      if (!to || to.length !== 1) return null;
+      return [{ type: 'each_deals', from: from.ref, stat: 'power', to: to[0]! } as EffectNode];
+    });
+    if (r) return r;
+  }
   // Rakdos Charm: "Each creature deals 1 damage to its controller."; Wave of Reckoning: "Each creature deals damage to
   // itself equal to its power."; Lukka: "Each creature you control deals damage equal to its power to each opponent."
   // Each of them is the source of its own damage (CR 120.3), all dealt at once.
@@ -3832,11 +3851,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // "Target creature's owner puts it on their choice of the top or bottom of their library."
-  const topOrBottom = /^(.+?)'s owner puts it on their choice of the top or bottom of their library$/.exec(s);
+  // Temporal Cleansing: "The owner of target nonland permanent puts it into their library second from the top or on the
+  // bottom."; Wan Shi Tong: "target nonland permanent's owner puts it …".
+  const topOrBottom =
+    /^(.+?)'s owner puts it on their choice of the top or bottom of their library$/.exec(s) ??
+    /^(?:[Tt]he owner of (.+?)|(.+?)'s owner) puts it into their library (second from the top) or on the bottom$/.exec(s);
   if (topOrBottom) {
     const r = attempt(b, (b) => {
-      const what = parseObjectRef(topOrBottom[1]!, b);
-      return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: 'choice' }] : null;
+      const what = parseObjectRef(topOrBottom[1] ?? topOrBottom[2]!, b);
+      return what && !what.plural ? [{ type: 'move', what: what.ref, to: 'library', position: 'choice', ...(topOrBottom[3] ? { secondFromTop: true } : {}) }] : null;
     });
     if (r) return r;
   }
@@ -4325,7 +4348,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Taunt from the Rampart: "Until your next turn, those creatures can't block."
   const untilNext = /^Until your next turn, ([^,]+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
   if (untilNext && !/\b(?:becomes?|is|are)\b/.test(untilNext[1]!)) {
-    const r = attempt(b, (b) => parseSentence(`${untilNext[1]} ${untilNext[2]} ${untilNext[3]} until your next turn`, b));
+    // Dovin Baan: "Until your next turn, up to one target creature gets -3/-0 and its activated abilities can't be activated."
+    // — both last until then.
+    const andIts = / and (its|their) activated abilities can't be activated$/.exec(untilNext[3]!);
+    const rest = andIts ? `${untilNext[3]!.slice(0, andIts.index)} until your next turn and ${andIts[1]} activated abilities can't be activated` : untilNext[3]!;
+    const r = attempt(b, (b) => parseSentence(`${untilNext[1]} ${untilNext[2]} ${rest} until your next turn`, b));
     if (r) return r;
   }
 
@@ -4624,6 +4651,9 @@ const VERBS: Record<string, VerbHandler> = {
     return amount !== null && who.ref === 'you' ? [{ type: 'surveil', amount }] : null;
   },
   create(args, who, b) {
+    // Sandstorm Crasher: "create a tapped and attacking token that's a copy of target creature you control" (CR 508.4).
+    const copyAttacking = /^(a|an|one) tapped and attacking (token (?:that's a copy) of (?!.*\bexcept\b).+)$/.exec(args);
+    if (copyAttacking) args = `${copyAttacking[1]} ${copyAttacking[2]}`;
     // Ghalta and Mavren: "Create a tapped and attacking X/X green Dinosaur creature token" — the same as "… token that's tapped
     // and attacking" (CR 508.4).
     const preAttacking = /^(a|an|one|two|three|four|five|X) tapped and attacking (.+)$/.exec(args);
@@ -4650,6 +4680,10 @@ const VERBS: Record<string, VerbHandler> = {
       const node: EffectNode = { type: 'create_token', amount, copyOf: of.ref, who };
       if (except) node.except = except;
       if (copy[2]) node.tapped = true;
+      if (copyAttacking) {
+        node.tapped = true;
+        node.attacking = true;
+      }
       createdTokens(b);
       return [node];
     }
@@ -6158,10 +6192,11 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   }
   // CR 602.5: "Its activated abilities can't be activated this turn" (Koma), "Target creature's activated abilities
   // can't be activated this turn" — mana abilities too.
-  const locked = /^(?:(.+?)'s|[Ii]ts) activated abilities can't be activated (?:this turn|until end of turn)$/.exec(c);
+  // Dovin Baan: "Until your next turn, … its activated abilities can't be activated."
+  const locked = /^(?:(.+?)'s|[Ii]ts) activated abilities can't be activated (this turn|until end of turn|until your next turn)$/.exec(c);
   if (locked) {
     const what = parseObjectRef(locked[1] ?? 'it', b);
-    return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: 'eot' }] : null;
+    return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: locked[2] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
   }
   // Assault Formation: "Target creature with defender can attack this turn as though it didn't have defender." (CR 702.3b)
   const defenderOk = /^(.+?) can attack this turn as though (?:it|they) didn't have defender$/.exec(c);

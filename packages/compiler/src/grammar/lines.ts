@@ -2098,6 +2098,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'you clash' || t === 'you win a clash') return { trigger: { type: 'clashed', ...(t === 'you win a clash' ? { won: true } : {}) }, it: { ref: 'self' }, player: null };
   // "When you cast this spell": it triggers from the stack (storm, CR 702.40a).
   if (t === 'you cast ~') return { trigger: { type: 'cast', who: 'you', self: true }, it: { ref: 'self' }, player: { ref: 'you' } };
+  // Skyfire Phoenix: "When you cast your commander, return this card from your graveyard to the battlefield." (CR 903.3)
+  if (t === 'you cast your commander') return { trigger: { type: 'cast', who: 'you', filter: { commander: true, owner: 'you' } }, it: { ref: 'trigger_object' }, player: { ref: 'you' } };
   // Custodi Lich: "Whenever you become the monarch"; Garland: "Whenever an opponent becomes the monarch" (CR 725.1).
   if (t === 'you become the monarch') return { trigger: { type: 'became_monarch', who: 'you' }, it: { ref: 'self' }, player: { ref: 'you' } };
   if (t === 'an opponent becomes the monarch') return { trigger: { type: 'became_monarch', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
@@ -2793,11 +2795,14 @@ function parseAnyColor(body: string, b: Binder): PlayerRuleNode | null {
   const firstEquip = /^You may pay \{0\} rather than pay the equip cost of the first equip ability you activate (during each of your turns|each turn)$/.exec(body);
   if (firstEquip) return { type: 'player_rule', who: 'you', rule: firstEquip[1] === 'each turn' ? 'first_equip_free_each_turn' : 'first_equip_free' } as PlayerRuleNode;
   // Worship: "If you control a creature, damage that would reduce your life total to less than 1 reduces it to 1 instead."
-  const floor = /^(?:If (.+?), )?[Dd]amage that would reduce your life total to less than 1 reduces it to 1 instead$/.exec(body);
+  // Elderscale Wurm: "As long as you have 7 or more life, damage that would reduce your life total to less than 7 reduces it
+  // to 7 instead." — a higher floor.
+  const floor = /^(?:(?:If|As long as) (.+?), )?[Dd]amage that would reduce your life total to less than (\d+) reduces it to \2 instead$/.exec(body);
   if (floor) {
     const condition = floor[1] ? parseCondition(floor[1], b) : undefined;
     if (condition === null) return null;
-    return { type: 'player_rule', who: 'you', rule: 'damage_floor', ...(condition ? { condition } : {}) } as PlayerRuleNode;
+    const n = Number(floor[2]);
+    return { type: 'player_rule', who: 'you', rule: 'damage_floor', ...(n !== 1 ? { amount: n } : {}), ...(condition ? { condition } : {}) } as PlayerRuleNode;
   }
   // Dracogenesis: "You may cast Dragon spells without paying their mana costs."; Rooftop Storm: "You may pay {0} rather than pay
   // the mana cost for Zombie creature spells you cast." (CR 118.9: an alternative cost, wherever they're cast from).
@@ -4607,7 +4612,8 @@ export const exertRule: GrammarRule = {
   parse(line, original, ctx) {
     // Combat Celebrant: "If this creature hasn't been exerted this turn, you may exert it as it attacks."
     const once = /^If ~ hasn't been exerted this turn, you may exert it as it attacks\./.test(line);
-    const m = /^(?:You may exert ~|If ~ hasn't been exerted this turn, you may exert it) as it attacks\.(?: When you do, (.+))?$/s.exec(line);
+    // Themberchaud: "You may exert Themberchaud as he attacks."
+    const m = /^(?:You may exert ~|If ~ hasn't been exerted this turn, you may exert it) as (?:it|he|she) attacks\.(?: When you do, (.+))?$/s.exec(line);
     if (!m) return null;
     const flag = once ? { notExertedThisTurn: true } : {};
     if (!m[1]) return { kind: 'static', text: original, effect: { type: 'exert_option', ...flag } } satisfies StaticAbility;

@@ -19,7 +19,7 @@ import {
   type PreventionFollowUp,
 } from './types.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { playerProtectedFrom, playerRule } from './player-rules.js';
+import { damageFloor, playerProtectedFrom, playerRule } from './player-rules.js';
 import { applyLifeGain, counterBlocked, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { amountOf } from './resolve.js';
 import { removeShield } from './permanents.js';
@@ -1010,7 +1010,8 @@ export function dealDamage(
       if (!playerRule(g, to.player, 'life_cant_change') && !playerRule(g, to.player, 'damage_no_life_loss')) {
         // Bloodletter of Aclazotz: the damage is the same; the life lost may be more. Worship: never below 1 from damage.
         const raw = lifeLoss(g, to.player, amount);
-        const lost = playerRule(g, to.player, 'damage_floor') ? Math.max(0, Math.min(raw, ps.life - 1)) : raw;
+        const floor = damageFloor(g, to.player);
+        const lost = floor ? Math.max(0, Math.min(raw, ps.life - floor)) : raw;
         ps.life -= lost;
         events.push({ type: 'life', player: to.player, delta: -lost, life: ps.life });
       }

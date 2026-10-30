@@ -1118,6 +1118,23 @@ const CARDS = [
   makeCard({ name: 'Kumena Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: "Ascend\nAt the beginning of your upkeep, each player draws a card. If you have the city's blessing, instead only you draw a card." }),
   makeCard({ name: 'Ping Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Ping Lite deals 1 damage to any target.' }),
   makeCard({ name: 'Diligence Lite', type_line: 'Enchantment — Aura', mana_cost: '{0}', oracle_text: 'Enchant creature\nWhen this Aura enters, target creature you control other than enchanted creature gets +2/+2 and gains vigilance until end of turn.' }),
+  makeCard({ name: 'Membrane Lite', type_line: 'Creature — Wall', mana_cost: '{0}', power: '0', toughness: '5', oracle_text: "Defender; reach\nWhenever this creature blocks a creature, return that creature to its owner's hand at end of combat." }),
+  makeCard({ name: 'Skyfire Lite', type_line: 'Creature — Phoenix', mana_cost: '{0}', power: '3', toughness: '2', oracle_text: 'Flying, haste\nWhen you cast your commander, return this card from your graveyard to the battlefield.' }),
+  makeCard({ name: 'Jirina Lite', type_line: 'Legendary Creature — Human Soldier', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "When Jirina Lite enters, create a 1/1 white Human Soldier creature token for each time you've cast a commander from the command zone this game." }),
+  makeCard({ name: 'Cmdr Lite', type_line: 'Legendary Creature — Human', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: '' }),
+  makeCard({ name: 'Themberchaud Lite', type_line: 'Legendary Creature — Dragon', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: 'You may exert Themberchaud Lite as he attacks. When you do, he gains flying until end of turn.' }),
+  makeCard({ name: 'Hydra Trainer Lite', type_line: 'Creature — Human Warrior', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'You may exert this creature as it attacks. When you do, target creature gets +X/+X until end of turn, where X is the number of counters on permanents you control.' }),
+  makeCard({ name: 'Sandstorm Lite', type_line: 'Creature — Minotaur Berserker', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "You may exert this creature as it attacks. When you do, create a tapped and attacking token that's a copy of target creature you control. Sacrifice the token at the beginning of the next end step." }),
+  makeCard({ name: 'Elderscale Lite', type_line: 'Creature — Wurm', mana_cost: '{0}', power: '7', toughness: '7', oracle_text: 'As long as you have 7 or more life, damage that would reduce your life total to less than 7 reduces it to 7 instead.' }),
+  makeCard({ name: 'Kaya Usurper Lite', type_line: 'Legendary Planeswalker — Kaya', mana_cost: '{0}', loyalty: '5', oracle_text: '−5: Kaya Usurper Lite deals damage to target player equal to the number of cards that player owns in exile and you gain that much life.' }),
+  makeCard({ name: 'Dovin Lite', type_line: 'Legendary Planeswalker — Dovin', mana_cost: '{0}', loyalty: '3', oracle_text: "+1: Until your next turn, up to one target creature gets -3/-0 and its activated abilities can't be activated." }),
+  makeCard({ name: 'Team-Up Lite', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'One or two target creatures you control each get +1/+0 until end of turn. They each deal damage equal to their power to target creature an opponent controls.' }),
+  makeCard({ name: 'Cleansing Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'The owner of target nonland permanent puts it into their library second from the top or on the bottom.' }),
+  makeCard({ name: 'Druidic Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'You may mill three cards. Then return up to one creature card and up to one land card from your graveyard to your hand.' }),
+  makeCard({ name: 'Cradle Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'Whenever you gain life, you may pay {1}{W}. If you do, put a +1/+1 counter on target creature for each 1 life you gained.' }),
+  makeCard({ name: 'Ginger Lite', type_line: 'Legendary Artifact Creature — Food Noble', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "At the beginning of each upkeep, if you're the monarch, create a Gingerbrute token." }),
+  makeCard({ name: 'Tadeas Lite', type_line: 'Legendary Creature — Human Monk', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: "Reach\nTadeas Lite has hexproof unless it's attacking.\nWhenever a creature you control with reach attacks, untap it and it can't be blocked by creatures with greater power this combat." }),
+  makeCard({ name: 'Shadowfax Lite', type_line: 'Legendary Creature — Horse', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever Shadowfax Lite attacks, you may put a creature card with lesser power from your hand onto the battlefield tapped and attacking.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -9563,6 +9580,151 @@ describe('Sieges', () => {
       r = drive(settle(toStep(r, 'upkeep', 'alice')), () => null);
       expect([r.zones.hand.alice!.length - hands[0]!, r.zones.hand.bob!.length - hands[1]!]).toEqual(blessed ? [1, 0] : [1, 1]);
     }
+  });
+
+  it('Aether Membrane, Skyfire Phoenix, Jirina Kudro, Themberchaud, Hydra Trainer, Sandstorm Crasher, Elderscale Wurm, Kaya, Orzhov Usurper', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const wall = give(g, 'alice', 'Membrane Lite', 'battlefield');
+    expect(['defender', 'reach'].map((k) => chars(g, g.objects[wall]!).keywords.some((x) => x.id === k))).toEqual([true, true]);
+
+    const deck = [...Array.from({ length: 40 }, () => 'Plains'), 'Skyfire Lite', 'Jirina Lite', 'Cmdr Lite'];
+    let h = toStep(start({ format: 'commander', extra: CARDS, decks: { alice: deck, bob: deck }, commanders: { alice: ['Cmdr Lite'] } }), 'main1', 'alice');
+    const cmdr = h.zones.command.find((id) => h.objects[id]!.commander)!;
+    const phoenix = give(h, 'alice', 'Skyfire Lite', 'graveyard');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: cmdr }));
+    expect([h.objects[cmdr]!.zone, h.objects[phoenix]!.zone]).toEqual(['battlefield', 'battlefield']);
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Jirina Lite', 'hand') }));
+    expect(h.zones.battlefield.filter((id) => h.objects[id]!.token && h.objects[id]!.controller === 'alice').length).toBe(1);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of k.zones.battlefield.filter((id) => k.objects[id]!.controller === 'bob')) moveObject(k, id, 'graveyard', []);
+    const dragon = give(k, 'alice', 'Themberchaud Lite', 'battlefield', { sick: false });
+    const trainer = give(k, 'alice', 'Hydra Trainer Lite', 'battlefield', { sick: false });
+    const sand = give(k, 'alice', 'Sandstorm Lite', 'battlefield', { sick: false });
+    const ogre = give(k, 'alice', 'Ogre', 'battlefield');
+    k.objects[ogre]!.counters['+1/+1'] = 2;
+    k = toAttack(toStep(k, 'beginning_of_combat'));
+    k = act(k, { type: 'choose', player: 'alice', answer: { kind: 'declare_attackers', attacks: [dragon, trainer, sand].map((attacker) => ({ attacker, target: { kind: 'player' as const, player: 'bob' } })), exert: [dragon, trainer, sand] } });
+    k = drive(k, (x) => {
+      const p = x.pending!;
+      if (p.kind !== 'trigger_targets') return null;
+      const text = JSON.stringify(p);
+      return act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: /tapped and attacking/.test(text) ? ogre : trainer }]] } });
+    }, 20);
+    expect(chars(k, k.objects[dragon]!).keywords.some((x) => x.id === 'flying')).toBe(true);
+    expect(chars(k, k.objects[trainer]!).power).toBe(4);
+    const copy = k.zones.battlefield.find((id) => k.objects[id]!.token && k.objects[id]!.card === 'Ogre');
+    expect(copy && k.objects[copy]!.tapped && Boolean(k.combat?.attackers[copy])).toBe(true);
+    k = drive(toStep(k, 'end', 'alice'), () => null);
+    expect(k.zones.battlefield.some((id) => k.objects[id]!.token && k.objects[id]!.card === 'Ogre')).toBe(false);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(m, 'alice', 'Elderscale Lite', 'battlefield');
+    m.players.alice!.life = 8;
+    const bolt = () => (m = settle(act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] })));
+    bolt();
+    expect(m.players.alice!.life).toBe(7);
+    bolt();
+    expect(m.players.alice!.life).toBe(7);
+    m.players.alice!.life = 6;
+    bolt();
+    expect(m.players.alice!.life).toBe(3);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const kaya = give(n, 'alice', 'Kaya Usurper Lite', 'battlefield');
+    n.objects[kaya]!.counters.loyalty = 5;
+    for (let i = 0; i < 3; i++) give(n, 'bob', 'Cub', 'exile');
+    give(n, 'alice', 'Cub', 'exile');
+    const [mine, theirs] = [n.players.alice!.life, n.players.bob!.life];
+    n = settle(act(n, { type: 'activate', player: 'alice', object: kaya, ability: 0, targets: [[{ kind: 'player', player: 'bob' }]] }));
+    expect([n.players.alice!.life - mine, theirs - n.players.bob!.life]).toEqual([3, 3]);
+  });
+
+  it('Dovin Baan, Terrific Team-Up, Temporal Cleansing, Druidic Ritual, Cradle of Vitality, Ginger, Tadeas, Shadowfax', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const dovin = give(g, 'alice', 'Dovin Lite', 'battlefield');
+    g.objects[dovin]!.counters.loyalty = 3;
+    const amoeba = give(g, 'bob', 'Amoeboid Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: dovin, ability: 0, targets: [[{ kind: 'object', object: amoeba }]] }));
+    expect(chars(g, g.objects[amoeba]!).power).toBe(-2);
+    g = drive(toStep(g, 'main1', 'bob'), () => null);
+    expect(legalActions(g, 'bob').some((a) => a.type === 'activate' && a.object === amoeba)).toBe(false);
+    expect(chars(g, g.objects[amoeba]!).power).toBe(-2);
+    g = drive(toStep(g, 'upkeep', 'alice'), () => null);
+    expect(chars(g, g.objects[amoeba]!).power).toBe(1);
+
+    for (const both of [false, true]) {
+      let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const cubs = [give(h, 'alice', 'Cub', 'battlefield'), give(h, 'alice', 'Cub', 'battlefield')];
+      const ogre = give(h, 'bob', 'Ogre', 'battlefield');
+      h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Team-Up Lite', 'hand'), targets: [(both ? cubs : cubs.slice(0, 1)).map((object) => ({ kind: 'object' as const, object })), [{ kind: 'object', object: ogre }]] }));
+      expect(both ? h.objects[ogre]!.zone : h.objects[ogre]!.damage).toBe(both ? 'graveyard' : 2);
+    }
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const target = give(k, 'bob', 'Ogre', 'battlefield');
+    k = settle(act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Cleansing Lite', 'hand'), targets: [[{ kind: 'object', object: target }]] }));
+    expect(k.pending).toMatchObject({ kind: 'choose_option', player: 'bob', options: ['second from the top', 'bottom'] });
+    k = settle(act(k, { type: 'choose', player: 'bob', answer: { kind: 'choose_option', choice: 'second from the top' } }));
+    expect(k.zones.library.bob!.indexOf(target)).toBe(1);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const [cub, plains] = [give(m, 'alice', 'Cub', 'graveyard'), give(m, 'alice', 'Plains', 'graveyard')];
+    m = act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Druidic Lite', 'hand') });
+    m = drive(m, (x) => {
+      const p = x.pending!;
+      if (p.kind === 'may') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: false } });
+      if (p.kind === 'choose_objects') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: p.candidates.filter((id) => id === cub || id === plains) } });
+      return null;
+    });
+    expect([m.objects[cub]!.zone, m.objects[plains]!.zone]).toEqual(['hand', 'hand']);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(n, 'alice', 'Cradle Lite', 'battlefield');
+    const grown = give(n, 'alice', 'Cub', 'battlefield');
+    n.players.alice!.pool.W = 2;
+    n = act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Salve', 'hand') });
+    n = drive(n, (x) => {
+      const p = x.pending!;
+      if (p.kind === 'trigger_targets') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: grown }]] } });
+      if (p.kind === 'pay') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'pay', pay: true } } as never);
+      return null;
+    });
+    expect(n.objects[grown]!.counters['+1/+1']).toBe(3);
+
+    let p = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(p, 'alice', 'Ginger Lite', 'battlefield');
+    p.monarch = 'alice';
+    p = drive(settle(toStep(p, 'upkeep', 'bob')), () => null);
+    const brute = p.zones.battlefield.find((id) => p.objects[id]!.token && p.objects[id]!.controller === 'alice')!;
+    const bc = chars(p, p.objects[brute]!);
+    expect([bc.name, p.cards[p.objects[brute]!.card]!.faces[0]!.manaCost, bc.power, bc.subtypes.includes('Food'), bc.keywords.some((x) => x.id === 'haste')]).toEqual(['Gingerbrute', '{1}', 1, true, true]);
+
+    let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of q.zones.battlefield.filter((id) => q.objects[id]!.controller === 'bob')) moveObject(q, id, 'graveyard', []);
+    const tadeas = give(q, 'alice', 'Tadeas Lite', 'battlefield', { sick: false });
+    const [big, small] = [give(q, 'bob', 'Ogre', 'battlefield'), give(q, 'bob', 'Cub', 'battlefield')];
+    expect(chars(q, q.objects[tadeas]!).keywords.some((x) => x.id === 'hexproof')).toBe(true);
+    q = drive(attackWith(q, [tadeas]), () => null);
+    expect([q.objects[tadeas]!.tapped, chars(q, q.objects[tadeas]!).keywords.some((x) => x.id === 'hexproof')]).toEqual([false, false]);
+    if (q.pending?.kind !== 'declare_blockers') q = toAttack(q);
+    expect(illegal(q, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: big, attacker: tadeas }] } } as never)).toMatch(/can’t be blocked/);
+    q = act(q, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: small, attacker: tadeas }] } } as never);
+    expect(q.combat?.attackers[tadeas]?.blocked).toBe(true);
+
+    let r = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const fax = give(r, 'alice', 'Shadowfax Lite', 'battlefield', { sick: false });
+    const [pony, brute2] = [give(r, 'alice', 'Cub', 'hand'), give(r, 'alice', 'Ogre', 'hand')];
+    let offered: string[] = [];
+    r = drive(attackWith(r, [fax]), (x) => {
+      const p = x.pending!;
+      if (p.kind === 'may') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+      if (p.kind !== 'choose_objects') return null;
+      offered = p.candidates;
+      return act(x, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [pony] } });
+    });
+    expect([offered.includes(pony), offered.includes(brute2), offered.every((id) => chars(r, r.objects[id]!).power < 3)]).toEqual([true, false, true]);
+    expect([r.objects[pony]!.zone, Boolean(r.combat?.attackers[pony]), r.objects[brute2]!.zone]).toEqual(['battlefield', true, 'hand']);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {

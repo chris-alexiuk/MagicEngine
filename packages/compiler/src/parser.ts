@@ -659,6 +659,11 @@ export class ParserRegistry {
       // Draconic Destiny: "Enchanted creature gets +1/+1 and has flying, … It's a Dragon in addition to its other types." — two
       // statics about the enchanted creature.
       line = line.replace(/^(Enchanted|Equipped) creature (.+?(?:\.|\."))\s+It['’]s an? ([A-Z][\w-]*) in addition to its other types\.$/, '$1 creature $2 $1 creature is a $3 in addition to its other types.');
+      // Tadeas, Juniper Ascendant: "Tadeas has hexproof unless it's attacking."
+      line = line.replace(/^([^,.]+?) has ([a-z ]+) unless it['’]s attacking\.$/, "As long as $1 isn't attacking, $1 has $2.");
+      // Tadeas: "Whenever a creature you control with reach attacks, untap it and it can't be blocked by creatures with greater
+      // power this combat." — the attack trigger applies it again in any later combat this turn, so "this turn" is the same.
+      line = line.replace(/^(Whenever a creature you control with reach attacks, untap it and it can['’]t be blocked by creatures with greater power) this combat\.$/, '$1 this turn.');
       // Mornsong Aria: "Players can't draw cards or gain life." — two player rules.
       line = line.replace(/^(Players|You|Your opponents) can['’]t draw cards or gain life\.$/, "$1 can't draw cards. $1 can't gain life.");
       const block = [line];

@@ -48,6 +48,12 @@ function objects(text: string, b: Binder, plural: boolean): AmountExpr | null {
   // "for each card in target opponent's hand", "the number of creature cards in target player's graveyard"
   // Peer into the Abyss: "the number of cards in their library" — the player the sentence is about.
   // Animus of Night's Reach: "the number of creature cards in defending player's graveyard".
+  // Kaya, Orzhov Usurper: "the number of cards that player owns in exile" (CR 406.3 — exile is shared; these are theirs).
+  const theirExile = /^cards (target player|target opponent|that player|the chosen player|defending player) owns in exile$/.exec(t);
+  if (theirExile && plural) {
+    const player = parsePlayerRef(theirExile[1]!, b);
+    return player ? { kind: 'cards', zone: 'exile', who: 'each', player } : null;
+  }
   const theirs = /^(.+) in (?:(target player|target opponent|that player|the chosen player|defending player|its controller)'s|their) (hand|graveyard|library)$/.exec(t);
   if (theirs) {
     const head = theirs[1]!;
@@ -296,7 +302,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   const landsN = /^(opponent|player) who had (two|three) or more lands enter the battlefield under their control this turn$/.exec(t);
   if (landsN) return { kind: 'players', who: landsN[1] === 'player' ? 'each' : 'opponents', landsEntered: parseAmount(landsN[2]!) as number };
   // CR 903.8: "for each time you've cast your commander from the command zone this game"
-  if (/^time you've cast your commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
+  // Jirina Kudro, Font of Magic: "for each time you've cast a commander from the command zone this game" — yours (CR 903.8).
+  if (/^time you've cast (?:your|a) commander from the command zone this game$/.test(t)) return { kind: 'commander_casts' };
   // CR 702.121a (melee): "for each opponent you attacked with a creature this combat"
   if (t === 'opponent you attacked with a creature this combat') return { kind: 'opponents_attacked' };
   // Rose, Cutthroat Raider: "for each opponent you attacked" — this turn.
@@ -327,6 +334,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
     delete pf.filter.zone;
     return { kind: 'cast_before', of: b.it ?? { ref: 'self' }, filter: pf.filter, yours: true };
   }
+  // Cradle of Vitality: "Whenever you gain life, … for each 1 life you gained." — that life.
+  if (/^1 life you gained$/.test(t) && b.eventAmount) return { kind: 'event' };
   // Neheb, the Eternal: "for each 1 life your opponents have lost this turn"
   const lifeEach = /^1 life (.+?) this turn$/.exec(t);
   if (lifeEach) return lifeThisTurn(lifeEach[1]!);
@@ -486,7 +495,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // The Ten Rings: "equal to the difference" — as the condition before it said.
   if (t === 'the difference' && b.difference) return b.difference;
   // Maester Seymour: "the number of counters among creatures you control" — every counter on them.
-  const among = /^the (?:total )?number of counters among (.+)$/.exec(t);
+  // Hydra Trainer: "the number of counters on permanents you control" — the same, with "on".
+  const among = /^the (?:total )?number of counters among (.+)$/.exec(t) ?? /^the (?:total )?number of counters on ((?:\S+ )*?(?:permanents|creatures|artifacts|lands|enchantments|planeswalkers) (?:you|your opponents) control)$/.exec(t);
   if (among) {
     const pf = parseFilter(among[1]!, b);
     return pf && pf.plural && !pf.filter.zone ? { kind: 'counters_among', filter: pf.filter } : null;
