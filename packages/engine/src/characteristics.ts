@@ -987,6 +987,11 @@ export function matchesFilter(
       const t = g.combat?.attackers[o.id]?.target;
       if (t?.kind !== 'player' || t.player !== ctx.controller) return false;
     }
+    if (f.attackingYouOrYours) {
+      const t = g.combat?.attackers[o.id]?.target;
+      const pw = t?.kind === 'planeswalker' ? g.objects[t.object] : undefined;
+      if (!t || (t.kind === 'player' ? t.player !== ctx.controller : !pw || pw.controller !== ctx.controller || !chars(g, pw).types.includes('Planeswalker'))) return false;
+    }
     if (f.attackingOpponent) {
       const t = g.combat?.attackers[o.id]?.target;
       if (t?.kind !== 'player' || t.player === ctx.controller) return false;

@@ -751,8 +751,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       switch (cond.event) {
         case 'creature_died':
           return log.creatureDied;
-        case 'opponent_damaged':
-          return (log.damagedPlayers ?? []).some((p) => p !== controller);
+        case 'opponent_damaged': {
+          // Antagonism: "unless one of their opponents was dealt damage this turn" — that player's opponents.
+          const whose = cond.of ? (refPlayers(ctx, cond.of as Ref)[0] ?? controller) : controller;
+          return (log.damagedPlayers ?? []).some((p) => p !== whose);
+        }
         // Command the Stage: "if an opponent was dealt noncombat damage last turn".
         case 'opponent_noncombat_damaged':
           return Object.entries(log.noncombatDamageTaken ?? {}).some(([p, n]) => p !== controller && n > 0);

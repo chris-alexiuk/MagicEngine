@@ -157,6 +157,12 @@ export class ParserRegistry {
         if (twoCosts) return [`${twoCosts[1]}${twoCosts[2]}.`, `${twoCosts[1]}${twoCosts[3]}.`];
         // Greener Pastures: "…, if that player controls more lands than each other player, the player creates …" — that player.
         if (/, if that player [^,]+, the player /.test(l)) return [l.replace(/(, if that player [^,]+, )the player /, '$1that player ')];
+        // Esper Sojourners: "When you cycle this card and when this creature dies, you may tap or untap target permanent." — two
+        // triggered abilities with the same effect.
+        const cycleDies = /^When you cycle (this card|~) and when (this creature|~) dies, (.+)$/.exec(l);
+        if (cycleDies) return [`When you cycle ${cycleDies[1]}, ${cycleDies[3]}`, `When ${cycleDies[2]} dies, ${cycleDies[3]}`];
+        // Bloodstone Goblin, Hallar: "Whenever you cast a spell, if that spell was kicked, …" — a kicked spell (it stays kicked).
+        if (/^Whenever you cast a spell, if that spell was kicked, /.test(l)) return [l.replace(/^Whenever you cast a spell, if that spell was kicked, /, 'Whenever you cast a kicked spell, ')];
         // Tidal Barracuda: "Any player may cast spells as though they had flash."
         if (l === 'Any player may cast spells as though they had flash.') return ['Players may cast spells as though they had flash.'];
         // Vizier of the Menagerie: "You can spend mana of any type to cast creature spells." — as though any color.

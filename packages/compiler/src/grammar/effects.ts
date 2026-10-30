@@ -304,6 +304,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const subject = who.replace(/^You\b/, 'you');
     return `If ${c1} was spent to cast this spell, ${subject} ${a}. If ${c2} was spent to cast this spell, ${subject} ${bb}.`;
   });
+  // Forget: "Target player discards two cards, then draws as many cards as they discarded this way."
+  text = text.replace(/\b(discards? (?:two|three|a|X) cards?), then draws as many cards as (?:they|you) discarded this way\./, '$1, then draws a card for each card discarded this way.');
   // Precognition: "you may look at the top card of target opponent's library. If you do, you may put that card on the bottom
   // of that player's library." — looking changes nothing but what's known; the choice is the put.
   text = text.replace(/^[Yy]ou may look at (the top card of [^.]+? library)\. If you do, you may put that card /, 'Look at $1. You may put that card ');
@@ -526,6 +528,17 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         else: structuredClone(insect),
       },
     ];
+  }
+  // Chaos Wand: "Target opponent exiles cards from the top of their library until they exile an instant or sorcery card. You
+  // may cast that card without paying its mana cost. Then put the exiled cards that weren't cast this way on the bottom of
+  // that library in a random order."; Dazzling Sphinx: "… that player exiles cards …" — their library, your cast.
+  const theirCascade = /^(Target opponent|Target player|[Tt]hat player) exiles cards from the top of their library until they exile an? (.+? card)\. You may cast that card without paying its mana cost\. Then (?:put|that player puts) the exiled cards that weren't cast this way on the bottom of (?:that|their) library in a random order\.$/.exec(text.trim());
+  if (theirCascade) {
+    const who = parsePlayerRef(theirCascade[1]!.toLowerCase(), b);
+    const pf = who ? parseFilter(`${theirCascade[2]} in your library`, b.clone()) : null;
+    if (!who || !pf || pf.plural) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    return [{ type: 'reveal_until', who, filter, exile: true, to: 'cast', youCast: true, rest: 'bottom' }];
   }
   // Tibalt's Trickery: "Counter target spell. Choose 1, 2, or 3 at random. Its controller mills that many cards, then exiles
   // cards from the top of their library until they exile a nonland card with a different name than that spell. They may cast
@@ -2103,7 +2116,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // turn." — the cards the search exiled.
       const searched = out[out.length - 1];
       const castSearched =
-        searched?.type === 'search' && searched.to === 'exile' && !searched.faceDown
+        (searched?.type === 'search' && searched.to === 'exile' && !searched.faceDown) || searched?.type === 'exile_until'
           ? /^(?:Until end of turn, you may cast (?:those cards|them|that card|it)( without paying (?:their|its) mana costs?)|You may cast (?:those cards|them|that card|it) this turn( without paying (?:their|its) mana costs?)?)$/.exec(s)
           : null;
       if (castSearched) {
@@ -2806,7 +2819,8 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
         // Abyssal Hunter: "Tap target creature. ~ deals damage equal to its power to that creature." — "its" is the subject's
         // (the source), not the creature named before.
         // (When "it" is already the source — "When ~ dies, … deals damage equal to its power" — it stays: as it last existed.)
-        const sourceSubject = /^~ deals? /.test(text) && /^its (?:power|toughness)$/.test(what) && b.it?.ref !== 'self' && !(b.it?.ref === 'trigger_object' && b.itIsSource);
+        // Hallar, the Firefletcher: "then Hallar deals damage equal to the number of +1/+1 counters on it" — on Hallar.
+        const sourceSubject = (/^~ deals? /.test(text) || /, then ~ deals? X damage /.test(text)) && /^(?:its (?:power|toughness)|the number of \S+ counters on it)$/.test(what) && b.it?.ref !== 'self' && !(b.it?.ref === 'trigger_object' && b.itIsSource);
         const savedIt = b.it;
         if (sourceSubject) b.it = { ref: 'self' };
         const expr = parseCount(what, b);
@@ -2850,6 +2864,18 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     // Only a creature (CR 700.4: a planeswalker "dies" too).
     const creature: EffectNode = { type: 'if', cond: { type: 'is', of: b.damaged, filter: { types: ['Creature'] } }, effects };
     return disintegrate[1] && disintegrate[1] !== "it's a creature" ? [{ type: 'if', cond: { type: 'kicked' }, effects: [creature] }] : [creature];
+  }
+  // Crown of Fury: "Enchanted creature and other creatures that share a creature type with it get +1/+0 and gain first strike
+  // until end of turn." — it, and the others (not it twice).
+  const crown = /^Enchanted creature and other creatures that share a creature type with it (get|gain) (.+)$/.exec(s);
+  if (crown && /\bAura\b/.test(b.env.typeLine ?? '')) {
+    const r = attempt(b, (b) => {
+      const one = parseSentence(`Enchanted creature ${crown[1]}s ${crown[2]!.replace(/ and gain /, ' and gains ')}`, b);
+      const rest = one ? parseSentence(`Creatures that share a creature type with enchanted creature ${crown[1]} ${crown[2]}`, b) : null;
+      if (!one || !rest || !rest.every((e) => e.type === 'modify' && (e.what as Ref).ref === 'all')) return null;
+      return [...one, ...rest.map((e) => ({ ...e, what: { ...(e.what as Ref & { filter: ObjectFilter }), filter: { ...(e.what as { filter: ObjectFilter }).filter, otherThan: { ref: 'attached' } } } }) as EffectNode)];
+    });
+    if (r) return r;
   }
   // Hurr Jackal: "Target creature can't be regenerated this turn."; Engulfing Flames: "It can't be regenerated this turn."
   // (CR 701.19c)
@@ -4628,7 +4654,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Priest of Forgotten Gods: "Any number of target players each lose 2 life and sacrifice a creature of their choice."
-  const anyEach = /^(Any number of|Two|Three) target (players|opponents) each (.+)$/.exec(s);
+  const anyEach = /^(Any number of|Two|Three|Up to two|Up to three|up to two|up to three) target (players|opponents) each (.+)$/.exec(s);
   if (anyEach) {
     const r = attempt(b, (b) => {
       const who = parsePlayerRef(`${anyEach[1]!.toLowerCase()} target ${anyEach[2]}`, b);
@@ -4791,7 +4817,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Tatsunari, Toad Rider: "Tatsunari and target Frog you control can't be blocked this turn except by creatures with flying
   // or reach." — the same for each.
-  const andTarget = /^~ and ((?:up to one )?(?:another )?target [^,]+?) (can't be blocked .+|get [+-].+|gain .+)$/.exec(s);
+  // Razorgrass Invoker: "This creature and up to one other target creature each get +3/+3 until end of turn."
+  const andTarget = /^~ and ((?:up to one )?(?:another |other )?target [^,]+?) (?:each )?(can't be blocked .+|get [+-].+|gain .+)$/.exec(s);
   if (andTarget) {
     const r = attempt(b, (b) => {
       const one = (pred: string) => pred.replace(/^get /, 'gets ').replace(/^gain /, 'gains ');
@@ -4916,10 +4943,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // CR 701.57a: "discover N".
   // Etali, Primal Conqueror: "each player exiles cards from the top of their library until they exile a nonland card".
-  const exileUntil = /^[Ee]ach player exiles cards from the top of their library until they exile a nonland card$/.exec(s);
+  // Nicol Bolas, God-Pharaoh: "Target opponent exiles cards from the top of their library until they exile a nonland card."
+  const exileUntil = /^([Ee]ach player|[Tt]arget opponent|[Tt]arget player|[Tt]hat player) exiles cards from the top of their library until they exile a nonland card$/.exec(s);
   if (exileUntil) {
+    const who = /^each player$/i.test(exileUntil[1]!) ? ({ ref: 'players', who: 'each' } as Ref) : parsePlayerRef(exileUntil[1]!.toLowerCase(), b);
+    if (!who) return null;
     b.it = { ref: 'created' };
-    return [{ type: 'exile_until', who: { ref: 'players', who: 'each' }, filter: { notTypes: ['Land'] } }];
+    return [{ type: 'exile_until', who, filter: { notTypes: ['Land'] } }];
   }
   // CR 119.5: "Your life total becomes 10"; The Endstone: "your life total becomes half your starting life total, rounded
   // up"; Oketra's Last Mercy: "… becomes equal to your starting life total"; Sorin Markov: "Target opponent's life total
@@ -5658,9 +5688,12 @@ const VERBS: Record<string, VerbHandler> = {
     // Grip of Amnesia: "unless its controller exiles all cards from their graveyard".
     if (!imperative && who.ref !== 'you' && who.ref !== 'players' && /^all cards from (?:their|his or her) graveyard$/.test(args)) return [{ type: 'move', what: { ref: 'all', filter: { zone: 'graveyard', ownedBy: who } }, to: 'exile' }];
     // Skullcap Snail: "target opponent exiles a card from their hand" — they choose it; "each opponent exiles …" — each of them.
-    if (!imperative && who.ref !== 'you' && /^a card from (?:their|his or her) hand$/.test(args)) {
-      if (who.ref === 'players') return [{ type: 'players_do', players: who, effects: [{ type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount: 1, then: 'exile' }] }];
-      return [{ type: 'choose_from_hand', who, filter: {}, amount: 1, then: 'exile', theirChoice: true }];
+    // Nicol Bolas, God-Pharaoh: "Each opponent exiles two cards from their hand."
+    const handExile = !imperative && who.ref !== 'you' ? /^(a|two|three) cards? from (?:their|his or her) hand$/.exec(args) : null;
+    if (handExile) {
+      const amount = handExile[1] === 'a' ? 1 : handExile[1] === 'two' ? 2 : 3;
+      if (who.ref === 'players') return [{ type: 'players_do', players: who, effects: [{ type: 'choose_from_hand', who: { ref: 'you' }, filter: {}, amount, then: 'exile' }] }];
+      return [{ type: 'choose_from_hand', who, filter: {}, amount, then: 'exile', theirChoice: true }];
     }
     // Masked Vandal: "you may exile a creature card from your graveyard. If you do, …" — chosen as it resolves (no target).
     // Young Necromancer: "you may exile two cards from your graveyard. When you do, …".
@@ -6177,6 +6210,8 @@ function parseReplacement(c: string, b: Binder): EffectNode[] | null {
     const to = parseRecipients(both[2]!, b);
     return to?.length === 1 ? [{ type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), to: to[0] }, { type: 'prevent', amount: 'all', ...(both[1] ? { combat: true } : {}), by: to[0] }] : null;
   }
+  // Chameleon Blur: "Prevent all damage that creatures would deal to players this turn." — to them, by creatures.
+  c = c.replace(/^([Pp])revent all (combat )?damage that creatures would deal to (players|you) this turn$/, (_m, p: string, combat: string | undefined, to: string) => `${p}revent all ${combat ?? ''}damage that would be dealt to ${to} this turn by creatures`);
   // Heavy Fog: "Prevent all damage that would be dealt to you this turn by attacking creatures." — both.
   const toBy = /^Prevent all (combat )?damage that would be dealt to (.+?) this turn by (.+)$/.exec(c);
   if (toBy) {

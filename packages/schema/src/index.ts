@@ -198,6 +198,8 @@ export interface ActivatedAbility extends AbilityBase, Program {
    */
   /** Throne of Eldraine: "Spend only mana of the chosen color to activate this ability" — its whole mana cost in that color. */
   payOnly?: 'chosen';
+  /** Crypt Rats: "Spend only black mana on X." — the X paid in that color (CR 107.3). */
+  xColor?: 'W' | 'U' | 'B' | 'R' | 'G';
   costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true; /** Loreseeker's Stone: "costs {1} more". */ more?: true; /** Kami of Jealous Thirst: "costs {4}{B} less" — colored mana too. */ mana?: string };
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
@@ -416,6 +418,8 @@ export interface ObjectFilter {
   combatPartner?: ObjectFilter;
   /** "creatures attacking you" — the player whose point of view this is (not their planeswalkers). */
   attackingYou?: true;
+  /** Soul Snare: "attacking you or a planeswalker you control". */
+  attackingYouOrYours?: true;
   /** Oviya: "Each creature that's attacking one of your opponents" — the player attacked is an opponent. */
   attackingOpponent?: true;
   token?: boolean;
@@ -1537,6 +1541,7 @@ export const CORE_NODES = {
     'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid',
   ],
   statics: [
+    'x_color',
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
     'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal',
   ],

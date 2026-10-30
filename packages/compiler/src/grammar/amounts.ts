@@ -152,6 +152,9 @@ function diedThisTurn(text: string, b: Binder): AmountExpr | null {
     const a = diedThisTurn(`${putInto[1]} that died this turn`, b);
     return a && a.kind === 'died_this_turn' && !a.controller ? { ...a, owner: 'you' } : null;
   }
+  // Tobias, Doomed Conqueror: "each nontoken creature you controlled that died this turn".
+  const yoursDied = /^(.+?) you controlled that died this turn$/.exec(text.trim());
+  if (yoursDied) return diedThisTurn(`${yoursDied[1]} that died under your control this turn`, b);
   const m = /^(.+?) that died (?:under (your|an opponent's) control )?this turn$/.exec(text.trim());
   if (!m) return null;
   const pf = parseFilter(m[1]!, b.clone());

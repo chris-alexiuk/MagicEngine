@@ -332,7 +332,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // CR 702.171b (saddle): "if it's saddled", "~ is saddled"
   if (/^(?:it(?:'s| is)|~ is) saddled$/.test(t)) return { type: 'saddled' };
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
-  if (/^an opponent was dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
+  // Bloodcrazed Goblin: "unless an opponent has been dealt damage this turn".
+  if (/^an opponent (?:was|has been) dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
+  // Antagonism: "unless one of their opponents was dealt damage this turn" — the opponents of the player the trigger is about.
+  if (/^one of (?:their|that player's) opponents (?:was|has been) dealt damage this turn$/.test(t) && b.player?.ref === 'trigger_player') return { type: 'this_turn', event: 'opponent_damaged', of: b.player };
   // Surge (CR 702.117a): "if you or one of your teammates has cast another spell this turn"
   // (Not the spell this source is or was: an enters trigger checks after it was cast.)
   if (/^(?:you or one of your teammates has|you've) cast another spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast', min: 1, other: true };
@@ -1134,6 +1137,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Filigree Fracture: "If that permanent was blue or black, draw a card."
   const wasColor = /^that (?:permanent|creature|artifact|enchantment|planeswalker) was (white|blue|black|red|green)(?: or (white|blue|black|red|green))?$/.exec(t);
   if (wasColor && b.it?.ref === 'target') return { type: 'was_type', of: b.it, colors: [wasColor[1]!, wasColor[2]].filter(Boolean).map((c) => COLOR_WORDS[c!]!) } as ConditionNode;
+  // Budding Insurgent: "If that permanent was a legendary enchantment, draw a card."
+  const wasSuperType = /^that (?:permanent|creature|land|artifact|enchantment|planeswalker) was an? (legendary|snow|basic) (artifact|creature|enchantment|land|planeswalker)$/.exec(t);
+  if (wasSuperType && b.it?.ref === 'target') return { type: 'was_type', of: b.it, supertype: capitalise(wasSuperType[1]!), cardType: capitalise(wasSuperType[2]!) } as ConditionNode;
   const wasKind = /^that (?:permanent|creature|land|artifact|planeswalker) was (?:an? ([A-Z][a-z]+) (planeswalker|creature|land|artifact)|(nonbasic|basic|legendary|nonlegendary))$/.exec(t);
   if (wasKind && b.it?.ref === 'target' && (!wasKind[1] || isSubtype(wasKind[1]))) {
     if (wasKind[1]) return { type: 'was_type', of: b.it, subtype: wasKind[1], cardType: capitalise(wasKind[2]!) };

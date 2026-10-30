@@ -71,7 +71,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // The Darkness Crystal: "target creature card exiled with The Darkness Crystal" (CR 607.2a).
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).
-  [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
+  // Soul Snare: "target creature that's attacking you or a planeswalker you control".
+  [/ (?:(?:that's|that is|that are) )?attacking you or a planeswalker you control$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYouOrYours = true), true)],
+  // Snow Fortress: "target creature without flying that's attacking you".
+  [/ (?:(?:that's|that is|that are) )?attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
   // Ordruun Mentor: "Whenever you attack a player, target creature that's attacking that player …".
   [/ (?:that's|that are) attacking that player$/, (f, _m, b) => {
     const who = b.named['that player'] ?? (b.player?.ref === 'trigger_player' ? b.player : null);
@@ -191,10 +194,10 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ of (?:the chosen|that) type$/, (f) => !f.chosenType && ((f.chosenType = true), true)],
   [/ that shares a creature type with your commander$/, (f) => !f.sharesTypeWithCommander && ((f.sharesTypeWithCommander = true), true)],
   // Shared Animosity: "that shares a creature type with it"; Coat of Arms: "that shares at least one creature type with it"
-  [/ that shares? (?:at least one|a) creature type with (it|~|this creature|that creature)$/, (f, m, b) => {
+  [/ that shares? (?:at least one|a) creature type with (it|~|this creature|that creature|enchanted creature|equipped creature)$/, (f, m, b) => {
     if (f.sharesCreatureTypeWith) return false;
     // One object: not "each creature … with it" (Coat of Arms compares each creature with itself in turn).
-    const about: Ref | null = m[1] === '~' || m[1] === 'this creature' ? { ref: 'self' } : b.it && ['self', 'trigger_object', 'attached', 'target', 'affected'].includes(b.it.ref) ? b.it : null;
+    const about: Ref | null = m[1] === '~' || m[1] === 'this creature' ? { ref: 'self' } : /^(?:enchanted|equipped) creature$/.test(m[1]!) ? { ref: 'attached' } : b.it && ['self', 'trigger_object', 'attached', 'target', 'affected'].includes(b.it.ref) ? b.it : null;
     return Boolean(about && ((f.sharesCreatureTypeWith = about), true));
   }],
   // Mirror Box: "each other creature you control with the same name as that creature" — each one it applies to.
@@ -1123,10 +1126,12 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // CR 115.1: "up to one target player" (Endurance) — none at all is a legal choice.
   // Priest of Forgotten Gods: "Any number of target players each lose 2 life …" (CR 115.1d).
   // Gleaming Splendor: "Two target players each draw a card."
-  const anyPlayers = /^(any number of|two|three) target (players|opponents)$/.exec(t);
+  const anyPlayers = /^(any number of|two|three|up to two|up to three) target (players|opponents)$/.exec(t);
   if (anyPlayers) {
     // Not "that player" / "their" later: each of them would need counting for themselves.
-    const count = anyPlayers[1] === 'two' ? { count: 2 } : anyPlayers[1] === 'three' ? { count: 3 } : { count: 100, upTo: true as const };
+    // Donatello's Science Lesson: "Up to two target players each draw a card."
+    const n = /two$/.test(anyPlayers[1]!) ? 2 : /three$/.test(anyPlayers[1]!) ? 3 : 100;
+    const count = { count: n, ...(n === 100 || /^up to /.test(anyPlayers[1]!) ? { upTo: true as const } : {}) };
     const spec: TargetSpec = { what: 'player', text: t, ...count, ...(anyPlayers[2] === 'opponents' ? { player: 'opponent' as const } : {}) };
     const ref = b.addTarget(spec);
     // Court of Cunning: "any number of target players each mill two cards. If you're the monarch, each of those players

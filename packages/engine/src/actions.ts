@@ -7,7 +7,7 @@ import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { helperKeywords, payWithHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
-import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility } from '@mtg/schema';
+import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility, StaticAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canActivateTapAbilities, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
@@ -772,7 +772,11 @@ function cast(
   // CR 601.2f / 107.3a: the total cost includes the value chosen for X — generic mana a reduction can take off too
   // (Goblin Electromancer and a Fireball with X=3: {2}{R}).
   if (cost.x) {
-    cost.generic += cost.x * x;
+    // Consume Spirit: "Spend only black mana on X." — that much mana of that color.
+    const xColor = castFace.abilities.find((a) => a.kind === 'static' && a.effect.type === 'x_color');
+    const c = xColor ? ((xColor as StaticAbility).effect.color as ManaColor) : undefined;
+    if (c) cost.specific[c] = (cost.specific[c] ?? 0) + cost.x * x;
+    else cost.generic += cost.x * x;
     cost.x = 0;
   }
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
@@ -1233,6 +1237,11 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     const other = (cost.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
     if (phyrexianLife + other > g.players[player]!.life) throw new RulesError(`You don’t have ${phyrexianLife + other} life to pay.`);
     if (playerRule(g, player, 'life_cant_change')) throw new RulesError('Your life total can’t change.');
+  }
+  // Crypt Rats: "Spend only black mana on X."
+  if (ability.xColor && mana.x) {
+    mana.specific[ability.xColor] = (mana.specific[ability.xColor] ?? 0) + mana.x * choices.x;
+    mana.x = 0;
   }
   if (cost.mana && !choices.costs.freeEquip && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
   if (cost.mana && !choices.costs.freeEquip && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');

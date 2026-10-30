@@ -4328,12 +4328,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Tibalt's Trickery: "Its controller … exiles cards from the top of their library until …. They may cast that card …"
     const who = (memo.who ??= node.who ? refPlayers(ctx, ref(node, 'who'))[0] : ctx.controller);
     if (!who) return true;
-    if (who !== ctx.controller) return effects.reveal_until!(node, { ...ctx, controller: who });
+    // Chaos Wand: "Target opponent exiles cards from the top of their library until …. You may cast that card …" — their
+    // library, your cast.
+    if (who !== ctx.controller && !node.youCast) return effects.reveal_until!(node, { ...ctx, controller: who });
+    const owner = who;
     if (!memo.seen) {
       const filter = liveFilter(ctx, { ...((node.filter ?? {}) as ObjectFilter), zone: 'library' as const });
       const seen: string[] = [];
       let hit: string | null = null;
-      for (const id of zoneList(g, 'library', ctx.controller)) {
+      for (const id of zoneList(g, 'library', owner)) {
         seen.push(id);
         if (matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null })) {
           hit = id;
@@ -4343,7 +4346,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       memo.seen = seen;
       memo.hit = hit;
       if (node.exile) for (const id of seen) moveObject(g, id, 'exile', ctx.events);
-      else if (seen.length) ctx.events.push({ type: 'revealed', player: ctx.controller, objects: [...seen] });
+      else if (seen.length) ctx.events.push({ type: 'revealed', player: owner, objects: [...seen] });
     }
     const hit = memo.hit;
     const where = (id: string) => g.objects[id]?.zone;
@@ -4378,8 +4381,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (from !== 'exile') for (const id of rest) moveObject(g, id, 'exile', ctx.events);
     } else if (r === 'shuffle') {
       if (from === 'exile') for (const id of rest) moveObject(g, id, 'library', ctx.events);
-      shuffleInPlace(g, zoneList(g, 'library', ctx.controller));
-      ctx.events.push({ type: 'shuffled', player: ctx.controller });
+      shuffleInPlace(g, zoneList(g, 'library', owner));
+      ctx.events.push({ type: 'shuffled', player: owner });
     } else {
       shuffleInPlace(g, rest);
       for (const id of rest) moveObject(g, id, 'library', ctx.events, { position: 'bottom' });
@@ -6164,7 +6167,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal'],
+  statics: ['x_color', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

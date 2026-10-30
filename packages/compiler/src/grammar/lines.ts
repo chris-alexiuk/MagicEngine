@@ -550,6 +550,12 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   [/ Activate only once\.$/, (a) => (a.oncePerGame = true)],
   // Throne of Eldraine: "Spend only mana of the chosen color to activate this ability."
   [/ Spend only mana of the chosen color to activate this ability\.$/, (a) => (a.payOnly = 'chosen')],
+  // Crypt Rats: "Spend only black mana on X." (CR 107.3)
+  [/ Spend only white mana on X\.$/, (a) => (a.xColor = 'W')],
+  [/ Spend only blue mana on X\.$/, (a) => (a.xColor = 'U')],
+  [/ Spend only black mana on X\.$/, (a) => (a.xColor = 'B')],
+  [/ Spend only red mana on X\.$/, (a) => (a.xColor = 'R')],
+  [/ Spend only green mana on X\.$/, (a) => (a.xColor = 'G')],
 ];
 
 /** "[Cost]: [Effect]." (CR 602.1). Mana abilities are handled by the mana rule. */
@@ -886,10 +892,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!base || !cond || base.trigger.while) return null;
     return { ...base, trigger: { ...base.trigger, while: cond } };
   }
-  const whileCond = /^(~|this creature) attacks while (?!saddled$)(.+)$/.exec(t);
+  // Burning Sun Cavalry: "Whenever this creature attacks or blocks while you control a Dinosaur".
+  const whileCond = /^(~|this creature) (attacks|attacks or blocks|blocks) while (?!saddled$)(.+)$/.exec(t);
   if (whileCond) {
-    const base = parseTrigger(word, '~ attacks', b);
-    const cond = base ? parseCondition(whileCond[2]!, b.clone()) : null;
+    const base = parseTrigger(word, `~ ${whileCond[2]}`, b);
+    const cond = base ? parseCondition(whileCond[3]!, b.clone()) : null;
     if (!base || !cond) return null;
     return { ...base, trigger: { ...base.trigger, while: cond } };
   }
@@ -4857,6 +4864,17 @@ export const returnIfPaidRule: GrammarRule = {
  * as it resolves, exile it and, at the beginning of your next upkeep, you may cast this card from exile
  * without paying its mana cost."
  */
+/** Consume Spirit: "Spend only black mana on X." — the spell's X paid in that color (CR 107.3). */
+export const xColorRule: GrammarRule = {
+  id: 'x_color',
+  parse(line, original, ctx) {
+    const m = /^Spend only (white|blue|black|red|green) mana on X\.$/.exec(line);
+    if (!m || !/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) return null;
+    const node: StaticAbility = { kind: 'static', text: original, effect: { type: 'x_color', color: COLOR_WORDS[m[1]!]! } };
+    return node;
+  },
+};
+
 export const reboundRule: GrammarRule = {
   id: 'rebound',
   parse(line, original) {
@@ -5396,6 +5414,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   selfReplacementRule,
   castOptionRule,
   reboundRule,
+  xColorRule,
   entersDayRule,
   entersPreparedRule,
   exertRule,
