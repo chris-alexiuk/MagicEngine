@@ -411,7 +411,7 @@ export interface ObjectFilter {
   tapped?: boolean;
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
   /** Alarum: "target nonattacking creature"; "nonblocking". */
-  notCombat?: 'attacking' | 'blocking';
+  notCombat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
   /** Fight to the Death: "blocked creatures"; "unblocked creatures" — attacking creatures, blocked or not (CR 509.1h). */
   blockedState?: 'blocked' | 'unblocked';
   /** CR 506.5: "attacking alone" — the only attacking creature. */
@@ -995,6 +995,8 @@ export interface EntersTappedEffect extends EffectNode {
 
 /** Blocking restrictions and requirements (CR 509.1b–c) carried by continuous effects. */
 export interface CombatRules {
+  /** Heartwood Dryad: "can block creatures with shadow as though it had shadow" (CR 702.28b). */
+  blocksShadow?: true;
   /** "can't be blocked by creatures with power 2 or less" */
   cantBeBlockedBy?: ObjectFilter;
   /** "can't be blocked except by creatures with flying" */
@@ -1574,7 +1576,7 @@ export const CORE_NODES = {
     'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair',
   ],
   statics: [
-    'x_color',
+    'x_color', 'ignore_landwalk',
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
     'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal',
   ],
@@ -1585,7 +1587,7 @@ export const CORE_NODES = {
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
     'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'spell_countered', 'proliferated', 'explores', 'coin_flipped', 'unattached', 'milled', 'became_monarch', 'counters_removed',
   ],
-  costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process'],
+  costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process', 'exile_top'],
   /** Counted amounts (AmountExpr kinds). */
   amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */

@@ -16,7 +16,7 @@ import { nextRandom } from './rng.js';
 /** Paying costs: mana abilities, automatic tapping, and non-mana costs (CR 118, CR 605). */
 
 /** Non-mana cost tags the engine can pay. */
-export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process'];
+export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process', 'exile_top'];
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -348,6 +348,9 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
     } else if (c.type === 'mill') {
       // CR 701.17b: not more cards than the library has.
       if (zoneList(g, 'library', player).length < Number(c.amount ?? 1)) throw new RulesError('Your library doesn’t have enough cards to mill.');
+    } else if (c.type === 'exile_top') {
+      // Arc-Slogger: "Exile the top ten cards of your library" — only with that many there (CR 118.3).
+      if (zoneList(g, 'library', player).length < Number(c.amount ?? 1)) throw new RulesError('Your library doesn’t have enough cards to exile.');
     } else throw new RulesError(`Paying “${c.type}” isn’t supported yet.`);
   }
 }
@@ -415,6 +418,8 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
     } else if (c.type === 'mill') {
       // Millikin: "{T}, Mill a card: Add {C}." (CR 701.17a)
       for (const id of zoneList(g, 'library', player).slice(0, Number(c.amount ?? 1))) moveObject(g, id, 'graveyard', events);
+    } else if (c.type === 'exile_top') {
+      for (const id of zoneList(g, 'library', player).slice(0, Number(c.amount ?? 1))) moveObject(g, id, 'exile', events);
     } else if (c.type === 'put_counters_self') {
       const counter = String(c.counter);
       const n = Number(c.amount ?? 1);

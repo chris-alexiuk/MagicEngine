@@ -972,7 +972,7 @@ export function matchesFilter(
   // lands".
   if (f.except && matchesFilter(g, o, f.except, { ...ctx, anyZone: true }, c)) return false;
   if (f.sourceAttachedTo && !(ctx.source?.attachedTo && ctx.source.attachedTo.id === o.id && ctx.source.attachedTo.zcc === o.zcc)) return false;
-  if (f.notCombat && (f.notCombat === 'attacking' ? g.combat?.attackers[o.id] : g.combat?.blockers[o.id])) return false;
+  if (f.notCombat && (f.notCombat !== 'blocking' && g.combat?.attackers[o.id] || (f.notCombat !== 'attacking' && g.combat?.blockers[o.id]))) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);

@@ -1265,8 +1265,10 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   // Longest first so "Kinnan, Bonder Prodigy" is replaced before "Kinnan".
   // (Not inside another card's name: Nissa Revane's "a card named Nissa's Chosen", Kookus's "a creature named Keeper of Kookus",
   // Mishra's "its name is Mishra's Warform".)
+  // (Nor a creature type a one-word name shares: Aurochs's "for each other attacking Aurochs", "an Aurochs card".)
   for (const name of [...names].sort((a, b) => b.length - a.length)) {
-    out = out.replace(new RegExp(`(?<![\\w'])(?<!\\b[A-Z][a-z]+ of )${escapeRegExp(name)}(?![\\w])(?!['’]s [A-Z][a-z]+(?![a-z]* (?:creature|card|token|permanent)s?\\b))`, 'g'), '~');
+    const asType = /^[A-Z][a-z]+$/.test(name) ? '(?<!\\b(?:other|attacking|blocking|each|an?|another|non-) )' : '';
+    out = out.replace(new RegExp(`(?<![\\w'])(?<!\\b[A-Z][a-z]+ of )${asType}${escapeRegExp(name)}(?![\\w])(?!['’]s [A-Z][a-z]+(?![a-z]* (?:creature|card|token|permanent)s?\\b))`, 'g'), '~');
   }
   // "this creature", "this Aura", "this Equipment" (the subtype words are capitalised).
   out = out.replace(new RegExp(`\\b[Tt]his (?:${SELF_NOUNS})\\b`, 'gi'), '~');

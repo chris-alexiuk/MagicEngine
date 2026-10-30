@@ -17,7 +17,7 @@ export interface ParsedFilter {
 }
 
 /** Subtypes whose plural is the same word ("Other Merfolk you control get +1/+1"). */
-const INVARIANT_PLURALS = new Set(['Merfolk', 'Kithkin', 'Moonfolk', 'Kor', 'Samurai', 'Fish', 'Sheep', 'Djinn', 'Efreet', 'Aetherborn', 'Viashino', 'Vedalken', 'Eldrazi', 'Myr', 'Nephilim', 'Surrakar', 'Jellyfish', 'Starfish', 'Treefolk', 'Deer', 'Elk', 'Bison', 'Kirin', 'Equipment']);
+const INVARIANT_PLURALS = new Set(['Merfolk', 'Kithkin', 'Moonfolk', 'Kor', 'Samurai', 'Fish', 'Sheep', 'Djinn', 'Efreet', 'Aetherborn', 'Viashino', 'Vedalken', 'Eldrazi', 'Myr', 'Nephilim', 'Surrakar', 'Jellyfish', 'Starfish', 'Treefolk', 'Deer', 'Elk', 'Bison', 'Kirin', 'Aurochs', 'Equipment']);
 
 const PLURAL_HEADS = new Set(['permanents', 'spells', 'cards', 'tokens']);
 /** CR 110.4: the permanent card types. */
@@ -142,6 +142,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     f.controlledBy = { ref: 'controller_of', of: b.it };
     return true;
   }],
+  // Street Sweeper: "destroy all Auras attached to target land".
+  [/ attached to (target (?:land|creature|permanent|artifact))$/, (f, m, b) => {
+    if (f.attachedTo || f.attachedToRef) return false;
+    const t = parseObjectRef(m[1]!, b);
+    return Boolean(t && !t.plural && t.targeted && ((f.attachedToRef = t.ref), true));
+  }],
   // Blastfire Bolt: "Destroy all Equipment attached to that creature." — the target, as the effect applies.
   [/ attached to (?:that creature|that permanent|it)$/, (f, _m, b) => b.it?.ref === 'target' && !f.attachedTo && !f.attachedToRef && ((f.attachedToRef = b.it), true)],
   // Witchbane Orb: "all Curses attached to you"; Curse of Thirst: "the number of Curses attached to them".
@@ -160,6 +166,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
   // Prehistoric Pet: "can't be blocked by creatures with greater power" — than the attacking creature.
   [/ with greater power$/, (f) => !f.powerAboveSource && ((f.powerAboveSource = true), true)],
+  // Spitfire Handler: "can't block creatures with power greater than this creature's power".
+  [/ with power greater than ~'s power$/, (f) => !f.powerAboveSource && ((f.powerAboveSource = true), true)],
   // Shadowfax, Lord of Horses: "a creature card with lesser power" — than this creature.
   // Not Kamiz's "… It connives. Then choose another attacking creature with lesser power" — lesser than that one.
   [/ with lesser power$/, (f, _m, b) => (!b.it || b.it.ref === 'self') && !f.powerBelowSource && ((f.powerBelowSource = true), true)],
@@ -731,6 +739,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
       else if (xl === 'token') f.token = false;
       // Alarum: "Untap target nonattacking creature."
       else if ((xl === 'attacking' || xl === 'blocking') && !f.notCombat) f.notCombat = xl;
+      // Unlikely Alliance: "target nonattacking, nonblocking creature" — neither.
+      else if ((xl === 'attacking' || xl === 'blocking') && f.notCombat && f.notCombat !== xl) f.notCombat = 'attacking_or_blocking';
       // Shield Broker: "target noncommander creature you don't control" (CR 903.3).
       else if (xl === 'commander') f.commander = false;
       // Shoot the Sheriff: "target non-outlaw creature" (CR 700.12).
@@ -1286,6 +1296,13 @@ export function parseRecipients(text: string, b: Binder): Ref[] | null {
       if (players.length > 1) return null;
     }
     // "each of two target creatures", "each of up to two targets" (CR 115.4).
+    // Storm of Steel: "each of one or two targets" — at least one.
+    const oneOrTwo = /^each of one or (two|three) targets$/i.exec(t);
+    if (oneOrTwo) {
+      const ref = b.addTarget({ what: 'any', filter: { types: ANY_TARGET_TYPES }, text: t, count: oneOrTwo[1] === 'two' ? 2 : 3, upTo: true, min: 1 });
+      b.it = ref;
+      return [ref];
+    }
     const eachOf = /^each of (up to )?(\w+) (?:other )?targets?(?: (.+))?$/i.exec(t);
     if (eachOf) {
       // Crackle with Power: "each of up to X targets" — as many as the X announced (CR 601.2b–c).
