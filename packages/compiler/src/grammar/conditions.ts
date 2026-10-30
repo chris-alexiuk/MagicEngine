@@ -414,9 +414,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Level Up: "if it has power 10 or greater" — the same.
   // Arachnus Web: "if enchanted creature's power is 4 or greater" — what this Aura is attached to.
   const hasStat = /^(it|~|that creature|enchanted creature|equipped creature) has (power|toughness|mana value) (\w+) or (greater|more|less|fewer)$/.exec(t);
-  const statIs = /^(its|~'s|that creature's|that card's|enchanted creature's|equipped creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : /^(?:enchanted|equipped) creature$/.test(hasStat[1]!) ? `${hasStat[1]}'s` : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
+  // Viv Vision: "draw a card if her power is 4 or greater" — a named character's own.
+  const statIs = /^(its|her|his|~'s|that creature's|that card's|enchanted creature's|equipped creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : /^(?:enchanted|equipped) creature$/.test(hasStat[1]!) ? `${hasStat[1]}'s` : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
   if (statIs) {
-    const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : /^(?:enchanted|equipped) creature's$/.test(statIs[1]!) ? ({ ref: 'attached' } as Ref) : b.it;
+    const of = statIs[1] === "~'s" || statIs[1] === 'her' || statIs[1] === 'his' ? ({ ref: 'self' } as Ref) : /^(?:enchanted|equipped) creature's$/.test(statIs[1]!) ? ({ ref: 'attached' } as Ref) : b.it;
     const n = parseAmount(statIs[3]!);
     if (of && typeof n === 'number') {
       const key = statIs[2] === 'mana value' ? 'manaValue' : (statIs[2] as 'power' | 'toughness');
@@ -516,6 +517,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you have max speed$/.test(t)) return { type: 'max_speed' };
   if (/^you don't have max speed$/.test(t)) return { type: 'max_speed', not: true };
   if (/^you have the city's blessing$/.test(t)) return { type: 'city_blessing' };
+  // Pelt Collector: "if that creature's power is greater than this creature's".
+  if (/^that creature's power is greater than (?:~|this creature)'s(?: power)?$/.test(t) && b.it?.ref === 'trigger_object') return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power'] };
   // CR 702.100a (evolve): "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness"
   if (t === "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness" && b.it) {
     return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power', 'toughness'] };
@@ -541,6 +544,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (total) return { type: 'total_power', op: 'ge', n: Number(total[2]), ...(total[1] === 'toughness' ? { stat: 'toughness' } : {}) };
   // Septic Rats: "if defending player is poisoned" (one or more poison counters).
   if (t === 'defending player is poisoned' && b.named['defending player']) return { type: 'poison', player: b.named['defending player'], min: 1 };
+  // Break the Spell: "If a permanent you controlled or a token was destroyed this way, draw a card."
+  if (t === 'a permanent you controlled or a token was destroyed this way') {
+    return { type: 'or', any: [{ type: 'amount', amount: { kind: 'moved_this_way', how: 'destroyed', yours: true }, op: 'ge', n: 1 }, { type: 'amount', amount: { kind: 'moved_this_way', how: 'destroyed', token: true }, op: 'ge', n: 1 }] };
+  }
   // Fanatic of the Harrowing: "each player discards a card. If you discarded a card this way, draw a card."
   if (t === 'you discarded a card this way') return { type: 'amount', amount: { kind: 'discarded_this_way', mine: true }, op: 'ge', n: 1 };
   // Corrupted Resolve: "Counter target spell if its controller is poisoned."
@@ -835,6 +842,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const amount = c ? parseCount(`the number of ${died[2]} that died ${died[3]}this turn`, b) : null;
     if (c && amount) return { type: 'amount', amount, ...c };
   }
+  // Path to the Festival: "if there are three or more basic land types among lands you control" (domain).
+  const domainN = /^there are (two|three|four|five) or more basic land types among lands you control$/.exec(t);
+  if (domainN) return { type: 'amount', amount: { kind: 'domain' }, op: 'ge', n: parseAmount(domainN[1]!) as number };
+  // Titan Hunter: "if no creatures died this turn".
+  if (t === 'no creatures died this turn') return { type: 'not', cond: { type: 'this_turn', event: 'creature_died' } };
   // Things that happened this turn.
   const events: Record<string, string> = {
     'a creature died this turn': 'creature_died',
@@ -933,7 +945,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Heroic Return: "if a creature is attacking you".
   if (t === 'a creature is attacking you') return { type: 'attacking_you', min: 1 };
   // Lyse Hext: "you've cast two or more noncreature spells this turn"
-  const castN = /^you(?:'ve)? cast (two|three|four|five) or more (.+?) spells this turn$/.exec(t);
+  // The Howling Abomination: "you've cast three or more spells this turn" — any spells.
+  const castN = /^you(?:'ve)? cast (two|three|four|five) or more (?:(.+?) )?spells this turn$/.exec(t);
+  if (castN && !castN[2]) return { type: 'this_turn', event: 'you_cast', min: parseAmount(castN[1]!) as number };
   if (castN) {
     const pf = parseFilter(`${castN[2]} spells`, b.clone());
     if (!pf || !pf.plural || (pf.filter.zone && pf.filter.zone !== 'stack') || pf.filter.controller) return null;
@@ -987,8 +1001,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Endless Evil: "When enchanted creature dies, if that creature was a Horror" — as it last existed.
-  const wasSub = /^(?:that creature|it) was an? ([A-Z][a-z]+)$/.exec(t);
-  if (wasSub && isSubtype(wasSub[1]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object'))) return { type: 'was_type', subtype: wasSub[1]! };
+  // Infernal Vessel: "When this creature dies, if it wasn't a Demon, …".
+  const wasSub = /^(?:that creature|it) (was|wasn't) an? ([A-Z][a-z]+)$/.exec(t);
+  if (wasSub && isSubtype(wasSub[2]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object'))) {
+    const c: ConditionNode = { type: 'was_type', subtype: wasSub[2]! };
+    return wasSub[1] === 'was' ? c : { type: 'not', cond: c };
+  }
   // Uglúk of the White Hand: "If that creature was a Goblin or Orc".
   const wasEither = /^(?:that creature|it) was an? ([A-Z][a-z]+) or (?:an? )?([A-Z][a-z]+)$/.exec(t);
   if (wasEither && isSubtype(wasEither[1]!) && isSubtype(wasEither[2]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object')))
@@ -998,7 +1016,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Grab the Prize: "the discarded card wasn't a land card"; Nasty End: "the sacrificed creature was legendary"; Falkenrath
   // Aristocrat: "the sacrificed creature was a Human" — what it was as it was sacrificed or discarded (CR 608.2h).
   // Vohar, Vodalian Desecrator: "If you discarded an instant or sorcery card this way" — the same as "the discarded card was".
-  const discardedThisWay = /^you discarded (an? .+? card) this way$/.exec(t);
+  // Silvan Reveler: "If you discard a land card this way" — the same.
+  const discardedThisWay = /^you discard(?:ed)? (an? .+? card) this way$/.exec(t);
   if (discardedThisWay) return parseCondition(`the discarded card was ${discardedThisWay[1]}`, b);
   const lkiWas = /^the (discarded|sacrificed) (?:card|creature|permanent|artifact) (was|wasn't) (an? )?(.+)$/.exec(t);
   if (lkiWas) {

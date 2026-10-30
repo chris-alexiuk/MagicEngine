@@ -456,7 +456,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const [a] = refObjects(ctx, cond.of as never);
       const [b] = refObjects(ctx, cond.than as never);
       if (!a || !b) return false;
-      return (cond.stats as string[]).some((s) => (s === 'power' ? power(g, a) > power(g, b) : toughness(g, a) > toughness(g, b)));
+      // Pelt Collector: "Whenever another creature you control … dies, if that creature's power is greater than this
+      // creature's" — the creature as it last existed (CR 603.10a).
+      const last = (o: typeof a) => (o.zone !== 'battlefield' ? g.lastKnown?.[o.id] : undefined);
+      const stat = (o: typeof a, k: string) => {
+        const l = last(o);
+        if (l && (l.zcc === o.zcc || l.zcc === o.zcc - 1)) return k === 'power' ? l.power : l.toughness;
+        return k === 'power' ? power(g, o) : toughness(g, o);
+      };
+      return (cond.stats as string[]).some((k) => stat(a, k) > stat(b, k));
     }
     case 'day_night':
       // CR 731: "if it's night"

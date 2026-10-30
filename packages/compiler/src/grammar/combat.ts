@@ -48,6 +48,13 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     const pf = parseFilter(unless[1]!, b);
     return pf && !pf.plural ? { attackOnlyIfDefenderControls: pf.filter } : null;
   }
+  // Spectral Grasp: "can't block creatures you control".
+  // Zurgo Bellstriker: "can't block creatures with power 2 or greater".
+  const cantBlockOf = /^can't block (creatures (?:you control|your opponents control|with power \d+ or (?:greater|less)))$/.exec(p);
+  if (cantBlockOf) {
+    const pf = parseFilter(cantBlockOf[1]!, b);
+    return pf && pf.plural ? { cantBlockOf: pf.filter } : null;
+  }
   const only = /^can block only (.+)$/.exec(p);
   if (only) {
     const pf = parseFilter(only[1]!, b);

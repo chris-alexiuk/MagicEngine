@@ -1544,7 +1544,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
   // Aerial Extortionist: "enters or deals combat damage to a player"; Alpha Deathclaw: "enters or becomes monstrous".
-  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies|deals combat damage to a player) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?|deals combat damage to a player|becomes monstrous|becomes tapped)$/.exec(t);
+  // Cryoshatter: "When enchanted creature becomes tapped or is dealt damage, destroy it."
+  const either = /^(~|enchanted creature|equipped creature) (enters|attacks|blocks|dies|deals combat damage to a player|becomes tapped) (?:or|and whenever (?:it|~)) (attacks|blocks|dies|leaves the battlefield|is turned face up|is put into a graveyard from the battlefield|transforms into ~|becomes the target of a spell(?: or ability)?(?: an opponent controls)?|deals combat damage to a player|becomes monstrous|becomes tapped|is dealt damage)$/.exec(t);
   if (either && either[2] !== either[3]) {
     const one = parseTrigger(word, `${either[1]} ${either[2]}`, b);
     const two = one ? parseTrigger(word, `${either[1]} ${either[3]}`, b) : null;
@@ -2052,6 +2053,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === '~ is put into a graveyard from anywhere') {
     b.selfZone = 'graveyard';
     return { trigger: { type: 'put_into_graveyard', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+  }
+  // Narcomoeba: "When this card is put into your graveyard from your library" — milled, surveilled or discarded from the
+  // top; never cast or played, and a card goes only to its owner's graveyard (CR 404.2).
+  if (t === '~ is put into your graveyard from your library') {
+    b.selfZone = 'graveyard';
+    return { trigger: { type: 'put_into_graveyard', subject: { ref: 'self' }, fromZone: 'library' }, it: { ref: 'self' }, player: null };
   }
   // CR 309.4c: a room ability's trigger (the dungeon parser fills in the room).
   if (t === 'you move your venture marker into this room' || t === 'you move your venture marker into ~') return { trigger: { type: 'room' }, it: { ref: 'self' }, player: null };
@@ -3126,7 +3133,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3295,7 +3302,8 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       effect.colors = ['W', 'U', 'B', 'R', 'G'];
       continue;
     }
-    const isColor = /^is (white|blue|black|red|green|colorless)$/.exec(part);
+    // Darkest Hour: "All creatures are black."
+    const isColor = /^(?:is|are) (white|blue|black|red|green|colorless)$/.exec(part);
     if (isColor && !effect.colors) {
       effect.colors = isColor[1] === 'colorless' ? [] : [COLOR_WORDS[isColor[1]!]! as Color];
       continue;
@@ -3944,6 +3952,10 @@ export const quantityReplacementRule: GrammarRule = {
         ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });
     }
+    // Charging Tuskodon: "If this creature would deal combat damage to a player, it deals double that damage to that player
+    // instead."
+    const selfToPlayer = /^If (?:~|this creature) would deal (combat )?damage to a player, it deals (double|triple) that damage to that player instead\.$/.exec(line);
+    if (selfToPlayer) return make({ event: 'damage', filter: { isSource: true }, op: selfToPlayer[2] as 'double' | 'triple', toPlayersOnly: true, ...(selfToPlayer[1] ? { combatOnly: true as const } : {}) });
     // Goldnight Castigator: "If a source would deal damage to you, it deals double that damage to you instead." / "… to this
     // creature …".
     const toYouOrSelf = /^If a source would deal damage to (you|~), it deals (double|triple) that damage to \1 instead\.$/.exec(line);
@@ -4946,8 +4958,9 @@ export const abilityCostReductionRule: GrammarRule = {
     const zirda = /^Abilities you activate that aren't mana abilities cost \{(\d+)\} less to activate\. This effect can't reduce the mana in that cost to less than one mana\.$/.exec(line);
     if (zirda) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, amount: Number(zirda[1]), minOne: true } } as StaticAbility;
     // Fighter Class: "Equip abilities you activate cost {2} less to activate." (CR 702.6a: generic mana only, CR 601.2f)
-    const equip = /^Equip abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
-    if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1]) } } as StaticAbility;
+    // Auriok Steelshaper: "Equip costs you pay cost {1} less." — the same.
+    const equip = /^Equip (?:abilities you activate cost \{(\d+)\} less to activate|costs you pay cost \{(\d+)\} less)\.$/.exec(line);
+    if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1] ?? equip[2]) } } as StaticAbility;
     // Silver-Fur Master: "Ninjutsu abilities you activate cost {1} less to activate." (commander ninjutsu too, CR 702.49d)
     // Fluctuator: "Cycling abilities you activate cost {2} less to activate." (typecycling too, CR 702.29e)
     const cycling = /^Cycling abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);

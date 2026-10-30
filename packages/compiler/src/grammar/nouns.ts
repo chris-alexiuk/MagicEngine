@@ -322,8 +322,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Kodama of the East Tree: "a permanent card with equal or lesser mana value".
   [/ with equal or lesser mana value$/, (f, _m, b) => b.it?.ref === 'trigger_object' && !f.manaValue && ((f.manaValue = { op: 'le', n: { kind: 'stat', stat: 'mana_value', of: { ref: 'trigger_object' } } }), true)],
   // "with a +1/+1 counter on it", "with +1/+1 counters on them", "with a counter on it"
+  // Heartless Act: "target creature with no counters on it"; Hindervines: "creatures with no +1/+1 counters on them" — none
+  // (of that kind).
+  [/ with no counters on (?:it|them)$/, (f) => !f.notCounter && !f.counter && ((f.notCounter = 'any'), true)],
+  [/ with no (\S+) counters on (?:it|them)$/, (f, m) => !f.notCounter && !f.counter && ((f.notCounter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?:a|an|one or more) (\S+) counters? on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
-  [/ with (?!a |an )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
+  [/ with (?!a |an |no )(\S+) counters on (?:it|them)$/, (f, m) => !f.counter && ((f.counter = m[1]!.replace(/−/g, '-')), true)],
   [/ with (?:a counter|counters) on (?:it|them)$/, (f) => !f.counter && ((f.counter = 'any'), true)],
   // Wave Goodbye: "each creature without a +1/+1 counter on it"
   [/ without (?:a|an) (\S+) counters? on (?:it|them)$/, (f, m) => !f.notCounter && ((f.notCounter = m[1]!.replace(/−/g, '-')), true)],

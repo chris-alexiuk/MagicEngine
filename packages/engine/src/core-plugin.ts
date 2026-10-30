@@ -627,6 +627,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         // Rousing Refrain: "Exile ~ with three time counters on it."
         const withCounters = node.counters as Record<string, number> | undefined;
         if (withCounters && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') for (const [k, n] of Object.entries(withCounters)) ctx.g.objects[o.id]!.counters[k] = (ctx.g.objects[o.id]!.counters[k] ?? 0) + n;
+        // Epochrasite: "exile it with three time counters on it and it gains suspend" (CR 702.62b: it's suspended).
+        if (node.gainSuspend && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') ctx.g.objects[o.id]!.suspended = true;
         // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
         if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
         // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
@@ -3949,11 +3951,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const candidates = movedThisWay(ctx, { how: 'milled' })
       .map((m) => m.id)
       .filter((id) => g.objects[id]?.zone === 'graveyard' && (each ? each.some((f) => fits(id, f)) : fits(id, filter)));
-    if (!candidates.length) return true;
+    // Patient Naturalist: "Put a land card from among the milled cards into your hand. If you can't, create a Treasure token."
+    if (!candidates.length) return Array.isArray(node.cant) ? { expand: structuredClone(node.cant as EffectNode[]) } : true;
     const max = Math.min(amountOf(ctx, node.amount), candidates.length);
     const min = node.optional ? 0 : max;
     const where = node.to === 'hand' ? 'into your hand' : 'onto the battlefield';
-    let chosen = candidates.length === 1 && min === 1 ? [candidates[0]!] : null;
+    // Cantankerous Keepers: "put all Elf cards from among them" — nothing to choose.
+    let chosen = min === max && max === candidates.length && !each ? [...candidates] : null;
     if (!chosen) {
       const answer = answerOf(ctx, 'choose_objects');
       const kinds = each ? Object.fromEntries(candidates.map((id) => [id, each.flatMap((f, i) => (fits(id, f) ? [i] : []))])) : undefined;
@@ -4304,6 +4308,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const r = String(node.rest ?? 'bottom');
     if (r === 'graveyard') {
       for (const id of rest) moveObject(g, id, 'graveyard', ctx.events);
+    } else if (r === 'hand') {
+      // Treasure Hunt: "then put all cards revealed this way into your hand".
+      for (const id of rest) moveObject(g, id, 'hand', ctx.events);
     } else if (r === 'exile') {
       if (from !== 'exile') for (const id of rest) moveObject(g, id, 'exile', ctx.events);
     } else if (r === 'shuffle') {
@@ -5843,7 +5850,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       }
       return [{ object: refTo(o) }];
     }
-    if (e.type !== 'moved' || e.to !== 'graveyard' || e.object !== check.source.id || check.source.zone !== 'graveyard') return [];
+    if (e.type !== 'moved' || e.to !== 'graveyard' || e.object !== check.source.id || check.source.zone !== 'graveyard' || (t.fromZone && e.from !== t.fromZone)) return [];
     return [{ object: refTo(check.source) }];
   },
   // CR 701.30: "Whenever you clash", "Whenever you win a clash".

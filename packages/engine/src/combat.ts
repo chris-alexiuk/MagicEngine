@@ -460,6 +460,11 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
     if (r.canBlockOnly && !matchesFilter(g, attacker, r.canBlockOnly, { controller: blocker.controller, source: blocker })) {
       return `${nameOf(g, blocker)} can’t block ${aName}.`;
     }
+    // Spectral Grasp: "Enchanted creature can't block creatures you control."
+    if (r.cantBlockOf) {
+      const src = r.from ? g.objects[r.from] : undefined;
+      if (matchesFilter(g, attacker, r.cantBlockOf, { controller: src?.controller ?? blocker.controller, source: src ?? blocker })) return `${nameOf(g, blocker)} can’t block ${aName}.`;
+    }
   }
   return null;
 }

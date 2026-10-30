@@ -239,7 +239,7 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
   // Devout Invocation: "for each creature tapped this way".
-  if (/^(?:creature|permanent|artifact) tapped this way$/.test(t)) return { kind: 'tapped_this_way' };
+  if (/^(?:creature|permanent|artifact|[A-Z][a-z]+) tapped this way$/.test(t)) return { kind: 'tapped_this_way' };
   // Seasoned Pyromancer: "for each nonland card discarded this way".
   const kindDiscarded = /^(nonland|land|creature|noncreature|instant or sorcery) card discarded this way$/.exec(t);
   if (kindDiscarded) {
@@ -322,7 +322,9 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // CR 700.8: "for each creature in your party"
   if (t === 'creature in your party') return { kind: 'party' };
   if (t === "spell you've cast this turn") return { kind: 'spells_cast_this_turn' };
-  if (t === "card you've discarded this turn") return { kind: 'discarded_this_turn' };
+  // Hollow One: "for each card you've cycled or discarded this turn" — cycling discards the card (CR 702.29a), so each is one
+  // discard.
+  if (t === "card you've discarded this turn" || t === "card you've cycled or discarded this turn") return { kind: 'discarded_this_turn' };
   // Lock and Load: "for each other instant and sorcery spell you've cast this turn" — not this one.
   const otherCast = /^other (.+?) spell you've cast this turn$/.exec(t);
   if (otherCast) {

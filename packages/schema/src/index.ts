@@ -954,6 +954,8 @@ export interface CombatRules {
   blockableOnlyBy?: ObjectFilter;
   /** "can block only creatures with flying" */
   canBlockOnly?: ObjectFilter;
+  /** Spectral Grasp: "can't block creatures you control" — "you" being the controller of what gave it this. */
+  cantBlockOf?: ObjectFilter;
   /** "can't be blocked by more than one creature" */
   maxBlockers?: number;
   /** "can't be blocked except by three or more creatures" */

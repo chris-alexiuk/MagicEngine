@@ -165,6 +165,10 @@ export class ParserRegistry {
         const byColor = /^Each creature you control has (.+)\.$/.exec(l);
         const colorParts = byColor ? byColor[1]!.split(/, (?:and )?/).map((p) => /^([a-z ]+) if it's (white|blue|black|red|green)$/.exec(p)) : null;
         if (colorParts && colorParts.length > 1 && colorParts.every(Boolean)) return colorParts.map((m) => `${capitalise(m![2]!)} creatures you control have ${m![1]}.`);
+        // Retro-Mutation: "Enchanted creature is a Turtle with base power and toughness 0/1. It can't attack and loses all
+        // abilities." — two statics about the same creature.
+        const isThenIt = /^(Enchanted creature) (is an? [A-Z][\w-]* with base power and toughness \d+\/\d+)\. It (can't attack(?: or block)?(?: and loses all abilities)?)\.$/.exec(l);
+        if (isThenIt) return [`${isThenIt[1]} ${isThenIt[2]}.`, `${isThenIt[1]} ${isThenIt[3]}.`];
         // Gift of Fangs: "Enchanted creature gets +2/+2 as long as it's a Vampire. Otherwise, it gets -2/-2."
         const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*)\. Otherwise, it gets ([+-]\d+\/[+-]\d+)\.$/.exec(l);
         if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} gets ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
@@ -977,6 +981,11 @@ export class ParserRegistry {
       // Fallaji Wayfarer: "~ is all colors. This ability doesn't affect its color identity." — color identity is the deck's
       // business (CR 903.4), already set from the card.
       .map((l) => l.replace(/\. This ability doesn't affect its color identity\.$/, '.'))
+      // Siege Dragon: "Whenever this creature attacks, if defending player controls no Walls, it deals 2 damage to each creature
+      // without flying that player controls." — the defending player.
+      .map((l) => l.replace(/^(Whenever (?:this creature|~) attacks, if defending player [^,]+, [^.]+?) that player controls\.$/, '$1 defending player controls.'))
+      // Earth Surge: "Each land gets +2/+2 as long as it's a creature." — each land creature (CR 613.4c after layer 4).
+      .map((l) => l.replace(/^Each (land|artifact) gets ([+-]\d+\/[+-]\d+) as long as it's a creature\.$/, 'Each $1 creature gets $2.'))
       // Sawblade Skinripper: "if you sacrificed one or more permanents this turn, this creature deals that much damage" — as many
       // as were sacrificed.
       .map((l) => l.replace(/^(At the beginning of your end step, if you sacrificed one or more (permanent|creature)s this turn, (?:this creature|~) deals) that much damage /, '$1 damage equal to the number of $2s you sacrificed this turn '))
