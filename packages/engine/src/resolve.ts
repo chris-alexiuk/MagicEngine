@@ -321,7 +321,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -526,7 +526,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       return Object.keys(g.turnLog.attacks ?? {}).filter((id) => !e.mine || g.objects[id]?.controller === ctx.controller).length;
     case 'sacrificed_this_turn':
       // The Balrog, Durin's Bane: "each permanent sacrificed this turn".
-      return Object.values(g.turnLog.sacrificedBy ?? {}).flat().filter((s) => !e.types || e.types.some((t) => s.types.includes(t))).length;
+      // Sawblade Skinripper: "the permanents you sacrificed this turn" — yours only.
+      return (e.mine ? (g.turnLog.sacrificedBy?.[ctx.controller] ?? []) : Object.values(g.turnLog.sacrificedBy ?? {}).flat()).filter((s) => !e.types || e.types.some((t) => s.types.includes(t))).length;
     case 'distinct_mana_values': {
       // Eris, Roar of the Storm: "each different mana value among instant and sorcery cards in your graveyard".
       const f = e.filter as ObjectFilter;
@@ -534,6 +535,12 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const pool = zone === 'battlefield' ? g.zones.battlefield : zone === 'graveyard' || zone === 'hand' || zone === 'library' ? zoneList(g, zone, ctx.controller) : zone === 'exile' ? g.zones.exile : [];
       const mvs = new Set(pool.filter((id) => matchesFilter(g, g.objects[id]!, f, { controller: ctx.controller, source: ctx.source ?? null, anyZone: zone !== 'battlefield' })).map((id) => manaValueOf(g, g.objects[id]!)));
       return mvs.size;
+    }
+    case 'distinct_powers': {
+      // Golden Ratio: "each different power among creatures you control".
+      const f = e.filter as ObjectFilter;
+      const ids = g.zones.battlefield.filter((id) => matchesFilter(g, g.objects[id]!, f, { controller: ctx.controller, source: ctx.source ?? null }));
+      return new Set(ids.map((id) => power(g, g.objects[id]!))).size;
     }
     // Change of Fortune: "draw a card for each card you've discarded this turn".
     case 'discarded_this_turn': {
@@ -613,6 +620,8 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       if (e.filter) {
         return (ctx.resolution?.moves ?? []).filter((m) => m.effect === 'discard' && m.from === 'hand' && g.objects[m.id] && matchesFilter(g, g.objects[m.id]!, e.filter as ObjectFilter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true })).length;
       }
+      // Fanatic of the Harrowing: "If you discarded a card this way".
+      if (e.mine) return ctx.resolution?.discarded?.[ctx.controller] ?? 0;
       // Windfall: "the greatest number of cards a player discarded this way"
       const counts = Object.values(ctx.resolution?.discarded ?? {});
       return e.max ? Math.max(0, ...counts) : counts.reduce((a, b) => a + b, 0);

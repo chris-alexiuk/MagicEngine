@@ -45,7 +45,7 @@ import {
 import { defaultCastChoice } from '../src/legal.js';
 import { planAutoTap } from '../src/autotap.js';
 import { parseManaCost } from '../src/mana.js';
-import { controlledByTargetIndex, relatedPick, withTargetX } from '../src/targets.js';
+import { controlledByTargetIndex, ownedByTargetIndex, relatedPick, withTargetX } from '../src/targets.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -213,7 +213,7 @@ function randomiseTargetsNow(g: GameState, a: Action): Action {
     for (const spec of specs!) {
       const attachedIndex = (spec.filter?.attachedToRef as { ref?: string; index?: number } | undefined)?.ref === 'target' ? ((spec.filter!.attachedToRef as { index?: number }).index ?? 0) : undefined;
       const attachedTo = attachedIndex !== undefined ? out[attachedIndex]?.[0] : undefined;
-      const candidates = dependent(targetCandidates(g, a.player, spec, o), controlledByTargetIndex(spec.filter), out).filter((t) => attachedIndex === undefined || (t.kind === 'object' && attachedTo?.kind === 'object' && g.objects[t.object]?.attachedTo?.id === attachedTo.object));
+      const candidates = dependent(targetCandidates(g, a.player, spec, o), controlledByTargetIndex(spec.filter) ?? ownedByTargetIndex(spec.filter), out).filter((t) => attachedIndex === undefined || (t.kind === 'object' && attachedTo?.kind === 'object' && g.objects[t.object]?.attachedTo?.id === attachedTo.object));
       // A later target with none left for the earlier ones picked ("another target creature that player controls"): keep the offered choice.
       if (!spec.upTo && candidates.length < (spec.count ?? 1)) stuck = true;
       out.push(distinct(spec, sample(candidates, spec.count ?? 1, Boolean(spec.upTo), spec.upTo ? (spec.min ?? 0) : 0, spec.sameOwner)));

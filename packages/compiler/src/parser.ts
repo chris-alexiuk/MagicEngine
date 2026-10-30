@@ -165,6 +165,9 @@ export class ParserRegistry {
         const byColor = /^Each creature you control has (.+)\.$/.exec(l);
         const colorParts = byColor ? byColor[1]!.split(/, (?:and )?/).map((p) => /^([a-z ]+) if it's (white|blue|black|red|green)$/.exec(p)) : null;
         if (colorParts && colorParts.length > 1 && colorParts.every(Boolean)) return colorParts.map((m) => `${capitalise(m![2]!)} creatures you control have ${m![1]}.`);
+        // Gift of Fangs: "Enchanted creature gets +2/+2 as long as it's a Vampire. Otherwise, it gets -2/-2."
+        const typeOtherwise = /^(Equipped creature|Enchanted creature) gets ([+-]\d+\/[+-]\d+) as long as it's (an? [A-Z][\w-]*)\. Otherwise, it gets ([+-]\d+\/[+-]\d+)\.$/.exec(l);
+        if (typeOtherwise) return [`${typeOtherwise[1]} gets ${typeOtherwise[2]} as long as it's ${typeOtherwise[3]}.`, `${typeOtherwise[1]} gets ${typeOtherwise[4]} as long as it isn't ${typeOtherwise[3]}.`];
         // Hunter's Blowgun: "Equipped creature has deathtouch during your turn. Otherwise, it has reach."
         const turnOtherwise = /^(Equipped creature|Enchanted creature|~) has (.+?) during your turn\. Otherwise, it has (.+)\.$/.exec(l);
         if (turnOtherwise) return [`During your turn, ${turnOtherwise[1]} has ${turnOtherwise[2]}.`, `During turns other than yours, ${turnOtherwise[1]} has ${turnOtherwise[3]}.`];
@@ -974,6 +977,12 @@ export class ParserRegistry {
       // Fallaji Wayfarer: "~ is all colors. This ability doesn't affect its color identity." — color identity is the deck's
       // business (CR 903.4), already set from the card.
       .map((l) => l.replace(/\. This ability doesn't affect its color identity\.$/, '.'))
+      // Sawblade Skinripper: "if you sacrificed one or more permanents this turn, this creature deals that much damage" — as many
+      // as were sacrificed.
+      .map((l) => l.replace(/^(At the beginning of your end step, if you sacrificed one or more (permanent|creature)s this turn, (?:this creature|~) deals) that much damage /, '$1 damage equal to the number of $2s you sacrificed this turn '))
+      // Rushblade Commander: "Warriors your team controls have haste." — in a game without teams, your team is just you
+      // (as Surge's "you or one of your teammates").
+      .map((l) => l.replace(/\byour team (controls|gained)\b/g, (_m, v: string) => (v === 'controls' ? 'you control' : 'you gained')))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
     for (const rule of this.rules) {

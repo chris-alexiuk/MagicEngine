@@ -385,7 +385,10 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'was_type': {
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;
-      return Boolean(last && (last.zcc === r!.zcc || last.zcc === r!.zcc - 1) && (cond.subtype ? last.subtypes?.includes(String(cond.subtype)) : last.types?.includes(String(cond.cardType))));
+      if (!last || !(last.zcc === r!.zcc || last.zcc === r!.zcc - 1)) return false;
+      // Koll, the Forgemaster: "if it was enchanted or equipped".
+      if (cond.attachment) return cond.attachment === 'Aura' ? Boolean(last.enchanted) : cond.attachment === 'Equipment' ? Boolean(last.equipped) : Boolean(last.enchanted || last.equipped);
+      return Boolean(cond.subtype ? last.subtypes?.includes(String(cond.subtype)) : last.types?.includes(String(cond.cardType)));
     }
     // Minas Tirith: "if you attacked with two or more creatures this turn"
     // Firemane Commando: "if none of those creatures attacked you" — the creatures attacking you (not your planeswalkers).

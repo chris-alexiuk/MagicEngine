@@ -241,6 +241,7 @@ export function moveObject(
       // CR 603.10a: "Whenever a creature with a +1/+1 counter on it dies", "a modified creature" — as it last existed.
       ...(Object.keys(o.counters).length ? { counters: { ...o.counters } } : {}),
       ...(isModified(g, o) ? { modified: true } : {}),
+      ...attachmentKinds(g, o),
       types: [...c.types],
       subtypes: [...c.subtypes],
       // Wilhelt, the Rotcleaver: "if it didn't have decayed".
@@ -646,4 +647,17 @@ export function setTapped(g: GameState, id: ObjectId, tapped: boolean, events: G
   }
   o.tapped = tapped;
   events.push({ type: 'tapped', object: id, tapped });
+}
+
+/** Koll, the Forgemaster: "if it was enchanted or equipped" — what was attached to it as it left (CR 603.10a). */
+function attachmentKinds(g: GameState, o: GameObject): { enchanted?: true; equipped?: true } {
+  const out: { enchanted?: true; equipped?: true } = {};
+  for (const id of g.zones.battlefield) {
+    const a = g.objects[id]!;
+    if (a.id === o.id || a.attachedTo?.id !== o.id || a.attachedTo.zcc !== o.zcc) continue;
+    const sub = chars(g, a).subtypes;
+    if (sub.includes('Aura')) out.enchanted = true;
+    if (sub.includes('Equipment')) out.equipped = true;
+  }
+  return out;
 }

@@ -1100,6 +1100,8 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
       if (e.bySelf && source.id === holder.id) hit = true;
       else if (e.byAttached && attachedHost !== undefined && source.id === attachedHost) hit = true;
+      // Statecraft: "… dealt to and dealt by creatures you control".
+      else if (e.by && matchesFilter(g, source, e.by, { controller: holder.controller, source: holder })) hit = true;
       else if (to.kind === 'player') hit = Boolean((e.toYou && to.player === holder.controller) || (e.toOpponents && to.player !== holder.controller));
       else {
         const o = g.objects[to.object];

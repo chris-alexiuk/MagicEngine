@@ -94,6 +94,12 @@ export function controlledByTargetIndex(filter: ObjectFilter | undefined): numbe
   return r?.ref === 'target' ? (r.index ?? 0) : undefined;
 }
 
+/** Gaea's Blessing: "up to three target cards from their graveyard" — the earlier target whose graveyard it is. */
+export function ownedByTargetIndex(filter: ObjectFilter | undefined): number | undefined {
+  const r = filter?.ownedBy as { ref?: string; index?: number } | undefined;
+  return r?.ref === 'target' ? (r.index ?? 0) : undefined;
+}
+
 /** The player a chosen target stands for: the player, or the permanent's controller (a card's owner, CR 108.4a). */
 function playerOfTarget(g: GameState, t: Target | TargetRef | undefined): PlayerId | undefined {
   if (!t || t.kind === 'ability') return undefined;
@@ -107,8 +113,13 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
   let filter = given;
   if (filter.ownedBy) {
     const { ownedBy, ...rest } = filter;
-    const player = (ownedBy as { ref?: string }).ref === 'trigger_player' ? triggerInfo?.player : undefined;
-    filter = { ...rest, ownerPlayer: player ?? '\u0000none' };
+    const r = ownedBy as { ref?: string; index?: number };
+    // Gaea's Blessing: "up to three target cards from their graveyard" — the earlier target player's (not yet known: any).
+    if (r.ref === 'target') filter = priorTargets ? { ...rest, ownerPlayer: playerOfTarget(g, priorTargets[r.index ?? 0]?.[0]) ?? '\u0000none' } : rest;
+    else {
+      const player = r.ref === 'trigger_player' ? triggerInfo?.player : undefined;
+      filter = { ...rest, ownerPlayer: player ?? '\u0000none' };
+    }
   }
   // "destroy target artifact that player controls" (the player the trigger is about); "… target creature that player
   // controls" (an earlier target). Not yet known (each target's candidates listed on their own): any player.
@@ -343,7 +354,7 @@ function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
       ...(min ? { min } : {}),
       ...(spec.sameOwner ? { sameOwner: true as const } : {}),
       ...(spec.perPlayer ? { perPlayer: true as const } : {}),
-      ...(controlledByTargetIndex(spec.filter) !== undefined ? { controlledByTarget: controlledByTargetIndex(spec.filter)! } : {}),
+      ...((controlledByTargetIndex(spec.filter) ?? ownedByTargetIndex(spec.filter)) !== undefined ? { controlledByTarget: (controlledByTargetIndex(spec.filter) ?? ownedByTargetIndex(spec.filter))! } : {}),
       ...((spec.filter?.attachedToRef as { ref?: string } | undefined)?.ref === 'target' ? { attachedToTarget: (spec.filter!.attachedToRef as { index?: number }).index ?? 0 } : {}),
       candidates,
     };

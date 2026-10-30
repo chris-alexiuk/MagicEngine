@@ -1957,6 +1957,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 701.21a: "Whenever you sacrifice a Clue", "… another permanent", "… a creature"
   // Mayhem Devil: "Whenever a player sacrifices a permanent"
   // Camellia, the Seedmiser: "Whenever you sacrifice one or more Foods" — once for those sacrificed together (CR 603.2c).
+  // Kingpin, Wilson Fisk: "Whenever you sacrifice Kingpin or another creature" — any creature, it included (it is one).
+  const selfOrAnotherSac = /^you sacrifice ~ or another (creature|artifact|permanent)$/.exec(t);
+  if (selfOrAnotherSac && (selfOrAnotherSac[1] === 'permanent' || b.env.typeLine.split('—')[0]!.toLowerCase().split(/\s+/).includes(selfOrAnotherSac[1]!))) {
+    return parseTrigger(word, `you sacrifice a${selfOrAnotherSac[1] === 'artifact' ? 'n' : ''} ${selfOrAnotherSac[1]}`, b);
+  }
   const sacrificed = /^(you|a player|an opponent|one or more players) sacrifices? (a|an|another|one or more(?: other)?) (.+)$/.exec(t);
   if (sacrificed) {
     const batch = sacrificed[2]!.startsWith('one or more');
@@ -2506,7 +2511,7 @@ export const continuousRule: GrammarRule = {
           if (/^~ /.test(trailing[1]!)) b.it = { ref: 'self' };
           // Sting, the Glinting Dagger: "Equipped creature has first strike as long as it's blocking or blocked by …".
           // Thieves' Tools: "Equipped creature can't be blocked as long as its power is 3 or less."
-          else if (/^(?:Equipped|Enchanted) creature /.test(trailing[1]!) && /^it(?:'s| is|s) /.test(trailing[2]!)) b.it = { ref: 'attached' };
+          else if (/^(?:Equipped|Enchanted) creature /.test(trailing[1]!) && /^it(?:'s| is|s| isn't) /.test(trailing[2]!)) b.it = { ref: 'attached' };
           const c = parseCondition(trailing[2]!, b);
           b.it = it;
           return c;
@@ -2661,7 +2666,8 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // Rite of the Raging Storm: "Creatures named Lightning Rager can't attack you or planeswalkers you control."
   // Eriette of the Charmed Apple: "Each creature that's enchanted by an Aura you control can't attack you …".
   body = body.replace(/^Each creature that's (enchanted by an Aura you control) can't attack you/, "Creatures that are $1 can't attack you");
-  const ban = /^(.*?creatures(?: with [a-z]+| named [A-Z][\w ,'-]+?| that are enchanted by an Aura you control)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
+  // Reverence: "Creatures with power 2 or less can't attack you." — checked as they attack.
+  const ban = /^(.*?creatures(?: with [a-z]+| with power \d+ or (?:less|greater)| named [A-Z][\w ,'-]+?| that are enchanted by an Aura you control)?) can't attack you( or planeswalkers you control)?$/i.exec(body);
   if (ban) {
     const pf = parseFilter(ban[1]!.replace(/^\w/, (c) => c.toLowerCase()), b);
     if (!pf || !pf.plural || pf.filter.zone || pf.filter.controller) return null;
@@ -3969,6 +3975,9 @@ export const staticPreventionRule: GrammarRule = {
   parse(line, original, ctx) {
     const env = envOf(ctx);
     if (!env || /\b(?:Instant|Sorcery)\b/.test(env.typeLine)) return null;
+    // Guardian Naga: "During your turn, prevent all damage that would be dealt to this creature." — the same as "… during
+    // your turn" after it.
+    line = line.replace(/^During your turn, prevent (all (?:combat |noncombat )?damage that would be dealt [^.]+)\.$/, 'Prevent $1 during your turn.');
     // Gisela, Blade of Goldnight: "If a source would deal damage to you or a permanent you control, prevent half that
     // damage, rounded up."
     const half = /^If a source would deal damage to (you or a permanent you control|you|a permanent you control), prevent half that damage, rounded up\.$/.exec(line);
@@ -4089,12 +4098,17 @@ export const staticPreventionRule: GrammarRule = {
       const pf = parseFilter(by[2]!, new Binder(env));
       if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(by[1] === 'Combat damage' ? { combat: true } : {}), from: pf.filter } } as StaticAbility;
     }
-    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)( during your turn)?\.$/.exec(line);
+    // Energy Field: "Prevent all damage that would be dealt to you by sources you don't control."
+    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control))?( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
     const node: StaticPreventionNode = { type: 'prevent_damage' };
+    if (m[4]) {
+      if (m[2] !== 'to') return null;
+      node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : { controller: 'opponent' };
+    }
     if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
-    if (m[4]) node.condition = { type: 'your_turn', value: true };
+    if (m[5]) node.condition = { type: 'your_turn', value: true };
     const self = (t: string) => t === '~' || /^this (?:creature|permanent|artifact|enchantment|land)$/.test(t);
     // Defang: "Prevent all damage that would be dealt by enchanted creature."; Ghostly Possession: "… to and dealt by
     // enchanted creature"; General's Kabuto: "… to equipped creature".
@@ -4103,9 +4117,16 @@ export const staticPreventionRule: GrammarRule = {
       if (m[2] !== 'to') node.byAttached = true;
       return { kind: 'static', text: original, effect: node };
     }
+    // Statecraft: "Prevent all combat damage that would be dealt to and dealt by creatures you control."
+    if (m[2] !== 'to' && !self(m[3]!)) {
+      const pf = parseFilter(m[3]!, b);
+      if (!pf || !pf.plural || pf.filter.zone) return null;
+      node.by = pf.filter;
+      if (m[2] === 'to and dealt by') node.to = pf.filter;
+      return { kind: 'static', text: original, effect: node };
+    }
     if (m[2] === 'by') return null;
     if (m[2] === 'to and dealt by') {
-      if (!self(m[3]!)) return null;
       node.toSelf = true;
       node.bySelf = true;
     } else {

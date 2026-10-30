@@ -111,6 +111,12 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.controlledBy = who), true));
   }],
+  // Tectonic Instability: "tap all lands its controller controls" — the controller of what "it" is.
+  [/ its controller controls$/, (f, _m, b) => {
+    if (f.controller || f.controlledBy || !b.it || b.it.ref === 'self') return false;
+    f.controlledBy = { ref: 'controller_of', of: b.it };
+    return true;
+  }],
   // Blastfire Bolt: "Destroy all Equipment attached to that creature." — the target, as the effect applies.
   [/ attached to (?:that creature|that permanent|it)$/, (f, _m, b) => b.it?.ref === 'target' && !f.attachedTo && !f.attachedToRef && ((f.attachedToRef = b.it), true)],
   // Witchbane Orb: "all Curses attached to you"; Curse of Thirst: "the number of Curses attached to them".
@@ -395,7 +401,10 @@ function categoryOf(word: string): Category | null {
 
 /** Parses the noun phrase after a determiner: "nonblack creature an opponent controls". */
 export function parseFilter(text: string, b: Binder): ParsedFilter | null {
-  let rest = text.trim();
+  // Sonar Strike: "target attacking, blocking, or tapped creature" — any of the three.
+  if (text.trim() === 'attacking, blocking, or tapped creature') return { filter: { anyOf: [{ combat: 'attacking_or_blocking', types: ['Creature'] }, { tapped: true, types: ['Creature'] }] }, plural: false };
+  // Long Feng, Grand Secretariat: "another creature you control or a land you control" — both yours.
+  let rest = text.trim().replace(/^(creature|artifact|enchantment|land|planeswalker) (you control|an opponent controls) or an? (creature|artifact|enchantment|land|planeswalker) \2$/, '$1 or $3 $2');
   // Paradox Surveyor: "a land card or a card with {X} in its mana cost" — a quality after a bare "card" is that
   // alternative's only (each alternative read on its own).
   // (Only "… or a card with …": in "target spell or permanent with mana value 1 or greater" it's both.)

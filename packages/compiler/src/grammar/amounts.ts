@@ -212,6 +212,13 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
     // Lunar Insight: "… among nonland permanents you control" — on the battlefield.
     if (pf && pf.plural) return { kind: 'distinct_mana_values', filter: pf.filter };
   }
+  // Golden Ratio: "for each different power among creatures you control"; Celebrate the Harvest: "the number of different
+  // powers among creatures you control".
+  const distinctPow = /^(?:different power|the number of different powers) among (.+)$/.exec(t);
+  if (distinctPow) {
+    const pf = parseFilter(distinctPow[1]!, b.clone());
+    if (pf && pf.plural && !pf.filter.zone) return { kind: 'distinct_powers', filter: pf.filter };
+  }
   // Kefka, Court Mage: "for each card type among cards discarded this way".
   if (t === 'card type among cards discarded this way') return { kind: 'card_types', discardedThisWay: true };
   // Discordant Spirit: "for each 1 damage dealt to you this turn".
@@ -231,6 +238,8 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   if (/^creature that convoked (?:it|~|this spell)$/.test(t)) return { kind: 'convoked', of: { ref: 'self' } };
   // Syphon Mind: "for each card discarded this way"
   if (t === 'card discarded this way') return { kind: 'discarded_this_way' };
+  // Devout Invocation: "for each creature tapped this way".
+  if (/^(?:creature|permanent|artifact) tapped this way$/.test(t)) return { kind: 'tapped_this_way' };
   // Seasoned Pyromancer: "for each nonland card discarded this way".
   const kindDiscarded = /^(nonland|land|creature|noncreature|instant or sorcery) card discarded this way$/.exec(t);
   if (kindDiscarded) {
@@ -477,6 +486,9 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   if (dealtTo) return { kind: 'life_this_turn', who: dealtTo[2] === 'you' ? 'you' : 'opponents', stat: dealtTo[1] ? 'noncombat_damage' : 'damage' };
   // Call Forth the Tempest: "the total mana value of other spells you've cast this turn".
   if (t === "the total mana value of other spells you've cast this turn") return { kind: 'spells_cast_this_turn', totalMv: true, other: true };
+  // Sawblade Skinripper: "the number of permanents you sacrificed this turn".
+  const sacN = /^the number of (permanent|creature|artifact)s you(?:'ve)? sacrificed this turn$/.exec(t);
+  if (sacN) return { kind: 'sacrificed_this_turn', mine: true, ...(sacN[1] !== 'permanent' ? { types: [capitalise(sacN[1]!)] } : {}) };
   // All-Fates Scroll: "the number of differently named lands you control".
   const named = /^the number of differently named (.+)$/.exec(t);
   if (named) {

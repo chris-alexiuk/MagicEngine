@@ -1164,11 +1164,14 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       for (; memo.i < players.length; memo.i++) {
         const p = players[memo.i]!;
         const fits = zoneList(ctx.g, 'hand', p).filter((id) => matchesFilter(ctx.g, ctx.g.objects[id]!, filter, { controller: p, source: ctx.source ?? null, anyZone: true }));
-        const k = Math.min(n, fits.length);
+        // Nantuko Cultivator: "discard any number of land cards" — as many of them as the player likes, none included.
+        const k = node.anyNumber ? fits.length : Math.min(n, fits.length);
+        const min = node.anyNumber ? 0 : k;
         let chosen = fits;
-        if (fits.length > k) {
-          if (!picked) return { ask: { kind: 'choose_objects', player: p, candidates: fits, min: k, max: k, text: `Discard ${k} of these cards.` } };
-          if (picked.objects.length !== k || new Set(picked.objects).size !== k || !picked.objects.every((id) => fits.includes(id))) throw new RulesError(`Choose ${k} of those cards to discard.`);
+        if (fits.length > k || (node.anyNumber && fits.length)) {
+          if (!picked) return { ask: { kind: 'choose_objects', player: p, candidates: fits, min, max: k, text: node.anyNumber ? 'Discard any number of these cards.' : `Discard ${k} of these cards.` } };
+          const m = picked.objects.length;
+          if (m < min || m > k || new Set(picked.objects).size !== m || !picked.objects.every((id) => fits.includes(id))) throw new RulesError(`Choose ${node.anyNumber ? 'any number' : k} of those cards to discard.`);
           chosen = picked.objects;
           picked = null;
         }
@@ -1407,7 +1410,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       chosen = answer.objects;
     } else {
       if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
-      if (!candidates.length) return true;
+      // Cracked Skull: "look at target player's hand. You may choose a nonland card from it." — seen whatever is in it.
+      if (!candidates.length) return node.lookHand && hand.length ? { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `Looking at: ${p}'s hand.`, seen: [...hand] } } : true;
       if (candidates.length > n || node.optional) {
         return {
           ask: {
@@ -1419,6 +1423,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
             text: node.then === 'library_top' ? `Put ${n === 1 ? 'a card' : `${n} cards`} from your hand on top of your library (the first one on top).` : `Choose ${n === 1 ? 'a card' : n >= 99 ? 'any number of cards' : `${node.optional ? 'up to ' : ''}${n} cards`} from ${p === ctx.controller ? 'your' : `${p}'s`} hand.`,
             ...(node.then === 'library_top' ? { ordered: true as const } : {}),
             ...(node.revealHand ? { revealed: [...hand] } : {}),
+            ...(node.lookHand ? { seen: [...hand] } : {}),
             // Michelangelo: the kinds each card can stand for.
             ...(each ? { kinds: Object.fromEntries(candidates.map((id) => [id, each.flatMap((_, i) => (fits(id, i) ? [i] : []))])) } : {}),
           },
@@ -1921,7 +1926,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (ctx.resolution) ctx.resolution.chosen = { ...ctx.resolution.chosen, colors: [...answer.choice] as Color[] };
       return true;
     }
-    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : [...SUBTYPES.creature];
+    // Imagecrafter: "a creature type other than Wall".
+    const except = (node.except as string[] | undefined) ?? [];
+    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : SUBTYPES.creature.filter((t) => !except.includes(t));
     const text = node.choice === 'color' ? 'Choose a color.' : node.choice === 'land_type' ? 'Choose a basic land type.' : 'Choose a creature type.';
     if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text, sourceName: sourceName(ctx) } };
     if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
@@ -3864,7 +3871,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Rise of the Witch-king: "return another permanent card" — not one this resolution sacrificed.
     const notMoved = node.notMoved ? new Set(movedThisWay(ctx, { how: String(node.notMoved) }).map((m) => m.id)) : null;
     const candidates = zoneList(g, 'graveyard', ctx.controller).filter((id) => !notMoved?.has(id) && matchesFilter(g, g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
-    if (!candidates.length) return true;
+    // Roots of Wisdom: "return a land card or Elf card from your graveyard to your hand. If you can't, draw a card."
+    if (!candidates.length) return Array.isArray(node.cant) ? { expand: structuredClone(node.cant as EffectNode[]) } : true;
     // Technomancer: "any number of …"; Lively Dirge: "… with total mana value 4 or less".
     const max = Math.min(node.amount === 'all' ? candidates.length : amountOf(ctx, node.amount ?? 1), candidates.length);
     const min = node.optional ? 0 : max;
@@ -4886,7 +4894,11 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
   if (e.type === 'blight') return blightCandidates(g, chooser).length > 0;
   if (e.type === 'forage') return foodCandidates(g, chooser).length > 0 || zoneList(g, 'graveyard', chooser).length >= 3;
   // Tempt with Immortality: "return a creature card from your graveyard to the battlefield" — only with one there.
-  if (e.type === 'return_chosen') return zoneList(g, 'graveyard', chooser).some((id) => matchesFilter(g, g.objects[id]!, bindFilter(ctx, (e.filter ?? {}) as ObjectFilter), { controller: chooser, source: ctx.source ?? null, anyZone: true }));
+  // Young Necromancer: "you may exile two cards from your graveyard. When you do, …" — only with two there.
+  if (e.type === 'return_chosen') {
+    const n = zoneList(g, 'graveyard', chooser).filter((id) => matchesFilter(g, g.objects[id]!, bindFilter(ctx, (e.filter ?? {}) as ObjectFilter), { controller: chooser, source: ctx.source ?? null, anyZone: true })).length;
+    return n >= (e.amount !== 'all' && !e.optional ? Math.max(1, amountOf(ctx, (e.amount ?? 1) as Amount)) : 1);
+  }
   // Leatherhead: "you may remove a counter from her. When you do, …" — only with a counter there to remove.
   if (e.type === 'remove_counters' && e.amount !== 'all') {
     const n = Math.max(1, amountOf(ctx, e.amount));

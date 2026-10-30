@@ -43,6 +43,9 @@ function stateFilter(text: string, b: Binder): ObjectFilter | null {
   if (color) return { colors: [color] };
   if (t === 'legendary') return { supertypes: ['Legendary'] };
   if (t === 'multicolored') return { multicolored: true };
+  // Obstinate Gargoyle: "as long as it's modified" (CR 700.9: equipped, enchanted by an Aura its controller controls, or
+  // with a counter on it).
+  if (t === 'modified') return { modified: true };
   if (t === 'colorless') return { colorless: true };
   const pf = parseFilter(t.replace(/^an? /, '').replace(/ or an? /g, ' or '), b);
   return pf && !pf.plural ? pf.filter : null;
@@ -387,6 +390,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Tadeas, Juniper Ascendant: "As long as ~ isn't attacking".
   const notAttacking = /^(~|it) (?:isn't|is not) (attacking|blocking)$/.exec(t);
   if (notAttacking && (notAttacking[1] === '~' || b.it?.ref === 'self')) return { type: 'not', cond: { type: 'is', of: { ref: 'self' }, filter: { combat: notAttacking[2] as 'attacking' | 'blocking' } } };
+  // Gift of Fangs: "as long as it isn't a Vampire" — what the static ability is about.
+  const isnt = /^(~|it|(?:enchanted|equipped) (?:creature|permanent)) isn't (an? [A-Z][\w-]*|(?:white|blue|black|red|green))$/.exec(t);
+  if (isnt) {
+    const subject = isnt[1] === 'it' ? (b.it ? { ref: b.it } : null) : parseObjectRef(isnt[1]!, b.clone(), 'static');
+    const filter = subject ? stateFilter(isnt[2]!, b) : null;
+    if (subject && filter) return { type: 'not', cond: { type: 'is', of: subject.ref, filter } };
+  }
   // "~ is attacking", "enchanted creature is blue", "equipped creature is a Human", "enchanted permanent is a creature".
   const is = /^(~|(?:enchanted|equipped) (?:creature|permanent|artifact|land)) is (?!not\b)(.+)$/.exec(t);
   if (is) {
@@ -402,10 +412,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^it's your (?:precombat )?main phase$/.test(t)) return { type: 'step', main: true, yours: true };
   // Tribute to the World Tree: "if its power is 3 or greater"; "if that creature's toughness is 2 or less"
   // Level Up: "if it has power 10 or greater" — the same.
-  const hasStat = /^(it|~|that creature) has (power|toughness|mana value) (\w+) or (greater|more|less|fewer)$/.exec(t);
-  const statIs = /^(its|~'s|that creature's|that card's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
+  // Arachnus Web: "if enchanted creature's power is 4 or greater" — what this Aura is attached to.
+  const hasStat = /^(it|~|that creature|enchanted creature|equipped creature) has (power|toughness|mana value) (\w+) or (greater|more|less|fewer)$/.exec(t);
+  const statIs = /^(its|~'s|that creature's|that card's|enchanted creature's|equipped creature's) (power|toughness|mana value) is (\w+) or (greater|more|less|fewer)$/.exec(t) ?? (hasStat ? ([t, hasStat[1] === '~' ? "~'s" : /^(?:enchanted|equipped) creature$/.test(hasStat[1]!) ? `${hasStat[1]}'s` : 'its', hasStat[2], hasStat[3], hasStat[4]] as unknown as RegExpExecArray) : null);
   if (statIs) {
-    const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : b.it;
+    const of = statIs[1] === "~'s" ? ({ ref: 'self' } as Ref) : /^(?:enchanted|equipped) creature's$/.test(statIs[1]!) ? ({ ref: 'attached' } as Ref) : b.it;
     const n = parseAmount(statIs[3]!);
     if (of && typeof n === 'number') {
       const key = statIs[2] === 'mana value' ? 'manaValue' : (statIs[2] as 'power' | 'toughness');
@@ -488,7 +499,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     }
   }
   // "as long as it's attacking" — "it" being what the ability is about.
-  const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking|attacking alone)$/.exec(t);
+  const itIs = /^it(?:'s| is) (attacking|blocking|tapped|untapped|attacking or blocking|attacking alone|modified)$/.exec(t);
   if (itIs && b.it) {
     const filter = stateFilter(itIs[1]!, b);
     if (filter) return { type: 'is', of: b.it, filter };
@@ -530,6 +541,14 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (total) return { type: 'total_power', op: 'ge', n: Number(total[2]), ...(total[1] === 'toughness' ? { stat: 'toughness' } : {}) };
   // Septic Rats: "if defending player is poisoned" (one or more poison counters).
   if (t === 'defending player is poisoned' && b.named['defending player']) return { type: 'poison', player: b.named['defending player'], min: 1 };
+  // Fanatic of the Harrowing: "each player discards a card. If you discarded a card this way, draw a card."
+  if (t === 'you discarded a card this way') return { type: 'amount', amount: { kind: 'discarded_this_way', mine: true }, op: 'ge', n: 1 };
+  // Corrupted Resolve: "Counter target spell if its controller is poisoned."
+  const poisoned = t !== 'defending player is poisoned' ? /^(its controller|that player|target player|they|you) (?:is|are) poisoned$/.exec(t) : null;
+  if (poisoned) {
+    const player = poisoned[1] === 'they' ? b.player : parsePlayerRef(poisoned[1]!, b);
+    if (player && player.ref !== 'players') return { type: 'poison', ...(player.ref === 'you' ? {} : { player }), min: 1 };
+  }
   // Fear of the Dark: "if defending player controls no Glimmer creatures" — the player this creature is attacking.
   const defNone = /^defending player controls no (.+)$/.exec(t);
   if (defNone && b.it?.ref === 'self' && b.named['defending player']) {
@@ -961,6 +980,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^it (was|wasn't) attacking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking' } } : { type: 'was_attacking' };
   // Guildsworn Prowler: "When this creature dies, if it wasn't blocking, draw a card."
   if (/^it (was|wasn't) blocking$/.test(t) && b.it?.ref === 'trigger_object') return t.includes("wasn't") ? { type: 'not', cond: { type: 'was_attacking', blocking: true } } : { type: 'was_attacking', blocking: true };
+  // Gunner Conscript: "When this creature dies, if it was enchanted"; Koll, the Forgemaster: "if it was enchanted or
+  // equipped" — as it last existed.
+  const wasAttached = /^it was (enchanted|equipped|enchanted or equipped)$/.exec(t);
+  if (wasAttached && (b.it?.ref === 'trigger_object' || b.it?.ref === 'self')) return { type: 'was_type', attachment: wasAttached[1] === 'enchanted' ? 'Aura' : wasAttached[1] === 'equipped' ? 'Equipment' : 'either' };
   const wasType = /^it was an? (creature|artifact|enchantment|land|planeswalker)$/.exec(t);
   if (wasType) return { type: 'was_type', cardType: wasType[1]!.replace(/^\w/, (c) => c.toUpperCase()) };
   // Endless Evil: "When enchanted creature dies, if that creature was a Horror" — as it last existed.

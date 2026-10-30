@@ -59,6 +59,43 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
+  // Gaea's Blessing: "Target player shuffles up to three target cards from their graveyard into their library." — cards in
+  // that player's graveyard; Loaming Shaman: "any number of target cards".
+  const shuffleTargets = /^(?:[Tt]arget player shuffles (up to (\w+)|any number of) target cards from their graveyard into their library)\.$/.exec(text.trim());
+  if (shuffleTargets) {
+    const n = shuffleTargets[2] ? parseAmount(shuffleTargets[2]) : 100;
+    if (typeof n === 'number') {
+      const player = b.addTarget({ what: 'player', text: 'target player' });
+      const cards = b.addTarget({ what: 'object', filter: { zone: 'graveyard', ownedBy: player }, text: 'target cards from their graveyard', count: n, upTo: true });
+      // The player shuffles even if no card is put in (or none is still there).
+      return [{ type: 'move', what: cards, to: 'library', position: 'shuffle' }, { type: 'shuffle', who: player }];
+    }
+  }
+  // Nantuko Cultivator: "you may discard any number of land cards. Put that many +1/+1 counters on this creature and draw
+  // that many cards." — none is fine (and does nothing).
+  const discardAny = /^(?:[Yy]ou may d|D)iscard any number of (.+? cards)\. Put that many \+1\/\+1 counters on (?:this creature|~) and draw that many cards\.$/.exec(text.trim());
+  if (discardAny) {
+    const pf = parseFilter(`${discardAny[1]} in your graveyard`, b.clone());
+    if (!pf || !pf.plural) return null;
+    const { zone: _z, owner: _o, ...filter } = pf.filter;
+    const many: AmountExpr = { kind: 'discarded_this_way' };
+    return [
+      { type: 'discard', amount: 0, anyNumber: true, who: { ref: 'you' }, filter },
+      { type: 'add_counters', what: { ref: 'self' }, counter: '+1/+1', amount: many },
+      { type: 'draw', amount: many, who: { ref: 'you' } },
+    ];
+  }
+  // Imagecrafter: "Choose a creature type other than Wall. Target creature becomes that type until end of turn." — its
+  // creature types are replaced (CR 205.1a).
+  const typeBut = /^Choose a creature type other than (Wall)\. (.+?) (becomes?) that type until end of turn\.$/.exec(text.trim());
+  if (typeBut) {
+    const r = attempt(b, (b) => {
+      const fx = parseEffectText(`${typeBut[2]} ${typeBut[3]} the creature type of your choice until end of turn.`, b);
+      if (fx?.length !== 2 || fx[0]!.type !== 'choose_value') return null;
+      return [{ ...fx[0]!, except: [typeBut[1]!] }, fx[1]!];
+    });
+    if (r) return r;
+  }
   // Stonehewer Giant: "Search your library for an Equipment card, put it onto the battlefield, attach it to a creature you
   // control, then shuffle." — the creature chosen as it resolves.
   const searchAttach = /^(Search your library for an? [^.]+?), put it onto the battlefield, attach it to (a creature you control), then shuffle\.$/.exec(text.trim());
@@ -795,7 +832,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // Eldrazi Monument: "sacrifice a creature. If you can't, sacrifice this artifact."
       const youCant = /^If you can't, (.+)$/.exec(s);
-      if (youCant && lastNode?.type === 'sacrifice_choice' && (lastNode.who as { ref?: string } | undefined)?.ref === 'you') {
+      if (youCant && ((lastNode?.type === 'sacrifice_choice' && (lastNode.who as { ref?: string } | undefined)?.ref === 'you') || (lastNode?.type === 'return_chosen' && !lastNode.optional && lastNode.amount === 1))) {
         const then = parseSentence(capitalise(youCant[1]!), b);
         if (!then) return null;
         lastNode.cant = then;
@@ -1175,6 +1212,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
         continue;
       }
+      // Devout Invocation: "Tap any number of untapped creatures you control. Create … for each creature tapped this way."
+      const tapAny = /^Tap any number of untapped (.+? you control)$/.exec(s);
+      const tapAnyFilter = tapAny ? parseFilter(tapAny[1]!, b.clone()) : null;
+      if (tapAnyFilter && tapAnyFilter.plural && !tapAnyFilter.filter.zone) {
+        const { controller: _c, ...filter } = tapAnyFilter.filter;
+        out.push({ type: 'tap_choice', filter } as EffectNode);
+        continue;
+      }
       // Myr Battlesphere: "you may tap X untapped Myr you control. If you do, this creature gets +X/+0 until end of turn and
       // deals X damage to …" — X is how many were tapped.
       const tapX = /^You may tap X untapped (.+? you control)$/.exec(s);
@@ -1421,6 +1466,24 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i += otherwise || ifNone ? 2 : 1;
         continue;
       }
+      // Interpret the Signs: "Scry 3, then reveal the top card of your library. Draw cards equal to that card's mana value."
+      // — it stays on top; "that card" is the revealed one (none if the library is empty).
+      if (topCard && /^[Rr]eveal/.test(topCard[1]!) && sentences[i + 1] && /\bthat card's mana value\b/.test(sentences[i + 1]!)) {
+        const r = attempt(b, (b) => {
+          // Judge Unworthy: "… deals damage equal to that card's mana value to that creature" — "that creature" is still the
+          // target; only "that card" is the revealed one.
+          const named = b.named;
+          b.named = { ...named, 'that card': { ref: 'chosen_object' } };
+          const then = parseSentence(sentences[i + 1]!, b);
+          b.named = named;
+          return then && JSON.stringify(then).includes('"chosen_object"') ? then : null;
+        });
+        if (r) {
+          out.push(...(topFirstFx ?? []), { type: 'reveal_top_card' }, ...r);
+          i += 1;
+          continue;
+        }
+      }
       // CR 701.20a: "Target opponent reveals their hand. You choose a nonland card from it. That player discards
       // that card." — the chosen card is discarded (or exiled).
       // Brain Maggot: "Target opponent reveals their hand and you choose a nonland card from it."
@@ -1429,7 +1492,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         sentences.splice(i, 1, `${revealAnd[1]} reveals their hand`, `You ${revealAnd[2]}`);
         s = sentences[i]!;
       }
-      const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s);
+      // Cracked Skull: "look at target player's hand. You may choose a nonland card from it. That player discards that card."
+      // — only you see it.
+      const looks = /^[Ll]ook at (.+?)'s hand$/.exec(s);
+      const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s) ?? looks;
       const chooses = reveals && sentences[i + 1] ? /^You (may )?choose (a|an|one|two) (.+?) from it(?: with mana value (\d+) or (less|greater))?(?: and (exile|discard) (?:that card|it))?$/.exec(sentences[i + 1]!) : null;
       if (reveals && chooses) {
         const r = attempt(b, (b) => {
@@ -1457,7 +1523,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
           }
           const until = then === 'exile_until';
           if (until) then = 'exile';
-          return { node: { type: 'choose_from_hand', who, filter, amount, then, revealHand: true, ...(chooses[1] ? { optional: true } : {}), ...(until ? { until: 'source_leaves' } : {}) } as EffectNode, used };
+          return { node: { type: 'choose_from_hand', who, filter, amount, then, ...(looks ? { lookHand: true } : { revealHand: true }), ...(chooses[1] ? { optional: true } : {}), ...(until ? { until: 'source_leaves' } : {}) } as EffectNode, used };
         });
         if (!r) return null;
         out.push(r.node);
@@ -5070,13 +5136,15 @@ const VERBS: Record<string, VerbHandler> = {
       return [{ type: 'players_do', players: who, effects: [{ type: 'return_chosen', filter, amount, to: 'exile' }] }];
     }
     // Masked Vandal: "you may exile a creature card from your graveyard. If you do, …" — chosen as it resolves (no target).
-    const chosenExile = imperative && who.ref === 'you' ? /^(a|an) ((?!.*\btarget\b).+? card) from your graveyard$/.exec(args) : null;
+    // Young Necromancer: "you may exile two cards from your graveyard. When you do, …".
+    const chosenExile = imperative && who.ref === 'you' ? /^(a|an|two|three|four|five) ((?!.*\btarget\b)(?:.+? )?cards?) from your graveyard$/.exec(args) : null;
     if (chosenExile) {
-      const pf = parseFilter(`${chosenExile[2]} in your graveyard`, b);
-      if (!pf || pf.plural) return null;
+      const n = parseAmount(chosenExile[1] === 'an' ? 'a' : chosenExile[1]!);
+      const pf = typeof n === 'number' ? parseFilter(`${chosenExile[2]} in your graveyard`, b) : null;
+      if (!pf || typeof n !== 'number' || pf.plural !== n > 1) return null;
       const { zone: _z, owner: _o, ...filter } = pf.filter;
-      b.it = { ref: 'created' };
-      return [{ type: 'return_chosen', filter, amount: 1, to: 'exile' }];
+      if (n === 1) b.it = { ref: 'created' };
+      return [{ type: 'return_chosen', filter, amount: n, to: 'exile' }];
     }
     // "that player exiles the top card of their library" (ingest), "Exile the top two cards of target player's library".
     // Necropotence: "Exile the top card of your library face down." (only you may look at it)
@@ -5163,7 +5231,11 @@ const VERBS: Record<string, VerbHandler> = {
       const what = parseObjectRef(hand[1]!, b);
       // "Return target permanent to its owner's hand. Then that player discards a card." — its owner.
       if (what && !what.plural && hand[2] === "its owner's" && !b.player) b.player = { ref: 'owner_of', of: what.ref };
-      return what ? [{ type: 'move', what: what.ref, to: 'hand' }] : null;
+      if (what) return [{ type: 'move', what: what.ref, to: 'hand' }];
+      // Peel from Reality: "Return target creature you control and target creature you don't control to their owners'
+      // hands." — each its own target.
+      const list = hand[2] === "their owners'" ? targetList(hand[1]!, b) : null;
+      return list ? list.map((r) => ({ type: 'move', what: r, to: 'hand' })) : null;
     }
     // Mantle of the Ancients: "return any number of target Aura and/or Equipment cards from your graveyard to the battlefield
     // attached to enchanted creature"; Gryff's Boon: "Return this card from your graveyard to the battlefield attached to
@@ -5782,6 +5854,15 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
   // CR 701.27a: transforming turns a double-faced permanent over.
   const transform = /^transform (~|it|him|her)$/i.exec(c);
   if (transform && (transform[1] !== 'it' || b.it?.ref === 'self')) return [{ type: 'transform', what: { ref: 'self' } }];
+  // Waxing Moon: "Transform up to one target Werewolf you control." (CR 701.27c: one that isn't double-faced doesn't.)
+  const transformTarget = /^transform ((?:up to one )?target .+)$/i.exec(c);
+  if (transformTarget) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(transformTarget[1]!, b);
+      return what && !what.plural && what.targeted ? [{ type: 'transform', what: what.ref }] : null;
+    });
+    if (r) return r;
+  }
   // CR 106.4: "Add {R}{R}{R}." as an instruction (rituals, triggered mana); "Add one mana of any color."
   const add = /^add (.+)$/i.exec(c);
   const produced = add ? parseManaProduction(add[1]!) : null;

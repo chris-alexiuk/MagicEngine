@@ -630,7 +630,7 @@ export interface TargetPrompt {
   sameOwner?: true;
   /** "For each opponent, … target … that player controls": each chosen object belongs to a different player. */
   perPlayer?: true;
-  /** "… and up to one target creature that player controls": controlled by the player chosen for prompt N (or by the controller of the permanent chosen for it). */
+  /** "… and up to one target creature that player controls": controlled by the player chosen for prompt N (or by the controller of the permanent chosen for it); for cards ("target cards from their graveyard"), owned by that player. */
   controlledByTarget?: number;
   /** Fiery Annihilation: "target Equipment attached to that creature" — only what's attached to that earlier target. */
   attachedToTarget?: number;
@@ -1061,7 +1061,7 @@ export interface GameState {
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; controller?: PlayerId; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; controller?: PlayerId; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; /** Koll, the Forgemaster: "if it was enchanted or equipped". */ enchanted?: true; equipped?: true; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */
