@@ -1,0 +1,14 @@
+
+> magic-engine@ cards:build /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler compile -- --download --out apps/web/public
+
+
+> @mtg/compiler@0.1.0 compile /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx src/cli.ts -- --download --out apps/web/public
+
+downloading 25 MB from https://data.scryfall.io/oracle-cards/oracle-cards-20261030090203.jsonl.gz
+compiled 32934 cards + 1095 tokens in 51055 ms
+  json 43.84 MB → gz 7.02 MB
+  coverage: full 26098, partial 4079, manual 2757
+  skipped: {"layout":3059,"digital_only":815,"un_set":1293,"no_oracle_id":0,"duplicate":0}
+  wrote /home/runner/work/MagicEngine/MagicEngine/apps/web/public

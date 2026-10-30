@@ -1,0 +1,13 @@
+
+> magic-engine@ cards:reparse /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler reparse -- ../../apps/web/public/cards.json.gz
+
+
+> @mtg/compiler@0.1.0 reparse /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx scripts/reparse.ts -- ../../apps/web/public/cards.json.gz
+
+reparsed 32934 cards in 49469 ms
+  full      26098  79.2%  (was 26098)
+  partial    4079  12.4%  (was 4079)
+  manual     2757   8.4%  (was 2757)
+  lines: 53844 compiled, 7911 unparsed

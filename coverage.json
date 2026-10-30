@@ -1,0 +1,1976 @@
+{
+  "builtAt": "2026-10-30T15:04:15.833Z",
+  "cardCount": 32934,
+  "totals": {
+    "full": 26098,
+    "partial": 4079,
+    "manual": 2757
+  },
+  "byLayout": {
+    "normal": {
+      "full": 25269,
+      "partial": 3728,
+      "manual": 2738
+    },
+    "transform": {
+      "full": 263,
+      "partial": 125,
+      "manual": 2
+    },
+    "prepare": {
+      "full": 62,
+      "partial": 5,
+      "manual": 0
+    },
+    "class": {
+      "full": 22,
+      "partial": 12,
+      "manual": 0
+    },
+    "modal_dfc": {
+      "full": 70,
+      "partial": 29,
+      "manual": 0
+    },
+    "saga": {
+      "full": 106,
+      "partial": 87,
+      "manual": 0
+    },
+    "flip": {
+      "full": 5,
+      "partial": 17,
+      "manual": 3
+    },
+    "split": {
+      "full": 97,
+      "partial": 26,
+      "manual": 1
+    },
+    "adventure": {
+      "full": 139,
+      "partial": 13,
+      "manual": 2
+    },
+    "prototype": {
+      "full": 14,
+      "partial": 5,
+      "manual": 0
+    },
+    "mutate": {
+      "full": 0,
+      "partial": 23,
+      "manual": 11
+    },
+    "meld": {
+      "full": 18,
+      "partial": 3,
+      "manual": 0
+    },
+    "leveler": {
+      "full": 25,
+      "partial": 1,
+      "manual": 0
+    },
+    "case": {
+      "full": 8,
+      "partial": 5,
+      "manual": 0
+    }
+  },
+  "topTemplates": [
+    {
+      "template": "{M} — N/N",
+      "count": 96,
+      "examples": [
+        "Ancestral Hot Dog Minotaur",
+        "Ancestral Hot Dog Minotaur",
+        "Carnival Elephant Meteor"
+      ]
+    },
+    {
+      "template": "When ~ enters, empower Jace N.",
+      "count": 15,
+      "examples": [
+        "Arcane Amphisbaena",
+        "Keeper of the Quiet Hour",
+        "Mindseeker Oculus"
+      ]
+    },
+    {
+      "template": "Draft ~ face up.",
+      "count": 13,
+      "examples": [
+        "Agent of Acquisitions",
+        "Animus of Predation",
+        "Archdemon of Paliano"
+      ]
+    },
+    {
+      "template": "{M}, {T}: ~ loses this ability and becomes an Aura enchantment with enchant creature. Attach it to target creature. You may pay {M} to end this effect.",
+      "count": 12,
+      "examples": [
+        "Calming Licid",
+        "Convulsing Licid",
+        "Corrupting Licid"
+      ]
+    },
+    {
+      "template": "When ~ enters, open an Attraction.",
+      "count": 12,
+      "examples": [
+        "Complaints Clerk",
+        "Deadbeat Attendant",
+        "Dee Kay, Finder of the Lost"
+      ]
+    },
+    {
+      "template": "Beam me up {M}",
+      "count": 10,
+      "examples": [
+        "Adversary by Algorithm",
+        "Boarding Action",
+        "Energize"
+      ]
+    },
+    {
+      "template": "Web-slinging {M}",
+      "count": 10,
+      "examples": [
+        "Amazing Spider-Girl",
+        "Arachne, Psionic Weaver",
+        "Scarlet Spider, Ben Reilly"
+      ]
+    },
+    {
+      "template": "When ~ enters, you get {M}, then you may put a sticker on a nonland permanent you own.",
+      "count": 9,
+      "examples": [
+        "Aerialephant",
+        "Ambassador Blorpityblorpboop",
+        "Carnival Carnivore"
+      ]
+    },
+    {
+      "template": "Remove ~ from your deck before playing if you're not playing for ante.",
+      "count": 9,
+      "examples": [
+        "Amulet of Quoz",
+        "Bronze Tablet",
+        "Contract from Below"
+      ]
+    },
+    {
+      "template": "Storied",
+      "count": 9,
+      "examples": [
+        "Balin, Loremaster",
+        "Bifur, Melodic Rider",
+        "Bombur, Gentle Dreamer"
+      ]
+    },
+    {
+      "template": "Choose N —",
+      "count": 8,
+      "examples": [
+        "Academic Probation",
+        "Command Performance",
+        "Dust of Moments"
+      ]
+    },
+    {
+      "template": "Empower Jace N.",
+      "count": 7,
+      "examples": [
+        "Academic Ascent",
+        "Jace's Machinations",
+        "No Admittance"
+      ]
+    },
+    {
+      "template": "Partner—Friends forever",
+      "count": 7,
+      "examples": [
+        "Bjorna, Nightfall Alchemist",
+        "Cecily, Haunted Mage",
+        "Elmar, Ulvenwald Informant"
+      ]
+    },
+    {
+      "template": "Partner—Character select",
+      "count": 6,
+      "examples": [
+        "April O'Neil, Live on the Scene",
+        "Donatello, the Brains",
+        "Leonardo, the Balance"
+      ]
+    },
+    {
+      "template": "As an additional cost to cast ~, you may reveal a Dragon card from your hand.",
+      "count": 6,
+      "examples": [
+        "Draconic Roar",
+        "Dragonlord's Prerogative",
+        "Foul-Tongue Invocation"
+      ]
+    },
+    {
+      "template": "Choose up to N {M} worth of modes. You may choose the same mode more than once.",
+      "count": 6,
+      "examples": [
+        "Hela's Arcanum",
+        "Season of Gathering",
+        "Season of Loss"
+      ]
+    },
+    {
+      "template": "{M}: The next N damage that would be dealt to ~ this turn is dealt to target creature you control instead.",
+      "count": 6,
+      "examples": [
+        "Lancers en-Kor",
+        "Nomads en-Kor",
+        "Outrider en-Kor"
+      ]
+    },
+    {
+      "template": "Suspend N—{M}. N can't be N.",
+      "count": 5,
+      "examples": [
+        "Aeon Chronicler",
+        "Benalish Commander",
+        "Detritivore"
+      ]
+    },
+    {
+      "template": "At the beginning of the Horde's first main phase, reveal an additional card from the top of the Horde's library. The Horde casts that card.",
+      "count": 5,
+      "examples": [
+        "Altar of Mogis",
+        "Massacre Totem",
+        "Plundered Statue"
+      ]
+    },
+    {
+      "template": "{T}, Remove any number of charge counters from ~: Add {M}, then add an additional {M} for each charge counter removed this way.",
+      "count": 5,
+      "examples": [
+        "Black Mana Battery",
+        "Blue Mana Battery",
+        "Green Mana Battery"
+      ]
+    },
+    {
+      "template": "At the beginning of the end step, if there are N or more ki counters on ~, you may flip it.",
+      "count": 5,
+      "examples": [
+        "Budoka Pupil // Ichiga, Who Topples Oaks",
+        "Callow Jushi // Jaraku the Interloper",
+        "Cunning Bandit // Azamuki, Treachery Incarnate"
+      ]
+    },
+    {
+      "template": "{M}, Remove N storage counters from ~: Add N mana in any combination of {M} and/or {M}.",
+      "count": 5,
+      "examples": [
+        "Calciform Pools",
+        "Dreadship Reef",
+        "Fungal Reaches"
+      ]
+    },
+    {
+      "template": "Paradigm",
+      "count": 5,
+      "examples": [
+        "Decorum Dissertation",
+        "Echocasting Symposium",
+        "Germination Practicum"
+      ]
+    },
+    {
+      "template": "{M}, Exile ~ from your hand: Target land gains \"{T}: Add {M}, {M}, or {M}\" until ~ is cast from exile. You may cast ~ for as long as it remains exiled.",
+      "count": 5,
+      "examples": [
+        "Glamorous Outlaw",
+        "Masked Bandits",
+        "Rakish Revelers"
+      ]
+    },
+    {
+      "template": "Starting with you, each player votes for planeswalk or chaos. If planeswalk gets more votes, planeswalk. If chaos gets more votes or the vote is tied, chaos ensues.",
+      "count": 5,
+      "examples": [
+        "Path of the Animist",
+        "Path of the Enigma",
+        "Path of the Ghosthunter"
+      ]
+    },
+    {
+      "template": "Flashback {M}. ~ costs {M} less to cast this way, where N is the greatest mana value of a commander you own on the battlefield or in the command zone.",
+      "count": 5,
+      "examples": [
+        "Visions of Dominance",
+        "Visions of Dread",
+        "Visions of Duplicity"
+      ]
+    },
+    {
+      "template": "~ enters under the control of an opponent of your choice.",
+      "count": 4,
+      "examples": [
+        "Abby, Merciless Soldier",
+        "Captive Audience",
+        "Pendant of Prosperity"
+      ]
+    },
+    {
+      "template": "Partner—Survivors",
+      "count": 4,
+      "examples": [
+        "Abby, Merciless Soldier",
+        "Ellie, Brick Master",
+        "Ellie, Vengeful Hunter"
+      ]
+    },
+    {
+      "template": "Time travel.",
+      "count": 4,
+      "examples": [
+        "All of History, All at Once",
+        "Coward // Killer",
+        "The Wedding of River Song"
+      ]
+    },
+    {
+      "template": "Cumulative upkeep {M} or {M}",
+      "count": 4,
+      "examples": [
+        "Arctic Nishoba",
+        "Earthen Goo",
+        "Jötun Owl Keeper"
+      ]
+    },
+    {
+      "template": "When ~ enter, choose N or both. Each mode must target a different player.",
+      "count": 4,
+      "examples": [
+        "Casey & Raph, Hotheads",
+        "Donnie & April, Adorkable Duo",
+        "Mikey & Mona, Mutant Sitters"
+      ]
+    },
+    {
+      "template": "When ~ enters, recruit.",
+      "count": 4,
+      "examples": [
+        "Celebrate the Mountain-king",
+        "Esgaroth Garrison",
+        "Long Lake Nuisance"
+      ]
+    },
+    {
+      "template": "At end of combat, if ~ attacked or blocked this combat, remove a ±N/±N counter from it.",
+      "count": 4,
+      "examples": [
+        "Clockwork Avian",
+        "Clockwork Beast",
+        "Clockwork Steed"
+      ]
+    },
+    {
+      "template": "{M}, {T}: Put up to N ±N/±N counters on ~. This ability can't cause the total number of ±N/±N counters on ~ to be greater than N. Activate only during your upkeep.",
+      "count": 4,
+      "examples": [
+        "Clockwork Avian",
+        "Clockwork Beast",
+        "Clockwork Steed"
+      ]
+    },
+    {
+      "template": "Equip abilities you activate that target ~ cost {M} less to activate.",
+      "count": 4,
+      "examples": [
+        "Cloud, Planet's Champion",
+        "Dwarven Mauler",
+        "Fervent Champion"
+      ]
+    },
+    {
+      "template": "Reveal ~ as you draft it and note how many cards you've drafted this draft round, including ~.",
+      "count": 4,
+      "examples": [
+        "Custodi Peacekeeper",
+        "Garbage Fire",
+        "Lurking Automaton"
+      ]
+    },
+    {
+      "template": "Cards in graveyards can't be the targets of spells or abilities.",
+      "count": 4,
+      "examples": [
+        "Dennick, Pious Apprentice // Dennick, Pious Apparition",
+        "Ground Seal",
+        "Silent Gravestone"
+      ]
+    },
+    {
+      "template": "• Remove N time counters from target permanent or suspended card.",
+      "count": 4,
+      "examples": [
+        "Fury Charm",
+        "Shivan Sand-Mage",
+        "Timebender"
+      ]
+    },
+    {
+      "template": "• Draw a card.",
+      "count": 4,
+      "examples": [
+        "Gollum, Riddle Master",
+        "Gorbag of Minas Morgul",
+        "The Fantastic Four"
+      ]
+    },
+    {
+      "template": "If a spell or ability an opponent controls causes you to discard ~, put it onto the battlefield instead of putting it into your graveyard.",
+      "count": 4,
+      "examples": [
+        "Loxodon Smiter",
+        "Nullhide Ferox",
+        "Obstinate Baloth"
+      ]
+    },
+    {
+      "template": "When ~ enters, choose N —",
+      "count": 4,
+      "examples": [
+        "Orcus, Prince of Undeath",
+        "Shivan Sand-Mage",
+        "Skemfar Shadowsage"
+      ]
+    },
+    {
+      "template": "When ~ enters, you may put a name sticker on it.",
+      "count": 3,
+      "examples": [
+        "_____ _____ _____ Trespasser",
+        "_____ Balls of Fire",
+        "Make a _____ Splash"
+      ]
+    },
+    {
+      "template": "N-N | Add {M}.",
+      "count": 3,
+      "examples": [
+        "\"Name Sticker\" Goblin",
+        "\"Name Sticker\" Goblin",
+        "\"Name Sticker\" Goblin"
+      ]
+    },
+    {
+      "template": "Change the text of target spell or permanent by replacing all instances of N color word with another.",
+      "count": 3,
+      "examples": [
+        "Alter Reality",
+        "Glamerdye",
+        "Sleight of Mind"
+      ]
+    },
+    {
+      "template": "If ~ was kicked with its {M} kicker, it enters with N ±N/±N counters on it.",
+      "count": 3,
+      "examples": [
+        "Anavolver",
+        "Cetavolver",
+        "Necravolver"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose odd or even.",
+      "count": 3,
+      "examples": [
+        "Ashling's Prerogative",
+        "Gollum, Riddle Master",
+        "Lavabrink Venturer"
+      ]
+    },
+    {
+      "template": "If you would roll N or more dice, instead roll that many dice plus N and ignore the lowest roll.",
+      "count": 3,
+      "examples": [
+        "Barbarian Class",
+        "Pixie Guide",
+        "Wyll, Blade of Frontiers"
+      ]
+    },
+    {
+      "template": "{M}: ~ gains banding until end of turn.",
+      "count": 3,
+      "examples": [
+        "Beast Walkers",
+        "Icatian Infantry",
+        "Urza's Engine"
+      ]
+    },
+    {
+      "template": "{M}, {T}: You get {M}.",
+      "count": 3,
+      "examples": [
+        "Blorbian Buddy",
+        "Prize Wall",
+        "Ticket Turbotubes"
+      ]
+    },
+    {
+      "template": "If ~ was kicked with its {M} kicker, it enters with a ±N/±N counter on it.",
+      "count": 3,
+      "examples": [
+        "Cetavolver",
+        "Degavolver",
+        "Rakavolver"
+      ]
+    },
+    {
+      "template": "Champion a creature",
+      "count": 3,
+      "examples": [
+        "Changeling Berserker",
+        "Changeling Hero",
+        "Changeling Titan"
+      ]
+    },
+    {
+      "template": "~ can't be copied.",
+      "count": 3,
+      "examples": [
+        "Choreographed Sparks",
+        "Display of Power",
+        "See Double"
+      ]
+    },
+    {
+      "template": "If ~ is your commander, choose a color before the game begins. ~ is the chosen color.",
+      "count": 3,
+      "examples": [
+        "Clara Oswald",
+        "Faceless One",
+        "The Prismatic Piper"
+      ]
+    },
+    {
+      "template": "If ~ would be destroyed, regenerate it.",
+      "count": 3,
+      "examples": [
+        "Clergy of the Holy Nimbus",
+        "Knight of the Holy Nimbus",
+        "Mossbridge Troll"
+      ]
+    },
+    {
+      "template": "When ~ enters, it becomes an Aura with enchant creature. Manifest the top card of your library and attach ~ to it.",
+      "count": 3,
+      "examples": [
+        "Cloudform",
+        "Lightform",
+        "Rageform"
+      ]
+    },
+    {
+      "template": "While an opponent is choosing targets as part of casting a spell they control or activating an ability they control, that player must choose at least N Flagbearer on the battlefield if able.",
+      "count": 3,
+      "examples": [
+        "Coalition Flag",
+        "Coalition Honor Guard",
+        "Standard Bearer"
+      ]
+    },
+    {
+      "template": "As an additional cost to cast ~, you may behold a Dragon.",
+      "count": 3,
+      "examples": [
+        "Dispelling Exhale",
+        "Osseous Exhale",
+        "Piercing Exhale"
+      ]
+    },
+    {
+      "template": "When there are no creatures on the battlefield, sacrifice ~.",
+      "count": 3,
+      "examples": [
+        "Drop of Honey",
+        "Porphyry Nodes",
+        "Task Mage Assembly"
+      ]
+    },
+    {
+      "template": "When ~ enters, look at target opponent's hand. You may exile a nonland card from it. For as long as that card remains exiled, its owner may play it. A spell cast this way costs {M} more to cast.",
+      "count": 3,
+      "examples": [
+        "Elite Spellbinder",
+        "Invasion of Gobakhan // Lightshield Array",
+        "Zero, Incorporeal Sensate"
+      ]
+    },
+    {
+      "template": "An opponent chooses N —",
+      "count": 3,
+      "examples": [
+        "Fatal Lore",
+        "Library of Lat-Nam",
+        "Misfortune"
+      ]
+    },
+    {
+      "template": "Players play with the top card of their libraries revealed.",
+      "count": 3,
+      "examples": [
+        "Field of Dreams",
+        "Lantern of Insight",
+        "Wizened Snitches"
+      ]
+    },
+    {
+      "template": "You may pay {M} rather than pay the mana cost for spells you cast.",
+      "count": 3,
+      "examples": [
+        "Fist of Suns",
+        "Jodah, Archmage Eternal",
+        "Leyline of Mutation"
+      ]
+    },
+    {
+      "template": "~ costs {M} less to cast if it's bargained.",
+      "count": 3,
+      "examples": [
+        "Hamlet Glutton",
+        "Ice Out",
+        "Johann's Stopgap"
+      ]
+    },
+    {
+      "template": "• ~ deals N damage to any target.",
+      "count": 3,
+      "examples": [
+        "Immard, the Stormcleaver",
+        "Prophetic Titan",
+        "Umaro, Raging Yeti"
+      ]
+    },
+    {
+      "template": "Choose N. If ~ was kicked, choose any number instead.",
+      "count": 3,
+      "examples": [
+        "Inscription of Abundance",
+        "Inscription of Insight",
+        "Inscription of Ruin"
+      ]
+    },
+    {
+      "template": "{M}: Turn ~ face down.",
+      "count": 3,
+      "examples": [
+        "Mischievous Quanar",
+        "Obscuring Aether",
+        "Wall of Deceit"
+      ]
+    },
+    {
+      "template": "• Return N target creature cards that share a creature type from your graveyard to your hand.",
+      "count": 3,
+      "examples": [
+        "Raise the Draugr",
+        "Return from Extinction",
+        "Unbury"
+      ]
+    },
+    {
+      "template": "• Put N time counters on target permanent with a time counter on it or suspended card.",
+      "count": 3,
+      "examples": [
+        "Shivan Sand-Mage",
+        "Timebender",
+        "Timecrafting"
+      ]
+    },
+    {
+      "template": "When ~ enters, if it was kicked with its {M} kicker, target player discards N cards.",
+      "count": 2,
+      "examples": [
+        "Ana Battlemage",
+        "Thunderscape Battlemage"
+      ]
+    },
+    {
+      "template": "~ has flying as long as it was kicked with its {M} kicker.",
+      "count": 2,
+      "examples": [
+        "Anavolver",
+        "Rakavolver"
+      ]
+    },
+    {
+      "template": "As ~ enters, look at an opponent's hand, then choose any card name.",
+      "count": 2,
+      "examples": [
+        "Anointed Peacekeeper",
+        "Sorcerous Spyglass"
+      ]
+    },
+    {
+      "template": "Creatures you control are the chosen type in addition to their other types. The same is true for creature spells you control and creature cards you own that aren't on the battlefield.",
+      "count": 2,
+      "examples": [
+        "Arcane Adaptation",
+        "Leyline of Transformation"
+      ]
+    },
+    {
+      "template": "{M}, {T}: Tap target creature you control and target creature of an opponent's choice they control. Those creatures fight each other.",
+      "count": 2,
+      "examples": [
+        "Arena",
+        "Magus of the Arena"
+      ]
+    },
+    {
+      "template": "When ~ enters, any player may sacrifice a land of their choice. If a player does, put ~ on top of its owner's library.",
+      "count": 2,
+      "examples": [
+        "Argothian Wurm",
+        "Shivan Wumpus"
+      ]
+    },
+    {
+      "template": "Your opponents can't cast spells with the same name as the exiled card.",
+      "count": 2,
+      "examples": [
+        "Ashiok's Erasure",
+        "Ixalan's Binding"
+      ]
+    },
+    {
+      "template": "Partner—Father & son",
+      "count": 2,
+      "examples": [
+        "Atreus, Impulsive Son",
+        "Kratos, Stoic Father"
+      ]
+    },
+    {
+      "template": "{M}: Look at target face-down creature.",
+      "count": 2,
+      "examples": [
+        "Aven Soulgazer",
+        "Smoke Teller"
+      ]
+    },
+    {
+      "template": "When ~ enters, you may put a name sticker on a nonland permanent you own.",
+      "count": 2,
+      "examples": [
+        "Baaallerina",
+        "Sword-Swallowing Seraph"
+      ]
+    },
+    {
+      "template": "You may look at cards exiled with ~.",
+      "count": 2,
+      "examples": [
+        "Bane Alley Broker",
+        "Grimoire Thief"
+      ]
+    },
+    {
+      "template": "At the beginning of your upkeep, sacrifice ~ unless you exile the top creature card of your graveyard.",
+      "count": 2,
+      "examples": [
+        "Barrow Ghoul",
+        "Circling Vultures"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose N players.",
+      "count": 2,
+      "examples": [
+        "Bitter Feud",
+        "Sower of Discord"
+      ]
+    },
+    {
+      "template": "Each nonland card in your hand without foretell has foretell. Its foretell cost is equal to its mana cost reduced by {M}.",
+      "count": 2,
+      "examples": [
+        "Bohn, Beguiling Balladeer",
+        "Dream Devourer"
+      ]
+    },
+    {
+      "template": "Spells with the chosen name you cast cost {M} less to cast.",
+      "count": 2,
+      "examples": [
+        "Brago's Favor",
+        "Council of the Absolute"
+      ]
+    },
+    {
+      "template": "~ can't attack if defending player controls an untapped land.",
+      "count": 2,
+      "examples": [
+        "Branded Brawlers",
+        "Veteran Brawlers"
+      ]
+    },
+    {
+      "template": "~ can't block if you control an untapped land.",
+      "count": 2,
+      "examples": [
+        "Branded Brawlers",
+        "Veteran Brawlers"
+      ]
+    },
+    {
+      "template": "Whenever another creature you control enters while ~ has a ±N/±N counter on it, remove a ±N/±N counter from ~.",
+      "count": 2,
+      "examples": [
+        "Bristlebane Battler",
+        "Reluctant Dounguard"
+      ]
+    },
+    {
+      "template": "As ~ is turned face up, put N ±N/±N counters on it.",
+      "count": 2,
+      "examples": [
+        "Bubble Smuggler",
+        "Hooded Hydra"
+      ]
+    },
+    {
+      "template": "• You draw a card and you lose N life.",
+      "count": 2,
+      "examples": [
+        "Caesar, Legion's Emperor",
+        "Disciple of Perdition"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose a color and an opponent.",
+      "count": 2,
+      "examples": [
+        "Call to Arms",
+        "Jihad"
+      ]
+    },
+    {
+      "template": "• Discard a card, then draw a card.",
+      "count": 2,
+      "examples": [
+        "Captain James T. Kirk",
+        "The Ruinous Wrecking Crew"
+      ]
+    },
+    {
+      "template": "• Creatures you control get ±N/±N until end of turn.",
+      "count": 2,
+      "examples": [
+        "Captain James T. Kirk",
+        "Orzhov Pontiff"
+      ]
+    },
+    {
+      "template": "~ has first strike as long as it was kicked with its {M} kicker.",
+      "count": 2,
+      "examples": [
+        "Cetavolver",
+        "Degavolver"
+      ]
+    },
+    {
+      "template": "~ has trample as long as it was kicked with its {M} kicker.",
+      "count": 2,
+      "examples": [
+        "Cetavolver",
+        "Necravolver"
+      ]
+    },
+    {
+      "template": "When ~ enters, create a N/N red Klingon Warrior creature token with haste.",
+      "count": 2,
+      "examples": [
+        "Cha'DIch Investigator",
+        "Worf, Defiant Commander"
+      ]
+    },
+    {
+      "template": "If a player would draw a card except the first N they draw in each of their draw steps, that player discards a card instead. If the player discards a card this way, they draw a card. If the player doesn't discard a card this way, they mill a card.",
+      "count": 2,
+      "examples": [
+        "Chains of Mephistopheles",
+        "Magus of the Chains"
+      ]
+    },
+    {
+      "template": "Until end of turn, any time you could activate a mana ability, you may pay N life. If you do, add {M}.",
+      "count": 2,
+      "examples": [
+        "Channel",
+        "Yavimaya Bloomsage // Channel"
+      ]
+    },
+    {
+      "template": "As an additional cost to cast ~, exile N creature cards from your graveyard.",
+      "count": 2,
+      "examples": [
+        "Chill Haunting",
+        "Haunting Misery"
+      ]
+    },
+    {
+      "template": "Your opponents can't cast spells with the same name as a card exiled with ~.",
+      "count": 2,
+      "examples": [
+        "Circu, Dimir Lobotomist",
+        "Godsend"
+      ]
+    },
+    {
+      "template": "Equipped creature gets ±N/±N and has \"{M}, {T}, Sacrifice ~: Destroy target artifact or enchantment.\"",
+      "count": 2,
+      "examples": [
+        "Citizen's Crowbar",
+        "Deconstruction Hammer"
+      ]
+    },
+    {
+      "template": "{M}: ~ can't be regenerated this turn. Only your opponents may activate this ability.",
+      "count": 2,
+      "examples": [
+        "Clergy of the Holy Nimbus",
+        "Knight of the Holy Nimbus"
+      ]
+    },
+    {
+      "template": "When ~ dies, turn the exiled card face up. If it's a creature card, put it onto the battlefield under your control.",
+      "count": 2,
+      "examples": [
+        "Clone Shell",
+        "Summoner's Egg"
+      ]
+    },
+    {
+      "template": "• Open an Attraction.",
+      "count": 2,
+      "examples": [
+        "Command Performance",
+        "Draconian Gate-Bot"
+      ]
+    },
+    {
+      "template": "• You get {M}.",
+      "count": 2,
+      "examples": [
+        "Command Performance",
+        "Robo-Piñata"
+      ]
+    },
+    {
+      "template": "• You may put a sticker on a nonland permanent you own.",
+      "count": 2,
+      "examples": [
+        "Command Performance",
+        "Robo-Piñata"
+      ]
+    },
+    {
+      "template": "• Create a Treasure token.",
+      "count": 2,
+      "examples": [
+        "Common Black Removal",
+        "Gorbag of Minas Morgul"
+      ]
+    },
+    {
+      "template": "Whenever ~ attacks, add {M} at the beginning of your next main phase this turn.",
+      "count": 2,
+      "examples": [
+        "Conduit of Storms // Conduit of Emrakul",
+        "Conduit of Storms // Conduit of Emrakul"
+      ]
+    },
+    {
+      "template": "Roll a d20.",
+      "count": 2,
+      "examples": [
+        "Cone of Cold",
+        "Thunderwave"
+      ]
+    },
+    {
+      "template": "Enchanted land is the chosen type.",
+      "count": 2,
+      "examples": [
+        "Convincing Mirage",
+        "Phantasmal Terrain"
+      ]
+    },
+    {
+      "template": "Return the top creature card of your graveyard to the battlefield. That creature gains haste until end of turn. Exile it at the beginning of the next end step.",
+      "count": 2,
+      "examples": [
+        "Corpse Dance",
+        "Shallow Grave"
+      ]
+    },
+    {
+      "template": "Target opponent reveals their hand. You choose a nonland card from that player's graveyard or hand and exile it. You may cast that card for as long as it remains exiled, and you may spend mana as though it were mana of any color to cast that spell.",
+      "count": 2,
+      "examples": [
+        "Covetous Urge",
+        "Psychic Intrusion"
+      ]
+    },
+    {
+      "template": "If enchanted land would be destroyed, instead sacrifice ~ and that land gains indestructible until end of turn.",
+      "count": 2,
+      "examples": [
+        "Crackling Emergence",
+        "Harmonious Emergence"
+      ]
+    },
+    {
+      "template": "{M}, {T}: Choose a card name, then reveal a card at random from your hand. If that card has the chosen name, ~ deals N damage to any target.",
+      "count": 2,
+      "examples": [
+        "Cursed Scroll",
+        "Magus of the Scroll"
+      ]
+    },
+    {
+      "template": "Target unblocked attacking creature becomes blocked.",
+      "count": 2,
+      "examples": [
+        "Curtain of Light",
+        "Dazzling Beauty"
+      ]
+    },
+    {
+      "template": "~ has all activated abilities of all creature cards exiled with it.",
+      "count": 2,
+      "examples": [
+        "Dark Impostor",
+        "Patchwork Crawler"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose another creature you control.",
+      "count": 2,
+      "examples": [
+        "Dauntless Bodyguard",
+        "Tyrannical Pitlord"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose Elemental, Elf, Faerie, Giant, Goblin, Kithkin, Merfolk, or Treefolk.",
+      "count": 2,
+      "examples": [
+        "Dawn-Blessed Pennant",
+        "Eclipsed Realms"
+      ]
+    },
+    {
+      "template": "Creatures with forestwalk can be blocked as though they didn't have forestwalk.",
+      "count": 2,
+      "examples": [
+        "Deadfall",
+        "Lord Magnus"
+      ]
+    },
+    {
+      "template": "Each player chooses any number of creatures they control with total power N or less, then sacrifices all other creatures they control.",
+      "count": 2,
+      "examples": [
+        "Destined Confrontation",
+        "Slaughter the Strong"
+      ]
+    },
+    {
+      "template": "N—N | Draw N cards.",
+      "count": 2,
+      "examples": [
+        "Diviner's Portent",
+        "The Deck of Many Things"
+      ]
+    },
+    {
+      "template": "When ~ enters, for each kind of counter on target permanent, put another counter of that kind on it or remove N from it.",
+      "count": 2,
+      "examples": [
+        "Dramatist's Puppet",
+        "Quarry Hauler"
+      ]
+    },
+    {
+      "template": "At the beginning of your upkeep, destroy the creature with the least power. It can't be regenerated. If N or more creatures are tied for least power, you choose N of them.",
+      "count": 2,
+      "examples": [
+        "Drop of Honey",
+        "Porphyry Nodes"
+      ]
+    },
+    {
+      "template": "At the beginning of your upkeep, you may exile all cards from your hand face down. If you do, put all other cards you own exiled with ~ into your hand.",
+      "count": 2,
+      "examples": [
+        "Duplicity",
+        "Moonring Mirror"
+      ]
+    },
+    {
+      "template": "When you lose control of ~, put all cards exiled with ~ into their owner's graveyard.",
+      "count": 2,
+      "examples": [
+        "Duplicity",
+        "Gustha's Scepter"
+      ]
+    },
+    {
+      "template": "Whenever you face a dilemma, each opponent loses N life and you gain N life.",
+      "count": 2,
+      "examples": [
+        "Elim Garak, Simple Tailor",
+        "Obsidian Order Operative"
+      ]
+    },
+    {
+      "template": "Whenever a land you control enters, you may have target land you control become a N/N Elemental creature with haste until end of turn. It's still a land.",
+      "count": 2,
+      "examples": [
+        "Embodiment of Fury",
+        "Embodiment of Insight"
+      ]
+    },
+    {
+      "template": "Prevent the next N damage that would be dealt this turn to any number of targets, divided as you choose.",
+      "count": 2,
+      "examples": [
+        "Embolden",
+        "Remedy"
+      ]
+    },
+    {
+      "template": "As ~ enters, secretly choose an opponent.",
+      "count": 2,
+      "examples": [
+        "Emissary of Grudges",
+        "Guardian Archon"
+      ]
+    },
+    {
+      "template": "Damage that would be dealt by ~ can't be prevented.",
+      "count": 2,
+      "examples": [
+        "Excruciator",
+        "Malignus"
+      ]
+    },
+    {
+      "template": "Choose N or both —",
+      "count": 2,
+      "examples": [
+        "Expose the Culprit",
+        "Two by Four"
+      ]
+    },
+    {
+      "template": "{T}: Draw a card and reveal it. If it isn't a land card, discard it.",
+      "count": 2,
+      "examples": [
+        "Fa'adiyah Seer",
+        "Sindbad"
+      ]
+    },
+    {
+      "template": "Target opponent chooses a card in your graveyard. You may pay {M}. If you do, repeat this process except that opponent can't choose a card already chosen for ~. Then put the last chosen card into your hand.",
+      "count": 2,
+      "examples": [
+        "Forgotten Lore",
+        "Shrouded Lore"
+      ]
+    },
+    {
+      "template": "Until end of turn, you may play lands and cast spells from your graveyard.",
+      "count": 2,
+      "examples": [
+        "Gaea's Will",
+        "Yawgmoth's Will"
+      ]
+    },
+    {
+      "template": "If a card would be put into your graveyard from anywhere this turn, exile that card instead.",
+      "count": 2,
+      "examples": [
+        "Gaea's Will",
+        "Yawgmoth's Will"
+      ]
+    },
+    {
+      "template": "{M} — {M}: ~ gets ±N/±N until end of turn.",
+      "count": 2,
+      "examples": [
+        "Geek Lotus Warrior",
+        "Primal Elder Kitty"
+      ]
+    },
+    {
+      "template": "At the beginning of your upkeep, if a player has more life than each other player, the player with the most life gains control of ~.",
+      "count": 2,
+      "examples": [
+        "Ghazbán Ogre",
+        "Wild Dogs"
+      ]
+    },
+    {
+      "template": "{M}: Until end of turn, ~ loses \"Prevent all damage that would be dealt to ~.\" Any player may activate this ability.",
+      "count": 2,
+      "examples": [
+        "Glittering Lion",
+        "Glittering Lynx"
+      ]
+    },
+    {
+      "template": "• You gain N life.",
+      "count": 2,
+      "examples": [
+        "Gnostro, Voice of the Crags",
+        "Tranquil Frillback"
+      ]
+    },
+    {
+      "template": "~ can't attack unless you control more creatures than defending player.",
+      "count": 2,
+      "examples": [
+        "Goblin Goon",
+        "Mogg Toady"
+      ]
+    },
+    {
+      "template": "~ can't block unless you control more creatures than attacking player.",
+      "count": 2,
+      "examples": [
+        "Goblin Goon",
+        "Mogg Toady"
+      ]
+    },
+    {
+      "template": "~ can't attack if defending player controls an untapped creature with power N or greater.",
+      "count": 2,
+      "examples": [
+        "Goblin Mutant",
+        "Orgg"
+      ]
+    },
+    {
+      "template": "• Put a ±N/±N counter on ~.",
+      "count": 2,
+      "examples": [
+        "Gollum, Riddle Master",
+        "Zuko, Conflicted"
+      ]
+    },
+    {
+      "template": "• Each opponent loses N life and you gain N life.",
+      "count": 2,
+      "examples": [
+        "Gollum, Riddle Master",
+        "Let's Play a Game"
+      ]
+    },
+    {
+      "template": "Creatures with islandwalk can be blocked as though they didn't have islandwalk.",
+      "count": 2,
+      "examples": [
+        "Gosta Dirk",
+        "Undertow"
+      ]
+    },
+    {
+      "template": "Creatures with plainswalk can be blocked as though they didn't have plainswalk.",
+      "count": 2,
+      "examples": [
+        "Great Wall",
+        "Lord Magnus"
+      ]
+    },
+    {
+      "template": "As an additional cost to cast ~, exile N cards from your graveyard.",
+      "count": 2,
+      "examples": [
+        "Harvest Pyre",
+        "Skeletal Scrying"
+      ]
+    },
+    {
+      "template": "~ can block creatures with shadow as though it had shadow.",
+      "count": 2,
+      "examples": [
+        "Heartwood Dryad",
+        "Wall of Diffusion"
+      ]
+    },
+    {
+      "template": "When ~ dies, you may cast it from your graveyard as an Adventure until the end of your next turn.",
+      "count": 2,
+      "examples": [
+        "Hildibrand Manderville // Gentleman's Rise",
+        "Mosswood Dreadknight // Dread Whispers"
+      ]
+    },
+    {
+      "template": "At the beginning of each player's upkeep, that player untaps a land they control.",
+      "count": 2,
+      "examples": [
+        "Hokori, Dust Drinker",
+        "Rising Waters"
+      ]
+    },
+    {
+      "template": "Whenever there are N or more tide counters on ~, remove all tide counters from it.",
+      "count": 2,
+      "examples": [
+        "Homarid",
+        "Tidal Influence"
+      ]
+    },
+    {
+      "template": "You may cast ~ from your graveyard. If you do, it enters with a finality counter on it.",
+      "count": 2,
+      "examples": [
+        "Hundred-Battle Veteran",
+        "Storied Veteran"
+      ]
+    },
+    {
+      "template": "When enchanted creature becomes the target of a spell or ability, sacrifice ~.",
+      "count": 2,
+      "examples": [
+        "Illusionary Armor",
+        "Sleeping Potion"
+      ]
+    },
+    {
+      "template": "Put a ±N/±N counter on target creature, N ±N/±N counters on another target creature, and N ±N/±N counters on a third target creature.",
+      "count": 2,
+      "examples": [
+        "Incremental Blight",
+        "Incremental Growth"
+      ]
+    },
+    {
+      "template": "Draw a card.",
+      "count": 2,
+      "examples": [
+        "Information Booth",
+        "Marchesa's Surprise Party"
+      ]
+    },
+    {
+      "template": "• Put N ±N/±N counters on target creature.",
+      "count": 2,
+      "examples": [
+        "Inscription of Abundance",
+        "The Fantastic Four"
+      ]
+    },
+    {
+      "template": "• Target opponent discards N cards.",
+      "count": 2,
+      "examples": [
+        "Inscription of Ruin",
+        "Vindictive Lich"
+      ]
+    },
+    {
+      "template": "The next time a source of your choice would deal damage to you this turn, prevent that damage. You gain life equal to the damage prevented this way.",
+      "count": 2,
+      "examples": [
+        "Intervention Pact",
+        "Reverse Damage"
+      ]
+    },
+    {
+      "template": "~ has hexproof as long as it hasn't dealt damage yet.",
+      "count": 2,
+      "examples": [
+        "Karakyk Guardian",
+        "Palladia-Mors, the Ruiner"
+      ]
+    },
+    {
+      "template": "{M}: Target noncreature artifact becomes an artifact creature with power and toughness each equal to its mana value until end of turn.",
+      "count": 2,
+      "examples": [
+        "Karn, Silver Golem",
+        "Sydri, Galvanic Genius"
+      ]
+    },
+    {
+      "template": "Creatures you control get ±N/±N until end of turn.",
+      "count": 2,
+      "examples": [
+        "Kiddie Coaster",
+        "Roller Coaster"
+      ]
+    },
+    {
+      "template": "At the beginning of combat on your turn, choose an opponent at random. ~ attacks that player this combat if able.",
+      "count": 2,
+      "examples": [
+        "Knight Rampager",
+        "Raving Dead"
+      ]
+    },
+    {
+      "template": "All damage that would be dealt this turn to target creature you control by a source of your choice is dealt to another target creature instead.",
+      "count": 2,
+      "examples": [
+        "Kor Chant",
+        "Kor Dirge"
+      ]
+    },
+    {
+      "template": "When ~ leaves the battlefield, that player gains N life.",
+      "count": 2,
+      "examples": [
+        "Laquatus's Champion",
+        "Soul Scourge"
+      ]
+    },
+    {
+      "template": "If you would gain life, draw that many cards instead.",
+      "count": 2,
+      "examples": [
+        "Lich",
+        "Nefarious Lich"
+      ]
+    },
+    {
+      "template": "If damage would be dealt to ~, put that many ±N/±N counters on it instead.",
+      "count": 2,
+      "examples": [
+        "Lichenthrope",
+        "Phytohydra"
+      ]
+    },
+    {
+      "template": "When ~ enters, any opponent may have it deal N damage to them. If a player does, sacrifice ~.",
+      "count": 2,
+      "examples": [
+        "Longhorn Firebeast",
+        "Vexing Devil"
+      ]
+    },
+    {
+      "template": "~ enters with N ±N/±N counters on it, where N is the highest number you noted for cards named ~.",
+      "count": 2,
+      "examples": [
+        "Lurking Automaton",
+        "Pyretic Hunter"
+      ]
+    },
+    {
+      "template": "At the beginning of each player's upkeep, that player may choose any number of tapped blue creatures they control and pay {M} for each creature chosen this way. If the player does, untap those creatures.",
+      "count": 2,
+      "examples": [
+        "Magnetic Mountain",
+        "Thelon's Curse"
+      ]
+    },
+    {
+      "template": "At the beginning of each player's upkeep, destroy target nonartifact creature that player controls of their choice. It can't be regenerated.",
+      "count": 2,
+      "examples": [
+        "Magus of the Abyss",
+        "The Abyss"
+      ]
+    },
+    {
+      "template": "{T}, Sacrifice ~: Each player exiles all cards from their hand face down and draws N cards. At the beginning of the next end step, each player discards their hand and returns to their hand each card they exiled this way.",
+      "count": 2,
+      "examples": [
+        "Magus of the Jar",
+        "Memory Jar"
+      ]
+    },
+    {
+      "template": "When ~ enters, search your library for N cards, exile them in a face-down pile, and shuffle that pile. Then shuffle your library.",
+      "count": 2,
+      "examples": [
+        "Mangara's Tome",
+        "Parallel Thoughts"
+      ]
+    },
+    {
+      "template": "Counters remain on ~ as it moves to any zone other than a player's hand or library.",
+      "count": 2,
+      "examples": [
+        "Me, the Immortal",
+        "Skullbriar, the Walking Grave"
+      ]
+    },
+    {
+      "template": "Target opponent reveals their hand. You choose a nonland card from that player's graveyard or hand and exile it.",
+      "count": 2,
+      "examples": [
+        "Memory Leak",
+        "Never Happened"
+      ]
+    },
+    {
+      "template": "As ~ enters, pay any amount of life.",
+      "count": 2,
+      "examples": [
+        "Minion of the Wastes",
+        "Phyrexian Processor"
+      ]
+    },
+    {
+      "template": "~'s power and toughness are each equal to the life paid as it entered.",
+      "count": 2,
+      "examples": [
+        "Minion of the Wastes",
+        "Nameless Race"
+      ]
+    },
+    {
+      "template": "When ~ enters during the declare attackers step, you may reselect which player or permanent target attacking creature is attacking.",
+      "count": 2,
+      "examples": [
+        "Misleading Signpost",
+        "Portal Mage"
+      ]
+    },
+    {
+      "template": "Whenever ~ mutates, put a ±N/±N counter on it.",
+      "count": 2,
+      "examples": [
+        "Mysterious Egg",
+        "Vulpikeet"
+      ]
+    },
+    {
+      "template": "{M}, {T}, Exile N cards from your graveyard: Target creature gets -N/-N until end of turn.",
+      "count": 2,
+      "examples": [
+        "Necropolis Fiend",
+        "Taigam, Sidisi's Hand"
+      ]
+    },
+    {
+      "template": "~ costs {M} less to cast if it targets a creature card with mana value N or less.",
+      "count": 2,
+      "examples": [
+        "No One Left Behind",
+        "Revoke Demise"
+      ]
+    },
+    {
+      "template": "Champion an Elemental",
+      "count": 2,
+      "examples": [
+        "Nova Chaser",
+        "Supreme Exemplar"
+      ]
+    },
+    {
+      "template": "Vanishing",
+      "count": 2,
+      "examples": [
+        "Out of Time",
+        "Tidewalker"
+      ]
+    },
+    {
+      "template": "Reveal ~ as you draft it. The player to your right chooses a color, you choose another color, then the player to your left chooses a third color.",
+      "count": 2,
+      "examples": [
+        "Paliano, the High City",
+        "Regicide"
+      ]
+    },
+    {
+      "template": "When ~ leaves the battlefield, each player returns to the battlefield all cards they own exiled with it.",
+      "count": 2,
+      "examples": [
+        "Parallax Tide",
+        "Parallax Wave"
+      ]
+    },
+    {
+      "template": "{M}: The next time a source of your choice of the chosen color would deal damage to you this turn, prevent that damage.",
+      "count": 2,
+      "examples": [
+        "Prismatic Circle",
+        "Story Circle"
+      ]
+    },
+    {
+      "template": "{M}, {T}: Create a token that's a copy of the exiled card. N is the mana value of that card.",
+      "count": 2,
+      "examples": [
+        "Prototype Portal",
+        "Soul Foundry"
+      ]
+    },
+    {
+      "template": "Creatures with swampwalk can be blocked as though they didn't have swampwalk.",
+      "count": 2,
+      "examples": [
+        "Quagmire",
+        "Ur-Drago"
+      ]
+    },
+    {
+      "template": "If you control a Forest, rather than pay ~'s mana cost, you may have each other player gain N life.",
+      "count": 2,
+      "examples": [
+        "Reverent Silence",
+        "Skyshroud Cutter"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose a color and a creature type.",
+      "count": 2,
+      "examples": [
+        "Riptide Replicator",
+        "Volrath's Laboratory"
+      ]
+    },
+    {
+      "template": "Whenever ~ attacks or blocks, sacrifice it unless you exile a card from your graveyard.",
+      "count": 2,
+      "examples": [
+        "Rotting Giant",
+        "Treacherous Vampire"
+      ]
+    },
+    {
+      "template": "You may cast ~ from your graveyard using its blitz ability.",
+      "count": 2,
+      "examples": [
+        "Sabin, Master Monk",
+        "Tenacious Underdog"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose a number.",
+      "count": 2,
+      "examples": [
+        "Sanctum Prelate",
+        "Squall, Gunblade Duelist"
+      ]
+    },
+    {
+      "template": "{M}, {T}: Create a N/N creature token of the chosen color and type.",
+      "count": 2,
+      "examples": [
+        "Sarpadian Empires, Vol. VII",
+        "Volrath's Laboratory"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose N colors.",
+      "count": 2,
+      "examples": [
+        "Seal of the Guildpact",
+        "Tablet of the Guilds"
+      ]
+    },
+    {
+      "template": "As ~ enters, choose a land type.",
+      "count": 2,
+      "examples": [
+        "Shimmer",
+        "Traveler's Cloak"
+      ]
+    },
+    {
+      "template": "Spells and abilities your opponents control can't cause you to sacrifice permanents.",
+      "count": 2,
+      "examples": [
+        "Sigarda, Host of Herons",
+        "Tajuru Preserver"
+      ]
+    },
+    {
+      "template": "Equipped creature gets ±N/±N and has \"Whenever ~ attacks, you may sacrifice ~. When you do, ~ deals N damage to any target.\"",
+      "count": 2,
+      "examples": [
+        "Spare Dagger",
+        "Sunfire Torch"
+      ]
+    },
+    {
+      "template": "Reinforce N—{M}",
+      "count": 2,
+      "examples": [
+        "Swell of Courage",
+        "Wren's Run Hydra"
+      ]
+    },
+    {
+      "template": "Each player may draw up to N cards. For each card less than N a player draws this way, that player gains N life.",
+      "count": 2,
+      "examples": [
+        "Temporary Truce",
+        "Truce"
+      ]
+    },
+    {
+      "template": "• Target opponent loses N life.",
+      "count": 2,
+      "examples": [
+        "The Ruinous Wrecking Crew",
+        "Vindictive Lich"
+      ]
+    },
+    {
+      "template": "Whenever a source you control deals noncombat damage to an opponent, you may exile that many cards from the top of your library. You may play those cards this turn.",
+      "count": 2,
+      "examples": [
+        "Thor, Guardian of Midgard",
+        "Virtue of Courage // Embereth Blaze"
+      ]
+    },
+    {
+      "template": "Change the text of target permanent by replacing all instances of N color word with another or N basic land type with another until end of turn.",
+      "count": 2,
+      "examples": [
+        "Trait Doctoring",
+        "Whim of Volrath"
+      ]
+    }
+  ],
+  "keywordCounts": {
+    "flying": 3207,
+    "enchant": 1261,
+    "trample": 1011,
+    "vigilance": 744,
+    "haste": 650,
+    "flash": 635,
+    "equip": 628,
+    "reach": 431,
+    "menace": 401,
+    "first_strike": 378,
+    "lifelink": 369,
+    "deathtouch": 332,
+    "defender": 311,
+    "cycling": 300,
+    "kicker": 229,
+    "flashback": 211,
+    "ward": 198,
+    "protection": 192,
+    "crew": 181,
+    "morph": 153,
+    "devoid": 133,
+    "landwalk": 133,
+    "double_strike": 119,
+    "indestructible": 109,
+    "convoke": 104,
+    "prowess": 100,
+    "typecycling": 99,
+    "hexproof": 80,
+    "cumulative_upkeep": 76,
+    "affinity": 76,
+    "station": 65,
+    "suspend": 65,
+    "changeling": 64,
+    "madness": 62,
+    "partner": 58,
+    "unearth": 56,
+    "partner_with": 53,
+    "foretell": 51,
+    "echo": 50,
+    "infect": 45,
+    "bestow": 43,
+    "disguise": 42,
+    "cascade": 42,
+    "start_your_engines": 41,
+    "fear": 40,
+    "buyback": 39,
+    "shadow": 39,
+    "toxic": 37,
+    "bushido": 36,
+    "daybound": 36,
+    "evoke": 35,
+    "shroud": 35,
+    "nightbound": 35,
+    "rebound": 35,
+    "ninjutsu": 35,
+    "exalted": 34,
+    "fuse": 34,
+    "mutate": 34,
+    "storm": 33,
+    "plot": 33,
+    "choose_a_background": 32,
+    "entwine": 32,
+    "escape": 32,
+    "warp": 32,
+    "megamorph": 31,
+    "saddle": 30,
+    "delve": 28,
+    "ascend": 28,
+    "horsemanship": 28,
+    "flanking": 28,
+    "doctor_s_companion": 27,
+    "aftermath": 27,
+    "backup": 27,
+    "overload": 27,
+    "soulshift": 27,
+    "sneak": 27,
+    "encore": 26,
+    "level_up": 26,
+    "splice": 26,
+    "wither": 26,
+    "disturb": 25,
+    "soulbond": 25,
+    "persist": 24,
+    "banding": 24,
+    "myriad": 24,
+    "intimidate": 23,
+    "improvise": 23,
+    "modular": 23,
+    "firebending": 23,
+    "bloodthirst": 23,
+    "exploit": 23,
+    "evolve": 22,
+    "dash": 22,
+    "undying": 22,
+    "craft": 21,
+    "split_second": 21,
+    "renown": 20,
+    "offspring": 20,
+    "bargain": 20,
+    "multikicker": 19,
+    "job_select": 19,
+    "mentor": 19,
+    "vanishing": 19,
+    "living_weapon": 19,
+    "devour": 19,
+    "replicate": 19,
+    "extort": 18,
+    "retrace": 18,
+    "reconfigure": 17,
+    "fading": 17,
+    "teamwork": 17,
+    "miracle": 17,
+    "blitz": 17,
+    "fabricate": 16,
+    "squad": 16,
+    "umbra_armor": 16,
+    "assist": 16,
+    "hideaway": 16,
+    "mayhem": 15,
+    "emerge": 15,
+    "embalm": 15,
+    "cipher": 15,
+    "more_than_meets_the_eye": 15,
+    "sunburst": 15,
+    "awaken": 15,
+    "skulk": 15,
+    "casualty": 14,
+    "battle_cry": 14,
+    "hidden_agenda": 14,
+    "annihilator": 14,
+    "scavenge": 14,
+    "unleash": 14,
+    "transmute": 14,
+    "dredge": 14,
+    "eternalize": 13,
+    "melee": 13,
+    "graft": 13,
+    "riot": 13,
+    "living_metal": 13,
+    "mobilize": 13,
+    "for_mirrodin": 13,
+    "hexproof_from": 13,
+    "ravenous": 12,
+    "outlast": 12,
+    "freerunning": 12,
+    "rampage": 12,
+    "cleave": 12,
+    "enlist": 12,
+    "jump_start": 12,
+    "phasing": 12,
+    "conspire": 11,
+    "training": 11,
+    "spectacle": 11,
+    "surge": 11,
+    "harmonize": 11,
+    "afterlife": 11,
+    "tribute": 11,
+    "companion": 11,
+    "haunt": 10,
+    "afflict": 10,
+    "prowl": 10,
+    "read_ahead": 10,
+    "increment": 9,
+    "amplify": 9,
+    "reinforce": 9,
+    "ingest": 9,
+    "escalate": 9,
+    "dethrone": 9,
+    "provoke": 8,
+    "compleated": 7,
+    "recover": 7,
+    "demonstrate": 6,
+    "undaunted": 5,
+    "epic": 5,
+    "impending": 5,
+    "ripple": 5,
+    "gravestorm": 3,
+    "fortify": 2,
+    "aura_swap": 1,
+    "transfigure": 1,
+    "decayed": 1,
+    "commander_ninjutsu": 1
+  },
+  "manualKeywords": {
+    "mutate": 34,
+    "banding": 24,
+    "kicker": 18,
+    "cumulative_upkeep": 16,
+    "cipher": 15,
+    "more_than_meets_the_eye": 15,
+    "hidden_agenda": 14,
+    "morph": 12,
+    "companion": 11,
+    "haunt": 10,
+    "ward": 10,
+    "amplify": 9,
+    "craft": 7,
+    "equip": 6,
+    "demonstrate": 6,
+    "epic": 5,
+    "typecycling": 5,
+    "overload": 4,
+    "backup": 4,
+    "flashback": 4,
+    "gravestorm": 3,
+    "echo": 3,
+    "protection": 3,
+    "fortify": 2,
+    "escalate": 2,
+    "enchant": 2,
+    "madness": 2,
+    "cleave": 1,
+    "affinity": 1,
+    "aura_swap": 1,
+    "emerge": 1,
+    "bestow": 1,
+    "transfigure": 1,
+    "recover": 1,
+    "partner_with": 1,
+    "escape": 1,
+    "awaken": 1,
+    "reconfigure": 1,
+    "hexproof_from": 1
+  }
+}
