@@ -602,6 +602,8 @@ export interface Resolution {
   tappedThisWay?: number;
   /** Damage this resolution's effects dealt ("You gain life equal to the damage dealt this way"). */
   damageDealt?: number;
+  /** The permanents this resolution dealt damage to (Underworld Fires: "a permanent dealt damage this way"). */
+  damagedObjects?: ObjectRef[];
   /** Hit the Mother Lode: the mana value of the card discovered (CR 701.57a). */
   discoveredMv?: number;
   /** CR 120.10: excess damage this resolution dealt to permanents ("the amount of excess damage dealt this way"). */

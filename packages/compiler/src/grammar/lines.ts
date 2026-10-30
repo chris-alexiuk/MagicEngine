@@ -798,8 +798,8 @@ export const activatedRule: GrammarRule = {
       if (mana && effect) {
         // Grinning Ignus: "Activate only as a sorcery" (CR 602.5d) — not while a spell is being cast, so never for
         // autotapping; "only as an instant" is only with priority; conditions ("Activate only if you control a Swamp")
-        // are checked as they're activated (CR 602.5b).
-        if (node.maxPerTurn || node.oncePerGame) return null;
+        // are checked as they're activated (CR 602.5b). Manaforge Cinder: "Activate no more than three times each turn."
+        if (node.oncePerGame) return null;
         // "{T}: Add {R} or {W}. ~ deals 1 damage to you." — extra untargeted effects (CR 605.1a allows them).
         const b = new Binder(env);
         b.it = { ref: 'self' };
@@ -1007,6 +1007,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (!pf || pf.plural) return null;
     // "that creature" is the one it blocks (the trigger's object).
     b.named['that creature'] = { ref: 'trigger_object' };
+    b.named['both creatures'] = { ref: 'self' };
     return { trigger: { type: 'blocks', subject: { ref: 'self' }, blocked: pf.filter }, it: { ref: 'self' }, player: null };
   }
   // CR 509.3c: "blocks or becomes blocked", "becomes blocked", "becomes blocked by a creature without flanking".
@@ -1025,6 +1026,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const by = parseFilter(attachedEither[1]!, b);
     if (!by || by.plural) return null;
     b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    b.named['both creatures'] = { ref: 'attached' };
     return { trigger: { type: 'blocks', subject: { ref: 'attached' }, orBlocked: true, other: by.filter }, it: { ref: 'trigger_object' }, player: null };
   }
   const blocked = /^~ (blocks or becomes blocked|becomes blocked)(?: by (?:a|an) (.+))?$/.exec(t);
@@ -1041,6 +1043,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Engulfing Slagwurm: "Whenever ~ blocks or becomes blocked by a creature, destroy that creature." — once for each
     // creature it blocks or is blocked by, about that creature (CR 509.3c–d).
     if (by && blocked[1] === 'blocks or becomes blocked') b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    if (by) b.named['both creatures'] = { ref: 'self' };
     const trigger: TriggerNode =
       blocked[1] === 'becomes blocked'
         ? { type: 'becomes_blocked', subject: { ref: 'self' }, ...(by ? { by: by.filter } : {}) }
@@ -1048,6 +1051,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger, it: { ref: 'self' }, player: null };
   }
 
+  // Innocent Bystander: "Whenever this creature is dealt 3 or more damage" — at once.
+  const dealtAtLeast = /^~ is dealt (\w+) or more damage$/.exec(t);
+  if (dealtAtLeast && typeof parseAmount(dealtAtLeast[1]!) === 'number') {
+    b.eventAmount = true;
+    return { trigger: { type: 'dealt_damage', subject: { ref: 'self' }, atLeast: parseAmount(dealtAtLeast[1]!) as number }, it: { ref: 'self' }, player: null };
+  }
   // "Whenever ~ deals damage", "deals combat damage", "is dealt damage" — with an amount ("that much").
   const damage = /^(~|enchanted creature|equipped creature) (deals damage|deals combat damage|is dealt damage|is dealt (?:non)?combat damage)$/.exec(t);
   if (damage) {
@@ -4222,17 +4231,21 @@ export const staticPreventionRule: GrammarRule = {
     // Energy Field: "Prevent all damage that would be dealt to you by sources you don't control."
     // Wall of Vapor: "Prevent all damage that would be dealt to this creature by creatures it's blocking."; Armored Transport:
     // "… combat damage … by creatures blocking it."
-    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|creatures (?:it's blocking|blocking it)))?( during your turn)?\.$/.exec(line);
+    const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|sources you control|creatures(?: it's blocking| blocking it)?))?( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
     const node: StaticPreventionNode = { type: 'prevent_damage' };
     if (m[4]) {
       if (m[2] !== 'to') return null;
-      if (/^creatures /.test(m[4])) {
+      // Uncle Istvan: "Prevent all damage that would be dealt to this creature by creatures."
+      if (m[4] === 'creatures') {
+        if (!/^(?:~|this creature)$/.test(m[3]!)) return null;
+        node.from = { types: ['Creature'] };
+      } else if (/^creatures /.test(m[4])) {
         const pf = /^(?:~|this creature)$/.test(m[3]!) ? parseFilter(m[4], b) : null;
         if (!pf?.plural || !pf.filter.combatWithSource) return null;
         node.from = pf.filter;
-      } else node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : { controller: 'opponent' };
+      } else node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : m[4] === 'sources you control' ? { controller: 'you' } : { controller: 'opponent' };
     }
     if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
     if (m[5]) node.condition = { type: 'your_turn', value: true };

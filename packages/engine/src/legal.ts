@@ -305,6 +305,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       }
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if (ab.oncePerTurn && o.activatedTurn?.[-1 - ability] === g.turn) return;
+      const used = o.activations?.[-1 - ability];
+      if (ab.maxPerTurn && used && used.turn === g.turn && used.n >= ab.maxPerTurn) return;
       let costs: CostChoices = {};
       if (ab.cost.other) {
         if (ab.cost.other.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;

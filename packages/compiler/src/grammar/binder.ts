@@ -47,6 +47,8 @@ export class Binder {
   batchPower = false;
   /** What the last "deals N damage to …" dealt damage to ("a creature dealt damage this way"). */
   damaged: Ref | null = null;
+  /** Some "deals N damage to …" came before (Underworld Fires: "to each creature and each planeswalker"). */
+  dealtDamage = false;
   /** CR 701.38: the options of the vote this ability holds ("If sickness gets more votes"). */
   votes: string[] = [];
   /** Set when the text uses something the engine can't do (the line stays unread). */
@@ -79,6 +81,7 @@ export class Binder {
     b.eventAmount = this.eventAmount;
     b.batchPower = this.batchPower;
     b.damaged = this.damaged;
+    b.dealtDamage = this.dealtDamage;
     b.votes = this.votes;
     b.unsupported = this.unsupported;
     b.xAllowed = this.xAllowed;
@@ -102,6 +105,7 @@ export class Binder {
     this.eventAmount = other.eventAmount;
     this.batchPower = other.batchPower;
     this.damaged = other.damaged;
+    this.dealtDamage = other.dealtDamage;
     this.votes = other.votes;
     this.unsupported = other.unsupported;
     this.xAllowed = other.xAllowed;

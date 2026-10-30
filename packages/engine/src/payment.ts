@@ -500,6 +500,13 @@ export function runManaAbility(
   const onceKey = -1 - index;
   if (ability.oncePerTurn && o.activatedTurn?.[onceKey] === g.turn) throw new RulesError('That ability can be activated only once each turn.');
   if (ability.oncePerTurn) (o.activatedTurn ??= {})[onceKey] = g.turn;
+  // Manaforge Cinder: "Activate no more than three times each turn."
+  if (ability.maxPerTurn) {
+    const was = o.activations?.[onceKey];
+    const n = was && was.turn === g.turn ? was.n : 0;
+    if (n >= ability.maxPerTurn) throw new RulesError(`That ability can be activated no more than ${ability.maxPerTurn} times each turn.`);
+    (o.activations ??= {})[onceKey] = { turn: g.turn, n: n + 1 };
+  }
   checkOtherCosts(g, player, o, ability.cost, costChoices);
   const manaCost = ability.cost.mana ? parseManaCost(ability.cost.mana) : null;
   if (manaCost) abilityCostReductions(g, o, ability, manaCost, player);

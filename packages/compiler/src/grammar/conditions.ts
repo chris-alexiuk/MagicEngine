@@ -222,6 +222,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (targetMV && b.it?.ref === 'target') return { type: 'amount', amount: { kind: 'stat', stat: 'mana_value', of: b.it }, op: targetMV[2] === 'less' ? 'le' : 'ge', n: Number(targetMV[1]) };
   // Glorious Gale: "Counter target creature spell. If it was a legendary spell, the Ring tempts you."
   if (/^(?:it|that spell) was a legendary spell$/.test(t) && b.it?.ref === 'target') return { type: 'is', of: b.it, filter: { supertypes: ['Legendary'] } };
+  // Jace's Defeat: "Counter target blue spell. If it was a Jace planeswalker spell, scry 2." — the card it was.
+  const wasSpell = /^(?:it|that spell) was an? (.+? spell)$/.exec(t);
+  if (wasSpell && b.it?.ref === 'target') {
+    const pf = parseFilter(wasSpell[1]!, b.clone());
+    if (pf && !pf.plural && pf.filter.zone === 'stack') {
+      const { zone: _z, ...filter } = pf.filter;
+      if (Object.keys(filter).length && Object.keys(filter).every((k) => ['types', 'subtypes', 'supertypes', 'colors', 'notTypes'].includes(k))) return { type: 'is', of: b.it, filter };
+    }
+  }
   // Avatar of Woe: "if there are ten or more creature cards total in all graveyards".
   const allGy = /^there are (\w+) or more (.+?) cards (?:total )?in all graveyards$/.exec(t);
   if (allGy) {
@@ -791,6 +800,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Adamant (Foreboding Fruit): "If at least three black mana was spent to cast this spell".
   const adamant = /^at least (\w+) (white|blue|black|red|green) mana was spent to cast (?:it|this spell|~)$/.exec(t);
   if (adamant && typeof parseAmount(adamant[1]!) === 'number') return { type: 'spent_colors', need: { [COLOR_WORDS[adamant[2]!]!]: parseAmount(adamant[1]!) as number } };
+  // Adamant (Clockwork Servant): "if at least three mana of the same color was spent to cast it".
+  const sameColor = /^at least (\w+) mana of the same color was spent to cast (?:it|this spell|~)$/.exec(t);
+  if (sameColor && typeof parseAmount(sameColor[1]!) === 'number') return { type: 'spent_colors', need: {}, anyColor: parseAmount(sameColor[1]!) as number } as ConditionNode;
   // Blazing Bomb: "if at least four mana was spent to cast it"; Tellah: "If four or more mana was spent to cast that spell".
   const spentAtLeast = /^(?:at least (\w+)|(\w+) or more) mana was spent to cast (?:that spell|it)$/.exec(t);
   if (spentAtLeast && b.it?.ref === 'trigger_object') {

@@ -324,6 +324,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       const d = dealDamage(ctx.g, source, to, n, false, ctx.events, sure);
       dealt += d;
+      if (d > 0 && to.kind === 'permanent' && ctx.resolution && ctx.g.objects[to.object]) (ctx.resolution.damagedObjects ??= []).push({ id: to.object, zcc: ctx.g.objects[to.object]!.zcc });
       // CR 120.10: "the amount of excess damage dealt to that creature this way".
       if (ctx.resolution && d > before) ctx.resolution.excess = (ctx.resolution.excess ?? 0) + (d - before);
     }
@@ -1122,6 +1123,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry');
   },
 
+  // CR 701.29a: "fateseal 2" — look at the top two cards of an opponent's library and put any of them on the bottom.
+  fateseal(node, ctx) {
+    const [p] = node.who ? refPlayers(ctx, ref(node, 'who')) : [];
+    if (p === undefined || p === ctx.controller) return true;
+    return lookAtTop(ctx, amountOf(ctx, node.amount), 'scry', false, p, true);
+  },
+
   surveil(node, ctx) {
     // CR 701.25a: like scry, but into the graveyard.
     return lookAtTop(ctx, amountOf(ctx, node.amount), 'surveil');
@@ -1145,9 +1153,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // CR 701.9a: the player chooses (in APNAP order, CR 101.4), then the cards go to the graveyard.
     const players = refPlayers(ctx, ref(node, 'who'));
     if (node.all) {
-      // "discards their hand": nothing to choose.
+      // "discards their hand": nothing to choose. Amnesia: "discards all nonland cards" — those of that kind.
+      const filter = node.filter ? liveFilter(ctx, node.filter as ObjectFilter) : null;
       for (const p of players) {
-        const hand = [...zoneList(ctx.g, 'hand', p)];
+        const hand = zoneList(ctx.g, 'hand', p).filter((id) => !filter || matchesFilter(ctx.g, ctx.g.objects[id]!, filter, { controller: ctx.controller, source: ctx.source ?? null, anyZone: true }));
         for (const id of hand) discardRecorded(ctx, id);
         if (ctx.resolution) (ctx.resolution.discarded ??= {})[p] = (ctx.resolution.discarded[p] ?? 0) + hand.length;
       }
@@ -4735,6 +4744,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   exile_if_dies(node, ctx) {
     // CR 614.1a: a replacement effect for this turn. "A creature dealt damage this way" — none, if it was all prevented.
     if (node.ifDealt && !ctx.resolution?.damageDealt) return true;
+    // Underworld Fires: "If a permanent dealt damage this way would die this turn" — only those it was dealt to.
+    if (node.ifDealt) {
+      const hit = ctx.resolution?.damagedObjects ?? [];
+      for (const o of refObjects(ctx, ref(node, 'what'))) if (o.zone === 'battlefield' && hit.some((r) => r.id === o.id && r.zcc === o.zcc)) o.exileIfDiesTurn = ctx.g.turn;
+      return true;
+    }
     // Malicious Malfunction: "If a creature would die this turn, exile it instead." — any creature, this turn.
     if (node.allCreatures) {
       ctx.g.exileDyingTurn = ctx.g.turn;
@@ -5152,7 +5167,7 @@ function copyEntersWith(ctx: EffectContext, except: CopyExcept | undefined, face
   return out;
 }
 
-function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false, owner?: PlayerId): EffectResult {
+function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reorder = false, owner?: PlayerId, fateseal = false): EffectResult {
   const library = zoneList(ctx.g, 'library', owner ?? ctx.controller);
   const looked = library.slice(0, n);
   if (!looked.length) return true;
@@ -5176,6 +5191,8 @@ function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reor
   library.unshift(...top);
   if (answer.kind === 'scry') library.push(...away);
   else for (const id of away) moveObject(ctx.g, id, 'graveyard', ctx.events);
+  // CR 701.29a: fateseal is done like a scry of an opponent's library, but it isn't scrying.
+  if (fateseal) return true;
   // Whispering Snitch: "Whenever you surveil for the first time each turn".
   const log = ctx.g.turnLog;
   const firstSurveil = answer.kind !== 'scry' && !(log.surveilled ?? []).includes(ctx.controller);
@@ -5571,6 +5588,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const amount = together.reduce((n, x) => n + x.amount, 0);
     const src = check.g.objects[e.source];
     const by = t.perSource && src ? { player: src.controller } : {};
+    // Innocent Bystander: "is dealt 3 or more damage".
+    if (typeof t.atLeast === 'number' && amount < t.atLeast) return [];
     return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o), amount, ...by }] : [];
   },
   // "Whenever you're dealt damage"

@@ -525,6 +525,8 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'spent_colors': {
       // Wistfulness: "if {G}{G} was spent to cast it"; Mythos of Snapdax: "If {B}{R} was spent to cast this spell".
       const spent = source?.cast?.spent ?? {};
+      // Adamant: "at least three mana of the same color" — any one color.
+      if (cond.anyColor !== undefined) return (['W', 'U', 'B', 'R', 'G'] as const).some((c) => (spent[c] ?? 0) >= Number(cond.anyColor));
       return Object.entries(cond.need as Record<string, number>).every(([c, n]) => (spent[c as 'W'] ?? 0) >= n);
     }
     case 'paid':

@@ -112,6 +112,9 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const who = parsePlayerRef(m[1]!, b);
     return Boolean(who && ((f.controlledBy = who), true));
   }],
+  // Devout Decree: "target creature or planeswalker that's black or red"; Aether Gust: "… spell or permanent that's red or
+  // green" (any of them).
+  [/ that's (white|blue|black|red|green)(?: or (white|blue|black|red|green))?$/, (f, m) => !f.colors && ((f.colors = [m[1]!, m[2]].filter(Boolean).map((c) => COLOR_WORDS[c!]!) as never), true)],
   // Tectonic Instability: "tap all lands its controller controls" — the controller of what "it" is.
   // Weight of Spires: "the number of nonbasic lands that creature's controller controls" — the same.
   [/ (?:its|that creature's|that permanent's) controller controls$/, (f, _m, b) => {
@@ -769,8 +772,9 @@ const ABILITY_KINDS: Record<string, ('activated' | 'triggered')[]> = {
 
 /** "target activated ability", "target triggered ability or colorless spell", "up to one target activated or triggered ability". */
 /** "you", "a creature you control", "you or a permanent you control": what a spell or ability targets. */
-function parseTargeting(text: string, b: Binder): { you?: true; filter?: ObjectFilter } | null {
+function parseTargeting(text: string, b: Binder): { you?: true; anyPlayer?: true; filter?: ObjectFilter } | null {
   if (text === 'you') return { you: true };
+  if (text === 'a player') return { anyPlayer: true };
   const m = /^(you or |you and\/or )?(?:a|an|one or more) (.+?)$/.exec(text);
   if (!m) return null;
   const pf = parseFilter(m[2]!, b.clone());
@@ -895,7 +899,7 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       // Silkguard: "each of up to X target creatures you control" — as many as the X announced (CR 601.2b–c).
       if (eachOf && eachOf[2] === 'X') {
         const pf = parseFilter(eachOf[4]!, b);
-        if (!pf || !pf.plural) return null;
+        if (!pf || !(pf.plural || pf.invariant)) return null;
         if (eachOf[3]) pf.filter.other = true;
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), countX: true, ...(eachOf[1] ? { upTo: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });
@@ -903,7 +907,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       if (eachOf) {
         const count = parseAmount(eachOf[2]!);
         const pf = typeof count === 'number' && count >= 2 ? parseFilter(eachOf[4]!, b) : null;
-        if (!pf || !pf.plural || typeof count !== 'number') return null;
+        // Vineshaper Mystic: "each of up to two target Merfolk you control" — a plural that's the same word.
+        if (!pf || !(pf.plural || pf.invariant) || typeof count !== 'number') return null;
         if (eachOf[3]) pf.filter.other = true;
         const spec: TargetSpec = { what: 'object', filter: pf.filter, text: t.replace(/^\w/, (c) => c.toLowerCase()), count, ...(eachOf[1] ? { upTo: true } : {}) };
         return set(b, { ref: b.addTarget(spec), plural: true, targeted: true });

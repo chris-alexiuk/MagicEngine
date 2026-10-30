@@ -292,7 +292,7 @@ export interface TargetSpec {
   /** Bolt Bend: "target spell or ability with a single target" (CR 115.10). */
   singleTarget?: true;
   /** Siren Stormtamer: "target spell or ability that targets you or a creature you control" — what it targets. */
-  targeting?: { you?: true; filter?: ObjectFilter };
+  targeting?: { you?: true; /** Outwit: "that targets a player" — any. */ anyPlayer?: true; filter?: ObjectFilter };
   /** For objects. */
   filter?: ObjectFilter;
   /** For players: "target opponent". */
@@ -1507,7 +1507,7 @@ export const CORE_NODES = {
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
     'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
-    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose',
+    'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose', 'fateseal',
     'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
     'harness', 'ring_tempts', 'venture', 'take_initiative', 'reveal_until', 'give_gift', 'become_copy', 'extra_combat', 'phase_out', 'phase_out_proliferated', 'return_from_each_graveyard', 'chain_copy', 'lock_untap', 'unlock', 'must_block', 'unattach', 'remove_from_combat', 'prevent_chosen_source', 'cant_block_attacker', 'untap_chosen', 'craft_return', 'damage_unpreventable', 'roll_die', 'vote', 'repeat', 'prohibit_casting', 'retarget', 'player_effect', 'choose_one', 'blight', 'forage', 'reflexive', 'next_spell', 'double_counters', 'swap_graveyard', 'sylvan_library', 'cast_from_hand', 'reveal_top', 'wheel', 'each_deals', 'keep_choose', 'turn_trigger', 'cast_paid', 'reanimate_attach', 'sacrifice_linked', 'delayed_leave', 'airbend', 'tempting_offer',
   ],

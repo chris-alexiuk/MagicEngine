@@ -200,7 +200,8 @@ function stackEntryOk(g: GameState, controller: PlayerId, spec: TargetSpec, entr
   if (!entry) return false;
   return entry.targets.some((list) =>
     list.some((t) => {
-      if (t.kind === 'player') return Boolean(want.you) && t.player === controller;
+      // Outwit: "Counter target spell that targets a player." — any player.
+      if (t.kind === 'player') return Boolean(want.anyPlayer) || (Boolean(want.you) && t.player === controller);
       if (t.kind !== 'object' || !want.filter) return false;
       const o = g.objects[t.id];
       return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, want.filter, { controller }));

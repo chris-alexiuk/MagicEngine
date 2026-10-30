@@ -117,11 +117,12 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
     return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
   }
   // Liliana's Indignation: "each creature card put into your graveyard this way" (after a mill).
-  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|put into your graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
+  // Coerced Confession: "each creature card put into their graveyard this way" (after a target player mills).
+  const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|put into (?:your|their|that player's) graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
   if (!m) return null;
   const another = /^another /.test(m[1]!);
   const noun = m[1]!.replace(/^(?:a|an|another) /, '').replace(/ cards?$|^cards?$/, '');
-  const how = (m[2] === 'put into a graveyard' || m[2] === 'put into your graveyard' ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2] === 'put into your hand' ? 'hand' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library' | 'hand';
+  const how = (/^put into (?:a|your|their|that player's) graveyard$/.test(m[2]!) ? 'graveyard' : m[2] === 'shuffled into a library' ? 'library' : m[2] === 'put into your hand' ? 'hand' : m[2]) as 'destroyed' | 'exiled' | 'sacrificed' | 'milled' | 'graveyard' | 'returned' | 'library' | 'hand';
   if (!noun || /^permanents?$/.test(noun)) return { kind: 'moved_this_way', how, ...(another ? { other: true } : {}) };
   // Bonehoard Dracosaur: "a nonland card exiled this way" — a bare "nonland" is read as "nonland permanent".
   const pf = parseFilter(noun, b.clone()) ?? (/^non[a-z]+$/.test(noun) ? parseFilter(`${noun} permanent`, b.clone()) : null);
@@ -505,7 +506,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Chandra's Incinerator: "the total amount of noncombat damage dealt to your opponents this turn".
   // Notorious Throng: "the damage dealt to your opponents this turn"; Simulacrum: "the damage dealt to you this turn".
   // Knollspine Dragon: "the damage dealt to target opponent this turn" — that one player.
-  const dealtToOne = /^the (?:amount of )?damage dealt to (target opponent|target player|that player) this turn$/.exec(t);
+  // Final Punishment: "the damage already dealt to that player this turn".
+  const dealtToOne = /^the (?:amount of )?damage (?:already )?dealt to (target opponent|target player|that player) this turn$/.exec(t);
   if (dealtToOne) {
     const who = parsePlayerRef(dealtToOne[1]!, b);
     if (who && who.ref !== 'players' && who.ref !== 'you') return { kind: 'life_this_turn', who: 'you', player: who, stat: 'damage' };
