@@ -25,6 +25,14 @@ function rulesFor(who: string, source: GameObject, player: PlayerId): boolean {
 export function flashPermission(g: GameState, player: PlayerId, card: GameObject): boolean {
   // Bard's Company: "You may cast this spell as though it had flash if you control a Human." (its own ability, CR 113.6e)
   for (const a of faceOf(g, card).abilities) {
+    // Crashing Tide: "This spell has flash as long as you control a Merfolk." — its own ability works wherever it's cast
+    // from (CR 113.6b); checked as it's cast.
+    if (a.kind === 'static' && a.effect.type === 'continuous') {
+      const c = a.effect as ContinuousEffectNode & { condition?: ConditionNode };
+      const self = (c.affected as { ref?: string } | undefined)?.ref === 'self';
+      if (self && (c.keywords ?? []).some((k) => k.id === 'flash') && (!c.condition || evalCondition(c.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} }))) return true;
+      continue;
+    }
     if (a.kind !== 'static' || a.effect.type !== 'flash_if') continue;
     const e = a.effect as unknown as { condition?: ConditionNode; ifTargets?: unknown };
     if (!e.ifTargets && e.condition && evalCondition(e.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} })) return true;

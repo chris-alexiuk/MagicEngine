@@ -918,6 +918,8 @@ export interface StaticPreventionNode extends EffectNode {
   condition?: ConditionNode;
   /** Gisela: "prevent half that damage, rounded up" — not all of it. */
   half?: 'up';
+  /** Orbs of Warding: "prevent 1 of that damage" — that much of it. */
+  amount?: number;
 }
 
 export interface TriggerExtraNode extends EffectNode {

@@ -242,6 +242,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   // Desynchronization: "each nonland permanent that's not historic"
   [/ that's not historic$/, (f) => !f.notHistoric && ((f.notHistoric = true), true)],
   // Sage's Reverie: "each Aura you control that's attached to a creature".
+  // End Hostilities: "all permanents attached to creatures".
+  [/ attached to (creatures|lands|artifacts)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1]!.replace(/s$/, '').replace(/^\w/, (c) => c.toUpperCase())), true)],
   [/ (?:that's|that are) attached to an? (creature|land|artifact|permanent)$/, (f, m) => !f.attachedToType && ((f.attachedToType = m[1] === 'permanent' ? '' : m[1]!.replace(/^\w/, (c) => c.toUpperCase())), m[1] !== 'permanent')],
   // Urza's Ruinous Blast: "all nonland permanents that aren't legendary"
   [/ (?:that aren't|that isn't|that's not) legendary$/, (f) => !f.notSupertypes && ((f.notSupertypes = ['Legendary']), true)],

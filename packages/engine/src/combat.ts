@@ -1066,8 +1066,9 @@ export function dealDamage(
 
 /** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; then?: PreventionFollowUp; batch?: string; once?: true } {
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; less?: number; then?: PreventionFollowUp; batch?: string; once?: true } {
   let halves = 0;
+  let less = 0;
   // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
   // granted ability of the creature itself.
   const recipient = to.kind === 'permanent' ? g.objects[to.object] : undefined;
@@ -1108,6 +1109,8 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       }
       if (!hit) continue;
       if (e.half) halves++;
+      // Orbs of Warding: "prevent 1 of that damage" — each such effect takes its share (CR 615.7).
+      else if (e.amount) less += e.amount;
       // Vigor: "Put a +1/+1 counter on that creature for each 1 damage prevented this way." (CR 615.5)
       else {
         const batch = e.then && !e.eachSource ? { batch: batchKey, ...(JSON.stringify(e.then).includes('"kind":"event"') ? {} : { once: true as const }) } : {};
@@ -1115,7 +1118,7 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       }
     }
   }
-  return { all: false, halves };
+  return { all: false, halves, ...(less ? { less } : {}) };
 }
 
 /** Prevention effects' follow-ups waiting to happen after the damage they prevented (CR 615.5). */
@@ -1155,7 +1158,7 @@ function runPreventedFollowUps(g: GameState, source: GameObject, to: DamageRecip
 
 /** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
 function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
-  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : { all: false, halves: 0 };
+  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : ({ all: false, halves: 0 } as ReturnType<typeof staticallyPrevented>);
   if (fixed.all) {
     events.push({ type: 'prevented', source: source.id, amount, to });
     // "remove a +1/+1 counter from this creature": once for all the damage dealt to it at once.
@@ -1169,6 +1172,11 @@ function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: 
     const before = amount;
     for (let i = 0; i < fixed.halves; i++) amount = Math.floor(amount / 2);
     if (amount < before) events.push({ type: 'prevented', source: source.id, amount: before - amount, to });
+  }
+  if (fixed.less && amount > 0) {
+    const cut = Math.min(amount, fixed.less);
+    amount -= cut;
+    events.push({ type: 'prevented', source: source.id, amount: cut, to });
   }
   if (amount <= 0 || !g.prevention.length) return amount;
   const left0 = amount;

@@ -706,6 +706,16 @@ export class ParserRegistry {
           continue;
         }
       }
+      // Drownyard Lurker: "When you cast or cycle Drownyard Lurker, create …" — two triggered abilities, one from the stack
+      // and one from the graveyard (CR 702.29c).
+      const castOrCycle = !node && block.length === 1 ? /^When you cast or cycle (.+?), (.+)$/.exec(line) : null;
+      if (castOrCycle) {
+        const each = [`When you cast ${castOrCycle[1]}, ${castOrCycle[2]}`, `When you cycle ${castOrCycle[1]}, ${castOrCycle[2]}`].map((p) => this.parseBlock([p], env, line));
+        if (each.every((n) => n?.kind === 'triggered')) {
+          for (const n of each) result.abilities.push(n!);
+          continue;
+        }
+      }
       // Draconic Destiny: "Enchanted creature gets +1/+1 and has … "{1}: …" Enchanted creature is a Dragon in addition to its
       // other types." — after a quoted ability, a second static about the same creature.
       const typeAfter = !node && !gate && block.length === 1 ? /^((?:Enchanted|Equipped) creature .+?\.")\s+((?:Enchanted|Equipped) creature is an? [A-Z][\w-]* in addition to its other types\.)$/.exec(line) : null;

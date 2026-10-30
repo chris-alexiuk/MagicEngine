@@ -713,9 +713,13 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return (log.spellsCast[controller] ?? 0) > 0;
         // Lyse Hext: "if you've cast two or more noncreature spells this turn"
         // Canyon Crab: "if you haven't cast a spell from your hand this turn" (`from`).
-        case 'you_cast':
+        case 'you_cast': {
           // Dream Thief: "if you've cast another blue spell this turn" (`other`) — not the spell this source was.
-          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.other || c.id !== source?.id) && (!cond.from || c.from === cond.from) && g.objects[c.id] && (!cond.filter || matchesFilter(g, g.objects[c.id]!, cond.filter as ObjectFilter, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+          // Rhino, Barreling Brute: "a spell with mana value 4 or greater" — as it was cast (its X counted, CR 202.3e).
+          const { manaValue: mv, ...rest } = (cond.filter ?? {}) as ObjectFilter;
+          const mvOk = (n: number) => !mv || typeof mv.n !== 'number' || ({ le: n <= mv.n, ge: n >= mv.n, eq: n === mv.n, lt: n < mv.n, gt: n > mv.n } as Record<string, boolean>)[mv.op]!;
+          return (log.castSpells ?? []).filter((c) => c.player === controller && (!cond.other || c.id !== source?.id) && (!cond.from || c.from === cond.from) && g.objects[c.id] && mvOk(c.mv ?? 0) && (!cond.filter || matchesFilter(g, g.objects[c.id]!, rest, { controller, source: source ?? null, anyZone: true }))).length >= Number(cond.min ?? 1);
+        }
         case 'you_lost_life':
           return log.lostLife.includes(controller);
         case 'you_played_land':

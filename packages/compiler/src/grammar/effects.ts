@@ -837,8 +837,20 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       }
       // CR 603.12: "[Do something]. When you do, [effect]." — the rest of the text is a reflexive triggered ability
       // with its own targets, which triggers only if the action was taken.
-      const whenYouDo = sentences[i + 1] ? /^When you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      // Glacial Dragonhunt: "Draw a card, then you may discard a card. When you discard a nonland card this way, …"; Evie Frye:
+      // "… then discard a card. When you discard a creature card this way, …" — it triggers only for that kind of card.
+      const discardKind = sentences[i + 1] ? /^When you discard an? ((?:non)?[a-z]+) card this way, (.+)$/.exec(sentences[i + 1]!) : null;
+      const discardFilter = discardKind && /\bdiscard a card$/.test(s) ? parseFilter(`${discardKind[1]} card in your hand`, b.clone()) : null;
+      const whenYouDo = sentences[i + 1] ? (/^When you do, (.+)$/.exec(sentences[i + 1]!) ?? (discardFilter && !/\bthat card\b/.test(discardKind![2]!) ? ([sentences[i + 1]!, discardKind![2]!] as unknown as RegExpExecArray) : null)) : null;
       if (whenYouDo) {
+        // "Draw a card, then you may discard a card. When you do, …" — only the discard is optional, and what it leads to.
+        const thenMay = /^(.+?), then you may (.+)$/.exec(s);
+        if (thenMay) {
+          const before = parseSentence(capitalise(thenMay[1]!), b);
+          if (!before) return null;
+          out.push(...before);
+          s = `You may ${thenMay[2]}`;
+        }
         // Leyline Tyrant: "you may pay any amount of {R}. When you do, it deals that much damage to any target." — X, in red.
         const anyOf = /^You may pay any amount of \{([WUBRGC])\}$/.exec(s);
         if (anyOf) whenYouDo[1] = whenYouDo[1]!.replace(/\bthat much\b/g, 'X');
@@ -872,7 +884,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // paid); with nothing paying X, a target "with mana value X" means nothing.
         if (/"n":"X"/.test(JSON.stringify(rb.targets)) && !pay?.[1]!.includes('{X}')) return null;
         const ability = { kind: 'triggered', text: `When you do, ${restText}`, trigger: { type: 'reflexive' }, effects: inner, ...(rb.targets.length ? { targets: rb.targets } : {}) };
-        const reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
+        let reflexive: EffectNode = { type: 'reflexive', abilities: [ability] };
+        if (discardFilter && !/^When you do, /.test(sentences[i + 1]!)) {
+          const { zone: _z, owner: _o, ...kind } = discardFilter.filter;
+          reflexive = { type: 'if', cond: { type: 'amount', amount: { kind: 'discarded_this_way', filter: kind }, op: 'ge', n: 1 } as ConditionNode, effects: [reflexive] };
+        }
         if (pay) out.push({ type: 'may_pay', cost: pay[1]!, effects: [reflexive], ...(capX ? { maxX: capX } : {}), ...(anyOf ? { xColor: anyOf[1] } : {}) });
         else out.push({ type: 'may_do', effects: first, then: [reflexive], ...(may ? {} : { mandatory: true }) });
         break;
@@ -2620,13 +2636,15 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Exhume: "Each player puts a creature card from their graveyard onto the battlefield" — each chooses their own, and
   // they enter at once under their owners' control.
-  const exhume = /^[Ee]ach player (?:puts|returns) (?:a|an) (.+? card(?: with .+?)?) from their graveyard (?:onto|to) the battlefield$/.exec(s);
+  // Fall of the Thran: "Each player returns two land cards from their graveyard to the battlefield."
+  const exhume = /^[Ee]ach player (?:puts|returns) (a|an|two|three) (.+? cards?(?: with .+?)?) from their graveyard (?:onto|to) the battlefield$/.exec(s);
   if (exhume) {
-    const pf = parseFilter(`${exhume[1]} in a graveyard`, b);
-    if (!pf || pf.plural) return null;
+    const n = /^an?$/.test(exhume[1]!) ? 1 : exhume[1] === 'two' ? 2 : 3;
+    const pf = parseFilter(`${exhume[2]} in a graveyard`, b);
+    if (!pf || pf.plural !== n > 1) return null;
     const { zone: _z, ...filter } = pf.filter;
     b.it = { ref: 'moved_onto' };
-    return [{ type: 'return_from_each_graveyard', filter, ownChoice: true }];
+    return [{ type: 'return_from_each_graveyard', filter, ownChoice: true, ...(n > 1 ? { count: n } : {}) }];
   }
   // Gisa, Glorious Resurrector: "put all creature cards exiled with Gisa onto the battlefield under your control".
   const putExiled = /^[Pp]ut (all (?:[a-z]+ )?cards exiled with ~) onto the battlefield under your control$/.exec(s);
@@ -4391,7 +4409,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     // Dovin Baan: "Until your next turn, up to one target creature gets -3/-0 and its activated abilities can't be activated."
     // — both last until then.
     const andIts = / and (its|their) activated abilities can't be activated$/.exec(untilNext[3]!);
-    const rest = andIts ? `${untilNext[3]!.slice(0, andIts.index)} until your next turn and ${andIts[1]} activated abilities can't be activated` : untilNext[3]!;
+    // Mu Yanling: "… gets -2/-0 and loses flying." — both until then.
+    const andLoses = !andIts ? / and (loses? [a-z ,]+)$/.exec(untilNext[3]!) : null;
+    const rest = andIts
+      ? `${untilNext[3]!.slice(0, andIts.index)} until your next turn and ${andIts[1]} activated abilities can't be activated`
+      : andLoses
+        ? `${untilNext[3]!.slice(0, andLoses.index)} until your next turn and ${andLoses[1]}`
+        : untilNext[3]!;
     const r = attempt(b, (b) => parseSentence(`${untilNext[1]} ${untilNext[2]} ${rest} until your next turn`, b));
     if (r) return r;
   }
@@ -6175,12 +6199,13 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     });
     if (r) return r;
   }
-  const lose = /^(.+?) loses? ([a-z ,]+?) until end of turn$/.exec(c);
+  // Mu Yanling, Sky Dancer: "Until your next turn, up to one target creature gets -2/-0 and loses flying."
+  const lose = /^(.+?) loses? ([a-z ,]+?) (until end of turn|until your next turn)$/.exec(c);
   if (lose && !/^all abilities$/.test(lose[2]!)) {
     const r = attempt(b, (b) => {
       const kws = parseKeywordList(lose[2]!, b);
       const what = kws && !kws.some((k) => k.text || k.cost || k.n !== undefined) ? parseObjectRef(lose[1]!, b) : null;
-      return what && kws ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), until: 'eot' }] : null;
+      return what && kws ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), until: lose[3] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
     });
     if (r) return r;
   }

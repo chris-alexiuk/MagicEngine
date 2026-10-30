@@ -725,6 +725,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const c = compare(xIs[1]!);
     return c ? { type: 'amount', amount: { kind: 'x' }, ...c } : null;
   }
+  // Aven Heartstabber: "there are five or more mana values among cards in your graveyard".
+  const mvAmong = /^there are (\w+ or more) mana values among cards in your graveyard$/.exec(t);
+  if (mvAmong) {
+    const c = compare(mvAmong[1]!);
+    return c ? { type: 'amount', amount: { kind: 'distinct_mana_values', filter: { zone: 'graveyard', owner: 'you' } }, ...c } : null;
+  }
   // Delirium: "there are four or more card types among cards in your graveyard"
   // Matzalantli: "there are four or more permanent types among cards in your graveyard".
   const cardTypes = /^there are (\w+ or more) (card|permanent) types among cards in your graveyard$/.exec(t);
@@ -894,6 +900,15 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
       const { zone: _z, ...filter } = pf.filter;
       return { type: 'this_turn', event: 'you_cast', filter, min: 1, ...(castOne[1] === 'another' ? { other: true } : {}) };
+    }
+  }
+  // Rhino, Barreling Brute: "if you've cast a spell with mana value 4 or greater this turn" — as each was cast.
+  const castWith = /^you(?:'ve)? cast (an?|another) ((?:\S+ )*?)spell (with mana value \d+ or (?:greater|less)) this turn$/.exec(t);
+  if (castWith) {
+    const pf = parseFilter(`${castWith[2]}spell ${castWith[3]}`, b.clone());
+    if (pf && !pf.plural && (!pf.filter.zone || pf.filter.zone === 'stack') && !pf.filter.controller) {
+      const { zone: _z, ...filter } = pf.filter;
+      return { type: 'this_turn', event: 'you_cast', filter, min: 1, ...(castWith[1] === 'another' ? { other: true } : {}) };
     }
   }
   // Heroic Return: "if a creature is attacking you".

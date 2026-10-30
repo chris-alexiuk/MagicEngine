@@ -1,4 +1,5 @@
 import type {
+  AmountExpr,
   AttackTaxNode,
   CastProhibitionNode,
   CastOptionNode,
@@ -1287,6 +1288,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // General Kreat: "Whenever one or more Goblins you control attack" — once per declaration, if any of them attack.
   // Hermes, Overseer of Elpis: "Whenever you attack with one or more Birds" — the same.
   // Ainok Strike Leader: "Whenever you attack with this creature and/or your commander" — once, if either attacks (CR 903.3).
+  // Jocasta, Automaton Avenger: "Whenever you attack with your commander".
+  if (t === 'you attack with your commander') return { trigger: { type: 'you_attack', filter: { commander: true, owner: 'you' } }, it: { ref: 'self' }, player: null };
   if (/^you attack with (?:~|this creature) and\/or your commander$/.test(t)) {
     return { trigger: { type: 'you_attack', filter: { anyOf: [{ isSource: true }, { commander: true, owner: 'you' }] } }, it: { ref: 'self' }, player: null };
   }
@@ -1671,7 +1674,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (atOpponent) {
     const r = parseTrigger(word, `${atOpponent[1]} attacks`, b);
     if (!r || r.trigger.type !== 'attacks' || (r.trigger as { defender?: string }).defender) return null;
-    return { ...r, trigger: { ...r.trigger, defender: 'opponent' } };
+    // Calculating Lich: "Whenever a creature attacks one of your opponents, that player loses 1 life." — the one attacked.
+    return { ...r, trigger: { ...r.trigger, defender: 'opponent' }, player: { ref: 'trigger_player' } };
   }
   const other = /^(?:a|an|another|one of your) (.+?) (enters(?: the battlefield)?(?: under your control)?|dies|is put into (?:a|your|an opponent's) graveyard from the battlefield|leaves the battlefield|attacks alone|attacks you|attacks|blocks|deals combat damage to (?:a player|an opponent|one of your opponents|TARGETPLAYER\d+))$/.exec(t);
   if (other) {
@@ -1844,6 +1848,11 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // CR 701.9 / 702.29d: "Whenever you discard a card", "an opponent discards a card", "you cycle or discard a card",
   // "you discard one or more cards", "you discard a creature card".
   // Archfiend of Ifnir: "Whenever you cycle or discard another card" — cycling is discarding (CR 702.29a): one event.
+  // Hostile Investigator: "Whenever one or more players discard one or more cards".
+  if (t === 'one or more players discard one or more cards') {
+    b.eventAmount = true;
+    return { trigger: { type: 'discard', who: 'any', batch: true, allPlayers: true }, it: { ref: 'self' }, player: null };
+  }
   const discard = /^(you|an opponent|a player) (?:cycles? or )?discards? (a card|another card|one or more cards|(?:a|an) (.+?) card|one or more (.+?) cards)$/.exec(t);
   if (discard) {
     const kind = discard[3] ?? discard[4];
@@ -2259,7 +2268,7 @@ export const triggeredRule: GrammarRule = {
           // planeswalker you control (CR 506.2); that can't change before it resolves.
           trig.trigger = { ...trig.trigger, defender: 'you' };
           effectText = iff[2]!;
-        } else if (iff && /^(?:~|this card|this creature) is in your graveyard$/.test(iff[1]!) && trig.trigger.type === 'phase') {
+        } else if (iff && /^(?:~|this card|this creature) is in your graveyard$/.test(iff[1]!) && (trig.trigger.type === 'phase' || trig.trigger.type === 'you_attack')) {
           // Master of Death: "At the beginning of your upkeep, if this card is in your graveyard, you may pay 1 life. If you do,
           // return it to your hand." — it triggers from the graveyard (CR 603.4: and only while it's still there).
           condition = { type: 'is', of: { ref: 'self' }, filter: { zone: 'graveyard' } } as ConditionNode;
@@ -3107,7 +3116,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|is (?:white|blue|black|red|green|colorless|the chosen color)|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3204,6 +3213,19 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (basePT && effect.setPower === undefined) {
       effect.setPower = Number(basePT[1]);
       effect.setToughness = Number(basePT[2]);
+      effect.setLayer = '7b';
+      continue;
+    }
+    // Layers 4, 5, 7b: Living Lands: "All Forests are 1/1 creatures that are still lands."; Ambush Commander: "Forests you
+    // control are 1/1 green Elf creatures that are still lands." (CR 205.1b: still lands; base P/T in layer 7b)
+    const stillLands = /^(?:is|are) (?:an? )?(\d+)\/(\d+) ((?:white|blue|black|red|green) )?((?:[A-Z][\w-]* )*)creatures? that (?:is|are) still (?:an? )?lands?$/.exec(part);
+    if (stillLands && !effect.setTypes && !effect.addTypes && effect.setPower === undefined) {
+      const subtypes = stillLands[4]!.trim() ? stillLands[4]!.trim().split(' ') : [];
+      if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
+      effect.addTypes = { types: ['Creature'], subtypes };
+      if (stillLands[3]) effect.colors = [COLOR_WORDS[stillLands[3].trim()]!] as Color[];
+      effect.setPower = Number(stillLands[1]);
+      effect.setToughness = Number(stillLands[2]);
       effect.setLayer = '7b';
       continue;
     }
@@ -3940,6 +3962,35 @@ export const staticPreventionRule: GrammarRule = {
       const node: StaticPreventionNode = { type: 'prevent_damage', half: 'up', ...(half[1]!.startsWith('you') ? { toYou: true as const } : {}), ...(half[1]!.includes('permanent') ? { to: { controller: 'you' } } : {}) };
       return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
+    // Orbs of Warding: "If a creature would deal damage to you, prevent 1 of that damage."; Sphere of Law: "If a red source
+    // would deal damage to you, prevent 2 of that damage."; Thunderstaff: "As long as this artifact is untapped, if a creature
+    // would deal combat damage to you, prevent 1 of that damage." (CR 615.7)
+    const some = /^(?:As long as (.+?), i|I)f (a source|a source an opponent controls|an? (?:white|blue|black|red|green) source|a creature|an artifact) would deal (combat )?damage to (you or a permanent you control|you or a creature you control|you|a planeswalker you control|equipped creature|enchanted creature|an? [A-Z][a-z]+ creature you control), prevent (\d+) of that damage\.$/.exec(line);
+    if (some) {
+      const b = new Binder(env);
+      const condition = some[1] ? parseCondition(some[1], b) : undefined;
+      if (condition === null) return null;
+      const colorOf = /^an? (white|blue|black|red|green) source$/.exec(some[2]!);
+      const from: ObjectFilter | undefined =
+        some[2] === 'a source an opponent controls' ? { controller: 'opponent' } : colorOf ? { colors: [COLOR_WORDS[colorOf[1]!]!] } : some[2] === 'a creature' ? { types: ['Creature'] } : some[2] === 'an artifact' ? { types: ['Artifact'] } : undefined;
+      const to = some[4]!;
+      const kind = /^an? ([A-Z][a-z]+) creature you control$/.exec(to);
+      const node: StaticPreventionNode = {
+        type: 'prevent_damage',
+        amount: Number(some[5]),
+        ...(to.startsWith('you') ? { toYou: true as const } : {}),
+        ...(to === 'you or a permanent you control' ? { to: { controller: 'you' } } : {}),
+        ...(to === 'you or a creature you control' ? { to: { controller: 'you', types: ['Creature'] } } : {}),
+        ...(to === 'a planeswalker you control' ? { to: { controller: 'you', types: ['Planeswalker'] } } : {}),
+        ...(kind ? { to: { controller: 'you', types: ['Creature'], subtypes: [kind[1]!] } } : {}),
+        ...(/^(?:equipped|enchanted) creature$/.test(to) ? { toAttached: true as const } : {}),
+        ...(from ? { from } : {}),
+        ...(some[3] ? { damage: 'combat' as const } : {}),
+        ...(condition ? { condition } : {}),
+      };
+      if (kind && !isSubtype(kind[1]!)) return null;
+      return { kind: 'static', text: original, effect: node } as StaticAbility;
+    }
     // Opposition Agent (CR 722): "You control your opponents while they're searching their libraries." / "While an opponent
     // is searching their library, they exile each card they find. You may play those cards for as long as they remain
     // exiled, and you may spend mana as though it were mana of any color to cast them."
@@ -4324,7 +4375,11 @@ export const entersWithCountersRule: GrammarRule = {
     if (perEach) {
       const env = envOf(ctx);
       const n = parseAmount(perEach[1]!);
-      const each = env && typeof n === 'number' ? parseForEach(perEach[3]!, new Binder(env)) : null;
+      // Ulasht, the Hate Seed: "… for each other red creature you control and a +1/+1 counter on it for each other green
+      // creature you control." — both counts (a red and green creature counts twice).
+      const two = /^(.+?) and (?:a|an) (\S+) counters? on (?:it|him|her) for each (.+)$/.exec(perEach[3]!);
+      const both = two && env && two[2] === perEach[2] ? [parseForEach(two[1]!, new Binder(env)), parseForEach(two[3]!, new Binder(env))] : null;
+      const each = both ? (both[0] && both[1] ? ({ kind: 'sum', parts: [both[0], both[1]] } as AmountExpr) : null) : env && typeof n === 'number' ? parseForEach(perEach[3]!, new Binder(env)) : null;
       if (!each || typeof n !== 'number') return null;
       const condition = perEachIf && env ? parseCondition(perEachIf[1]!, new Binder(env)) : undefined;
       if (condition === null) return null;

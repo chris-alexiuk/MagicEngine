@@ -2808,11 +2808,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       memo.i = i;
       // Exhume: each player chooses from their own graveyard (APNAP order, CR 101.4).
       const chooser = node.ownChoice ? players[i]! : ctx.controller;
-      if (candidates.length > 1 && !answer) return { ask: { kind: 'choose_objects', player: chooser, candidates, min: 1, max: 1, text: node.ownChoice ? 'Choose a card in your graveyard to put onto the battlefield.' : `Choose a card in ${g.players[players[i]!]!.name}'s graveyard.` } };
-      if (candidates.length > 1) {
-        if (answer!.objects.length !== 1 || !candidates.includes(answer!.objects[0]!)) throw new RulesError('Choose one of those cards.');
-        memo.picked.push(answer!.objects[0]!);
-      } else if (candidates.length === 1) memo.picked.push(candidates[0]!);
+      // Fall of the Thran: "Each player returns two land cards from their graveyard to the battlefield."
+      const n = typeof node.count === 'number' ? node.count : 1;
+      if (candidates.length > n && !answer) return { ask: { kind: 'choose_objects', player: chooser, candidates, min: n, max: n, text: node.ownChoice ? `Choose ${n === 1 ? 'a card' : `${n} cards`} in your graveyard to put onto the battlefield.` : `Choose a card in ${g.players[players[i]!]!.name}'s graveyard.` } };
+      if (candidates.length > n) {
+        if (answer!.objects.length !== n || new Set(answer!.objects).size !== n || !answer!.objects.every((id) => candidates.includes(id))) throw new RulesError(`Choose ${n} of those cards.`);
+        memo.picked.push(...answer!.objects);
+      } else memo.picked.push(...candidates);
       answer = null;
       memo.i = i + 1;
     }
@@ -5575,7 +5577,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     };
     if (!ok(e.object)) return [];
     if (t.batch) {
-      const together = (check.batch ?? [e]).filter((x) => x.type === 'discarded' && x.player === e.player && ok(x.object));
+      // Hostile Investigator: "Whenever one or more players discard one or more cards" — everyone's at once, one trigger.
+      const together = (check.batch ?? [e]).filter((x) => x.type === 'discarded' && (t.allPlayers || x.player === e.player) && ok(x.object));
       if (together[0] !== e) return [];
       // Magmakin Artillerist: "Whenever you discard one or more cards, … deals that much damage" — how many.
       const cards = together.flatMap((x) => (x.type === 'discarded' && check.g.objects[x.object] ? [refTo(check.g.objects[x.object]!)] : []));

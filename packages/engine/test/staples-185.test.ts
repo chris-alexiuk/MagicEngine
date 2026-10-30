@@ -1145,6 +1145,24 @@ const CARDS = [
   makeCard({ name: 'Tatsunari Lite', type_line: 'Legendary Creature — Human Ninja', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "{0}: Tatsunari Lite and target Frog you control can't be blocked this turn except by creatures with flying or reach." }),
   makeCard({ name: 'Froggy Lite', type_line: 'Creature — Frog', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Make Bear Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Create a 2/2 green Bear creature token.' }),
+  makeCard({ name: 'Mu Yanling Lite', type_line: 'Legendary Planeswalker — Yanling', mana_cost: '{0}', loyalty: '2', oracle_text: '+2: Until your next turn, up to one target creature gets -2/-0 and loses flying.' }),
+  makeCard({ name: 'Rhino Lite', type_line: 'Legendary Creature — Human Villain', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: "Whenever Rhino Lite attacks, if you've cast a spell with mana value 4 or greater this turn, draw a card." }),
+  makeCard({ name: 'Orbs Lite', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'If a creature would deal damage to you, prevent 1 of that damage.' }),
+  makeCard({ name: 'Sphere Law Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'If a red source would deal damage to you, prevent 2 of that damage.' }),
+  makeCard({ name: 'Investigator Lite', type_line: 'Creature — Ogre Rogue Detective', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever one or more players discard one or more cards, investigate. This ability triggers only once each turn.' }),
+  makeCard({ name: 'Each Discards Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player discards a card.' }),
+  makeCard({ name: 'Lurker Lite', type_line: 'Creature — Eldrazi Trilobite', mana_cost: '{0}', power: '3', toughness: '1', oracle_text: 'When you cast or cycle Lurker Lite, create a 0/1 colorless Eldrazi Spawn creature token with "Sacrifice this token: Add {C}."\nCycling {0}' }),
+  makeCard({ name: 'Thran Return Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Each player returns two land cards from their graveyard to the battlefield.' }),
+  makeCard({ name: 'Revolt Lite', type_line: 'Enchantment', mana_cost: '{0}', oracle_text: 'All lands are 2/2 creatures that are still lands.' }),
+  makeCard({ name: 'Ambush Lite', type_line: 'Creature — Elf', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Forests you control are 1/1 green Elf creatures that are still lands.' }),
+  makeCard({ name: 'Ulasht Lite', type_line: 'Legendary Creature — Hellion Hydra', mana_cost: '{0}', power: '0', toughness: '0', oracle_text: 'Ulasht Lite enters with a +1/+1 counter on it for each other red creature you control and a +1/+1 counter on it for each other green creature you control.' }),
+  makeCard({ name: 'Red Green Lite', type_line: 'Creature — Goblin Elf', mana_cost: '{R}{G}', cmc: 2, colors: ['R', 'G'], power: '1', toughness: '1', oracle_text: '' }),
+  makeCard({ name: 'Jocasta Lite', type_line: 'Legendary Artifact Creature — Robot Hero', mana_cost: '{0}', power: '3', toughness: '3', oracle_text: 'Whenever you attack with your commander, if this card is in your graveyard, you may return it to the battlefield tapped and attacking.' }),
+  makeCard({ name: 'Dragonhunt Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Draw a card, then you may discard a card. When you discard a nonland card this way, Dragonhunt Lite deals 3 damage to target creature.' }),
+  makeCard({ name: 'Calculating Lite', type_line: 'Creature — Zombie Wizard', mana_cost: '{0}', power: '1', toughness: '3', oracle_text: 'Whenever a creature attacks one of your opponents, that player loses 1 life.' }),
+  makeCard({ name: 'Hostilities Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Destroy all creatures and all permanents attached to creatures.' }),
+  makeCard({ name: 'Heartstabber Lite', type_line: 'Creature — Bird Assassin', mana_cost: '{0}', power: '2', toughness: '1', oracle_text: 'As long as there are five or more mana values among cards in your graveyard, this creature gets +2/+2 and has deathtouch.' }),
+  makeCard({ name: 'Shift Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'This spell has flash as long as there are five or more mana values among cards in your graveyard.\nDraw a card.' }),
   makeCard({ name: 'Misthollow Griffin', type_line: 'Creature — Griffin', mana_cost: '{2}', cmc: 2, power: '3', toughness: '3', oracle_text: 'Flying\nYou may cast this card from exile.' }),
 ];
 
@@ -9733,7 +9751,8 @@ describe('Sieges', () => {
       offered = p.candidates;
       return act(x, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [pony] } });
     });
-    expect([offered.includes(pony), offered.includes(brute2), offered.every((id) => chars(r, r.objects[id]!).power < 3)]).toEqual([true, false, true]);
+    // (With only the Cub to choose, it's chosen for you.)
+    expect([offered.length === 0 || offered.includes(pony), offered.includes(brute2), offered.every((id) => chars(r, r.objects[id]!).power < 3)]).toEqual([true, false, true]);
     expect([r.objects[pony]!.zone, Boolean(r.combat?.attackers[pony]), r.objects[brute2]!.zone]).toEqual(['battlefield', true, 'hand']);
   });
 
@@ -9802,6 +9821,149 @@ describe('Sieges', () => {
     expect(illegal(p, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: ground, attacker: frog }] } } as never)).toMatch(/can’t be blocked/);
     p = act(p, { type: 'choose', player: 'bob', answer: { kind: 'declare_blockers', blocks: [{ blocker: bird, attacker: frog }] } } as never);
     expect(p.combat?.attackers[frog]?.blocked).toBe(true);
+  });
+
+  it('Mu Yanling, Rhino, Orbs of Warding, Sphere of Law, Hostile Investigator, Drownyard Lurker, Fall of the Thran, Nature\'s Revolt, Ambush Commander', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const mu = give(g, 'alice', 'Mu Yanling Lite', 'battlefield');
+    g.objects[mu]!.counters.loyalty = 2;
+    const bird = give(g, 'bob', 'Bird Lite', 'battlefield');
+    g = settle(act(g, { type: 'activate', player: 'alice', object: mu, ability: 0, targets: [[{ kind: 'object', object: bird }]] }));
+    const flies = (x: GameState) => chars(x, x.objects[bird]!).keywords.some((k) => k.id === 'flying');
+    expect([chars(g, g.objects[bird]!).power, flies(g)]).toEqual([-1, false]);
+    g = drive(toStep(g, 'main1', 'bob'), () => null);
+    expect(flies(g)).toBe(false);
+    g = drive(toStep(g, 'upkeep', 'alice'), () => null);
+    expect([chars(g, g.objects[bird]!).power, flies(g)]).toEqual([1, true]);
+
+    for (const big of [false, true]) {
+      let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      for (const id of h.zones.battlefield.filter((id) => h.objects[id]!.controller === 'bob')) moveObject(h, id, 'graveyard', []);
+      const rhino = give(h, 'alice', 'Rhino Lite', 'battlefield', { sick: false });
+      // An X spell's mana value counts its X as it was cast (CR 202.3e).
+      h.players.alice!.pool.G = 4;
+      h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Procrastinate Lite', 'hand'), x: big ? 4 : 3, targets: [[{ kind: 'object', object: rhino }]] }));
+      h.objects[rhino]!.tapped = false;
+      h.objects[rhino]!.counters = {};
+      const lib = h.zones.library.alice!.length;
+      h = drive(attackWith(h, [rhino]), () => null);
+      expect(lib - h.zones.library.alice!.length).toBe(big ? 1 : 0);
+    }
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'bob');
+    give(k, 'alice', 'Orbs Lite', 'battlefield');
+    give(k, 'alice', 'Sphere Law Lite', 'battlefield');
+    const ogre = give(k, 'bob', 'Ogre', 'battlefield', { sick: false });
+    const start0 = k.players.alice!.life;
+    k = settle(act(k, { type: 'cast', player: 'bob', object: give(k, 'bob', 'Red Bolt Lite', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    k = settle(act(k, { type: 'cast', player: 'bob', object: give(k, 'bob', 'Bolt', 'hand'), targets: [[{ kind: 'player', player: 'alice' }]] }));
+    expect(start0 - k.players.alice!.life).toBe(1 + 3);
+    const mid = k.players.alice!.life;
+    k = toAttack(toStep(k, 'beginning_of_combat'));
+    k = act(k, { type: 'choose', player: 'bob', answer: { kind: 'declare_attackers', attacks: [{ attacker: ogre, target: { kind: 'player', player: 'alice' } }] } });
+    for (let i = 0; i < 30 && k.step !== 'end'; i++) {
+      if (k.pending?.kind === 'declare_blockers') k = act(k, { type: 'choose', player: 'alice', answer: { kind: 'declare_blockers', blocks: [] } } as never);
+      else if (k.priority) k = act(k, { type: 'pass', player: k.priority });
+      else break;
+    }
+    expect(mid - k.players.alice!.life).toBe(4);
+
+    let m = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(m, 'alice', 'Investigator Lite', 'battlefield');
+    const clues = (x: GameState) => x.zones.battlefield.filter((id) => x.objects[id]!.token && x.cards[x.objects[id]!.card]?.faces[0]?.name === 'Clue').length;
+    for (let i = 0; i < 2; i++) {
+      m = act(m, { type: 'cast', player: 'alice', object: give(m, 'alice', 'Each Discards Lite', 'hand') });
+      m = drive(m, (x) => (x.pending?.kind === 'discard' ? act(x, { type: 'choose', player: x.pending.player, answer: { kind: 'discard', objects: x.zones.hand[x.pending.player]!.slice(0, 1) } }) : null), 20);
+    }
+    expect(clues(m)).toBe(1);
+
+    let n = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const spawns = (x: GameState) => x.zones.battlefield.filter((id) => x.objects[id]!.token && x.objects[id]!.controller === 'alice').length;
+    n = settle(act(n, { type: 'cast', player: 'alice', object: give(n, 'alice', 'Lurker Lite', 'hand') }));
+    expect(spawns(n)).toBe(2 - 1);
+    n = settle(act(n, { type: 'activate', player: 'alice', object: give(n, 'alice', 'Lurker Lite', 'hand'), ability: 0 }));
+    expect(spawns(n)).toBe(2);
+
+    let p = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const yards = [give(p, 'alice', 'Plains', 'graveyard'), give(p, 'alice', 'Plains', 'graveyard'), give(p, 'alice', 'Plains', 'graveyard'), give(p, 'bob', 'Swamp', 'graveyard')];
+    p = act(p, { type: 'cast', player: 'alice', object: give(p, 'alice', 'Thran Return Lite', 'hand') });
+    p = drive(p, (x) => (x.pending?.kind === 'choose_objects' ? act(x, { type: 'choose', player: x.pending.player, answer: { kind: 'choose_objects', objects: x.pending.candidates.slice(0, 2) } }) : null));
+    expect(yards.map((id) => p.objects[id]!.zone)).toEqual(['battlefield', 'battlefield', 'graveyard', 'battlefield']);
+
+    let q = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const forest = q.zones.battlefield.find((id) => q.objects[id]!.card === 'Forest' && q.objects[id]!.controller === 'alice') ?? give(q, 'alice', 'Forest', 'battlefield');
+    const plains = give(q, 'alice', 'Plains', 'battlefield');
+    give(q, 'alice', 'Ambush Lite', 'battlefield');
+    const fc = chars(q, q.objects[forest]!);
+    expect([fc.types.includes('Creature'), fc.types.includes('Land'), fc.power, fc.subtypes.includes('Elf'), fc.subtypes.includes('Forest'), fc.colors]).toEqual([true, true, 1, true, true, ['G']]);
+    expect(chars(q, q.objects[plains]!).types.includes('Creature')).toBe(false);
+    give(q, 'alice', 'Revolt Lite', 'battlefield');
+    expect([chars(q, q.objects[plains]!).power, chars(q, q.objects[plains]!).types.includes('Creature')]).toEqual([2, true]);
+  });
+
+  it('Ulasht, Jocasta, Glacial Dragonhunt', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Red Green Lite', 'battlefield');
+    give(g, 'alice', 'Red Bolt Lite', 'battlefield');
+    give(g, 'alice', 'Cub', 'battlefield');
+    const ulasht = give(g, 'alice', 'Ulasht Lite', 'hand');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: ulasht }));
+    expect(g.objects[ulasht]!.counters['+1/+1']).toBe(2);
+
+    const deck = [...Array.from({ length: 40 }, () => 'Plains'), 'Jocasta Lite', 'Cmdr Lite'];
+    let h = toStep(start({ format: 'commander', extra: CARDS, decks: { alice: deck, bob: deck }, commanders: { alice: ['Cmdr Lite'] } }), 'main1', 'alice');
+    for (const id of h.zones.battlefield.filter((id) => h.objects[id]!.controller === 'bob')) moveObject(h, id, 'graveyard', []);
+    const cmdr = h.zones.command.find((id) => h.objects[id]!.commander)!;
+    h = settle(act(h, { type: 'cast', player: 'alice', object: cmdr }));
+    h.objects[cmdr]!.sick = false;
+    const robot = give(h, 'alice', 'Jocasta Lite', 'graveyard');
+    h = drive(attackWith(h, [cmdr]), (x) => (x.pending?.kind === 'may' ? act(x, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } }) : null));
+    expect([h.objects[robot]!.zone, h.objects[robot]!.tapped, Boolean(h.combat?.attackers[robot])]).toEqual(['battlefield', true, true]);
+
+    for (const land of [false, true]) {
+      let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      const victim = give(k, 'bob', 'Ogre', 'battlefield');
+      const discard = give(k, 'alice', land ? 'Plains' : 'Cub', 'hand');
+      k = act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Dragonhunt Lite', 'hand') });
+      k = drive(k, (x) => {
+        const p = x.pending!;
+        if (p.kind === 'may') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'may', yes: true } });
+        if (p.kind === 'discard') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'discard', objects: [discard] } });
+        if (p.kind === 'trigger_targets') return act(x, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'object', object: victim }]] } });
+        return null;
+      });
+      expect([k.objects[discard]!.zone, k.objects[victim]!.zone]).toEqual(['graveyard', land ? 'battlefield' : 'graveyard']);
+    }
+  });
+
+  it('Calculating Lich, End Hostilities, Aven Heartstabber', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'bob')) moveObject(g, id, 'graveyard', []);
+    give(g, 'alice', 'Calculating Lite', 'battlefield');
+    const attackers = [give(g, 'alice', 'Cub', 'battlefield', { sick: false }), give(g, 'alice', 'Cub', 'battlefield', { sick: false })];
+    const life = g.players.bob!.life;
+    g = drive(attackWith(g, attackers), () => null);
+    expect(life - g.players.bob!.life).toBe(2);
+
+    let h = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const cub = give(h, 'alice', 'Cub', 'battlefield');
+    const aura = give(h, 'alice', 'Diligence Lite', 'battlefield');
+    h.objects[aura]!.attachedTo = { id: cub, zcc: h.objects[cub]!.zcc };
+    const trinket = give(h, 'alice', 'Trinket', 'battlefield');
+    h = settle(act(h, { type: 'cast', player: 'alice', object: give(h, 'alice', 'Hostilities Lite', 'hand') }));
+    expect([h.objects[cub]!.zone, h.objects[aura]!.zone, h.objects[trinket]!.zone]).toEqual(['graveyard', 'graveyard', 'battlefield']);
+
+    let k = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    for (const id of [...k.zones.graveyard.alice!]) moveObject(k, id, 'exile', []);
+    const bird = give(k, 'alice', 'Heartstabber Lite', 'battlefield');
+    for (const name of ['Cub', 'Trinket', 'Bear', 'Ogre Three']) give(k, 'alice', name, 'graveyard');
+    expect(chars(k, k.objects[bird]!).power).toBe(2);
+    const shift = give(k, 'alice', 'Shift Lite', 'hand');
+    k = act(k, { type: 'cast', player: 'alice', object: give(k, 'alice', 'Salve', 'hand') });
+    expect(legalActions(k, 'alice').some((a) => a.type === 'cast' && a.object === shift)).toBe(false);
+    give(k, 'alice', 'Cycler Lite', 'graveyard');
+    expect([chars(k, k.objects[bird]!).power, chars(k, k.objects[bird]!).keywords.some((x) => x.id === 'deathtouch')]).toEqual([4, true]);
+    expect(legalActions(k, 'alice').some((a) => a.type === 'cast' && a.object === shift)).toBe(true);
   });
 
   it('Blazing Bomb: only a spell with four or more mana spent to cast it', () => {
