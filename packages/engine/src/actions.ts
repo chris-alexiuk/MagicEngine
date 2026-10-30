@@ -1272,6 +1272,8 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     ...(division ? { division } : {}),
   });
   events.push({ type: 'ability_activated', player, source: id, text: ability.text, entry: g.stack[g.stack.length - 1]!.kind === 'ability' ? (g.stack[g.stack.length - 1] as { id: string }).id : '', ...(cost.loyalty !== undefined ? { loyalty: true as const } : {}) });
+  // Valiant Rescuer: "Whenever you cycle another card for the first time each turn" — the cards cycled, in order (CR 702.29).
+  if (/^[a-z -]*cycling\b/.test((ability.text ?? '').toLowerCase())) (g.turnLog.cycled ??= []).push({ player, source: id, entry: (g.stack[g.stack.length - 1] as { id?: string }).id ?? '' });
   announceTargets(g.stack[g.stack.length - 1]!, events, g);
   // CR 117.3c: the activating player receives priority afterward.
   givePriority(g, player);

@@ -31,6 +31,8 @@ export interface TurnLog {
   spellsCast: Record<PlayerId, number>;
   /** The spells cast this turn, by whom ("can't cast more than one noncreature spell each turn"). */
   castSpells?: { player: PlayerId; id: ObjectId; zcc?: number; from?: string; mv?: number }[];
+  /** Valiant Rescuer: the cycling abilities activated this turn, in order (who, which card, the stack entry). */
+  cycled?: { player: PlayerId; source: ObjectId; entry: string }[];
   /** Forge Anew: the players who activated an equip ability this turn. */
   equipped?: PlayerId[];
   noncreatureCast: PlayerId[];

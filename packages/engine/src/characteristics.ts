@@ -1051,6 +1051,7 @@ export function matchesFilter(
   if (f.notCounter && (f.notCounter === 'any' ? Object.values(counters).some((n) => n > 0) : (counters[f.notCounter] ?? 0) > 0)) return false;
   // CR 702.134a: "with power less than this creature's power"
   if (f.powerBelowSource && (!ctx.source || c.power >= chars(g, ctx.source).power)) return false;
+  if (f.powerAboveSource && (!ctx.source || c.power <= chars(g, ctx.source).power)) return false;
   if (f.powerAboveBase && !(c.power > (c.basePower ?? c.power))) return false;
   // Bedrock Tortoise: "with toughness greater than its power".
   if (f.toughnessAbovePower && !(c.toughness > c.power)) return false;

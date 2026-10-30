@@ -459,6 +459,8 @@ export interface ObjectFilter {
   commander?: boolean;
   /** Shaile, Dean of Radiance: it entered the battlefield under your control this turn. */
   enteredUnderYou?: true;
+  /** Prehistoric Pet: "creatures with greater power" — than the source (the attacking creature, as blocks are checked). */
+  powerAboveSource?: true;
   /** "with a +1/+1 counter on it" — a counter of this kind ('any': "with a counter on it"). */
   counter?: string;
   /** Wave Goodbye: "without a +1/+1 counter on it" ('any': "without counters on it"). */
@@ -1343,6 +1345,9 @@ export interface QuantityReplacementNode extends EffectNode {
   toChosen?: true;
   /** Curse of Bloodletting: only damage to the player this Aura enchants. */
   toEnchantedPlayer?: true;
+  /** Goldnight Castigator: damage dealt to you, or to this permanent. */
+  toYou?: true;
+  toSelf?: true;
   /** Fiendish Duo: "would deal damage to an opponent" — players only, not their permanents. */
   toPlayersOnly?: true;
   noncombat?: true;

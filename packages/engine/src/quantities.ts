@@ -153,6 +153,9 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       if (e.toPlayersOnly && s.to?.kind !== 'player') return false;
       // Curse of Bloodletting: "If a source would deal damage to enchanted player, …"
       if (e.toEnchantedPlayer && !(s.to?.kind === 'player' && s.to.player === source.attachedToPlayer)) return false;
+      // Goldnight Castigator: "If a source would deal damage to you" / "… to this creature".
+      if (e.toYou && !(s.to?.kind === 'player' && s.to.player === you)) return false;
+      if (e.toSelf && !(s.to?.kind === 'permanent' && s.to.object === source.id)) return false;
       if (e.toChosen) {
         const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
         if (!p || p !== source.chosen?.player) return false;

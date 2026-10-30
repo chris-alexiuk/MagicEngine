@@ -451,7 +451,8 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   // CR 509.1b: restrictions from continuous effects — on the attacker, then on the blocker.
   for (const r of chars(g, attacker).combat) {
     // "can't be blocked by creatures with power less than ~'s power": ~ is the ability's source (Champion of Lambholt).
-    const ctx = { controller: attacker.controller, source: (r.from && g.objects[r.from]) || attacker };
+    // Prehistoric Pet: "creatures with greater power" — than the attacker, whatever gave it the restriction.
+    const ctx = { controller: attacker.controller, source: (!r.cantBeBlockedBy?.powerAboveSource && r.from && g.objects[r.from]) || attacker };
     if (r.cantBeBlockedBy && matchesFilter(g, blocker, r.cantBeBlockedBy, ctx)) return `${aName} can’t be blocked by ${nameOf(g, blocker)}.`;
     if (r.blockableOnlyBy && !matchesFilter(g, blocker, r.blockableOnlyBy, ctx)) return `${aName} can’t be blocked by ${nameOf(g, blocker)}.`;
   }

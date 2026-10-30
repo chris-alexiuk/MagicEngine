@@ -59,7 +59,7 @@ for (const t of SUBTYPE_SET) {
   if (/fe$/.test(t)) SUBTYPE_PLURALS.set(`${t.slice(0, -2)}ves`, t);
 }
 // Irregular plurals in Oracle text: "Mice", "Oxen", "Dwarves", "Octopi" aren't formed by the rules above.
-for (const [plural, t] of [['Mice', 'Mouse'], ['Oxen', 'Ox'], ['Dwarves', 'Dwarf'], ['Fungi', 'Fungus'], ['Homunculi', 'Homunculus']] as const) {
+for (const [plural, t] of [['Mice', 'Mouse'], ['Oxen', 'Ox'], ['Dwarves', 'Dwarf'], ['Fungi', 'Fungus'], ['Homunculi', 'Homunculus'], ['Pegasi', 'Pegasus']] as const) {
   if (SUBTYPE_SET.has(t)) SUBTYPE_PLURALS.set(plural, t);
 }
 

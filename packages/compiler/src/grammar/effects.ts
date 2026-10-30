@@ -220,6 +220,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^Exile all cards from all opponents' hands and graveyards\.$/, "Exile all cards from all opponents' hands. Exile all cards from all opponents' graveyards.");
   // Foul-Tongue Shriek: "Target opponent loses 1 life for each attacking creature you control. You gain that much life."
   text = text.replace(/\b((?:[Tt]arget (?:player|opponent)|[Ee]ach opponent) loses [^.]*?\blife\b[^.]*?)(?:\. You| and you) gain that much life\./, '$1. You gain life equal to the life lost this way.');
+  // Mogg Infestation: "Destroy all creatures target player controls. For each creature that died this way, that player
+  // creates two 1/1 red Goblin creature tokens."
+  text = text.replace(/\. For each creature that died this way, (that player|you) (creates? [^.]+)\./, '. $1 $2 for each creature put into a graveyard this way.');
+  // Kumena's Awakening: "each player draws a card. If you have the city's blessing, instead only you draw a card."
+  text = text.replace(/(\. If [^,.]+), instead only you (\w+)/, '$1, instead you $2');
   // Roalesk, Apex Hybrid: "proliferate, then proliferate again".
   text = text.replace(/\b([Pp])roliferate, then proliferate again\./, '$1roliferate. Proliferate.');
   // Psychic Spiral: "Shuffle all cards from your graveyard into your library. Target player mills that many cards."
@@ -640,7 +645,10 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       s = s.replace(/^([Rr]eturn all .+?) (to their owners' hands) (except for .+)$/, '$1 $3 $2');
       // Entish Restoration: "If you control a creature with power 4 or greater, instead search …" — the same as "… instead".
       s = s.replace(/^(If [^,]+), instead (.+)$/, '$1, $2 instead');
-      if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s)) previous = [];
+      // Wings of Velis Vel: "Until end of turn, target creature has base power and toughness 4/4, gains all creature types,
+      // and gains flying." — a list of three.
+      s = s.replace(/^(Until end of turn, .+? ha(?:s|ve) base power and toughness \d+\/\d+), (gains? [^,]+),? and (gains? .+)$/, '$1 and $2 and $3');
+      if (i > 0 && !/ instead$/.test(s) && !/ instead if /.test(s) && !/, search your library for .+ instead of one$/.test(s)) previous = [];
       const ifBefore = prevIf;
       prevIf = null;
       // "Then each player draws a card." — "then" only orders what's already in order.
@@ -1459,7 +1467,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       const cond = iff && !/^If you do\b/.test(s) ? parseCondition(iff[1]!, b) : null;
       // "If this spell was kicked, that creature gets -5/-5 until end of turn instead." — the earlier
       // sentence's effect, replaced when the condition holds.
-      const instead = iff && cond && / instead$/.test(iff[2]!) && !/would/.test(iff[2]!) ? iff[2]!.replace(/ instead$/, '') : null;
+      const instead = iff && cond && (/ instead$/.test(iff[2]!) || /^search your library for .+ instead of one$/.test(iff[2]!)) && !/would/.test(iff[2]!) ? iff[2]!.replace(/ instead$/, '') : null;
       // Emiel the Blessed: "you may pay {G/W}. If you do, put a +1/+1 counter on it. If it's a Unicorn, put two +1/+1 counters
       // on it instead." — what "if you do" does.
       const doNode = out[out.length - 1];
@@ -1483,9 +1491,18 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const n = more ? parseAmount(more[1]!) : null;
         if (!yes && n !== null && previous.every((x) => x.type === 'deal_damage')) yes = previous.map((x) => ({ ...structuredClone(x), amount: n }));
         // Rite of Replication: "If this spell was kicked, create five of those tokens instead." — the same tokens, more of them.
-        const moreTokens = /^create (\w+) of those tokens$/.exec(instead);
-        const tokenCount = moreTokens ? parseAmount(moreTokens[1]!) : null;
+        // The Final Days: "If this spell was cast from a graveyard, instead create X of those tokens, where X is the number of
+        // creature cards in your graveyard."
+        const moreTokens = /^create (\w+) of those tokens(?:, where X is (.+))?$/.exec(instead);
+        const tokenCount = !moreTokens ? null : moreTokens[2] ? (moreTokens[1] === 'X' ? parseCount(moreTokens[2], b.clone()) : null) : parseAmount(moreTokens[1]!);
         if (!yes && tokenCount !== null && previous.length === 1 && previous[0]!.type === 'create_token') yes = [{ ...structuredClone(previous[0]!), amount: tokenCount }];
+        // Reclaim the Wastes: "If this spell was kicked, search your library for two basic land cards instead of one." — the
+        // same search, for more cards.
+        const moreSearch = /^search your library for (two|three) (.+) cards instead of one$/.exec(instead);
+        if (!yes && moreSearch && previous.length === 1 && previous[0]!.type === 'search' && previous[0]!.amount === 1) {
+          const pf = parseFilter(`${moreSearch[2]} cards in your library`, b.clone());
+          if (pf && JSON.stringify(pf.filter) === JSON.stringify(previous[0]!.filter)) yes = [{ ...structuredClone(previous[0]!), amount: moreSearch[1] === 'two' ? 2 : 3 }];
+        }
         // Increasing Confusion: "If this spell was cast from a graveyard, that player mills twice that many cards instead."
         if (!yes && /^(?:that player|they|you) mills? twice that many cards$/.test(instead) && previous.length === 1 && previous[0]!.type === 'mill') {
           const was = previous[0]!;
@@ -2798,7 +2815,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: playerWard[3] === 'end of turn' ? 'eot' : 'your_next_turn' }];
   // Roiling Vortex: "Your opponents can't gain life this turn."; Skullcrack: "Players can't gain life this turn." (CR 119.7)
   // Screaming Nemesis: "… they can't gain life for the rest of the game."
-  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent) can't gain life (this turn|for the rest of the game)$/.exec(s);
+  // Stigma Lasher: "Whenever this creature deals damage to a player, that player can't gain life for the rest of the game."
+  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent|That player|that player) can't gain life (this turn|for the rest of the game)$/.exec(s);
   if (noGain) {
     const who: Ref | null = noGain[1] === 'Players' ? { ref: 'players', who: 'each' } : /^(?:Your opponents|Each opponent)$/.test(noGain[1]!) ? { ref: 'players', who: 'opponents' } : parsePlayerRef(noGain[1]!.toLowerCase(), b);
     return who ? [{ type: 'player_effect', who, rule: 'cant_gain_life', until: noGain[2] === 'this turn' ? 'eot' : 'game' }] : null;
@@ -3371,6 +3389,32 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (shuffleWheel) {
     const who = attempt(b, (b) => parsePlayerRef(shuffleWheel[1]!, b));
     if (who) return [{ type: 'wheel', who, mode: 'all', to: 'shuffle' }];
+  }
+  // Curse of the Pierced Heart: "this Aura deals 1 damage to that player or a planeswalker that player controls" — the
+  // source's controller picks one as it resolves (CR 608.2d); with no planeswalker there, it's the player.
+  const orWalker = /^(.+? deals .+? damage to )(that player|that opponent|defending player|enchanted player)( or a planeswalker )(?:that player|that opponent|they|defending player|enchanted player) controls?$/.exec(s);
+  if (orWalker) {
+    const r = attempt(b, (b) => {
+      const before = b.clone();
+      const toPlayer = parseSentence(`${orWalker[1]}${orWalker[2]}`, b);
+      const d = toPlayer?.length === 1 && toPlayer[0]!.type === 'deal_damage' ? toPlayer[0]! : null;
+      const who = d?.to as Ref | undefined;
+      if (!d || !who || /target/.test(JSON.stringify(who))) return null;
+      const c = before.clone();
+      const choose = parseSentence(`Choose a planeswalker ${orWalker[2]} controls`, c);
+      const hit = choose ? parseSentence(`${capitalise(orWalker[1]!)}it`, c) : null;
+      if (!choose || !hit || choose.length !== 1 || choose[0]!.type !== 'choose_object' || JSON.stringify(c.targets) !== JSON.stringify(b.targets)) return null;
+      const walkers = { kind: 'count', filter: { types: ['Planeswalker'], controlledBy: who } } as AmountExpr;
+      return [
+        {
+          type: 'if',
+          cond: { type: 'amount', amount: walkers, op: 'ge', n: 1 },
+          effects: [{ type: 'choose_one', labels: [orWalker[2]!, `a planeswalker ${orWalker[2]} controls`], options: [toPlayer!, [...choose, ...hit]] }],
+          else: toPlayer!,
+        } as EffectNode,
+      ];
+    });
+    if (r) return r;
   }
   // Steel Seraph: "target creature you control gains your choice of flying, vigilance, or lifelink until end of turn" —
   // chosen as it resolves (CR 608.2d); the same object whichever is chosen.
@@ -4104,6 +4148,13 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     b.named = { ...b.named, 'the chosen player': who, 'that opponent': who };
     return [{ type: 'choose_opponent' }];
   }
+  // Vial Smasher the Fierce: "choose an opponent at random. … to that player …" (CR 608.2d — nobody chooses).
+  if (/^[Cc]hoose an opponent at random$/.test(s)) {
+    const who: Ref = { ref: 'chosen_opponent' };
+    b.player = who;
+    b.named = { ...b.named, 'the chosen player': who, 'that opponent': who, 'that player': who };
+    return [{ type: 'choose_opponent', random: true }];
+  }
   // The Black Gate: "Choose a player with the most life or tied for most life." — any player, you included.
   if (/^[Cc]hoose a player with the most life or tied for most life$/.test(s)) {
     const who: Ref = { ref: 'chosen_opponent' };
@@ -4673,6 +4724,8 @@ const VERBS: Record<string, VerbHandler> = {
     return [node];
   },
   sacrifice(args, who, b) {
+    // Sporogenic Infection: "a creature of their choice other than enchanted creature".
+    args = args.replace(/ of (?:their|your) choice (other than )/, ' $1');
     // All Is Dust: "Each player sacrifices all permanents they control that are one or more colors." — their own.
     const all = /^all (.+?) (?:they|you) control( that .+)?$/.exec(args);
     if (all && (who.ref === 'you' || (who.ref === 'players' && !who.attacking))) {
@@ -4808,9 +4861,10 @@ const VERBS: Record<string, VerbHandler> = {
         { type: 'add_counters', what: what.ref, counter: twoKinds[4]!.replace(/−/g, '-'), amount: n2 },
       ];
     }
-    const counters = /^(\S+) (\S+) counters? on (.+)$/.exec(args);
+    // Procrastinate: "Put twice X stun counters on it."
+    const counters = /^(twice X|\S+) (\S+) counters? on (.+)$/.exec(args);
     if (counters) {
-      const amount = parseAmount(counters[1]!);
+      const amount = counters[1] === 'twice X' ? { kind: 'x' as const, times: 2 } : parseAmount(counters[1]!);
       if (amount === null || !/^[+-]?\w+(?:\/[+-]\d+)?$/.test(counters[2]!)) return null;
       // Sword of Truth and Justice: "put a +1/+1 counter on a creature you control" — one chosen as it resolves.
       const one = /\btarget\b/.test(counters[3]!) ? null : /^(a|an|another) (.+)$/.exec(counters[3]!);
@@ -5682,7 +5736,9 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   c = c
     .replace(/^(.+?) (becomes? )an? ((?:[A-Za-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 $2a $4/$5 $3$6')
     .replace(/^(.+?) become ((?:[a-z]+ )*?)creatures with base power and toughness (\d+)\/(\d+)( until end of turn)?$/, '$1 become a $3/$4 $2creature$5')
-    .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5');
+    .replace(/^(.+?) become (\d+)\/(\d+) ((?:[a-z]+ )*?)creatures( until end of turn)?$/, '$1 become a $2/$3 $4creature$5')
+    // Push the Limit: "Vehicles you control become artifact creatures until end of turn." — each keeps its own P/T.
+    .replace(/^(.+?) become ((?:[a-z]+ )*?artifact )creatures( until end of turn)?$/, '$1 become a $2creature$3');
   // Turn to Frog: "target creature loses all abilities and becomes a blue Frog with base power and toughness 1/1" — a
   // creature type, not a card type: it keeps its card types and loses its other creature types (CR 205.1b); its color
   // becomes blue (layer 5).
@@ -5950,6 +6006,14 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
     const node = inner?.length === 1 && inner[0]!.type === 'modify' && inner[0]!.until === 'game' ? inner[0]! : null;
     if (node) return [{ ...node, until: 'source_controlled' }];
   }
+  // Amoeboid Changeling: "Target creature loses all creature types until end of turn." (layer 4, CR 205.1b)
+  const loseAllTypes = /^(.+?) loses all creature types until end of turn$/.exec(c);
+  if (loseAllTypes) {
+    return attempt(b, (b) => {
+      const what = parseObjectRef(loseAllTypes[1]!, b);
+      return what && !what.plural ? [{ type: 'modify', what: what.ref, until: 'eot', creatureTypes: [] }] : null;
+    });
+  }
   const m =
     /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ??
     /^(.+?) ((?:can attack as though (?:it|they) didn't have defender|assigns? combat damage equal to (?:its|their) toughness rather than (?:its|their) power)(?:,? and .+)?) until end of turn$/.exec(c) ??
@@ -5976,6 +6040,12 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
       }
       const pm = /^(gets?|gains?|has|have) (.+)$/.exec(part);
       if (!pm) return null;
+      // Blades of Velis Vel: "each get +2/+0 and gain all creature types until end of turn" (layer 4, CR 205.1b).
+      if (/^gains?$/.test(pm[1]!) && pm[2] === 'all creature types') {
+        if (node.allCreatureTypes || loseTypes) return null;
+        node.allCreatureTypes = true;
+        continue;
+      }
       if (/^get/.test(pm[1]!)) {
         // "that creature gets an additional +2/+2" — another pump on top of the first.
         const pt = parsePT(pm[2]!.replace(/^an additional /, ''));

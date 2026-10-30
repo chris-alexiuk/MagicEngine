@@ -2421,6 +2421,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!opponents.length || !ctx.resolution) return true;
     const answer = answerOf(ctx, 'choose_option');
     if (opponents.length === 1) ctx.resolution.chosenOpponent = opponents[0]!;
+    // Vial Smasher the Fierce: "choose an opponent at random" — nobody chooses.
+    else if (node.random) ctx.resolution.chosenOpponent = opponents[Math.floor(nextRandom(g) * opponents.length)]!;
     else if (answer) {
       const p = opponents.find((x) => g.players[x]!.name === answer.choice || x === answer.choice);
       if (!p) throw new RulesError('Choose an opponent.');
@@ -5811,6 +5813,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     // CR 702.29c: "When you cycle this card" — it triggers from wherever the card went.
     if (t.self && e.source !== check.source.id) return [];
     if (t.other && e.source === check.source.id) return [];
+    // Valiant Rescuer: "for the first time each turn" — no other card of theirs was cycled earlier this turn.
+    if (t.firstEachTurn && (check.g.turnLog.cycled ?? []).find((c) => c.player === e.player && (!t.other || c.source !== check.source.id))?.entry !== e.entry) return [];
     if (t.subject) {
       const src = check.g.objects[e.source];
       // Harsh Mentor and a fetch land: a source sacrificed to pay the cost is looked at as it last was (CR 603.10a-style).

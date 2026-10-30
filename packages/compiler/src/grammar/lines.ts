@@ -532,6 +532,8 @@ const ACTIVATION_LIMITS: [RegExp, (a: ActivatedAbility) => void][] = [
   // CR 702.151a (reconfigure)
   [/ Activate only if ~ is attached to a creature and only as a sorcery\.$/, (a) => ((a.timing = 'sorcery'), andIf(a, { type: 'is', of: { ref: 'self' }, filter: { attached: true } }))],
   [/ Activate only once each turn\.$/, (a) => (a.oncePerTurn = true)],
+  // Glory: "Activate only if this card is in your graveyard." — an ability that works from there (CR 113.6m).
+  [/ Activate only if (?:this card|~) is in your graveyard\.$/, (a) => (a.zone = 'graveyard')],
   [/ Activate no more than twice each turn\.$/, (a) => (a.maxPerTurn = 2)],
   [/ Activate no more than three times each turn\.$/, (a) => (a.maxPerTurn = 3)],
   // CR 602.2
@@ -1527,7 +1529,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const one = parseTrigger(word, `~ ${selfOrAttached[2]}`, b);
     const two = one ? parseTrigger(word, `${selfOrAttached[1]} creature ${selfOrAttached[2]}`, b) : null;
     if (!one || !two) return null;
-    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: null, player: one.player ?? two.player };
+    // Simian Sling: "Whenever this creature or equipped creature becomes blocked, it deals 1 damage to defending player." —
+    // the creature that became blocked.
+    if (selfOrAttached[2] === 'becomes blocked') b.itOnField = true;
+    return { trigger: { type: 'either', of: [one.trigger, two.trigger] }, it: selfOrAttached[2] === 'becomes blocked' ? { ref: 'trigger_object' } : null, player: one.player ?? two.player };
   }
   // "When ~ enters or attacks", "Whenever ~ attacks or blocks", "When ~ enters or dies",
   // "When ~ enters and whenever it attacks": one ability with two trigger events (CR 603.2).
@@ -1865,10 +1870,12 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     return { trigger: { type: 'activate', who: 'you', keyword: 'cycling', self: true }, it: { ref: 'self' }, player: null };
   }
   // "Whenever you cycle a card", "Whenever a player cycles a card", "Whenever you cycle another card"
-  const cycles = /^(you|a player|an opponent) cycles? (a|another) card$/.exec(t);
+  // Valiant Rescuer: "Whenever you cycle another card for the first time each turn".
+  const cycles = /^(you|a player|an opponent) cycles? (a|another) card( for the first time each turn)?$/.exec(t);
   if (cycles) {
     const who = cycles[1] === 'you' ? 'you' : cycles[1] === 'an opponent' ? 'opponent' : 'any';
-    return { trigger: { type: 'activate', who, keyword: 'cycling', ...(cycles[2] === 'another' ? { other: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    if (cycles[3] && who !== 'you') return null;
+    return { trigger: { type: 'activate', who, keyword: 'cycling', ...(cycles[2] === 'another' ? { other: true } : {}), ...(cycles[3] ? { firstEachTurn: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // CR 705: "Whenever you win a coin flip" (Tavern Scoundrel), "Whenever you lose a coin flip", "… flip a coin".
   const flip = /^you (win|lose|flip) a coin(?: flip)?$/.exec(t);
@@ -2213,7 +2220,7 @@ export const triggeredRule: GrammarRule = {
         if (trig.player?.ref === 'trigger_player' && ['draw', 'gain_life', 'lose_life'].includes(trig.trigger.type) && (trig.trigger as { who?: string }).who !== 'you') b.named['them'] ??= trig.player;
         // Dragon Tempest: "Whenever a Dragon you control enters, it deals X damage to any target" — that Dragon deals it.
         // Saskia: "Whenever a creature you control deals combat damage to a player, it deals that much damage to …"
-        if (['enters', 'attacks', 'blocks', 'deals_combat_damage'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
+        if (['enters', 'attacks', 'blocks', 'deals_combat_damage', 'becomes_blocked'].includes(trig.trigger.type) && (trig.trigger.subject as Ref | undefined)?.ref === 'all') b.itOnField = true;
         // Inalla: "Whenever another nontoken Wizard you control enters, … create a token that's a copy of that Wizard." — the
         // permanent the trigger is about, by its creature type.
         const subjectTypes = ((trig.trigger.subject as { filter?: ObjectFilter } | undefined)?.filter?.subtypes ?? []);
@@ -2568,6 +2575,9 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   // Root Sliver: "Sliver spells can't be countered." — anyone's Sliver spells.
   const kindOnly = /^([A-Z][\w-]*) spells can't be countered$/.exec(body);
   if (kindOnly && isSubtype(kindOnly[1]!)) return { type: 'uncounterable', filter: { subtypes: [kindOnly[1]!] }, anyone: true };
+  // Gaea's Herald: "Creature spells can't be countered." — anyone's.
+  const typeOnly = /^(Creature|Artifact|Enchantment|Instant|Sorcery|Planeswalker) spells can't be countered$/.exec(body);
+  if (typeOnly) return { type: 'uncounterable', filter: { types: [typeOnly[1]!] }, anyone: true };
   // Spider-Punk: "Spells and abilities can't be countered." — activated and triggered abilities too.
   if (/^Spells and abilities can't be countered$/.test(body)) return { type: 'uncounterable', filter: {}, anyone: true, abilitiesToo: true };
   // Thryx, the Sudden Storm: "Spells you cast with mana value 5 or greater can't be countered."
@@ -3650,8 +3660,8 @@ export const costModifierRule: GrammarRule = {
       const adjectives = others[1]!.trim().replace(/^Other /i, '').replace(/ and /g, ' or ');
       let filter: ObjectFilter = {};
       if ((adjectives && !/^Spells?$/i.test(adjectives)) || suffix) {
-        // "Aura and Equipment spells": a subtype keeps its capital.
-        const first = adjectives.split(' ')[0]!;
+        // "Aura and Equipment spells": a subtype keeps its capital (The Destined Warrior: "Cleric, Rogue, Warrior, and Wizard").
+        const first = adjectives.split(/[ ,]/)[0]!;
         const words = isSubtype(first) ? adjectives : adjectives.replace(/^\w/, (c) => c.toLowerCase());
         const pf = parseFilter(`${adjectives && !/^Spells?$/i.test(adjectives) ? `${words} ` : ''}spells${suffix}`, b);
         if (!pf) return null;
@@ -3887,6 +3897,10 @@ export const quantityReplacementRule: GrammarRule = {
         ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
       });
     }
+    // Goldnight Castigator: "If a source would deal damage to you, it deals double that damage to you instead." / "… to this
+    // creature …".
+    const toYouOrSelf = /^If a source would deal damage to (you|~), it deals (double|triple) that damage to \1 instead\.$/.exec(line);
+    if (toYouOrSelf) return make({ event: 'damage', op: toYouOrSelf[2] as 'double' | 'triple', ...(toYouOrSelf[1] === 'you' ? { toYou: true as const } : { toSelf: true as const }) });
     // Curse of Bloodletting: "If a source would deal damage to enchanted player, it deals double that damage to that player instead."
     const curse = /^If a source would deal damage to enchanted player, it deals (double|triple) that damage to that player instead\.$/.exec(line);
     if (curse && /\bAura\b/.test(env.typeLine)) return make({ event: 'damage', toEnchantedPlayer: true, op: curse[1] as 'double' | 'triple' });
@@ -4108,7 +4122,8 @@ export const entersTappedUnlessRule: GrammarRule = {
     const env = envOf(ctx);
     const m = /^~ enters(?: the battlefield)? tapped unless (.+)\.$/.exec(line);
     // Den of the Bugbear: "If you control two or more other lands, this land enters tapped." — unless it's false.
-    const iff = !m ? /^If (.+), ~ enters(?: the battlefield)? tapped\.$/.exec(line) : null;
+    // Eddymurk Crab: "This creature enters tapped if it's not your turn."
+    const iff = !m ? /^If (.+), ~ enters(?: the battlefield)? tapped\.$/.exec(line) ?? /^~ enters(?: the battlefield)? tapped if (.+)\.$/.exec(line) : null;
     if (!env || (!m && !iff)) return null;
     const cond = parseCondition((m ?? iff)![1]!, new Binder(env));
     if (!cond) return null;
@@ -4327,6 +4342,9 @@ export const entersWithCountersRule: GrammarRule = {
     // counters on it." — one replacement (CR 614.1c), twice X counters from that X up.
     const xMore = /^~ enters with X (\S+) counters on it\. If X is (\w+) or more, it enters with an additional X \1 counters on it\.$/.exec(line);
     if (xMore && typeof parseAmount(xMore[2]!) === 'number') return { kind: 'static', text: original, effect: { type: 'enters_with_counters', counter: xMore[1]!.replace(/−/g, '-'), amount: 'X', doubledIfXAtLeast: parseAmount(xMore[2]!) as number } } satisfies StaticAbility;
+    // Polukranos, Unchained: "… enters with six +1/+1 counters on it unless it escaped" (as the parser splits it).
+    const unlessEscaped = / unless it escaped\.$/.test(line);
+    if (unlessEscaped) line = line.replace(/ unless it escaped\.$/, '.');
     const m = /^(?:If (.+?), (?:~|it)|~) enters(?: the battlefield)?( tapped)? with (twice X|\S+) (\S+) counters? on (?:it|him|her)( for each time it was kicked| for each color of mana spent to cast it)?(?: if (.+?))?\.$/.exec(line);
     const tapped = Boolean(m?.[2]);
     if (m) m.splice(2, 1);
@@ -4348,7 +4366,7 @@ export const entersWithCountersRule: GrammarRule = {
         type: 'enters_with_counters',
         counter: m[3]!.replace(/−/g, '-'),
         amount,
-        ...(condition ? { condition } : {}),
+        ...(condition ? { condition } : unlessEscaped ? { condition: { type: 'paid', cost: 'escape', not: true } } : {}),
         // CR 702.33c (multikicker); converge
         ...(m[4] === ' for each time it was kicked' ? { perKick: true } : m[4] ? { perColor: true } : {}),
         ...(tapped ? { tapped: true } : {}),

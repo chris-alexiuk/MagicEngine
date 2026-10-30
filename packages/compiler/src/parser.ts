@@ -690,6 +690,17 @@ export class ParserRegistry {
           }
         }
       }
+      // Polukranos, Unchained: "Polukranos enters with six +1/+1 counters on it. It escapes with twelve +1/+1 counters on it
+      // instead." — one or the other (CR 702.138c).
+      const escapesInstead = !node && block.length === 1 ? /^(.+?) enters with (\w+) (\S+) counters on it\. It escapes with (\w+) \3 counters on it instead\.$/.exec(line) : null;
+      if (escapesInstead) {
+        const parts = [`${escapesInstead[1]} enters with ${escapesInstead[2]} ${escapesInstead[3]} counters on it unless it escaped.`, `${escapesInstead[1]} escapes with ${escapesInstead[4]} ${escapesInstead[3]} counters on it.`];
+        const each = parts.map((p) => this.parseBlock([p], env, line));
+        if (each.every((n) => n?.kind === 'static')) {
+          for (const n of each) result.abilities.push(n!);
+          continue;
+        }
+      }
       // Draconic Destiny: "Enchanted creature gets +1/+1 and has … "{1}: …" Enchanted creature is a Dragon in addition to its
       // other types." — after a quoted ability, a second static about the same creature.
       const typeAfter = !node && !gate && block.length === 1 ? /^((?:Enchanted|Equipped) creature .+?\.")\s+((?:Enchanted|Equipped) creature is an? [A-Z][\w-]* in addition to its other types\.)$/.exec(line) : null;

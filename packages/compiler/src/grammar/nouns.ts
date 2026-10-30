@@ -127,6 +127,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   }],
   // CR 702.134a (mentor)
   [/ with power less than ~'s power$/, (f) => !f.powerBelowSource && ((f.powerBelowSource = true), true)],
+  // Prehistoric Pet: "can't be blocked by creatures with greater power" — than the attacking creature.
+  [/ with greater power$/, (f) => !f.powerAboveSource && ((f.powerAboveSource = true), true)],
   [/ you own$/, (f) => !f.owner && ((f.owner = 'you'), true)],
   // Agent of Treachery: "permanents you don't own" (CR 108.3: the other players own them).
   [/ you don't own$/, (f) => !f.owner && ((f.owner = 'opponent'), true)],
@@ -146,6 +148,8 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ with a basic land type$/, (f) => !f.subtypes && ((f.subtypes = ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest']), true)],
   // "target permanent other than this creature", "all creatures other than ~": the same as "another" / "other".
   [/ other than (?:~|this (?:creature|permanent|enchantment|artifact|land|card|planeswalker|Vehicle|Equipment|Aura|battle))$/, (f) => !f.other && ((f.other = true), true)],
+  // Sporogenic Infection: "a creature of their choice other than enchanted creature".
+  [/ other than (?:enchanted|equipped) creature$/, (f) => !f.otherThan && !f.other && ((f.otherThan = { ref: 'attached' }), true)],
   [/ dealt damage by ~ this turn$/, (f) => !f.damagedBySource && ((f.damagedBySource = true), true)],
   // Braids, Arisen Nightmare: "a permanent … that shares a card type with it" — what was sacrificed.
   [/ that shares a card type with the sacrificed permanent$/, (f) => !f.sharesCardTypeWithSacrificed && ((f.sharesCardTypeWithSacrificed = true), true)],
@@ -883,7 +887,8 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
       // "one or two target creatures", "one, two, or three target creatures", "one or more target creatures": at least one.
       const oneOr = /^(one or two|one, two, or three|one or more) (other )?target (.+)$/i.exec(t);
       if (oneOr) {
-        const pf = parseFilter(oneOr[3]!, b);
+        // Leonardo's Technique: "one or two target creature cards each with mana value 3 or less" — each of them.
+        const pf = parseFilter(oneOr[3]!.replace(/^((?:[a-z]+ )*cards) each with /, '$1 with '), b);
         if (!pf || !pf.plural) return null;
         if (oneOr[2]) pf.filter.other = true;
         const count = /two$/i.test(oneOr[1]!) ? 2 : /three$/i.test(oneOr[1]!) ? 3 : 100;

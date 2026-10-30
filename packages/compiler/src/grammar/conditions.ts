@@ -126,8 +126,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (pf && pf.plural && !pf.filter.zone) return { type: 'count', who: 'all', filter: pf.filter, max: 0 };
   }
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
-  const vsStart = /^your life total is (greater|less) than your starting life total$/.exec(t);
-  if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? 'gt' : 'lt', starting: true };
+  // Path of Bravery: "As long as your life total is greater than or equal to your starting life total".
+  const vsStart = /^your life total is (greater|less) than (or equal to )?your starting life total$/.exec(t);
+  if (vsStart) return { type: 'life', op: vsStart[1] === 'greater' ? (vsStart[2] ? 'ge' : 'gt') : vsStart[2] ? 'le' : 'lt', starting: true };
   // Game Over: "if a player's life total is less than or equal to half their starting life total".
   const halfStart = /^(a player's|an opponent's|your) life total is less than or equal to half (?:their|your) starting life total$/.exec(t);
   if (halfStart) return { type: 'life', halfStarting: halfStart[1] === "a player's" ? 'any' : halfStart[1] === 'your' ? 'you' : 'opponent' };

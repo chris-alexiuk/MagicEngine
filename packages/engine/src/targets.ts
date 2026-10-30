@@ -119,6 +119,11 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
     const player = !known ? undefined : index === undefined ? triggerInfo!.player : playerOfTarget(g, priorTargets![index]?.[0]);
     filter = known ? { ...rest, controllerPlayer: player ?? '\u0000none' } : rest;
   }
+  // Due Diligence: "target creature you control other than enchanted creature" — the one this Aura is attached to.
+  if (filter.otherThan && (filter.otherThan as { ref?: string }).ref === 'attached') {
+    const { otherThan: _o, ...rest } = filter;
+    filter = { ...rest, notObject: source?.attachedTo?.id ?? '' };
+  }
   // Fiery Annihilation: "target Equipment attached to that creature" — an earlier target (not yet known: any).
   if (filter.attachedToRef) {
     const { attachedToRef, ...rest } = filter;

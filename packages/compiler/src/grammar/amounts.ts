@@ -420,6 +420,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
     const pf = parseFilter(kindsAmong[2]!, b);
     return pf && pf.plural && !pf.filter.zone ? { kind: 'creature_types_among', filter: { ...pf.filter, ...(kindsAmong[1] ? { other: true } : {}) } } : null;
   }
+  // Dihada's Ploy: "the number of cards you've discarded this turn".
+  if (/^the number of cards you(?:'ve)? discarded this turn$/.test(t)) return { kind: 'discarded_this_turn' };
   // Prismabasher: "the number of colors among permanents you control" (CR 105.2).
   const colorsAmong = /^the number of colors among (other )?(.+)$/.exec(t);
   if (colorsAmong) {
