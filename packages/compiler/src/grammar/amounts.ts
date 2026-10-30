@@ -116,6 +116,9 @@ export function movedThisWay(text: string, b: Binder): AmountExpr | null {
     const inner = each ? movedThisWay(`${theirs[1]} ${theirs[2]} this way`, b) : null;
     return inner && inner.kind === 'moved_this_way' ? { ...inner, controlledBy: each! } : null;
   }
+  // Hellfire: "the number of creatures that died this way" — put into a graveyard from the battlefield (CR 700.4).
+  const died = /^(.+?) that died this way$/.exec(text.trim());
+  if (died && !/ (?:destroyed|exiled|sacrificed|returned) /.test(died[1]!)) return movedThisWay(`${died[1]} put into a graveyard this way`, b);
   // Liliana's Indignation: "each creature card put into your graveyard this way" (after a mill).
   // Coerced Confession: "each creature card put into their graveyard this way" (after a target player mills).
   const m = /^(.+?) (destroyed|exiled|sacrificed|milled|put into a graveyard|put into (?:your|their|that player's) graveyard|returned|shuffled into a library|put into your hand) this way$/.exec(text.trim());
@@ -286,6 +289,10 @@ export function parseForEach(text: string, b: Binder): AmountExpr | null {
   // Ancient Excavation: "discard a card for each card drawn this way".
   // Laquatus's Creativity: "Target player draws …, then discards a card for each card drawn this way" — by anyone.
   if (t === 'card drawn this way') return { kind: 'drawn_this_way' };
+  // Swift Silence: "Draw a card for each spell countered this way."
+  if (t === 'spell countered this way') return { kind: 'countered_this_way' };
+  // CR 702.82b: Skullmulcher: "for each creature it devoured".
+  if (t === 'creature it devoured' || t === 'creature ~ devoured') return { kind: 'devoured' };
   // Heliod, the Radiant Dawn: "for each card your opponents have drawn this turn".
   if (t === 'card your opponents have drawn this turn') return { kind: 'drawn_this_turn', who: 'opponents' };
   if (t === 'opponent' || t === 'opponent you have') return { kind: 'players', who: 'opponents' };
@@ -506,6 +513,8 @@ export function parseCount(text: string, b: Binder): AmountExpr | null {
   // Chandra's Incinerator: "the total amount of noncombat damage dealt to your opponents this turn".
   // Notorious Throng: "the damage dealt to your opponents this turn"; Simulacrum: "the damage dealt to you this turn".
   // Knollspine Dragon: "the damage dealt to target opponent this turn" — that one player.
+  // Militant Angel: "equal to the number of opponents you attacked this turn".
+  if (t === 'the number of opponents you attacked this turn') return { kind: 'opponents_attacked', thisTurn: true };
   // Final Punishment: "the damage already dealt to that player this turn".
   const dealtToOne = /^the (?:amount of )?damage (?:already )?dealt to (target opponent|target player|that player) this turn$/.exec(t);
   if (dealtToOne) {
@@ -791,7 +800,9 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
     if (v === 'X') return expr;
     if (v && typeof v === 'object' && !Array.isArray(v) && (v as { kind?: string }).kind === 'x') {
       const t = (v as { times?: number }).times ?? 1;
-      return { ...expr, times: (expr.times ?? 1) * t, ...(expr.plus ? { plus: expr.plus * t } : {}) };
+      // Hellfire: "~ deals X plus 3 damage to you, where X is …" — the 3 stays.
+      const plus = (expr.plus ?? 0) * t + ((v as { plus?: number }).plus ?? 0);
+      return { ...expr, times: (expr.times ?? 1) * t, ...(plus ? { plus } : {}) };
     }
     return v;
   };

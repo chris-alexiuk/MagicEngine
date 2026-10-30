@@ -72,6 +72,14 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ exiled with (?:~|this (?:artifact|creature|enchantment|permanent|land))$/, (f) => !f.exiledWithSource && !f.zone && ((f.exiledWithSource = true), (f.zone = 'exile'), true)],
   // Arachnogenesis: "the number of creatures attacking you" (not your planeswalkers).
   [/ attacking you$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingYou = true), true)],
+  // Ordruun Mentor: "Whenever you attack a player, target creature that's attacking that player …".
+  [/ (?:that's|that are) attacking that player$/, (f, _m, b) => {
+    const who = b.named['that player'] ?? (b.player?.ref === 'trigger_player' ? b.player : null);
+    if (f.combat || !who || who.ref !== 'trigger_player') return false;
+    f.combat = 'attacking';
+    f.attackingPlayerRef = who;
+    return true;
+  }],
   // Viper, Cruel Conspirator: "Target creature that's attacking alone" (CR 506.5).
   [/ that's attacking alone$/, (f) => !f.combat && ((f.combat = 'attacking'), (f.attackingAlone = true), true)],
   // Oviya, Automech Artisan: "Each creature that's attacking one of your opponents".
@@ -386,7 +394,7 @@ export function parseKeywordList(text: string, b: Binder, printed = false, grant
   // Swords: "protection from black and from green" is two protections (CR 702.16).
   text = text.replace(/\bprotection from (\w+) and from (\w+)\b/g, 'protection from $1, protection from $2');
   // Giver of Runes: "protection from colorless or from the color of your choice" is one protection, chosen.
-  text = text.replace(/\bprotection from colorless or from the color of your choice\b/g, 'protection from colorless\u0002the color of your choice');
+  text = text.replace(/\bprotection from (colorless|artifacts) or from the color of your choice\b/g, 'protection from $1\u0002the color of your choice');
   const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean).map((i) => i.replace('\u0002', ' or from '));
   const out: KeywordInstance[] = [];
   for (const item of items) {
@@ -430,6 +438,8 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
   }
   // Long Feng, Grand Secretariat: "another creature you control or a land you control" — both yours.
   let rest = text.trim().replace(/^(creature|artifact|enchantment|land|planeswalker) (you control|an opponent controls) or an? (creature|artifact|enchantment|land|planeswalker) \2$/, '$1 or $3 $2');
+  // Fell Shepherd: "all creature cards that were put into your graveyard from the battlefield this turn".
+  rest = rest.replace(/^(.+? cards?) that (?:was|were) put into your graveyard from the battlefield this turn$/, '$1 in your graveyard that were put there from the battlefield this turn');
   // Paradox Surveyor: "a land card or a card with {X} in its mana cost" — a quality after a bare "card" is that
   // alternative's only (each alternative read on its own).
   // (Only "… or a card with …": in "target spell or permanent with mana value 1 or greater" it's both.)
@@ -451,6 +461,12 @@ export function parseFilter(text: string, b: Binder): ParsedFilter | null {
       return { filter: { ...shared, anyOf: [strip(one.filter), strip(two.filter)] }, plural: false } as ParsedFilter;
     });
     if (r) return r;
+  }
+  // Magistrate's Veto: "White creatures and blue creatures can't block." — each kind (one that's both counts once).
+  const twoColors = /^(white|blue|black|red|green) creatures and (white|blue|black|red|green) creatures$/i.exec(rest);
+  if (twoColors && twoColors[1]!.toLowerCase() !== twoColors[2]!.toLowerCase()) {
+    const color = (w: string) => COLOR_WORDS[w.toLowerCase()]!;
+    return { filter: { types: ['Creature'], anyOf: [{ colors: [color(twoColors[1]!)] }, { colors: [color(twoColors[2]!)] }] }, plural: true };
   }
   // Kestia, the Cultivator: "an enchanted creature or enchantment creature you control" — either, both yours.
   const eitherCreature = /^(enchanted|equipped|attacking|tapped|untapped|legendary|artifact|enchantment|token) creature or (enchanted|equipped|attacking|tapped|untapped|legendary|artifact|enchantment|token) creature( you control| an opponent controls)?$/.exec(rest);
@@ -681,6 +697,8 @@ function parseHeadPhrase(text: string, f: ObjectFilter): { plural: boolean; inva
       if (TYPE_NOUNS[xl]) (f.notTypes ??= []).push(TYPE_NOUNS[xl]!);
       else if (COLOR_WORDS[xl]) (f.notColors ??= []).push(COLOR_WORDS[xl]!);
       else if (xl === 'token') f.token = false;
+      // Alarum: "Untap target nonattacking creature."
+      else if ((xl === 'attacking' || xl === 'blocking') && !f.notCombat) f.notCombat = xl;
       // Shield Broker: "target noncommander creature you don't control" (CR 903.3).
       else if (xl === 'commander') f.commander = false;
       // Shoot the Sheriff: "target non-outlaw creature" (CR 700.12).
@@ -1043,6 +1061,22 @@ function demonstrative(t: string, b: Binder): Ref | null {
 }
 
 /** Player phrases: "you", "target opponent", "each player", "that player", "its controller". */
+/** Rix Maadi Guildmage: "target player who lost life this turn"; Keeper of the Flame: "target opponent who has more life
+ * than you do as you activate this ability" (CR 115.1: a restriction on what may be chosen). */
+function playerWho(text: string): TargetSpec['who'] | null {
+  if (text === 'lost life this turn') return { lostLife: true };
+  if (text === 'attacked this turn' || text === 'attacked with a creature this turn') return { attacked: true };
+  if (text === 'was dealt combat damage by ~ this turn') return { combatDamagedBySource: true };
+  const m = /^(?:has|controls) (?:at least (\w+) )?(more|fewer) (life|cards in hand|creatures|creature cards in their graveyard) than you(?: do)?( as you activate this ability)?$/.exec(text);
+  if (!m) return null;
+  const by = m[1] ? parseAmount(m[1]) : 1;
+  if (typeof by !== 'number') return null;
+  const stats: Record<string, 'life' | 'hand' | 'creatures' | 'graveyard_creatures'> = { life: 'life', 'cards in hand': 'hand', creatures: 'creatures', 'creature cards in their graveyard': 'graveyard_creatures' };
+  const stat = stats[m[3]!]!;
+  if ((stat === 'creatures') !== /^controls/.test(text)) return null;
+  return { more: { stat, ...(by > 1 ? { by } : {}), ...(m[2] === 'fewer' ? { fewer: true as const } : {}) }, ...(m[4] ? { asActivated: true as const } : {}) };
+}
+
 export function parsePlayerRef(text: string, b: Binder): Ref | null {
   const t = text.trim().toLowerCase();
   if (t === 'you') return { ref: 'you' };
@@ -1114,11 +1148,16 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
     b.player = ref;
     return ref;
   }
-  const playerTarget = /^(up to one )?target (player|opponent)$/.exec(t);
+  const playerTarget = /^(up to one )?target (player|opponent)(?: who (.+))?$/.exec(t);
   if (playerTarget) {
     const spec: TargetSpec = { what: 'player', text: t };
     if (playerTarget[2] === 'opponent') spec.player = 'opponent';
     if (playerTarget[1]) spec.upTo = true;
+    if (playerTarget[3]) {
+      const who = playerWho(playerTarget[3]);
+      if (!who) return null;
+      spec.who = who;
+    }
     const ref = b.addTarget(spec);
     b.player = ref;
     return ref;
@@ -1152,7 +1191,8 @@ export function parsePlayerRef(text: string, b: Binder): Ref | null {
   // Blightning: "That player or that planeswalker's controller discards two cards." — after "target player or planeswalker".
   if (/^that player or that (?:planeswalker|permanent|battle)'s (?:controller|protector)$/.test(t) && b.it?.ref === 'target' && !/'s protector$/.test(t)) return { ref: 'player_or_controller', of: b.it };
   // Searing Blood: "When that creature dies this turn, ~ deals 3 damage to the creature's controller." — the same as "that".
-  const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t.replace(/^the (creature|permanent)'s (controller|owner)$/, 'that $1\'s $2'));
+  // Choking Sands: "the land's controller".
+  const owner = /^(?:its|(that (?:creature|permanent|spell|card|land|artifact|enchantment|planeswalker|token))'s) (controller|owner)$/.exec(t.replace(/^the (creature|permanent|land|artifact|enchantment|planeswalker)'s (controller|owner)$/, 'that $1\'s $2'));
   // Gloom Sower: "Whenever ~ becomes blocked by a creature, that creature's controller …" — the creature the trigger names.
   const of = owner ? (owner[1] && b.named[owner[1]]) || (owner[1] ? demonstrative(owner[1], b) : b.it) : null;
   if (owner && of) return { ref: owner[2] === 'controller' ? 'controller_of' : 'owner_of', of };

@@ -281,6 +281,8 @@ export interface GameObject {
   exiledBy?: ObjectRef;
   /** CR 614.12: what was chosen as it entered ("As ~ enters, choose a color"). */
   chosen?: { color?: Color; creatureType?: string; cardName?: string; cardType?: string; player?: PlayerId; word?: string; landType?: string; number?: number };
+  /** CR 702.82b: how many creatures it devoured as it entered ("for each creature it devoured"). */
+  devoured?: number;
 }
 
 /** A reference that goes stale when the object changes zones. */
@@ -424,6 +426,11 @@ export interface ContinuousEffect {
   source: ObjectRef;
   controller: PlayerId;
   objects: ObjectRef[];
+  /**
+   * CR 611.2c: an effect that changes no characteristics or control ("Creatures without flying can't block this turn",
+   * Magmatic Chasm) applies to whatever matches this as it goes — creatures that enter later included. `objects` is empty.
+   */
+  filter?: ObjectFilter;
   power?: number;
   toughness?: number;
   keywords?: KeywordInstance[];
@@ -604,6 +611,8 @@ export interface Resolution {
   damageDealt?: number;
   /** The permanents this resolution dealt damage to (Underworld Fires: "a permanent dealt damage this way"). */
   damagedObjects?: ObjectRef[];
+  /** Spells this resolution countered (Swift Silence: "for each spell countered this way"). */
+  countered?: number;
   /** Hit the Mother Lode: the mana value of the card discovered (CR 701.57a). */
   discoveredMv?: number;
   /** CR 120.10: excess damage this resolution dealt to permanents ("the amount of excess damage dealt this way"). */
@@ -918,7 +927,7 @@ export type GameEvent =
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }
   /** `by`: who controls the spell or ability that countered it. */
-  | { type: 'countered'; object: ObjectId; by?: PlayerId }
+  | { type: 'countered'; object: ObjectId; by?: PlayerId; /** Multani's Presence: who controlled the spell. */ caster?: PlayerId }
   /** CR 608.2b: every target was illegal, so it didn't resolve. */
   | { type: 'fizzled'; entry: StackEntry }
   | { type: 'regenerated'; object: ObjectId }
@@ -1069,7 +1078,7 @@ export interface GameState {
   /** Animate Dead: the creature an Aura put onto the battlefield — the only thing it can enchant now, and what it sacrifices (CR 607.2). */
   reanimated?: { aura: ObjectRef; creature: ObjectRef }[];
   /** CR 608.2h: power and toughness of permanents as they last existed on the battlefield, by object. */
-  lastKnown?: Record<ObjectId, { zcc: number; controller?: PlayerId; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; /** Koll, the Forgemaster: "if it was enchanted or equipped". */ enchanted?: true; equipped?: true; types?: string[]; subtypes?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
+  lastKnown?: Record<ObjectId, { zcc: number; controller?: PlayerId; power: number; toughness: number; counters?: Record<string, number>; modified?: boolean; /** Koll, the Forgemaster: "if it was enchanted or equipped". */ enchanted?: true; equipped?: true; types?: string[]; subtypes?: string[]; supertypes?: string[]; colors?: string[]; keywords?: string[]; enchantedPlayer?: PlayerId; attachedTo?: ObjectRef; copyOf?: { card: string; face: number }; granted?: AbilityNode[]; faceDown?: GameObject['faceDown']; chosen?: GameObject['chosen'] }>;
   /** Cards a player may play or cast from where they are (impulse draw: "you may play that card this turn"). */
   /** `firstTurn`: "During your next turn, you may play that card" starts later. */
   /** `free`: "… without paying its mana cost" (Dauthi Voidwalker). */

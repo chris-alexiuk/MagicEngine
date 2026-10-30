@@ -2,7 +2,7 @@ import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/sch
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, loggedUpTo } from './conditions.js';
 import { runEffect, type EffectContext } from './registry.js';
-import { isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
+import { checkingOnResolution, isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
 import { battlefieldZcc, faceOf, livePlayers, manaValueOf, nameOf, nextPlayer, zoneList } from './zones.js';
 
@@ -323,7 +323,7 @@ export function refRecipients(ctx: EffectContext, ref: Ref): DamageRecipient[] {
 }
 
 /** Amount kinds the engine counts (schema CORE_NODES.amounts). */
-export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions'];
+export const AMOUNT_KINDS: readonly string[] = ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'];
 
 /** The objects a reference meant, with the zone-change count it meant them at (for last-known information). */
 function refRefs(ctx: EffectContext, ref: Ref): { id: ObjectId; zcc: number }[] {
@@ -567,6 +567,11 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     // Bronze Cudgels: "the number of times this ability has resolved this turn".
     case 'ability_resolutions':
       return g.resolving?.abilityCount ?? 0;
+    case 'countered_this_way':
+      return ctx.resolution?.countered ?? 0;
+    // CR 702.82b: Skullmulcher: "draw a card for each creature it devoured".
+    case 'devoured':
+      return ctx.source?.devoured ?? 0;
     case 'drawn_this_way':
       // "for each card drawn this way" — by any player (Communal Brewing; Laquatus's Creativity's target player).
       return Object.values(ctx.resolution?.drew ?? {}).reduce((n, k) => n + (k ?? 0), 0);
@@ -948,7 +953,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
   let chosen = 0;
   let legal = 0;
   // CR 608.2b: "with mana value X or less" — the X it was cast or activated with.
-  const out = targetingAs(entry.kind === 'ability', () => withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
+  const out = checkingOnResolution(() => targetingAs(entry.kind === 'ability', () => withTriggerInfo(entry.kind === 'ability' ? entry.trigger : undefined, () =>
     withPriorTargets(entry.targets, () => withTargetX(entry.x, () =>
       program.specs.map((spec, i) =>
         (entry.targets[i] ?? []).filter((t) => {
@@ -959,7 +964,7 @@ export function recheckTargets(g: GameState, entry: StackEntry): TargetRef[][] |
         }),
       ),
     )),
-  ));
+  )));
   // Gilded Drake: "This ability still resolves if its target becomes illegal."
   return chosen > 0 && legal === 0 && !program.specs.some((s) => s.stillResolves) ? null : out;
 }

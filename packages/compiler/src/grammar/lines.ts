@@ -1025,7 +1025,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (attachedEither) {
     const by = parseFilter(attachedEither[1]!, b);
     if (!by || by.plural) return null;
-    b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    // Venom: "… blocks or becomes blocked by a non-Wall creature, destroy the other creature at end of combat."
+    b.named['that creature'] = b.named['the creature'] = b.named['the other creature'] = { ref: 'trigger_object' };
     b.named['both creatures'] = { ref: 'attached' };
     return { trigger: { type: 'blocks', subject: { ref: 'attached' }, orBlocked: true, other: by.filter }, it: { ref: 'trigger_object' }, player: null };
   }
@@ -1042,7 +1043,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (blocked[1] === 'becomes blocked') b.named['defending player'] = { ref: 'trigger_player' };
     // Engulfing Slagwurm: "Whenever ~ blocks or becomes blocked by a creature, destroy that creature." — once for each
     // creature it blocks or is blocked by, about that creature (CR 509.3c–d).
-    if (by && blocked[1] === 'blocks or becomes blocked') b.named['that creature'] = b.named['the creature'] = { ref: 'trigger_object' };
+    if (by && blocked[1] === 'blocks or becomes blocked') b.named['that creature'] = b.named['the creature'] = b.named['the other creature'] = { ref: 'trigger_object' };
     if (by) b.named['both creatures'] = { ref: 'self' };
     const trigger: TriggerNode =
       blocked[1] === 'becomes blocked'
@@ -1112,7 +1113,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     // "Whenever ~ deals damage to a creature" — "that creature" is the creature dealt damage.
     if (damageTo[3] === 'a creature') {
-      b.named['that creature'] = { ref: 'trigger_object' };
+      // Venomous Fangs: "Whenever enchanted creature deals damage to a creature, destroy the other creature."
+      b.named['that creature'] = b.named['the other creature'] = { ref: 'trigger_object' };
       return { trigger: { type: 'deals_damage', subject, to: 'creature' }, it: subject, player: null };
     }
     return {
@@ -2152,6 +2154,29 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (exiledFrom[1] === 'another') pf.filter.other = true;
     return { trigger: { type: 'leaves', subject: { ref: 'all', filter: pf.filter }, toZones: ['exile'] }, it: { ref: 'trigger_object' }, player: null };
   }
+  // Multani's Presence: "Whenever a spell you've cast is countered" (CR 701.6a).
+  if (/^a spell you(?:'ve cast| control) is countered$/.test(t)) return { trigger: { type: 'spell_countered' }, it: { ref: 'trigger_object' }, player: null };
+  // CR 701.44: "Whenever a creature you control explores" — once for each explore; "that creature" is the explorer.
+  const explores = /^(a creature you control|another creature you control|~) explores$/.exec(t);
+  if (explores) {
+    if (explores[1] === '~') return { trigger: { type: 'explores', subject: { ref: 'self' } }, it: { ref: 'self' }, player: null };
+    const pf = parseFilter(explores[1]!.replace(/^another /, 'a '), b);
+    if (!pf || pf.plural) return null;
+    if (/^another /.test(explores[1]!)) pf.filter.other = true;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'explores', subject: { ref: 'all', filter: pf.filter } }, it: { ref: 'trigger_object' }, player: null };
+  }
+  // Azorius Aethermage: "Whenever a permanent is returned to your hand"; Warped Devotion: "… to a player's hand, that player
+  // discards a card" — from the battlefield to its owner's hand (CR 400.3).
+  const returned = /^(a|an|another) (.+?) is returned to (your|a player's|its owner's) hand(?: from the battlefield)?$/.exec(t);
+  if (returned) {
+    const pf = parseFilter(returned[2]!, b);
+    if (!pf || pf.plural || pf.filter.zone) return null;
+    if (returned[1] === 'another') pf.filter.other = true;
+    if (returned[3] === 'your') pf.filter.owner = 'you';
+    b.named['that player'] = { ref: 'owner_of', of: { ref: 'trigger_object' } };
+    return { trigger: { type: 'leaves', subject: { ref: 'all', filter: pf.filter }, toZones: ['hand'] }, it: { ref: 'trigger_object' }, player: { ref: 'owner_of', of: { ref: 'trigger_object' } } };
+  }
   // Dour Port-Mage: "Whenever one or more other creatures you control leave the battlefield without dying" (once per
   // batch); "Whenever another creature you control leaves the battlefield without dying".
   const manyLeave = /^(?:one or more (other )?(.+?) leave|(another|a|an) (.+?) leaves) the battlefield( without dying)?$/.exec(t);
@@ -2310,7 +2335,10 @@ export const triggeredRule: GrammarRule = {
       // "Whenever you activate an ability, if it isn't a mana ability, …": mana abilities never trigger these (CR 605.3b).
       line
         .replace(/^(Whenever .+? activates? an ability(?: of .+?)?), if it isn't a mana ability, /, (_m, head: string) => `${head} that isn't a mana ability, `)
-        .replace(/^Whenever an ability of ((?:equipped|enchanted) creature) is activated, if it isn't a mana ability, /, "Whenever an ability of $1 that isn't a mana ability is activated, "),
+        .replace(/^Whenever an ability of ((?:equipped|enchanted) creature) is activated, if it isn't a mana ability, /, "Whenever an ability of $1 that isn't a mana ability is activated, ")
+        // Liability: "Whenever a nontoken permanent is put into a player's graveyard from the battlefield, that player loses 1
+        // life." — its owner's graveyard (CR 400.3), so its owner.
+        .replace(/^(Whenever an? .+?) is put into a player's graveyard from the battlefield, that player /, '$1 is put into a graveyard from the battlefield, its owner '),
     );
     if (!env || !m) return null;
     const body = m[2]!;
@@ -3242,7 +3270,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? \d+\/\d+ (?:[A-Z][\w’'-]* )*artifact creature(?: with [a-z ,]+)?|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? that (?:is|are) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -3378,6 +3406,21 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       effect.setPower = Number(isA[4]);
       effect.setToughness = Number(isA[5]);
       effect.setLayer = '7b';
+      continue;
+    }
+    // Rusted Relic: "This artifact is a 5/5 Golem artifact creature as long as …"; Warden of the Wall: "During turns other than
+    // yours, this artifact is a 2/3 Gargoyle artifact creature with flying." (layers 4, 6 and 7b)
+    const artifactCreature = /^is an? (\d+)\/(\d+) ((?:[A-Z][\w’'-]* )*)artifact creature(?: with ([a-z ,]+))?$/.exec(part);
+    if (artifactCreature && !effect.setTypes && effect.setPower === undefined && /\bArtifact\b/.test(b.env.typeLine) && !/\bCreature\b/.test(b.env.typeLine)) {
+      const subtypes = artifactCreature[3]!.trim() ? artifactCreature[3]!.trim().split(' ') : [];
+      if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
+      const kws = artifactCreature[4] ? parseKeywordList(artifactCreature[4], b) : [];
+      if (!kws) return null;
+      effect.setTypes = { types: ['Artifact', 'Creature'], subtypes };
+      effect.setPower = Number(artifactCreature[1]);
+      effect.setToughness = Number(artifactCreature[2]);
+      effect.setLayer = '7b';
+      if (kws.length) effect.keywords = [...(effect.keywords ?? []), ...kws];
       continue;
     }
     // Lignify: "is a Treefolk with base power and toughness 0/4" — its creature types replaced, its card types kept.

@@ -301,6 +301,19 @@ export interface TargetSpec {
   notTriggerPlayer?: true;
   /** Needle Drop: "any target that was dealt damage this turn" — a player too. */
   damagedThisTurn?: true;
+  /**
+   * A target player who meets a condition: Rix Maadi Guildmage "target player who lost life this turn"; Fire and Brimstone
+   * "who attacked this turn"; Hope of Ghirapur "who was dealt combat damage by ~ this turn"; Keeper of the Flame "who has
+   * more life than you do as you activate this ability" (`more`: their life, hand size, creatures or creature cards in their
+   * graveyard against yours, by at least `by`; `fewer` reverses it). `asActivated`: checked only as it's put on the stack.
+   */
+  who?: {
+    lostLife?: true;
+    attacked?: true;
+    combatDamagedBySource?: true;
+    more?: { stat: 'life' | 'hand' | 'creatures' | 'graveyard_creatures'; by?: number; fewer?: true };
+    asActivated?: true;
+  };
   /** How many; 1 unless stated. */
   count?: number;
   /** "Exile X target creatures": as many as the X announced (CR 601.2b–c). `count` is then ignored. */
@@ -393,6 +406,8 @@ export interface ObjectFilter {
   other?: true;
   tapped?: boolean;
   combat?: 'attacking' | 'blocking' | 'attacking_or_blocking';
+  /** Alarum: "target nonattacking creature"; "nonblocking". */
+  notCombat?: 'attacking' | 'blocking';
   /** Fight to the Death: "blocked creatures"; "unblocked creatures" — attacking creatures, blocked or not (CR 509.1h). */
   blockedState?: 'blocked' | 'unblocked';
   /** CR 506.5: "attacking alone" — the only attacking creature. */
@@ -529,7 +544,8 @@ export interface ObjectFilter {
   attachedToPlayerId?: string;
   /** Wash Away: "target spell that wasn't cast from its owner's hand" — a copy, or one cast from anywhere else. */
   notCastFromHand?: true;
-  /** Within Range: "creatures attacking them" — that player (bound to `attackingPlayer` as it's counted). */
+  /** Within Range: "creatures attacking them" — that player (bound to `attackingPlayer` as it's counted); Ordruun Mentor:
+   * "target creature that's attacking that player". */
   attackingPlayerRef?: Ref;
   attackingPlayer?: string;
   /** Domri, Anarch of Bolas: "Creature spells you cast" — not a copy of a spell (CR 707.10). */
@@ -740,6 +756,10 @@ export type AmountExpr = (
   /** Ancient Excavation: "for each card drawn this way" — what this resolution drew for you. */
   /** The cards this resolution made anyone draw (Communal Brewing: each other player who drew; Laquatus's Creativity). */
   | { kind: 'drawn_this_way' }
+  /** Swift Silence: "for each spell countered this way". */
+  | { kind: 'countered_this_way' }
+  /** CR 702.82b: "for each creature it devoured" — as its source entered. */
+  | { kind: 'devoured' }
   /** Thalisse, Reverent Medium: "the number of tokens you created this turn". */
   | { kind: 'tokens_created_this_turn' }
   /** Myr Battlesphere: "you may tap X untapped Myr you control" — how many were tapped. */
@@ -1525,11 +1545,11 @@ export const CORE_NODES = {
     'becomes_target', 'deals_damage', 'dealt_damage', 'player_dealt_damage', 'lose_life', 'chapter', 'becomes_level',
     'player_attacked', 'turned_face_up', 'last_counter_removed', 'day_night_changed', 'either', 'becomes_tapped', 'state', 'activate', 'exerted', 'clashed', 'put_into_graveyard',
     'you_attack', 'unblocked', 'combat_damage_batch', 'leave_graveyard', 'discard', 'scry', 'counters_put', 'sacrificed',
-    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'proliferated', 'coin_flipped', 'unattached', 'milled', 'became_monarch', 'counters_removed',
+    'becomes_monstrous', 'ring_tempted', 'room', 'dungeon_completed', 'crime', 'expend', 'transforms', 'unlock_door', 'fully_unlocked', 'die_rolled', 'reflexive', 'mana_spent', 'tapped_for_mana', 'land_played', 'searched', 'counters_spell', 'spell_countered', 'proliferated', 'explores', 'coin_flipped', 'unattached', 'milled', 'became_monarch', 'counters_removed',
   ],
   costs: ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process'],
   /** Counted amounts (AmountExpr kinds). */
-  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions'],
+  amounts: ['count', 'cards', 'stat', 'life', 'counters', 'players', 'devotion', 'x', 'event', 'cast_before', 'commander_casts', 'kicks', 'party', 'life_lost', 'opponents_attacked', 'colors_spent', 'cost_lki', 'paid_times', 'domain', 'card_types', 'blockers', 'die_result', 'votes', 'greatest', 'discarded_this_way', 'spells_cast_this_turn', 'colors_among', 'commander_colors', 'total_power', 'moved_this_way', 'died_this_turn', 'damage_this_way', 'life_this_turn', 'excess_this_way', 'mana_spent', 'sum', 'max', 'unspent_mana', 'attackers_this_turn', 'sacrificed_this_turn', 'distinct_mana_values', 'drawn_this_turn', 'tokens_created_this_turn', 'tapped_this_way', 'counters_among', 'counters_removed', 'attacks_this_turn', 'convoked', 'sacrificed_to_cast', 'discover_shortfall', 'source_damage_this_turn', 'entered_this_turn', 'discarded_this_turn', 'to_graveyard_this_turn', 'distinct_names', 'flips_won', 'speed', 'drawn_this_way', 'left_this_turn', 'creature_types_among', 'distinct_powers', 'most_sharing_type', 'ability_resolutions', 'countered_this_way', 'devoured'],
   /** Keyword abilities (CR 702) the engine applies. Others are recorded but resolved by players. */
   keywords: [
     'flying', 'first_strike', 'double_strike', 'deathtouch', 'defender', 'flash', 'haste', 'hexproof', 'hexproof_from',

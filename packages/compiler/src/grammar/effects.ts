@@ -304,6 +304,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     const subject = who.replace(/^You\b/, 'you');
     return `If ${c1} was spent to cast this spell, ${subject} ${a}. If ${c2} was spent to cast this spell, ${subject} ${bb}.`;
   });
+  // Precognition: "you may look at the top card of target opponent's library. If you do, you may put that card on the bottom
+  // of that player's library." — looking changes nothing but what's known; the choice is the put.
+  text = text.replace(/^[Yy]ou may look at (the top card of [^.]+? library)\. If you do, you may put that card /, 'Look at $1. You may put that card ');
+  // Searing Blaze: "… target player or planeswalker …. … ~ deals 3 damage to that player or planeswalker …" — the same target.
+  if (/\btarget player or planeswalker\b/.test(text)) text = text.replace(/\b(to|damage to) that player or planeswalker\b/g, '$1 that player');
+  // Liliana's Defeat: "If that permanent was a Liliana planeswalker, her controller loses 3 life." — that planeswalker's.
+  text = text.replace(/(If that permanent was an? [A-Z][a-z]+ planeswalker, )(?:her|his) controller\b/, '$1its controller');
+  // Warren Pilferers: "return target creature card from your graveyard to your hand. If that card is a Goblin card, …" — the
+  // same as "If it's a Goblin card".
+  text = text.replace(/(to (?:your|its owner's) hand\. )If that card is (an? [A-Z][\w-]* card), /, "$1If it's $2, ");
+  // Clip Wings: "Each opponent sacrifices a creature of their choice with flying." — a creature with flying, their choice.
+  text = text.replace(/\b(sacrifices? an? (?:creature|artifact|permanent|land)) of their choice (with [^.,]+)([.,])/g, '$1 $2 of their choice$3');
+  // Invert the Skies: "Creatures your opponents control lose flying until end of turn if {G} was spent to cast this spell, and
+  // creatures you control gain flying until end of turn if {U} was spent to cast this spell."
+  text = text.replace(/^([A-Z][^,.]+?) if (\{[WUBRG]\}) was spent to cast (?:this spell|~), and ([a-z][^,.]+?) if (\{[WUBRG]\}) was spent to cast (?:this spell|~)\.$/, (_m, a: string, c1: string, bb: string, c2: string) =>
+    `If ${c1} was spent to cast this spell, ${a.replace(/^(?!~)\w/, (c) => c.toLowerCase())}. If ${c2} was spent to cast this spell, ${bb}.`);
   // Nightcreep: "Until end of turn, all creatures become black and all lands become Swamps." — both for that long.
   text = text.replace(/^Until end of turn, (all [^,.]+? become [^,.]+?) and (all [^,.]+? become [^,.]+?)\.$/, '$1 until end of turn. $2 until end of turn.');
   // Witch's Vengeance: "Creatures of the creature type of your choice get -3/-3 until end of turn." — the type is chosen as it
@@ -791,7 +807,13 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       s = s.replace(/^((?:That|Those) (?:creature|creatures|permanent|player)|It|They) also (?=[a-z])/, '$1 ');
       // Electro: "When you do, he deals X damage to target player." — a character card calling itself "he" or "she".
       // Kaito Shizuki: "If Kaito entered this turn, he phases out."
-      if (/\b(?:Creature|Planeswalker)\b/.test(b.env.typeLine)) s = s.replace(/^((?:If [^,]+, )?)(?:[Hh]e|[Ss]he) (?=(?:deals|gains|gets|fights|phases|connives|explores)(?: |$))/, '$1~ ');
+      // Machine Man: "put a +1/+1 counter on Machine Man and he gains flying until end of turn"; Jack of Hearts: "he deals
+      // damage equal to his power to each creature".
+      if (/\b(?:Creature|Planeswalker)\b/.test(b.env.typeLine)) {
+        s = s.replace(/^((?:If [^,]+, )?)(?:[Hh]e|[Ss]he) (?=(?:deals|gains|gets|fights|phases|connives|explores)(?: |$))/, '$1~ ');
+        s = s.replace(/( on ~ and) (?:he|she) (?=(?:gains|gets) )/, '$1 it ');
+        s = s.replace(/^(~ deals damage equal to) (?:his|her) (power|toughness)\b/, '$1 its $2');
+      }
       // Dawn's Truce: "If the gift was promised, permanents you control also gain indestructible until end of turn."
       s = s.replace(/^(If [^,]+, [^,]*?) also (?=(?:gains?|gets?|deals?|has|have|loses?|draws?|creates?|puts?) )/, '$1 ');
       // Finale of Glory: "If X is 10 or more, also create X 4/4 white Angel creature tokens …"
@@ -2356,7 +2378,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         continue;
       }
       // Nekrataal: "Destroy target nonartifact, nonblack creature. That creature can't be regenerated."
-      if (/^(?:It|They|Those creatures|That creature|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
+      if (/^(?:It|They|Those creatures|That creature|The creature|(?:A|The) (?:creature|permanent) destroyed this way|(?:Creatures|Permanents) destroyed this way) can't be regenerated$/.test(s)) {
         // The destroy effects of the sentence before ("Destroy target creature and all others with the same name").
         const destroys: EffectNode[] = [];
         const find = (list: EffectNode[]) => {
@@ -2820,6 +2842,25 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Disintegrate: "~ deals X damage to any target. If it's a creature, it can't be regenerated this turn, and if it would die
+  // this turn, exile it instead." (a player is unaffected); Scorching Lava: "If this spell was kicked, that creature …".
+  const disintegrate = /^(?:If (it's a creature|(?:this spell|~) was kicked), )?(?:[Ii]t|[Tt]hat creature) can't be regenerated this turn,? and if it would die this turn, exile it instead$/.exec(s);
+  if (disintegrate && b.damaged) {
+    const effects: EffectNode[] = [{ type: 'modify', what: b.damaged, rules: ['cant_be_regenerated'], until: 'eot' }, { type: 'exile_if_dies', what: b.damaged }];
+    // Only a creature (CR 700.4: a planeswalker "dies" too).
+    const creature: EffectNode = { type: 'if', cond: { type: 'is', of: b.damaged, filter: { types: ['Creature'] } }, effects };
+    return disintegrate[1] && disintegrate[1] !== "it's a creature" ? [{ type: 'if', cond: { type: 'kicked' }, effects: [creature] }] : [creature];
+  }
+  // Hurr Jackal: "Target creature can't be regenerated this turn."; Engulfing Flames: "It can't be regenerated this turn."
+  // (CR 701.19c)
+  const noRegen = /^(.+?) can't be regenerated this turn$/.exec(s);
+  if (noRegen && !/ dealt damage /.test(noRegen[1]!)) {
+    const r = attempt(b, (b) => {
+      const what = parseObjectRef(noRegen[1]!.replace(/^(?:It|That creature|The creature|Target creature)\b/, (w) => w.toLowerCase()), b);
+      return what ? [{ type: 'modify', what: what.ref, rules: ['cant_be_regenerated'], until: 'eot' } as EffectNode] : null;
+    });
+    if (r) return r;
+  }
   // Hit the Mother Lode: "If the discovered card's mana value is less than 10, create a number of tapped Treasure tokens equal
   // to the difference." — none if nothing was discovered (CR 701.57a).
   const shortfall = /^If the discovered card's mana value is less than (\d+), create a number of (tapped )?Treasure tokens equal to the difference$/.exec(s);
@@ -3216,10 +3257,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // Roiling Vortex: "Your opponents can't gain life this turn."; Skullcrack: "Players can't gain life this turn." (CR 119.7)
   // Screaming Nemesis: "… they can't gain life for the rest of the game."
   // Stigma Lasher: "Whenever this creature deals damage to a player, that player can't gain life for the rest of the game."
-  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent|That player|that player) can't gain life (this turn|for the rest of the game)$/.exec(s);
+  // Flames of the Blood Hand: "If that player or that planeswalker's controller would gain life this turn, that player gains
+  // no life instead." — the same (CR 119.7).
+  const noGainText = s.replace(/^If (that player or that planeswalker's controller|that player|target player) would gain life this turn, that player gains no life instead$/, (_m, who: string) => `${capitalise(who)} can't gain life this turn`);
+  const noGain = /^(Your opponents|Players|Each opponent|Target player|Target opponent|That player|that player|That player or that planeswalker's controller) can't gain life (this turn|for the rest of the game)$/.exec(noGainText);
   if (noGain) {
     const who: Ref | null = noGain[1] === 'Players' ? { ref: 'players', who: 'each' } : /^(?:Your opponents|Each opponent)$/.test(noGain[1]!) ? { ref: 'players', who: 'opponents' } : parsePlayerRef(noGain[1]!.toLowerCase(), b);
     return who ? [{ type: 'player_effect', who, rule: 'cant_gain_life', until: noGain[2] === 'this turn' ? 'eot' : 'game' }] : null;
+  }
+  // Pardic Miner: "Target player can't play lands this turn." (CR 305.2)
+  const noLands = /^(Target player|Target opponent|That player|that player|Each opponent|Your opponents) can't play lands this turn$/.exec(s);
+  if (noLands) {
+    const who: Ref | null = /^(?:Your opponents|Each opponent)$/.test(noLands[1]!) ? { ref: 'players', who: 'opponents' } : parsePlayerRef(noLands[1]!.toLowerCase(), b);
+    return who ? [{ type: 'player_effect', who, rule: 'cant_play_lands', until: 'eot' }] : null;
   }
   // Screaming Nemesis: "If a player is dealt damage this way, they can't gain life for the rest of the game." — the damage's
   // target, if it's a player that was dealt damage.
@@ -4790,7 +4840,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Great Train Heist: "Choose target opponent." — the player, for what follows ("that player").
-  if (/^[Cc]hoose (?:another )?target (?:opponent|player)$/.test(s)) {
+  if (/^[Cc]hoose (?:another )?target (?:opponent|player)(?: who .+)?$/.test(s)) {
     const r = attempt(b, (b) => {
       const who = parsePlayerRef(s.slice(7), b);
       if (!who) return null;

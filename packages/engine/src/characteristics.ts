@@ -518,7 +518,9 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
     ...(e.combat ? { combat: e.combat } : {}),
     ...(e.switchPT ? { switchPT: true as const } : {}),
     // CR 611.2c: locked to the objects it affected when it was created; Promise of Loyalty: while it has a vow counter.
-    applies: (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc) && (!e.whileCounter || (o.counters[e.whileCounter] ?? 0) > 0),
+    applies: e.filter
+      ? (o, c) => o.zone === 'battlefield' && !o.phasedOut && matchesFilter(g, o, e.filter!, { controller: e.controller, source: g.objects[e.source.id] ?? null }, c)
+      : (o) => e.objects.some((r) => r.id === o.id && r.zcc === o.zcc) && (!e.whileCounter || (o.counters[e.whileCounter] ?? 0) > 0),
   }));
 }
 
@@ -970,6 +972,7 @@ export function matchesFilter(
   // lands".
   if (f.except && matchesFilter(g, o, f.except, { ...ctx, anyZone: true }, c)) return false;
   if (f.sourceAttachedTo && !(ctx.source?.attachedTo && ctx.source.attachedTo.id === o.id && ctx.source.attachedTo.zcc === o.zcc)) return false;
+  if (f.notCombat && (f.notCombat === 'attacking' ? g.combat?.attackers[o.id] : g.combat?.blockers[o.id])) return false;
   if (f.combat) {
     const attacking = Boolean(g.combat?.attackers[o.id]);
     const blocking = Boolean(g.combat?.blockers[o.id]);
@@ -1294,7 +1297,7 @@ export function protectionQualities(g: GameState, o: GameObject): string[] {
  */
 export function bindQualityKeywords(
   keywords: KeywordInstance[],
-  bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless'; creatureType?: string; cardType?: string; chosenCardType?: string },
+  bind: { you: PlayerId; grantedBy?: string; color?: Color | 'colorless' | 'artifacts'; creatureType?: string; cardType?: string; chosenCardType?: string },
 ): KeywordInstance[] {
   if (!keywords.some((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text) || k.id === 'untargetable_by_opponents' || (k.id === 'untargetable' && k.opponents))) return keywords;
   return keywords.flatMap((k) => {
@@ -1306,7 +1309,7 @@ export function bindQualityKeywords(
       const r = readQuality(q);
       if (r?.kind === 'chosen_color' || r?.kind === 'choice') {
         if (!bind.color) ok = false;
-        return bind.color === 'colorless' ? 'colorless' : COLOR_NAMES[bind.color as Color] ?? q;
+        return bind.color === 'colorless' || bind.color === 'artifacts' ? bind.color : COLOR_NAMES[bind.color as Color] ?? q;
       }
       if (r?.kind === 'type_choice') {
         if (!bind.cardType) ok = false;

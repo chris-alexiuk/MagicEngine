@@ -19,7 +19,7 @@ export type Quality =
   | { kind: 'chosen_color' }
   /** "the color of your choice", "the color of its controller's choice", "colorless or from the color of your
    * choice": chosen as the effect that grants it resolves. */
-  | { kind: 'choice'; chooser: 'you' | 'its_controller'; colorless?: true }
+  | { kind: 'choice'; chooser: 'you' | 'its_controller'; colorless?: true; /** Apostle's Blessing: "artifacts or from the color of your choice". */ artifacts?: true }
   /** Pippin: "the card type of your choice" — chosen as the effect that grants it resolves. */
   | { kind: 'type_choice' }
   /** Objects of a kind: "artifacts", "Goblins", "non-Human creatures", "creatures your opponents control",
@@ -149,6 +149,7 @@ export function readQuality(q: string): Quality | null {
   if (q === 'the color of your choice') return { kind: 'choice', chooser: 'you' };
   if (q === "the color of its controller's choice") return { kind: 'choice', chooser: 'its_controller' };
   if (q === 'colorless or from the color of your choice') return { kind: 'choice', chooser: 'you', colorless: true };
+  if (q === 'artifacts or from the color of your choice') return { kind: 'choice', chooser: 'you', artifacts: true };
   if (q === 'the card type of your choice') return { kind: 'type_choice' };
   const mv = /^mana value (\d+)(?: or (less|greater))?$/.exec(q);
   if (mv) return { kind: 'mana_value', n: Number(mv[1]), cmp: mv[2] === 'less' ? 'lte' : mv[2] === 'greater' ? 'gte' : 'eq' };

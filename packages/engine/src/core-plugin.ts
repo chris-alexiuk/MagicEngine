@@ -664,10 +664,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // CR 701.6a: it's removed from the stack and put into its owner's graveyard — or exiled, if the counterspell says so;
       // Memory Lapse, Remand, Spell Crumple: on top of / into / on the bottom of its owner's library or hand.
       const to = node.to as 'library_top' | 'library_bottom' | 'hand' | undefined;
+      const caster = o.controller;
       if (to === 'hand') moveObject(ctx.g, o.id, 'hand', ctx.events);
       else if (to) moveObject(ctx.g, o.id, 'library', ctx.events, { position: to === 'library_top' ? 'top' : 'bottom' });
       else moveObject(ctx.g, o.id, node.exile ? 'exile' : 'graveyard', ctx.events);
-      ctx.events.push({ type: 'countered', object: o.id, by: ctx.controller });
+      ctx.events.push({ type: 'countered', object: o.id, by: ctx.controller, caster });
+      // Swift Silence: "Draw a card for each spell countered this way."
+      if (ctx.resolution) ctx.resolution.countered = (ctx.resolution.countered ?? 0) + 1;
     }
     return true;
   },
@@ -922,7 +925,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // (CR 400.7a).
     const permanentSpell = (o: GameObject) => o.zone === 'stack' && PERMANENT_CARD_TYPES.some((t) => chars(ctx.g, o).types.includes(t));
     const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield' || (flashback && o.zone === 'graveyard') || (spellColor && o.zone === 'stack') || permanentSpell(o));
-    if (!objects.length) return true;
+    // CR 611.2c: only an effect that changes characteristics (or control) is locked to the objects it affected as it began;
+    // "Creatures without flying can't block this turn" (Magmatic Chasm) applies to creatures that enter later too.
+    const what = ref(node, 'what');
+    const rulesOnly = (Array.isArray(node.rules) || node.combat) && CHARACTERISTIC_FIELDS.every((k) => node[k] === undefined) && !node.double;
+    const live = rulesOnly && what.ref === 'all' && what.filter && !JSON.stringify(what.filter).includes('"ref"') && !JSON.stringify(what.filter).includes('chosen') ? (what.filter as ObjectFilter) : undefined;
+    if (!objects.length && !live) return true;
     const g = ctx.g;
     const chosen = ctx.resolution?.chosen ?? {};
     // CR 702.16a: "gains protection from the color of your choice" — chosen now; "from the chosen color" — as chosen
@@ -932,15 +940,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const src = ctx.source;
       const lk = src && !src.chosen ? g.lastKnown?.[src.id] : undefined;
       const before = src?.chosen ?? (lk && lk.zcc + 1 === src!.zcc ? lk.chosen : undefined);
-      let color: Color | 'colorless' | undefined = chosen.color ?? before?.color;
+      let color: Color | 'colorless' | 'artifacts' | undefined = chosen.color ?? before?.color;
       const choice = keywords.flatMap((k) => ((k.id === 'protection' || k.id === 'hexproof_from') && k.text ? splitQualities(k.text).map(readQuality) : [])).find((r) => r?.kind === 'choice');
       if (choice?.kind === 'choice') {
         const chooser = choice.chooser === 'its_controller' ? objects[0]!.controller : ctx.controller;
-        const options = [...(choice.colorless ? ['colorless'] : []), 'W', 'U', 'B', 'R', 'G'];
+        const options = [...(choice.colorless ? ['colorless'] : []), ...(choice.artifacts ? ['artifacts'] : []), 'W', 'U', 'B', 'R', 'G'];
         const answer = answerOf(ctx, 'choose_option');
         if (!answer) return { ask: { kind: 'choose_option', player: chooser, options, text: 'Choose a color (protection).', sourceName: sourceName(ctx) } };
         if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
-        color = answer.choice as Color | 'colorless';
+        color = answer.choice as Color | 'colorless' | 'artifacts';
       }
       // Pippin: "protection from the card type of your choice".
       let cardType: string | undefined;
@@ -974,7 +982,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       timestamp: ++g.clock,
       source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
       controller: ctx.controller,
-      objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
+      objects: live ? [] : objects.map((o) => ({ id: o.id, zcc: o.zcc })),
+      ...(live ? { filter: live } : {}),
       // CR 608.2h: a counted amount ("+1/+1 for each creature you control") is counted once, now.
       ...(node.power !== undefined ? { power: amountOf(ctx, node.power), toughness: amountOf(ctx, node.toughness ?? 0) } : {}),
       ...(keywords ? { keywords } : {}),
@@ -5626,6 +5635,12 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'you' ? e.by !== check.controller : t.who === 'opponent' ? e.by === check.controller : false) return [];
     return [{ player: e.by }];
   },
+  // Multani's Presence: "Whenever a spell you've cast is countered" (CR 701.6a).
+  spell_countered(_t, check) {
+    const e = check.event;
+    if (e.type !== 'countered' || !e.caster || e.caster !== check.controller || check.sourceLeft) return [];
+    return [{ player: e.caster }];
+  },
   // CR 603.2b: "at the beginning of" a step triggers as the step begins.
   phase(t, check) {
     const e = check.event;
@@ -5965,6 +5980,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // onto the battlefield.
   // Archivist of Oghma: "Whenever an opponent searches their library"
   // Ezuri, Stalker of Spheres: "Whenever you proliferate" (CR 701.34).
+  // CR 701.44: "Whenever a creature you control explores" (Wildgrowth Walker, Lurking Chupacabra) — once for each explore.
+  explores(t, check) {
+    const e = check.event;
+    if (e.type !== 'explored' || check.sourceLeft) return [];
+    const o = check.g.objects[e.object];
+    return o && subjectMatches(check, t.subject as Ref, o, { anyZone: true }) ? [{ object: refTo(o) }] : [];
+  },
   proliferated(t, check) {
     const e = check.event;
     if (e.type !== 'proliferated' || check.sourceLeft || e.player !== check.controller) return [];
@@ -6131,6 +6153,9 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
 };
 
 
+
+/** A `modify` that sets any of these changes characteristics (CR 613.1: layers 4–7) — see CR 611.2c. */
+const CHARACTERISTIC_FIELDS = ['power', 'keywords', 'loseKeywords', 'cantHave', 'types', 'allCreatureTypes', 'colors', 'addColors', 'creatureTypes', 'landTypes', 'loseAbilities', 'setPower', 'livePower', 'switchPT'] as const;
 
 export const corePlugin: MechanicPlugin = {
   id: 'core',

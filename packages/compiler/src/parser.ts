@@ -140,6 +140,23 @@ export class ParserRegistry {
           const each = andEnchanted[1]!.replace(/^(\+\d+\/\+\d+) for each (.+?) and \1 for each (.+)$/, '$1 for each $2 and each $3');
           return [`This creature gets ${each}.`, `Enchanted creature gets ${each}.`];
         }
+        // Kavu Titan: "If this creature was kicked, it enters with three +1/+1 counters on it and with trample." — the counters
+        // as it enters (CR 614.1c), and the keyword for as long as it's on the battlefield (CR 702.33d: it was kicked).
+        const kickedWith = new RegExp(`^If (?:this creature|~|${names}) was (kicked(?: with its \\{[^}]+\\}(?:\\{[^}]+\\})* kicker)?), it enters with (.+? on it) and with ([a-z ]+)\\.$`).exec(l);
+        if (kickedWith) return [`If this creature was ${kickedWith[1]}, it enters with ${kickedWith[2]}.`, `This creature has ${kickedWith[3]} as long as it was ${kickedWith[1]}.`];
+        // Homicidal Seclusion: "As long as you control exactly one creature, that creature gets +3/+1 and has lifelink." — the one
+        // creature you control.
+        const lone = /^As long as you control exactly one creature, that creature gets ([+-]\d+\/[+-]\d+) and has (.+)\.$/.exec(l);
+        if (lone) return [`As long as you control exactly one creature, creatures you control get ${lone[1]} and have ${lone[2]}.`];
+        // Hobble: "Enchanted creature can't block if it's black." — for as long as it is.
+        const ifIts = /^((?:Enchanted|Equipped) creature) (can't (?:attack|block)(?: or block)?) if it's ([^,.]+)\.$/.exec(l);
+        if (ifIts) return [`${ifIts[1]} ${ifIts[2]} as long as it's ${ifIts[3]}.`];
+        // Ruthless Disposal: "As an additional cost to cast this spell, discard a card and sacrifice a creature." — both costs
+        // (CR 601.2f).
+        const twoCosts = /^(As an additional cost to cast this spell, )((?:discard|sacrifice|pay|exile|tap|return|reveal) [^.]+?) and ((?:discard|sacrifice|pay|exile|tap|return|reveal) [^.]+)\.$/.exec(l);
+        if (twoCosts) return [`${twoCosts[1]}${twoCosts[2]}.`, `${twoCosts[1]}${twoCosts[3]}.`];
+        // Greener Pastures: "…, if that player controls more lands than each other player, the player creates …" — that player.
+        if (/, if that player [^,]+, the player /.test(l)) return [l.replace(/(, if that player [^,]+, )the player /, '$1that player ')];
         // Tidal Barracuda: "Any player may cast spells as though they had flash."
         if (l === 'Any player may cast spells as though they had flash.') return ['Players may cast spells as though they had flash.'];
         // Vizier of the Menagerie: "You can spend mana of any type to cast creature spells." — as though any color.

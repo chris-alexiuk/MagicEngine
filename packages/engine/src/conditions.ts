@@ -403,9 +403,16 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       if (cond.of) {
         if (!ofTarget || ofTarget.kind !== 'object') return false;
         const now = g.objects[ofTarget.id];
-        if (now && now.zcc === ofTarget.zcc && now.zone === 'battlefield') return cond.subtype ? chars(g, now).subtypes.includes(String(cond.subtype)) : chars(g, now).types.includes(String(cond.cardType) as never);
         const lk = g.lastKnown?.[ofTarget.id];
-        return Boolean(lk && lk.zcc === ofTarget.zcc && (cond.subtype ? lk.subtypes?.includes(String(cond.subtype)) : lk.types?.includes(String(cond.cardType))));
+        const was = now && now.zcc === ofTarget.zcc && now.zone === 'battlefield' ? chars(g, now) : lk && lk.zcc === ofTarget.zcc ? { types: lk.types ?? [], subtypes: lk.subtypes ?? [], supertypes: lk.supertypes ?? [], colors: lk.colors ?? [] } : null;
+        if (!was) return false;
+        // Filigree Fracture: "If that permanent was blue or black" — any of them.
+        if (Array.isArray(cond.colors)) return (cond.colors as string[]).some((c) => (was.colors as string[]).includes(c));
+        // Liliana's Defeat: "a Liliana planeswalker" (both); Choking Sands: "nonbasic" (CR 205.4).
+        if (cond.subtype && !was.subtypes.includes(String(cond.subtype))) return false;
+        if (cond.cardType && !(was.types as string[]).includes(String(cond.cardType))) return false;
+        if (cond.supertype && (was.supertypes as string[]).includes(String(cond.supertype)) === Boolean(cond.notSupertype)) return false;
+        return Boolean(cond.subtype || cond.cardType || cond.supertype);
       }
       const r = ctx.trigger?.object;
       const last = r ? g.lastKnown?.[r.id] : undefined;

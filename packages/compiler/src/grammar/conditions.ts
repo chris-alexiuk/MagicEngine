@@ -17,6 +17,12 @@ function count(word: string): { min?: number; max?: number } | null {
     const n = parseAmount(more[1]!);
     return typeof n === 'number' ? { min: n } : null;
   }
+  // Demonic Rising: "if you control exactly one creature".
+  const exactly = /^exactly (\w+)$/.exec(word);
+  if (exactly) {
+    const n = parseAmount(exactly[1]!);
+    return typeof n === 'number' ? { min: n, max: n } : null;
+  }
   const fewer = /^(\w+) or (?:fewer|less)$/.exec(word);
   if (fewer) {
     const n = parseAmount(fewer[1]!);
@@ -493,6 +499,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const n = parseAmount(statWas[3]!);
     if (typeof n === 'number') return { type: 'is', of: b.it, filter: { [statWas[1]!]: { op: statWas[2] === 'less than' ? 'lt' : 'gt', n } }, was: true };
   }
+  // Deathknell Berserker: "When this creature dies, if its power was 3 or greater, …" — as it last existed (CR 603.10a).
+  const statOrMore = /^its (power|toughness) was (\w+) or (greater|less)$/.exec(t);
+  if (statOrMore && (b.it?.ref === 'trigger_object' || (b.it?.ref === 'self' && b.itIsSource))) {
+    const n = parseAmount(statOrMore[2]!);
+    if (typeof n === 'number') return { type: 'is', of: b.it, filter: { [statOrMore[1]!]: { op: statOrMore[3] === 'less' ? 'le' : 'ge', n } }, was: true };
+  }
   // Selvala: "if its power is greater than each other creature's power"
   if (t === "its power is greater than each other creature's power" && b.it) return { type: 'is', of: b.it, filter: { powerAboveOthers: true } };
   // Tezzeret: "If it's an artifact creature, put a +1/+1 counter on it." — what it is now (the sentence loop makes sure an
@@ -652,7 +664,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (!pf || pf.plural) return null;
     return { type: 'count', who: 'you', filter: { ...pf.filter, ...(dont[1] === 'another' ? { other: true } : {}) }, max: 0 };
   }
-  const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer) (other )?(?!more )(.+)$/.exec(t);
+  const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer|exactly \w+) (other )?(?!more )(.+)$/.exec(t);
   if (control) {
     const c = count(control[2]!);
     const pf = parseFilter(control[4]!.replace(/ or an? /g, ' or '), b);
@@ -703,6 +715,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Resonating Lute: "… cards in your hand" means the same.
   if (/^you have /.test(t)) t = t.replace(/ cards in your hand( than|$)/, ' cards in hand$1');
   if (/^you have no cards in hand$/.test(t)) return { type: 'hand', op: 'le', n: 0 };
+  // Imaginary Pet: "if you have a card in hand".
+  if (/^you have (?:a card|one or more cards|any cards) in hand$/.test(t)) return { type: 'hand', op: 'ge', n: 1 };
   // Temple of the Dead: "if a player has one or fewer cards in hand"; "an opponent has no cards in hand".
   const someHand = /^(a player|an opponent) has (no|\w+ or (?:fewer|more)) cards in hand$/.exec(t);
   if (someHand) {
@@ -992,6 +1006,8 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (t === 'you gained or lost life this turn') return { type: 'or', any: [{ type: 'this_turn', event: 'you_gained_life' }, { type: 'this_turn', event: 'you_lost_life' }] };
   // River of Tears: "If you played a land this turn" (CR 305.1: played, not just put onto the battlefield).
   if (/^you(?:'ve)? played a land this turn$/.test(t)) return { type: 'this_turn', event: 'you_played_land' };
+  // Mercadian Atlas: "if you didn't play a land this turn".
+  if (/^you (?:didn't|did not|haven't) play(?:ed)? a land this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_played_land' } };
   // Mirrex: "Activate only if this land entered this turn."
   if (/^(?:~|this (?:land|creature|artifact|permanent|enchantment)) entered (?:the battlefield )?this turn$/.test(t)) return { type: 'is', of: { ref: 'self' }, filter: { enteredThisTurn: true } };
   // Thrasta, Tempest's Roar: "~ has hexproof as long as it entered this turn" — itself.
@@ -1005,10 +1021,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Fortune Teller's Talent: "you've cast a spell this turn"; Essence Channeler: "you've lost life this turn".
   if (/^you(?:'ve)? cast a spell this turn$/.test(t)) return { type: 'this_turn', event: 'you_cast_spell' };
   // Impatience: "At the beginning of each player's end step, if that player didn't cast a spell this turn, …".
-  const theyCast = /^(that player|they) (didn't|did not|hasn't|haven't|has|have) cast a spell this turn$/.exec(t);
+  // Predatory Advantage: "if that player didn't cast a creature spell this turn".
+  const theyCast = /^(that player|they) (didn't|did not|hasn't|haven't|has|have) cast an? (?:(creature|noncreature|instant|sorcery|artifact|enchantment) )?spell this turn$/.exec(t);
   if (theyCast) {
     const who = parsePlayerRef(theyCast[1]!, b);
-    if (who && who.ref !== 'you' && who.ref !== 'players') return { type: 'amount', amount: { kind: 'spells_cast_this_turn', player: who }, op: /n't|not/.test(theyCast[2]!) ? 'eq' : 'ge', n: /n't|not/.test(theyCast[2]!) ? 0 : 1 } as ConditionNode;
+    const kind = theyCast[3];
+    const filter = kind ? (kind === 'noncreature' ? { notTypes: ['Creature'] } : { types: [capitalise(kind)] }) : undefined;
+    if (who && who.ref !== 'you' && who.ref !== 'players') return { type: 'amount', amount: { kind: 'spells_cast_this_turn', player: who, ...(filter ? { filter } : {}) }, op: /n't|not/.test(theyCast[2]!) ? 'eq' : 'ge', n: /n't|not/.test(theyCast[2]!) ? 0 : 1 } as ConditionNode;
   }
   // Conduit of Worlds: "If you haven't cast a spell this turn".
   if (/^you (?:haven't|have not|didn't) cast a spell this turn$/.test(t)) return { type: 'not', cond: { type: 'this_turn', event: 'you_cast_spell' } };
@@ -1109,6 +1128,17 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (wasSub && isSubtype(wasSub[2]!) && (b.it?.ref === 'trigger_object' || (/^that creature/.test(t) && b.named['that creature']?.ref === 'trigger_object'))) {
     const c: ConditionNode = { type: 'was_type', subtype: wasSub[2]! };
     return wasSub[1] === 'was' ? c : { type: 'not', cond: c };
+  }
+  // Liliana's Defeat: "Destroy target black creature or black planeswalker. If that permanent was a Liliana planeswalker, …";
+  // Choking Sands: "Destroy target non-Swamp land. If that land was nonbasic, …" — as it last existed.
+  // Filigree Fracture: "If that permanent was blue or black, draw a card."
+  const wasColor = /^that (?:permanent|creature|artifact|enchantment|planeswalker) was (white|blue|black|red|green)(?: or (white|blue|black|red|green))?$/.exec(t);
+  if (wasColor && b.it?.ref === 'target') return { type: 'was_type', of: b.it, colors: [wasColor[1]!, wasColor[2]].filter(Boolean).map((c) => COLOR_WORDS[c!]!) } as ConditionNode;
+  const wasKind = /^that (?:permanent|creature|land|artifact|planeswalker) was (?:an? ([A-Z][a-z]+) (planeswalker|creature|land|artifact)|(nonbasic|basic|legendary|nonlegendary))$/.exec(t);
+  if (wasKind && b.it?.ref === 'target' && (!wasKind[1] || isSubtype(wasKind[1]))) {
+    if (wasKind[1]) return { type: 'was_type', of: b.it, subtype: wasKind[1], cardType: capitalise(wasKind[2]!) };
+    const sup = wasKind[3]!.replace(/^non/, '');
+    return { type: 'was_type', of: b.it, supertype: capitalise(sup), ...(wasKind[3]!.startsWith('non') ? { notSupertype: true } : {}) } as ConditionNode;
   }
   // Zephyr Sentinel: "return up to one other target creature you control to its owner's hand. If it was a Soldier, …".
   if (wasSub && wasSub[1] === 'was' && isSubtype(wasSub[2]!) && b.it?.ref === 'target') return { type: 'was_type', subtype: wasSub[2]!, of: b.it };

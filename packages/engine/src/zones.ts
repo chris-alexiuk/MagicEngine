@@ -250,6 +250,10 @@ export function moveObject(
       ...attachmentKinds(g, o),
       types: [...c.types],
       subtypes: [...c.subtypes],
+      // Choking Sands: "If that land was nonbasic".
+      ...(c.supertypes.length ? { supertypes: [...c.supertypes] } : {}),
+      // Filigree Fracture: "If that permanent was blue or black".
+      ...(c.colors.length ? { colors: [...c.colors] } : {}),
       // Wilhelt, the Rotcleaver: "if it didn't have decayed".
       ...(c.keywords.length ? { keywords: [...new Set(c.keywords.map((k) => k.id))] } : {}),
       ...(o.attachedToPlayer ? { enchantedPlayer: o.attachedToPlayer } : {}),
@@ -350,6 +354,7 @@ export function moveObject(
   delete o.monstrous;
   delete o.harnessed;
   delete o.chosen;
+  delete o.devoured;
   delete o.exiledBy;
   delete o.skipUntap;
   delete o.classLevel;

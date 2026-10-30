@@ -698,7 +698,7 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
       delete o.copyRevert;
     }
   }
-  g.effects = g.effects.filter((e) => e.until !== 'eot' && !(e.throughTurn !== undefined && e.throughTurn <= g.turn) && e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc));
+  g.effects = g.effects.filter((e) => e.until !== 'eot' && !(e.throughTurn !== undefined && e.throughTurn <= g.turn) && (e.filter || e.objects.some((r) => g.objects[r.id]?.zcc === r.zcc)));
   // CR 514.2: "this turn" prevention ends; "until your next turn" lasts on.
   g.prevention = g.prevention.filter((p) => p.untilTurnOf !== undefined);
   applyControlEffects(g, events);

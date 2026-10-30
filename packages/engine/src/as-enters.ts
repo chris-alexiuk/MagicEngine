@@ -206,6 +206,7 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
       const chosen = answer.sacrifice ?? [];
       if (new Set(chosen).size !== chosen.length || !chosen.every((id) => p.candidates?.includes(id))) throw new RulesError('Choose creatures you control to sacrifice.');
       for (const id of chosen) sacrifice(g, g.objects[id]!, player, events);
+      o.devoured = chosen.length;
       // "This permanent enters with N +1/+1 counters on it for each creature sacrificed this way."
       const n = Number(next.node.amount ?? 1) * chosen.length;
       if (n > 0 && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + n;

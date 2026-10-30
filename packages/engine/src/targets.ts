@@ -4,7 +4,7 @@ import { amountOf } from './resolve.js';
 import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
 import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TriggerInfo } from './types.js';
 import { playerProtectedFrom, playerRule } from './player-rules.js';
-import { livePlayers, manaValueOf, nameOf } from './zones.js';
+import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
 
 /**
  * Targeting (CR 115). `source` is the object the spell or ability comes from: the
@@ -25,6 +25,43 @@ export function targetingAs<T>(ability: boolean, fn: () => T): T {
   } finally {
     byAbility = before;
   }
+}
+
+/** CR 608.2b: targets being rechecked as a spell or ability resolves (Keeper of the Flame: "as you activate this ability" isn't). */
+let resolving = false;
+export function checkingOnResolution<T>(fn: () => T): T {
+  const before = resolving;
+  resolving = true;
+  try {
+    return fn();
+  } finally {
+    resolving = before;
+  }
+}
+
+/** Rix Maadi Guildmage: "target player who lost life this turn"; Keeper of the Flame: "who has more life than you do". */
+function playerWhoOk(g: GameState, controller: PlayerId, who: NonNullable<TargetSpec['who']>, player: PlayerId, source: GameObject | null): boolean {
+  if (who.lostLife && !((g.turnLog.lifeLost?.[player] ?? 0) > 0)) return false;
+  if (who.attacked && !g.turnLog.attacked.includes(player)) return false;
+  // Hope of Ghirapur sacrifices itself as it's activated: what it did this turn stays done (CR 608.2b).
+  if (who.combatDamagedBySource && !resolving && !(source && (g.turnLog.playerDamagedBy?.[player] ?? []).includes(`c:${source.id}:${source.zcc}`))) return false;
+  if (who.more && !(who.asActivated && resolving)) {
+    const stat = (p: PlayerId): number => {
+      switch (who.more!.stat) {
+        case 'life':
+          return g.players[p]!.life;
+        case 'hand':
+          return zoneList(g, 'hand', p).length;
+        case 'creatures':
+          return g.zones.battlefield.filter((id) => g.objects[id]!.controller === p && !g.objects[id]!.phasedOut && chars(g, g.objects[id]!).types.includes('Creature')).length;
+        case 'graveyard_creatures':
+          return zoneList(g, 'graveyard', p).filter((id) => faceOf(g, g.objects[id]!).types.includes('Creature')).length;
+      }
+    };
+    const diff = who.more.fewer ? stat(controller) - stat(player) : stat(player) - stat(controller);
+    if (diff < Math.max(1, who.more.by ?? 1)) return false;
+  }
+  return true;
 }
 
 /** The event a triggered ability's targets are being chosen or checked for (Scrap Trawler: "with lesser mana value"). */
@@ -130,6 +167,11 @@ function countedFilter(g: GameState, controller: PlayerId, given: ObjectFilter, 
     const player = !known ? undefined : index === undefined ? triggerInfo!.player : playerOfTarget(g, priorTargets![index]?.[0]);
     filter = known ? { ...rest, controllerPlayer: player ?? '\u0000none' } : rest;
   }
+  // Ordruun Mentor: "target creature that's attacking that player" — the player the trigger is about.
+  if (filter.attackingPlayerRef) {
+    const { attackingPlayerRef: _a, ...rest } = filter;
+    filter = triggerInfo?.player ? { ...rest, attackingPlayer: triggerInfo.player } : rest;
+  }
   // Due Diligence: "target creature you control other than enchanted creature" — the one this Aura is attached to.
   if (filter.otherThan && (filter.otherThan as { ref?: string }).ref === 'attached') {
     const { otherThan: _o, ...rest } = filter;
@@ -232,6 +274,7 @@ function canTargetPlayer(g: GameState, controller: PlayerId, spec: TargetSpec, p
   if (spec.notTriggerPlayer && triggerInfo?.player === player) return false;
   // Needle Drop: "any target that was dealt damage this turn".
   if (spec.damagedThisTurn && !((g.turnLog.damageTaken?.[player] ?? 0) > 0)) return false;
+  if (spec.who && !playerWhoOk(g, controller, spec.who, player, source)) return false;
   // CR 702.11c: a player with hexproof can't be the target of spells or abilities their opponents control;
   // CR 702.18: with shroud, of any spell or ability.
   if (playerRule(g, player, 'shroud')) return false;
