@@ -26,6 +26,8 @@ export { activatedAbilities, flatten, spellPrograms } from './program.js';
 export { canChooseTargets, defaultTargets, isLegalTarget, targetCandidates, targetingAs, targetPrompts } from './targets.js';
 export { attackRestriction, attackTax, attackTargets, combatLimits, mustAttack, blockDeclarationProblem, defendingPlayers, evasionProblem as blockProblem } from './combat.js';
 export { parseManaCost, payFromPool } from './mana.js';
+export { choiceModes, choicePrompts, defaultCastChoice, withCharsCache } from './ui.js';
+export type { ModeMenu } from './ui.js';
 export { hasEffectHandler, hasStaticHandler, hasTriggerMatcher, installPlugin, installedPlugins } from './registry.js';
 export type { EffectContext, EffectHandler, EffectResult, EnterReplacement, MechanicPlugin, TriggerCheck, TriggerMatcher } from './registry.js';
 export * from './types.js';
