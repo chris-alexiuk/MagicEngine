@@ -1903,6 +1903,7 @@ code {
 .opponents {
   display: grid;
   gap: 10px;
+  flex: 1 0 auto;
 }
 .opponents.n2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1937,7 +1938,8 @@ code {
   font-size: 21px;
 }
 .seat.me {
-  margin-top: auto;
+  flex: 1 0 auto;
+  grid-template-rows: 1fr auto;
   border-color: var(--line);
   background: rgba(0, 0, 0, 0.16);
 }
@@ -2151,9 +2153,15 @@ button.pile:hover .pile-label {
   min-width: 0;
 }
 .lane.front {
+  flex: 1 0 auto;
   justify-content: center;
   min-height: 46px;
   padding: 4px 0;
+}
+/* Spare height goes to the creature lanes; creatures sit toward the middle. */
+.lanes.far .lane.front {
+  align-items: flex-end;
+  align-content: flex-end;
 }
 .lane.back {
   justify-content: space-between;
@@ -2628,6 +2636,15 @@ button.pile:hover .pile-label {
 }
 .hover-card .proxy {
   font-size: 13px;
+}
+/* The preview is the place to read a proxy, so its rules text gets the room. */
+.hover-card .proxy-art {
+  flex-basis: 24%;
+}
+.hover-card .proxy-text {
+  font-size: 12px;
+  line-height: 1.35;
+  padding-bottom: 10%;
 }
 .hover-manual {
   position: absolute;
