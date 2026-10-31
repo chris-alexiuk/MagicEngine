@@ -85,14 +85,23 @@ export function AutomationMark({ level, size = 12 }: { level: Automation; size?:
 // Card image with a text "proxy" fallback (offline, missing scan, blocked CDN).
 // ---------------------------------------------------------------------------
 
+/** The frame color a text proxy uses: the card's color, gold for several, gray for colorless, brown for lands. */
+function frameOf(face: FaceDef): string {
+  if (face.colors.length > 1) return 'gold';
+  if (face.colors.length === 1) return face.colors[0]!.toLowerCase();
+  return face.types.includes('Land') ? 'land' : 'colorless';
+}
+
+/** A text stand-in drawn like a card frame: name and cost, art area, type line, rules text, P/T box. */
 export function Proxy({ face }: { face: FaceDef }) {
   const pt = face.power !== undefined ? `${face.power}/${face.toughness}` : face.loyalty ?? face.defense;
   return (
-    <div className="proxy" aria-hidden="true">
+    <div className={`proxy frame-${frameOf(face)}`} aria-hidden="true">
       <div className="proxy-head">
         <span className="proxy-name">{face.name}</span>
         <ManaCost cost={face.manaCost} />
       </div>
+      <div className="proxy-art" />
       <div className="proxy-type">{face.typeLine}</div>
       <div className="proxy-text">
         {face.oracle.split('\n').map((line, i) => (

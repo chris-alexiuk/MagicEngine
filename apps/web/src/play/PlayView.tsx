@@ -4,7 +4,8 @@ import { chars, legalActions, STEPS, viewFor, withCharsCache, type Action, type 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AUTOMATION_LABEL, AutomationMark, CardImage, RulesText } from '../components/bits';
 import { deckCount, validateDeck, type Deck } from '../deck/model';
-import { SeatArea, type BoardHandlers } from './Board';
+import { cardClass, Seat, type BoardHandlers } from './Board';
+import { Actions, ActionBarSlot } from './actionbar';
 import { shownCard, TableCard } from './cards';
 import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices, ObjectTile } from './Choices';
 import { actionLabel, actionObject, targetLabel } from './labels';
@@ -279,11 +280,20 @@ function Table({ live, setLive, onLeave }: { live: Live; setLive: (l: Live) => v
     else act(a);
   };
 
+  // The stack entry in focus (hovered, else the top): what it targets is highlighted on the table.
+  const [stackFocus, setStackFocus] = useState<number | null>(null);
+  const targeted = useMemo(() => {
+    const e = g.stack[stackFocus ?? g.stack.length - 1];
+    return new Set((e?.targets ?? []).flat().flatMap((t) => (t.kind === 'object' ? [t.id] : t.kind === 'player' ? [t.player] : [])));
+  }, [g, stackFocus]);
+  const [barEl, setBarEl] = useState<HTMLElement | null>(null);
+
   const h: BoardHandlers = {
     pick: curtained ? null : pick,
     selected,
     actionable: flow || g.pending ? new Set() : actionable,
     manaOnly,
+    targeted,
     onCard: (id) => {
       if (pick?.objects.has(id)) pick.onPick({ kind: 'object', object: id });
       else if (!pick || (!flow && !g.pending)) setSelected(selected === id ? null : id);
@@ -298,106 +308,114 @@ function Table({ live, setLive, onLeave }: { live: Live; setLive: (l: Live) => v
     const i = g.order.indexOf(seat);
     return [...g.order.slice(i + 1), ...g.order.slice(0, i)];
   })();
-  const compact = others.length > 1;
   const pendingMine = viewer && g.pending && g.pending.player === viewer ? (view.pending as typeof g.pending) : null;
   const myPriority = Boolean(viewer && g.priority === viewer && !g.pending);
   const top = g.stack[g.stack.length - 1];
+  const endTurn = () => {
+    setPassUntil({ player: viewer!, turn: g.turn });
+    const r = step(g, { type: 'pass', player: viewer! }, stops, { player: viewer!, turn: g.turn });
+    if (r.ok) {
+      const lines = r.applied.steps.flatMap((s) => narrate(s.before, s.after, s.events, nextLogId));
+      const actions = [...live.actions, ...r.applied.steps.map((s) => s.action)];
+      setLive({ ...live, state: r.applied.state, actions, log: [...live.log, ...lines].slice(-800) });
+      saveGame({ setup: live.setup, actions, savedAt: new Date().toISOString() });
+      setSelected(null);
+    } else setError({ text: r.error, bug: true });
+  };
+  const choicePanel = pendingMine ? (
+    <ChoicePanel key={JSON.stringify(pendingMine).length + pendingMine.kind + live.actions.length} g={g} view={view} pending={pendingMine} me={viewer!} answer={answer} act={(a) => act(a)} setPick={setPick} />
+  ) : null;
+  // Damage assignment is a step of its own: it opens over the table, like a client's damage prompt.
+  const overlayChoice = pendingMine?.kind === 'assign_combat_damage';
 
   return (
-    <div className="play">
-      <div className="table">
-        <div className={`opponents n${others.length}`}>
-          {others.map((p) => (
-            <SeatArea key={p} g={g} view={view} player={p} h={h} isViewer={false} deciding={who === p} compact={compact} />
-          ))}
-        </div>
-        <SeatArea g={g} view={view} player={seat} h={h} isViewer={!curtained} deciding={who === seat} compact={false} />
-        {hover && !curtained && <HoverPreview view={view} id={hover.id} rect={hover.rect} />}
-      </div>
-
-      <aside className="play-side" aria-label="Game controls">
-        <TurnBox g={g} who={who} />
-        <div className="prompt" aria-live="polite">
-          {error && (
-            <div className="banner warn">
-              <strong>{error.bug ? 'The engine refused an action it offered.' : 'That isn’t allowed.'}</strong> {error.text}
-              {error.bug && <span className="hint"> (Logged to the console with the action — that’s an engine bug.)</span>}
-            </div>
-          )}
-          {g.over ? (
-            <div className="flow-step">
-              <p className="flow-title">{g.winner ? `${g.players[g.winner]!.name} wins!` : 'The game is a draw.'}</p>
-              <button type="button" className="primary" onClick={() => { clearSavedGame(); onLeave(); }}>
-                New game
-              </button>
-            </div>
-          ) : curtained ? (
-            <p className="hint">Waiting for {g.players[who!]!.name}.</p>
-          ) : pendingMine ? (
-            <>
-              <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
-              <ChoicePanel key={JSON.stringify(pendingMine).length + pendingMine.kind + live.actions.length} g={g} view={view} pending={pendingMine} me={viewer!} answer={answer} act={(a) => act(a)} setPick={setPick} />
-            </>
-          ) : flow ? (
-            <ActionFlow key={JSON.stringify(flow)} g={g} view={view} action={flow} setPick={setPick} onCommit={(a) => act(a, false)} onCancel={() => { setFlow(null); setPickState(null); }} />
-          ) : myPriority ? (
-            <SelectedPanel g={g} view={view} id={selected} actions={selected ? (byObject.get(selected) ?? []) : []} extra={extra} onChoose={choose} />
-          ) : null}
-        </div>
-
-        {myPriority && !flow && (
-          <div className="pass-box">
-            <button type="button" className="primary" onClick={() => act({ type: 'pass', player: viewer! })}>
-              {top ? `Pass — let ${top.kind === 'spell' ? publicName(top.object, g) : `${top.sourceName}’s ability`} resolve` : g.active === viewer ? `Pass — go to ${nextStepName(g.step)}` : 'Pass'}
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              title="Pass priority until the turn ends, unless an opponent casts or activates something"
-              onClick={() => {
-                setPassUntil({ player: viewer!, turn: g.turn });
-                const r = step(g, { type: 'pass', player: viewer! }, stops, { player: viewer!, turn: g.turn });
-                if (r.ok) {
-                  const lines = r.applied.steps.flatMap((s) => narrate(s.before, s.after, s.events, nextLogId));
-                  const actions = [...live.actions, ...r.applied.steps.map((s) => s.action)];
-                  setLive({ ...live, state: r.applied.state, actions, log: [...live.log, ...lines].slice(-800) });
-                  saveGame({ setup: live.setup, actions, savedAt: new Date().toISOString() });
-                  setSelected(null);
-                } else setError({ text: r.error, bug: true });
-              }}
-            >
-              {g.active === viewer ? 'End turn' : 'Pass for the rest of this turn'}
-            </button>
-            <button type="button" className="ghost tiny" onClick={() => setShowStops(!showStops)} aria-expanded={showStops}>
-              Stops
-            </button>
+    <ActionBarSlot.Provider value={barEl}>
+      <div className={`play seats-${g.order.length}`}>
+        <PhaseStrip g={g} who={who} />
+        <div className="table">
+          <div className={`opponents n${others.length}`}>
+            {others.map((p) => (
+              <Seat key={p} g={g} view={view} player={p} h={h} me={false} deciding={who === p} />
+            ))}
           </div>
-        )}
-        {showStops && viewer && <StopsEditor stops={stops[viewer] ?? DEFAULT_STOPS} onChange={(s) => setStop(viewer, s)} name={g.players[viewer]!.name} />}
-
-        <StackBox g={g} pick={curtained ? null : pick} />
-        <LogBox log={live.log} viewer={viewer} />
-        <div className="side-foot">
-          <button type="button" className="ghost tiny" onClick={onLeave}>
-            Leave table (game is saved)
-          </button>
-          {viewer && !g.over && (
-            <button
-              type="button"
-              className="ghost tiny danger"
-              onClick={() => {
-                if (window.confirm(`Concede the game for ${g.players[viewer]!.name}?`)) act({ type: 'concede', player: viewer });
-              }}
-            >
-              Concede
-            </button>
+          <StackBand g={g} view={view} pick={curtained ? null : pick} onFocus={setStackFocus} onHover={h.onHover} />
+          <Seat g={g} view={view} player={seat} h={h} me={!curtained} deciding={who === seat} />
+          {hover && !curtained && <HoverPreview view={view} id={hover.id} rect={hover.rect} />}
+          {overlayChoice && choicePanel && (
+            <div className="overlay" role="dialog" aria-label="Assign combat damage">
+              <div className="overlay-panel">{choicePanel}</div>
+            </div>
           )}
         </div>
-      </aside>
 
-      {curtained && who && <Curtain g={g} who={who} log={live.log} onReady={() => setHolder(who)} />}
-      {zone && <ZoneDialog g={g} view={view} player={zone.player} zone={zone.zone} onClose={() => setZone(null)} />}
-    </div>
+        <aside className="play-side" aria-label="Game controls">
+          <LogBox log={live.log} viewer={viewer} />
+          <div className="prompt" aria-live="polite">
+            {error && (
+              <div className="banner warn">
+                <strong>{error.bug ? 'The engine refused an action it offered.' : 'That isn’t allowed.'}</strong> {error.text}
+                {error.bug && <span className="hint"> (Logged to the console with the action — that’s an engine bug.)</span>}
+              </div>
+            )}
+            {g.over ? (
+              <div className="flow-step">
+                <p className="flow-title">{g.winner ? `${g.players[g.winner]!.name} wins!` : 'The game is a draw.'}</p>
+                <Actions>
+                  <button type="button" className="primary" onClick={() => { clearSavedGame(); onLeave(); }}>
+                    New game
+                  </button>
+                </Actions>
+              </div>
+            ) : curtained ? (
+              <p className="hint">Waiting for {g.players[who!]!.name}.</p>
+            ) : pendingMine ? (
+              <>
+                <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
+                {overlayChoice ? <p className="hint">Assign combat damage in the panel over the table.</p> : choicePanel}
+              </>
+            ) : flow ? (
+              <ActionFlow key={JSON.stringify(flow)} g={g} view={view} action={flow} setPick={setPick} onCommit={(a) => act(a, false)} onCancel={() => { setFlow(null); setPickState(null); }} />
+            ) : myPriority ? (
+              <SelectedPanel g={g} view={view} id={selected} actions={selected ? (byObject.get(selected) ?? []) : []} extra={extra} onChoose={choose} />
+            ) : null}
+          </div>
+          {myPriority && !flow && (
+            <Actions hint={top ? `${top.kind === 'spell' ? publicName(top.object, g) : `${top.sourceName}’s ability`} is on the stack` : null}>
+              <button type="button" className="primary pass" onClick={() => act({ type: 'pass', player: viewer! })}>
+                {top ? `Resolve ${top.kind === 'spell' ? publicName(top.object, g).split(' // ')[0] : 'ability'}` : g.active === viewer ? `Pass to ${nextStepName(g.step)}` : 'Pass'}
+              </button>
+              <button type="button" className="secondary" title="Pass priority until the turn ends, unless an opponent casts or activates something" onClick={endTurn}>
+                {g.active === viewer ? 'End turn' : 'Pass the turn'}
+              </button>
+              <button type="button" className="ghost" onClick={() => setShowStops(!showStops)} aria-expanded={showStops}>
+                Stops
+              </button>
+            </Actions>
+          )}
+          <div className="action-bar" ref={setBarEl} aria-label="Actions" />
+          {showStops && viewer && <StopsEditor stops={stops[viewer] ?? DEFAULT_STOPS} onChange={(s) => setStop(viewer, s)} name={g.players[viewer]!.name} />}
+          <div className="side-foot">
+            <button type="button" className="ghost tiny" onClick={onLeave}>
+              Leave table (game is saved)
+            </button>
+            {viewer && !g.over && (
+              <button
+                type="button"
+                className="ghost tiny danger"
+                onClick={() => {
+                  if (window.confirm(`Concede the game for ${g.players[viewer]!.name}?`)) act({ type: 'concede', player: viewer });
+                }}
+              >
+                Concede
+              </button>
+            )}
+          </div>
+        </aside>
+
+        {curtained && who && <Curtain g={g} who={who} log={live.log} onReady={() => setHolder(who)} />}
+        {zone && <ZoneDialog g={g} view={view} player={zone.player} zone={zone.zone} h={h} onClose={() => setZone(null)} />}
+      </div>
+    </ActionBarSlot.Provider>
   );
 }
 
@@ -407,22 +425,34 @@ function nextStepName(s: Step): string {
   return next ? STEP_NAME[next].toLowerCase() : 'the next turn';
 }
 
-function TurnBox({ g, who }: { g: GameState; who: PlayerId | null }) {
+/** The turn structure along the top edge: whose turn, the current step, and who is deciding. */
+function PhaseStrip({ g, who }: { g: GameState; who: PlayerId | null }) {
   const name = (p: PlayerId) => g.players[p]?.name ?? p;
-  const shown: Step[] = ['upkeep', 'draw', 'main1', 'beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat', 'main2', 'end'];
+  const shown: [Step, string][] = [
+    ['upkeep', 'Upkeep'],
+    ['draw', 'Draw'],
+    ['main1', 'Main 1'],
+    ['beginning_of_combat', 'Combat'],
+    ['declare_attackers', 'Attackers'],
+    ['declare_blockers', 'Blockers'],
+    ['combat_damage', 'Damage'],
+    ['end_of_combat', 'End combat'],
+    ['main2', 'Main 2'],
+    ['end', 'End'],
+  ];
   return (
-    <div className="turn-box">
-      <p className="turn-title">{g.started ? `Turn ${g.turn} · ${name(g.active)}` : 'Opening hands'}</p>
+    <div className="phase-strip" aria-label="Turn structure">
+      <span className="turn-title">{g.started ? `Turn ${g.turn} · ${name(g.active)}` : 'Opening hands'}</span>
       {g.started && (
-        <ol className="steps" aria-label="Turn structure">
-          {shown.map((s) => (
-            <li key={s} className={s === g.step ? 'now' : ''} title={STEP_NAME[s]}>
-              {STEP_NAME[s].replace('Beginning of combat', 'Begin combat').replace('Declare ', '').replace('Combat damage', 'Damage').replace('End of combat', 'End combat')}
+        <ol className="steps">
+          {shown.map(([s, label]) => (
+            <li key={s} className={s === g.step ? 'now' : ''} title={STEP_NAME[s]} aria-current={s === g.step ? 'step' : undefined}>
+              {label}
             </li>
           ))}
         </ol>
       )}
-      {who && <p className="hint">{g.pending ? `${name(who)}: ${(CHOICE_TITLE[g.pending.kind] ?? g.pending.kind).toLowerCase()}` : `${name(who)} has priority`}</p>}
+      {who && <span className="priority-note">{g.pending ? `${name(who)}: ${(CHOICE_TITLE[g.pending.kind] ?? g.pending.kind).toLowerCase()}` : `${name(who)} has priority`}</span>}
     </div>
   );
 }
@@ -528,41 +558,61 @@ function StopsEditor({ stops, onChange, name }: { stops: Stops; onChange: (s: St
   );
 }
 
-function StackBox({ g, pick }: { g: GameState; pick: Pick | null }) {
-  if (!g.stack.length) return null;
+/** The stack between the two halves of the table, as overlapping cards (top of the stack on the right). */
+function StackBand({ g, view, pick, onFocus, onHover }: { g: GameState; view: ReturnType<typeof viewFor>; pick: Pick | null; onFocus: (i: number | null) => void; onHover: (id: string | null, el?: HTMLElement) => void }) {
+  if (!g.stack.length) return <div className="midline" aria-hidden="true" />;
   return (
-    <div className="stack-box">
-      <p className="box-title">Stack ({g.stack.length})</p>
-      <ol className="stack-list">
-        {[...g.stack].reverse().map((e, i) => {
+    <div className="midline">
+    <div className="stack-band" aria-label={`Stack, ${g.stack.length} item${g.stack.length > 1 ? 's' : ''}`}>
+      <span className="band-label">Stack</span>
+      <ol className="stack-cards">
+        {g.stack.map((e, i) => {
           const targets = e.targets.flat().map((t) => targetLabel(g, t.kind === 'object' ? { kind: 'object', object: t.id } : t));
           const entryId = e.kind === 'ability' ? e.id : null;
           const objId = e.kind === 'spell' ? e.object : null;
-          const pickable = (entryId && pick?.entries.has(entryId)) || (objId && pick?.objects.has(objId));
+          const pickable = Boolean((entryId && pick?.entries.has(entryId)) || (objId && pick?.objects.has(objId)));
           const chosen = pick?.chosen.some((c) => (c.kind === 'ability' && c.entry === entryId) || (c.kind === 'object' && c.object === objId));
+          const o = objId ? view.objects[objId] : undefined;
           return (
-            <li key={entryId ?? objId ?? i} className={`${i === 0 ? 'stack-top ' : ''}${pickable ? 'pickable ' : ''}${chosen ? 'picked' : ''}`}>
+            <li key={entryId ?? objId ?? i} className={`stack-item${i === g.stack.length - 1 ? ' stack-top' : ''}${pickable ? ' pickable' : ''}${chosen ? ' picked' : ''}`} style={{ zIndex: i + 1 }}>
               <button
                 type="button"
+                className="stack-card"
                 disabled={!pickable}
+                onMouseEnter={(ev) => {
+                  onFocus(i);
+                  if (objId) onHover(objId, ev.currentTarget);
+                }}
+                onMouseLeave={() => {
+                  onFocus(null);
+                  onHover(null);
+                }}
                 onClick={() => {
                   if (entryId && pick?.entries.has(entryId)) pick.onPick({ kind: 'ability', entry: entryId });
                   else if (objId && pick?.objects.has(objId)) pick.onPick({ kind: 'object', object: objId });
                 }}
+                aria-label={`${e.kind === 'spell' ? publicName(e.object, g) : `${e.sourceName}’s ability`}${targets.length ? `, targeting ${targets.join(', ')}` : ''}`}
               >
-                <span className="stack-name">{e.kind === 'spell' ? publicName(e.object, g) : `${e.sourceName} — ability`}</span>
-                {e.kind === 'ability' && <span className="stack-text">{e.text}</span>}
-                <span className="stack-meta">
-                  {g.players[e.controller]?.name}
-                  {targets.length ? ` → ${targets.join(', ')}` : ''}
-                  {e.kind === 'ability' && e.manual ? ' · resolved by hand' : ''}
-                  {e.x ? ` · X=${e.x}` : ''}
-                </span>
+                {o ? (
+                  <TableCard cards={view.cards} o={o} sizes="96px" />
+                ) : (
+                  <span className="ability-card">
+                    <strong>{e.kind === 'ability' ? e.sourceName : ''}</strong>
+                    <span>{e.kind === 'ability' ? e.text : ''}</span>
+                  </span>
+                )}
               </button>
+              <span className="stack-meta">
+                {g.players[e.controller]?.name}
+                {targets.length ? ` → ${targets.join(', ')}` : ''}
+                {e.kind === 'ability' && e.manual ? ' · by hand' : ''}
+                {e.x ? ` · X=${e.x}` : ''}
+              </span>
             </li>
           );
         })}
       </ol>
+    </div>
     </div>
   );
 }
@@ -614,7 +664,7 @@ function Curtain({ g, who, log, onReady }: { g: GameState; who: PlayerId; log: L
   );
 }
 
-function ZoneDialog({ g, view, player, zone, onClose }: { g: GameState; view: ReturnType<typeof viewFor>; player: PlayerId; zone: 'graveyard' | 'exile'; onClose: () => void }) {
+function ZoneDialog({ g, view, player, zone, h, onClose }: { g: GameState; view: ReturnType<typeof viewFor>; player: PlayerId; zone: 'graveyard' | 'exile'; h: BoardHandlers; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -632,17 +682,44 @@ function ZoneDialog({ g, view, player, zone, onClose }: { g: GameState; view: Re
             Close
           </button>
         </header>
+        {ids.some((id) => h.actionable.has(id)) && <p className="hint">Highlighted cards can be played now: choose one to see how.</p>}
         {ids.length === 0 ? (
           <p className="muted">Empty.</p>
         ) : (
-          <div className="tile-row zone-tiles">
-            {ids.map((id) => (
-              <ObjectTile key={id} view={view} id={id} />
-            ))}
+          <div className="zone-grid">
+            {ids.map((id) => {
+              const o = view.objects[id];
+              const can = h.actionable.has(id);
+              return (
+                <span key={id} className="zone-cell">
+                  <button
+                    type="button"
+                    data-id={id}
+                    className={cardClass(id, h, 'zone-card')}
+                    disabled={!can}
+                    onClick={() => {
+                      h.onCard(id);
+                      ref.current?.close();
+                    }}
+                  >
+                    {o ? <TableCard cards={view.cards} o={o} sizes="110px" /> : <CardBackOnly />}
+                  </button>
+                  <span className="pick-name">{o ? publicName(id, view as unknown as GameState) : 'Face-down card'}</span>
+                </span>
+              );
+            })}
           </div>
         )}
       </form>
     </dialog>
+  );
+}
+
+function CardBackOnly() {
+  return (
+    <span className="tc-frame">
+      <span className="card-back" />
+    </span>
   );
 }
 

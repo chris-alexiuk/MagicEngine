@@ -22,6 +22,7 @@ import {
 } from '@mtg/engine';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RulesText } from '../components/bits';
+import { Actions } from './actionbar';
 import { TableCard } from './cards';
 import { actionLabel, sameTarget, targetLabel } from './labels';
 import { publicName } from './log';
@@ -54,15 +55,12 @@ function TargetChip({ g, t, selected, onClick }: { g: GameState; t: Target; sele
 
 function Confirm({ ok, label = 'Confirm', why, onClick, children }: { ok: boolean; label?: string; why?: string | null; onClick: () => void; children?: React.ReactNode }) {
   return (
-    <div className="confirm-row">
-      {why && <p className="hint warn">{why}</p>}
-      <div className="btn-row">
-        <button type="button" className="primary" disabled={!ok} onClick={onClick}>
-          {label}
-        </button>
-        {children}
-      </div>
-    </div>
+    <Actions hint={why ? <span className="warn-text">{why}</span> : null}>
+      <button type="button" className="primary confirm" disabled={!ok} onClick={onClick}>
+        {label}
+      </button>
+      {children}
+    </Actions>
   );
 }
 
@@ -785,14 +783,14 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
           <p className="hint">
             {ps.mulligans ? `You’ve taken ${ps.mulligans} mulligan${ps.mulligans > 1 ? 's' : ''}. ` : ''}A mulligan draws seven new cards; you then put {next} on the bottom{g.config.freeMulligan && ps.mulligans === 0 ? ' (your first mulligan is free)' : ''}.
           </p>
-          <div className="btn-row">
+          <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'mulligan', keep: true })}>
               Keep
             </button>
             <button type="button" className="secondary" disabled={next >= g.config.startingHandSize} onClick={() => answer({ kind: 'mulligan', keep: false })}>
               Mulligan
             </button>
-          </div>
+          </Actions>
         </div>
       );
     }
@@ -815,9 +813,11 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
               <ObjectTile key={id} view={view} id={id} onClick={() => answer({ kind: 'dredge', object: id })} note="Dredge" />
             ))}
           </div>
-          <button type="button" className="primary" onClick={() => answer({ kind: 'dredge', object: null })}>
-            Draw normally
-          </button>
+          <Actions>
+            <button type="button" className="primary" onClick={() => answer({ kind: 'dredge', object: null })}>
+              Draw normally
+            </button>
+          </Actions>
         </div>
       );
     case 'legend_rule':
@@ -833,14 +833,14 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
             <ObjectTile view={view} id={p.object} />
           </div>
           <p className="hint">Put it into the command zone? Casting it from there costs {'{2}'} more for each earlier cast from the command zone.</p>
-          <div className="btn-row">
+          <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'commander_zone', move: true })}>
               Move to command zone
             </button>
             <button type="button" className="secondary" onClick={() => answer({ kind: 'commander_zone', move: false })}>
               Leave it {p.zone === 'exile' ? 'in exile' : `in your ${p.zone}`}
             </button>
-          </div>
+          </Actions>
         </div>
       );
     }
@@ -890,14 +890,14 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
           <blockquote className="manual-text">
             <RulesText text={p.text} />
           </blockquote>
-          <div className="btn-row">
+          <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'may', yes: true })}>
               Yes
             </button>
             <button type="button" className="secondary" onClick={() => answer({ kind: 'may', yes: false })}>
               No
             </button>
-          </div>
+          </Actions>
         </div>
       );
     case 'choose_option':
@@ -1067,14 +1067,14 @@ function CastFreePanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
         <div className="tile-row">
           <ObjectTile view={view} id={p.object} />
         </div>
-        <div className="btn-row">
+        <Actions>
           <button type="button" className="primary" onClick={() => (needsChoices(g, draft) ? setCasting(true) : answer({ kind: 'cast_free', cast: true }))}>
             Cast {publicName(p.object, g)}
           </button>
           <button type="button" className="secondary" onClick={() => answer({ kind: 'cast_free', cast: false })}>
             Don’t cast
           </button>
-        </div>
+        </Actions>
       </div>
     );
   return (
@@ -1107,14 +1107,14 @@ function CopyTargetsPanel({ g, view, p, setPick, answer }: { g: GameState; view:
     return (
       <div className="flow-step">
         {head}
-        <div className="btn-row">
+        <Actions>
           <button type="button" className="primary" onClick={() => answer({ kind: 'copy_targets' })}>
             Keep targets
           </button>
           <button type="button" className="secondary" onClick={() => setChanging(true)}>
             Choose new targets
           </button>
-        </div>
+        </Actions>
       </div>
     );
   return (
@@ -1139,14 +1139,14 @@ function PayPanel({ p, answer }: { p: Extract<PendingChoice, { kind: 'pay' }>; a
           <input type="number" min={0} {...(p.x.max !== undefined ? { max: p.x.max } : {})} value={x} onChange={(e) => setX(Math.max(0, Math.min(p.x?.max ?? Infinity, Number(e.target.value) || 0)))} />
         </label>
       )}
-      <div className="btn-row">
+      <Actions>
         <button type="button" className="primary" onClick={() => answer({ kind: 'pay', pay: true, ...(p.x ? { x } : {}) })}>
           Pay <RulesText text={p.cost} />
         </button>
         <button type="button" className="secondary" onClick={() => answer({ kind: 'pay', pay: false })}>
           Don’t pay
         </button>
-      </div>
+      </Actions>
       <p className="hint">Mana is tapped for you automatically.</p>
     </div>
   );
@@ -1218,14 +1218,14 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
       return (
         <div className="flow-step">
           {head}
-          <div className="btn-row">
+          <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'as_enters', pay: true })}>
               {p.choice === 'pay_life' ? `Pay ${p.amount ?? 0} life` : 'Yes'}
             </button>
             <button type="button" className="secondary" onClick={() => answer({ kind: 'as_enters', pay: false })}>
               {p.choice === 'pay_life' ? 'Don’t (it enters tapped)' : 'No'}
             </button>
-          </div>
+          </Actions>
         </div>
       );
   }
@@ -1242,6 +1242,7 @@ function FallbackPanel({ pending, answer }: { pending: PendingChoice; answer: (a
       <p className="hint">This table doesn’t have a screen for this choice yet. Answer with the engine’s answer object:</p>
       <textarea className="raw-input" value={text} onChange={(e) => setText(e.target.value)} rows={3} />
       {err && <p className="hint warn">{err}</p>}
+      <Actions>
       <button
         type="button"
         className="primary"
@@ -1255,6 +1256,7 @@ function FallbackPanel({ pending, answer }: { pending: PendingChoice; answer: (a
       >
         Answer
       </button>
+      </Actions>
     </div>
   );
 }
