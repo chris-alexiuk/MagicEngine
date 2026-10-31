@@ -271,6 +271,8 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       return { player: me, answer: { kind: 'discard', objects: shuffle(hand()).slice(0, Math.min(p.count, hand().length)) } };
     case 'legend_rule':
       return { player: me, answer: { kind: 'legend_rule', keep: pick(p.objects) } };
+    case 'commander_zone':
+      return { player: me, answer: { kind: 'commander_zone', move: rnd() < 0.8 } };
     case 'manual_resolution':
       return { player: me, answer: { kind: 'manual_resolution', done: true } };
     case 'may':

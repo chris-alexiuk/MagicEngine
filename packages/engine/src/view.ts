@@ -57,6 +57,8 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
     for (const id of g.pending.revealed ?? []) visible.add(id);
     if (g.pending.player === viewer) for (const id of [...g.pending.candidates, ...(g.pending.seen ?? [])]) visible.add(id);
   }
+  // CR 903.9: the commander its owner may move to the command zone (a commander is known to everyone anyway).
+  if (g.pending?.kind === 'commander_zone') visible.add(g.pending.object);
   // CR 701.23a: a player searching their library looks at all of it.
   if (g.pending?.kind === 'search' && g.pending.player === viewer) {
     for (const id of g.zones.library[viewer] ?? []) visible.add(id);

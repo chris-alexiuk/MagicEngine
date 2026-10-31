@@ -194,6 +194,22 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       }
       return;
     }
+    case 'commander_zone': {
+      const q = p as Extract<typeof p, { kind: 'commander_zone' }>;
+      g.pending = null;
+      g.commanderReturns = (g.commanderReturns ?? []).filter((e) => e.id !== q.object);
+      const o = g.objects[q.object];
+      // CR 903.9: the owner may put it into the command zone (or leave it where it is).
+      if (answer.move && o && o.zone === q.zone) moveObject(g, q.object, 'command', events);
+      if (g.step === 'cleanup' && g.priority === null) {
+        checkStateBasedActions(g, events);
+        if (!g.pending && !g.over) {
+          g.extraCleanup = true;
+          givePriority(g, g.active);
+        }
+      }
+      return;
+    }
     case 'manual_resolution':
       completeManualResolution(g, events);
       return;

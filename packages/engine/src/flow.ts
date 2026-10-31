@@ -867,6 +867,9 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     const legendGroup = findLegendRuleGroup(g, toGraveyard);
 
     if (!losers.length && !toGraveyard.size && !toDestroy.size && !unattach.length && !unbestow.size && !vanish.length && !changed && !legendGroup) {
+      // CR 704.6d / CR 903.9a: a commander that went to a graveyard or exile — its owner chooses whether it goes to the
+      // command zone, one at a time.
+      if (promptCommanderReturn(g)) return true;
       return any;
     }
     any = true;
@@ -893,6 +896,22 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     }
   }
   return any;
+}
+
+/** CR 903.9: asks the owner of the first commander still where it went whether to put it into the command zone. */
+function promptCommanderReturn(g: GameState): boolean {
+  const waiting = (g.commanderReturns ?? []).filter((e) => {
+    const o = g.objects[e.id];
+    return o && o.zcc === e.zcc && ['graveyard', 'exile', 'hand', 'library'].includes(o.zone) && !g.players[o.owner]!.lost;
+  });
+  if (!waiting.length) {
+    delete g.commanderReturns;
+    return false;
+  }
+  g.commanderReturns = waiting;
+  const o = g.objects[waiting[0]!.id]!;
+  g.pending = { kind: 'commander_zone', player: o.owner, object: o.id, zone: o.zone };
+  return true;
 }
 
 function findLegendRuleGroup(

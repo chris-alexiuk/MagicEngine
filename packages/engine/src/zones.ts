@@ -289,6 +289,12 @@ export function moveObject(
 
   o.zone = to;
   o.zcc++;
+  // CR 903.9a: a commander put into a graveyard or exile may go to the command zone (a state-based action). CR 903.9b:
+  // one put into its owner's hand or library may go there instead — its owner is asked right after the move, before
+  // anyone gets priority (draws from the library aren't asked).
+  if (o.commander && !o.token && (to === 'graveyard' || to === 'exile' || ((to === 'hand' || to === 'library') && from !== 'library'))) {
+    (g.commanderReturns ??= []).push({ id, zcc: o.zcc });
+  }
   // CR 400.7a: effects from spells and abilities that changed a spell on the stack (Rivaz of the Claw: "it gains 'When
   // this creature dies, exile it.'") continue to apply to the permanent it becomes.
   if (from === 'stack' && to === 'battlefield') {

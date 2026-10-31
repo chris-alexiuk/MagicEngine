@@ -60,8 +60,10 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (def.faces[0]!.types.includes('Land') && (ruleAllows(g, player, 'lands_from_graveyard', g.objects[id]!) || graveyardLandPermission(g, player, g.objects[id]!)) && !enteringBanned(g, g.objects[id]!, 'graveyard')) out.push({ type: 'play_land', player, object: id });
     }
   }
-  // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library.
-  for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player), ...playableFromTop(g, player), ...playableFromGraveyard(g, player)]) {
+  // The hand, plus cards an effect lets this player play from exile (impulse draw) or from the top of their library,
+  // and (CR 903.8) the commanders they own in the command zone.
+  const commanders = g.zones.command.filter((c) => g.objects[c]?.commander && g.objects[c]!.owner === player && !g.objects[c]!.emblem);
+  for (const id of [...zoneList(g, 'hand', player), ...playableFromExile(g, player), ...playableFromTop(g, player), ...playableFromGraveyard(g, player), ...commanders]) {
     const o = g.objects[id]!;
     const def = g.cards[o.card]!;
     def.faces.forEach((face, faceIndex) => {
@@ -75,6 +77,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         if (face.keywords.some((k) => k.id === 'aftermath')) return;
       }
       if (face.types.includes('Land')) {
+        // CR 903.8: a commander is cast from the command zone, never played as a land.
+        if (o.zone === 'command') return;
         if (mainPhaseEmptyStack && g.players[player]!.landsPlayedThisTurn < landsAllowed(g, player) && (faceIndex === 0 || def.layout === 'modal_dfc') && !((o.zone === 'graveyard' || o.zone === 'library') && enteringBanned(g, o, o.zone))) {
           out.push({ type: 'play_land', player, object: id, ...(faceIndex ? { face: faceIndex } : {}) });
         }
@@ -92,6 +96,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       // Airbend: {2} rather than its mana cost.
       const airbent = !free && o.zone === 'exile' ? permissionCost(g, player, o) : undefined;
       const cost = parseManaCost(lifeInstead || free ? '' : (airbent ?? face.manaCost));
+      // CR 903.8: {2} more for each previous cast from the command zone.
+      cost.generic += commanderTax(g, o);
       // Water Whip: "As an additional cost to cast this spell, waterbend {5}."
       const extraMana = additionalMana(face);
       for (const e of extraMana) addCost(cost, parseManaCost(e.mana));
@@ -134,6 +140,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       const lookAtTargets = targetTaxed || face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as { ifTargets?: unknown }).ifTargets));
       if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'per_target_cost') || hasModeCosts(face) || lookAtTargets) {
         const total = parseManaCost(face.manaCost);
+        total.generic += commanderTax(g, o);
         for (const e of extraMana) addCost(total, parseManaCost(e.mana));
         const refs = (choice.targets ?? []).map((list) => list.map((t): TargetRef => (t.kind === 'object' ? { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc } : (t as TargetRef))));
         applyCostModifiers(g, player, o, face, total, refs);
@@ -148,8 +155,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (lifeCosts > 0 && g.players[player]!.life < lifeCosts) return;
       out.push({ type: 'cast', player, object: id, autoTap: true, ...(faceIndex ? { face: faceIndex } : {}), ...choice, ...withCosts(all) });
     });
-    // CR 118.9 / 601.2f: the same spell for an alternative cost, or with an optional additional one.
-    if (o.zone === 'hand') out.push(...optionCasts(g, player, o, mainPhaseEmptyStack, false));
+    // CR 118.9 / 601.2f: the same spell for an alternative cost, or with an optional additional one (a commander too, CR 903.8).
+    if (o.zone === 'hand' || o.zone === 'command') out.push(...optionCasts(g, player, o, mainPhaseEmptyStack, false));
   }
   // CR 702.138a: escape from the graveyard.
   for (const id of zoneList(g, 'graveyard', player)) out.push(...optionCasts(g, player, g.objects[id]!, mainPhaseEmptyStack, true));
@@ -432,6 +439,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       if (fromGraveyard || !sorcerySpeed) continue;
       // Cost changes apply to the face-down spell too ("Creature spells you cast cost {1} more").
       const downCost = parseManaCost('{3}');
+      downCost.generic += commanderTax(g, o);
       const downFace = faceDownFace({ ...o, faceDown: opt.id === 'disguise' ? 'disguise' : 'morph' });
       // "Your opponents can't cast spells during your turn" applies to it too (CR 708.4).
       if (castProhibition(g, player, downFace, o)) continue;
@@ -464,6 +472,7 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
       cost.x += extra.x;
     }
     applyCostModifiers(g, player, o, face, cost);
+    cost.generic += commanderTax(g, o);
     // Emerge: the creature it would sacrifice lowers the cost.
     if (opt.reduceBySacrificed) {
       const sac = defaultCostChoices(g, player, o, opt.cost.other ?? [])?.sacrifice?.[0];
@@ -490,6 +499,11 @@ function optionCasts(g: GameState, player: PlayerId, o: GameObject, sorcerySpeed
     out.push({ type: 'cast', player, object: o.id, autoTap: true, ...choice, ...withCosts(costs), ...(opt.kind === 'alternative' ? { alt: opt.id } : { extras: [opt.id] }) });
   }
   return out;
+}
+
+/** CR 903.8: commander tax — {2} for each time this commander was cast from the command zone before (0 elsewhere). */
+function commanderTax(g: GameState, o: GameObject): number {
+  return o.zone === 'command' && o.commander ? 2 * (g.commanderCasts[o.id] ?? 0) : 0;
 }
 
 /** Every mode, with default targets — or null when some mode has none. */

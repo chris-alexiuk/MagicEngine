@@ -751,6 +751,7 @@ export const CHOICE_TITLE: Record<PendingChoice['kind'], string> = {
   untap_limit: 'Untap step',
   dredge: 'Dredge?',
   legend_rule: 'Legend rule',
+  commander_zone: 'Commander',
   manual_resolution: 'Resolve by hand',
   declare_attackers: 'Declare attackers',
   declare_blockers: 'Declare blockers',
@@ -821,6 +822,28 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
       );
     case 'legend_rule':
       return <ObjectPicker key="lr" view={view} candidates={p.objects} min={1} max={1} label="Keep this one" title={`Legend rule: keep one ${p.name}; the rest go to the graveyard`} setPick={setPick} onDone={([keep]) => keep && answer({ kind: 'legend_rule', keep })} />;
+    case 'commander_zone': {
+      const where = p.zone === 'graveyard' ? 'went to your graveyard' : p.zone === 'exile' ? 'was exiled' : p.zone === 'hand' ? 'was put into your hand' : 'was put into your library';
+      return (
+        <div className="flow-step">
+          <p className="flow-title">
+            {publicName(p.object, view as unknown as GameState)} {where}.
+          </p>
+          <div className="tile-row">
+            <ObjectTile view={view} id={p.object} />
+          </div>
+          <p className="hint">Put it into the command zone? Casting it from there costs {'{2}'} more for each earlier cast from the command zone.</p>
+          <div className="btn-row">
+            <button type="button" className="primary" onClick={() => answer({ kind: 'commander_zone', move: true })}>
+              Move to command zone
+            </button>
+            <button type="button" className="secondary" onClick={() => answer({ kind: 'commander_zone', move: false })}>
+              Leave it {p.zone === 'exile' ? 'in exile' : `in your ${p.zone}`}
+            </button>
+          </div>
+        </div>
+      );
+    }
     case 'manual_resolution':
       return (
         <div className="flow-step">

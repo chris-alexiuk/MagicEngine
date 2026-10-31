@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { compileCards, type ScryfallCard } from '@mtg/compiler';
 import type { CardDef } from '@mtg/schema';
-import { legalActions, type Action, type GameState } from '@mtg/engine';
+import { apply, legalActions, type Action, type GameState } from '@mtg/engine';
 import { describe, expect, it } from 'vitest';
 import { narrate } from './log';
 import { DEFAULT_STOPS, decider, newGame, replay, shouldAutoPass, step, type GameSetup, type Stops } from './session';
@@ -75,6 +75,50 @@ describe('same-screen session', () => {
     // Draws name the card only in a line for the drawer.
     const draws = narrate(g, g, [{ type: 'drew', player: 'p1', object: g.zones.hand.p1![0]! }], () => 0);
     expect(draws).toEqual([expect.objectContaining({ text: 'Ann draws a card.' }), expect.objectContaining({ only: 'p1' })]);
+  });
+
+  it('casts the commander from the command zone, and again with {2} tax after it returns there', () => {
+    let { g } = keepBoth();
+    const kinnan = g.zones.command.find((id) => g.objects[id]!.card === 'Kinnan, Bonder Prodigy')!;
+    const run = (a: Action) => {
+      const r = step(g, a, stops, null);
+      if (!r.ok) throw new Error(`${JSON.stringify(a)}: ${r.error}`);
+      g = r.applied.state;
+    };
+    const castKinnan = () => legalActions(g, 'p1').find((a) => a.type === 'cast' && a.object === kinnan);
+    // Each of Ann's turns: play a land; Ben just passes. Stop once Kinnan is castable.
+    const untilCastable = () => {
+      for (let i = 0; i < 400 && !castKinnan(); i++) {
+        if (g.pending) {
+          const p = g.pending;
+          if (p.kind === 'declare_attackers') run({ type: 'choose', player: p.player, answer: { kind: 'declare_attackers', attacks: [] } });
+          else if (p.kind === 'discard_to_hand_size') run({ type: 'choose', player: p.player, answer: { kind: 'discard_to_hand_size', objects: g.zones.hand[p.player]!.slice(0, p.count) } });
+          else throw new Error(`unexpected ${p.kind}`);
+          continue;
+        }
+        const land = g.priority === 'p1' ? legalActions(g, 'p1').find((a) => a.type === 'play_land') : undefined;
+        run(land ?? { type: 'pass', player: g.priority! });
+      }
+      return castKinnan();
+    };
+    const first = untilCastable();
+    expect(first).toEqual({ type: 'cast', player: 'p1', object: kinnan, autoTap: true });
+    run(first!);
+    while (g.stack.length) run({ type: 'pass', player: g.priority! });
+    expect(g.objects[kinnan]!.zone).toBe('battlefield');
+    // It dies (by hand here); Ann moves it back to the command zone.
+    const died = apply(g, { type: 'manual', player: g.priority!, op: { kind: 'move', object: kinnan, to: 'graveyard' } });
+    if (!died.ok) throw new Error(died.error);
+    g = died.state;
+    expect(g.pending).toEqual({ kind: 'commander_zone', player: 'p1', object: kinnan, zone: 'graveyard' });
+    run({ type: 'choose', player: 'p1', answer: { kind: 'commander_zone', move: true } });
+    expect(g.objects[kinnan]!.zone).toBe('command');
+    const lands = () => g.zones.battlefield.filter((id) => g.objects[id]!.controller === 'p1').length;
+    const second = untilCastable();
+    // {G}{U} plus {2} of commander tax: four lands.
+    expect(lands()).toBeGreaterThanOrEqual(4);
+    run(second!);
+    expect(g.commanderCasts[kinnan]).toBe(2);
   });
 
   it('refuses an illegal action without changing anything', () => {

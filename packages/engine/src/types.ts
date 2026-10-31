@@ -677,6 +677,8 @@ export type PendingChoice =
   /** CR 702.52a: the active player may dredge instead of drawing in their draw step. */
   | { kind: 'dredge'; player: PlayerId; candidates: ObjectId[] }
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
+  /** CR 903.9a / 903.9b: a commander that went to a graveyard, exile, a hand or a library — its owner may put it into the command zone. */
+  | { kind: 'commander_zone'; player: PlayerId; object: ObjectId; zone: ZoneName }
   | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
   /** `exertable`: attackers that may be exerted as they attack (CR 701.43d). */
   /** `enlisters`: attackers that may enlist, and `enlistable` the creatures they could tap (CR 702.154a). */
@@ -765,6 +767,7 @@ export type ChoiceAnswer =
   | { kind: 'untap_limit'; objects: ObjectId[] }
   | { kind: 'dredge'; object: ObjectId | null }
   | { kind: 'legend_rule'; keep: ObjectId }
+  | { kind: 'commander_zone'; move: boolean }
   | { kind: 'manual_resolution'; done: true }
   | { kind: 'declare_attackers'; attacks: { attacker: ObjectId; target: AttackTarget }[]; exert?: ObjectId[]; enlist?: { attacker: ObjectId; tap: ObjectId }[] }
   | { kind: 'declare_blockers'; blocks: { blocker: ObjectId; attacker: ObjectId }[] }
@@ -1067,6 +1070,8 @@ export interface GameState {
   commanderDamage: Record<PlayerId, Record<ObjectId, number>>;
   /** How many times each player has cast each commander from the command zone (CR 903.8). */
   commanderCasts: Record<ObjectId, number>;
+  /** CR 903.9: commanders that changed zones since state-based actions were last checked, whose owners may move them to the command zone. */
+  commanderReturns?: { id: ObjectId; zcc: number }[];
   /** Continuous effects from resolved spells and abilities (CR 611.2). */
   effects: ContinuousEffect[];
   /** Triggered abilities waiting to go on the stack (CR 603.3). */
