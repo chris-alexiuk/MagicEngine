@@ -2237,7 +2237,7 @@ code {
   font-size: 13.5px;
   cursor: default;
 }
-.stack-list li.top button {
+.stack-list li.stack-top button {
   border-color: var(--ink-3);
 }
 .stack-list li.pickable button {

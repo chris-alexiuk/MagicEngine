@@ -541,7 +541,7 @@ function StackBox({ g, pick }: { g: GameState; pick: Pick | null }) {
           const pickable = (entryId && pick?.entries.has(entryId)) || (objId && pick?.objects.has(objId));
           const chosen = pick?.chosen.some((c) => (c.kind === 'ability' && c.entry === entryId) || (c.kind === 'object' && c.object === objId));
           return (
-            <li key={entryId ?? objId ?? i} className={`${i === 0 ? 'top ' : ''}${pickable ? 'pickable ' : ''}${chosen ? 'picked' : ''}`}>
+            <li key={entryId ?? objId ?? i} className={`${i === 0 ? 'stack-top ' : ''}${pickable ? 'pickable ' : ''}${chosen ? 'picked' : ''}`}>
               <button
                 type="button"
                 disabled={!pickable}
