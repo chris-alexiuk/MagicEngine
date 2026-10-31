@@ -20,7 +20,7 @@ import {
   type TargetPrompt,
   type ZoneName,
 } from '@mtg/engine';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RulesText } from '../components/bits';
 import { TableCard } from './cards';
 import { actionLabel, sameTarget, targetLabel } from './labels';
@@ -70,15 +70,30 @@ function Confirm({ ok, label = 'Confirm', why, onClick, children }: { ok: boolea
 // Modes
 // ---------------------------------------------------------------------------
 
-export function ModePicker({ menu, initial, onDone, onCancel }: { menu: ModeMenu; initial?: number[]; onDone: (modes: number[]) => void; onCancel?: () => void }) {
-  const [modes, setModes] = useState<number[]>(initial ?? []);
+export function ModePicker({
+  menu,
+  initial,
+  onDone,
+  onCancel,
+  feasible,
+}: {
+  menu: ModeMenu;
+  initial?: number[];
+  onDone: (modes: number[]) => void;
+  onCancel?: () => void;
+  /** Whether these modes can be chosen now (CR 700.2: not a mode whose targets can't be chosen). */
+  feasible?: (modes: number[]) => boolean;
+}) {
+  const [modes, setModes] = useState<number[]>(() => (initial && (!feasible || feasible(initial)) ? initial : []));
+  const blocked = useMemo(() => new Set(menu.options.map((_, i) => i).filter((i) => feasible && !feasible([i]))), [menu, feasible]);
   const toggle = (i: number) => {
     if (menu.repeat) setModes([...modes, i].sort((a, b) => a - b));
     else if (modes.includes(i)) setModes(modes.filter((m) => m !== i));
     else if (menu.max === 1) setModes([i]);
     else if (modes.length < menu.max) setModes([...modes, i].sort((a, b) => a - b));
   };
-  const ok = modes.length >= menu.min && modes.length <= menu.max;
+  const fits = !feasible || modes.length === 0 || feasible(modes);
+  const ok = modes.length >= menu.min && modes.length <= menu.max && fits;
   return (
     <div className="flow-step">
       <p className="flow-title">
@@ -89,22 +104,24 @@ export function ModePicker({ menu, initial, onDone, onCancel }: { menu: ModeMenu
         {menu.options.map((opt, i) => {
           const n = modes.filter((m) => m === i).length;
           const used = menu.used.includes(i);
+          const noTargets = blocked.has(i);
           return (
             <li key={i}>
-              <button type="button" className={n ? 'mode selected' : 'mode'} disabled={used} onClick={() => toggle(i)} aria-pressed={n > 0}>
+              <button type="button" className={n ? 'mode selected' : 'mode'} disabled={used || noTargets} onClick={() => toggle(i)} aria-pressed={n > 0}>
                 <span className="mode-text">
                   <RulesText text={opt.text} />
                 </span>
                 {opt.cost && <span className="mode-cost">+{opt.cost}</span>}
                 {opt.manual && <span className="mode-manual">resolve by hand</span>}
                 {used && <span className="mode-manual">already chosen</span>}
+                {noTargets && !used && <span className="mode-manual">no legal targets</span>}
                 {n > 1 && <span className="mode-cost">×{n}</span>}
               </button>
             </li>
           );
         })}
       </ul>
-      <Confirm ok={ok} label="Next" onClick={() => onDone(modes)}>
+      <Confirm ok={ok} why={fits ? null : 'There aren’t enough legal targets for these modes together.'} label="Next" onClick={() => onDone(modes)}>
         {menu.repeat && modes.length > 0 && (
           <button type="button" className="ghost" onClick={() => setModes([])}>
             Clear
@@ -249,6 +266,17 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
     }
   }, [g, action]);
   const [modes, setModes] = useState<number[] | null>(menu ? null : (action.modes ?? null));
+  // A mode set is choosable if every target it asks for has enough legal candidates.
+  const feasible = useCallback(
+    (m: number[]) => {
+      try {
+        return choicePrompts(g, action, m).every((pr) => pr.candidates.length >= promptRange(pr)[0]);
+      } catch {
+        return false;
+      }
+    },
+    [g, action],
+  );
   const prompts = useMemo((): { list: TargetPrompt[] } | { error: string } | null => {
     if (menu && !modes) return null;
     try {
@@ -280,7 +308,7 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
     return (
       <div>
         {head}
-        <ModePicker menu={menu} initial={action.modes} onDone={setModes} onCancel={onCancel} />
+        <ModePicker menu={menu} initial={action.modes} onDone={setModes} onCancel={onCancel} feasible={feasible} />
       </div>
     );
   if (!prompts) return null;
@@ -978,7 +1006,11 @@ function TriggerPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pla
     return (
       <div>
         {head}
-        <ModePicker menu={{ min: p.modes.min, max: p.modes.max, repeat: Boolean(p.modes.repeat), used: p.modes.used ?? [], options: p.modes.options.map((o) => ({ text: o.text, manual: false })) }} onDone={setModes} />
+        <ModePicker
+          menu={{ min: p.modes.min, max: p.modes.max, repeat: Boolean(p.modes.repeat), used: p.modes.used ?? [], options: p.modes.options.map((o) => ({ text: o.text, manual: false })) }}
+          feasible={(m) => m.every((i) => (p.modes?.options[i]?.prompts ?? []).every((pr) => pr.candidates.length >= promptRange(pr)[0]))}
+          onDone={setModes}
+        />
       </div>
     );
   // The chosen modes' prompts (in printed order), then the ability's own.
