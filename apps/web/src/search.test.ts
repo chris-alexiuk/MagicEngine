@@ -57,8 +57,11 @@ describe('compileQuery', () => {
   });
 
   it('filters by automation and legality', () => {
-    expect(names('auto:manual')).toContain('Kinnan, Bonder Prodigy');
-    expect(names('auto:full')).toContain('Counterspell');
+    // The three levels split the cards between them (which cards are manual changes as the grammar grows).
+    const levels = ['auto:full', 'auto:partial', 'auto:manual'].map(names);
+    expect(levels.flat().sort()).toEqual(names(''));
+    expect(levels[0]).toContain('Counterspell');
+    expect(names('auto:partial').every((n) => !levels[0]!.includes(n))).toBe(true);
     expect(names('is:gc')).toEqual(['Jace, the Mind Sculptor', 'Kinnan, Bonder Prodigy', 'Rhystic Study', 'Sol Ring']);
     expect(names('banned:modern')).toEqual(['Sol Ring']);
   });
