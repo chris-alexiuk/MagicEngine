@@ -50,8 +50,9 @@ async function decode(bytes: ArrayBuffer): Promise<string> {
 
 export async function loadCardDB(base: string): Promise<LoadedDB> {
   const metaUrl = new URL('cards.meta.json', new URL(base, location.href)).href;
-  const dbUrl = new URL('cards.json.gz', new URL(base, location.href)).href;
   const meta = await fetchMeta(metaUrl);
+  // Hosts that serve only certain extensions can carry the same gzip bytes under another name.
+  const dbUrl = new URL(meta.file ?? 'cards.json.gz', new URL(base, location.href)).href;
   const key = `${dbUrl}?sha=${meta.sha256}`;
 
   let bytes: ArrayBuffer | null = null;

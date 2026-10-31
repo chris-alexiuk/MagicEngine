@@ -43,6 +43,8 @@ export interface CardDBMeta {
   bytes: number;
   sha256: string;
   coverage: Record<Automation, number>;
+  /** DB file name next to the meta file, when it isn't cards.json.gz (for hosts that serve only some extensions). */
+  file?: string;
 }
 
 export interface CardDef {
