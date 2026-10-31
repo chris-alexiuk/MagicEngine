@@ -37,6 +37,7 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
 - **Card DB:** stored in Cache Storage keyed by its sha256. A reload fetches only the small meta file; a new DB downloads only when the hash changes.
 - **Images:** never bulk-downloaded. Loaded on demand from Scryfall's CDN (`small` for the grid on 1× screens, `normal` otherwise). A service worker caches them under a byte budget (default 250 MB, user-adjustable), evicting least recently viewed first. Pinned images (cards in saved decks) are never evicted.
 - **Fallback:** if an image is slow or blocked, a text proxy of the card shows instead.
+- **Decks and games:** saved decks live in localStorage (names and counts). The game in progress is saved as its setup and the list of actions applied; resuming replays them, since the engine is deterministic.
 - **Scryfall image rules:** never cover, crop or distort the artist/copyright line.
 
 ## Engine
@@ -75,7 +76,8 @@ The contract between the two sides is `CORE_NODES` in `packages/schema`: the tag
 2. Engine core, 2-player same-screen
    - ✅ Setup and London mulligan, turn structure, priority, stack, land plays, mana abilities, casting and resolution, state-based actions, cleanup, manual resolution, player views
    - ✅ Combat: attackers (incl. multiple opponents and planeswalkers), blockers with evasion and protection, first/double strike, trample, deathtouch, lifelink, infect, wither, toxic; commanders in the command zone with tax, and commander damage
-   - Same-screen table UI
+   - ✅ Same-screen table UI (`apps/web/src/play`): 2–4 players pass one device; a curtain before each player's decision keeps hands hidden (`viewFor`). Everything clickable comes from `legalActions()` or the pending choice; targets come from the engine's candidates (`choicePrompts`), and the engine re-checks every action. Seats choose stops; priority is passed for them elsewhere. Not yet: dividing damage among targets by hand (it's split evenly), X costs of activated abilities, splice, and adjusting the board by hand outside a manual resolution
+   - Early part of milestone 5: deck builder with search, commander and partner/Background/Doctor pairs, color identity, singleton and legality checks, engine coverage per deck; import from Moxfield, Archidekt, MTGO, Arena and plain text (unmatched lines listed), export as text. Moxfield/Archidekt links are tried from the browser, which those sites usually refuse (no proxy by design)
 3. Effects system and parser v1
    - ✅ Compositional grammar: spells, triggered, activated and static abilities, modal spells, tokens, costs (mana, tap, sacrifice, life, loyalty)
    - ✅ Targets and resolution: target rules, fizzling, hexproof/shroud/protection, counterspells, choices during resolution, library search, "unless … pays"
