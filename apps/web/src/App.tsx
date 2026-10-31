@@ -1,21 +1,124 @@
 import type { Automation, CardDef, Color } from '@mtg/schema';
 import { COLORS } from '@mtg/schema';
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { AUTOMATION_LABEL, AutomationMark, CardImage, ManaSymbol } from './components/bits';
 import { CardDetail } from './components/CardDetail';
 import { StoragePanel } from './components/StoragePanel';
 import { loadCardDB, type LoadedDB } from './db';
+import { DecksView } from './deck/DecksView';
+import type { Deck } from './deck/model';
+import { buildIndex } from './deck/names';
+import { loadDecks, saveDecks, syncPins } from './deck/store';
 import { compileQuery, FILTER_HELP, sortCards, type SortKey } from './search';
 
 const BASE = import.meta.env.BASE_URL;
+// The rules engine is most of the bundle: load it when the table is first opened.
+const PlayView = lazy(() => import('./play/PlayView').then((m) => ({ default: m.PlayView })));
 const PAGE = 120;
 const LEVELS: Automation[] = ['full', 'partial', 'manual'];
 const COLOR_NAMES: Record<Color, string> = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
 
 type LoadState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; loaded: LoadedDB };
 
+type View = 'cards' | 'decks' | 'play';
+
+function useHashRoute(): [string, (r: string) => void] {
+  const [hash, setHash] = useState(() => location.hash || '#/');
+  useEffect(() => {
+    const on = () => setHash(location.hash || '#/');
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  return [hash, (r) => (location.hash = r)];
+}
+
+function Nav({ view }: { view: View }) {
+  const tabs: [View, string, string][] = [
+    ['cards', 'Cards', '#/'],
+    ['decks', 'Decks', '#/decks'],
+    ['play', 'Play', '#/play'],
+  ];
+  return (
+    <nav className="tabs" aria-label="Sections">
+      {tabs.map(([v, label, href]) => (
+        <a key={v} href={href} className={v === view ? 'tab active' : 'tab'} aria-current={v === view ? 'page' : undefined}>
+          {label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function LoadMessage({ load }: { load: LoadState }) {
+  if (load.status === 'loading') return <p className="state">Loading card data…</p>;
+  if (load.status === 'error')
+    return (
+      <div className="state error">
+        <p>{load.message}</p>
+        <p>
+          Build the card data first: <code>pnpm cards:fixture</code> for the small sample, or <code>pnpm cards:build</code> for every card. Then reload.
+        </p>
+      </div>
+    );
+  return null;
+}
+
 export function App() {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
+  const [hash, go] = useHashRoute();
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [decks, setDecksState] = useState<Deck[]>(() => loadDecks());
+  const [storageWarning, setStorageWarning] = useState(false);
+  const view: View = hash.startsWith('#/decks') ? 'decks' : hash.startsWith('#/play') ? 'play' : 'cards';
+  const deckId = /^#\/decks\/([^/?#]+)/.exec(hash)?.[1] ?? null;
+
+  useEffect(() => {
+    loadCardDB(BASE)
+      .then((loaded) => setLoad({ status: 'ready', loaded }))
+      .catch((err: unknown) => setLoad({ status: 'error', message: err instanceof Error ? err.message : String(err) }));
+  }, []);
+
+  const index = useMemo(() => (load.status === 'ready' ? buildIndex(load.loaded.db.cards) : null), [load]);
+  // Saved decks' card images stay pinned in the image cache.
+  useEffect(() => {
+    if (index) void syncPins(decks, index.get);
+  }, [index, decks]);
+  const setDecks = (next: Deck[]) => {
+    setDecksState(next);
+    setStorageWarning(!saveDecks(next));
+  };
+
+  if (view === 'cards') return <BrowserView load={load} storageOpen={storageOpen} setStorageOpen={setStorageOpen} />;
+  return (
+    <div className={`app view-${view}`}>
+      <header className="top slim">
+        <div className="brand-wrap">
+          <h1 className="brand">MagicEngine</h1>
+          <Nav view={view} />
+        </div>
+        <span />
+        <button type="button" className="ghost storage-btn" onClick={() => setStorageOpen(true)}>
+          Storage
+        </button>
+      </header>
+      {storageWarning && <p className="banner warn page-banner">This browser won’t save decks (storage is full or blocked). Export your decks as text to keep them.</p>}
+      {load.status !== 'ready' || !index ? (
+        <main className="page">
+          <LoadMessage load={load} />
+        </main>
+      ) : view === 'decks' ? (
+        <DecksView cards={load.loaded.db.cards} index={index} decks={decks} setDecks={setDecks} deckId={deckId} go={go} />
+      ) : (
+        <Suspense fallback={<p className="state page">Loading the rules engine…</p>}>
+          <PlayView db={load.loaded.db} decks={decks} lookup={index.get} onEditDeck={(id) => go(`#/decks/${id}`)} />
+        </Suspense>
+      )}
+      <StoragePanel open={storageOpen} onClose={() => setStorageOpen(false)} meta={load.status === 'ready' ? load.loaded.meta : null} />
+    </div>
+  );
+}
+
+function BrowserView({ load, storageOpen, setStorageOpen }: { load: LoadState; storageOpen: boolean; setStorageOpen: (open: boolean) => void }) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [identity, setIdentity] = useState<Color[]>([]);
@@ -23,7 +126,6 @@ export function App() {
   const [sort, setSort] = useState<SortKey>('name');
   const [limit, setLimit] = useState(PAGE);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [storageOpen, setStorageOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -36,12 +138,6 @@ export function App() {
     );
     ro.observe(header);
     return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    loadCardDB(BASE)
-      .then((loaded) => setLoad({ status: 'ready', loaded }))
-      .catch((err: unknown) => setLoad({ status: 'error', message: err instanceof Error ? err.message : String(err) }));
   }, []);
 
   useEffect(() => {
@@ -80,7 +176,10 @@ export function App() {
   return (
     <div className="app">
       <header className="top" ref={headerRef}>
-        <h1 className="brand">MagicEngine</h1>
+        <div className="brand-wrap">
+          <h1 className="brand">MagicEngine</h1>
+          <Nav view="cards" />
+        </div>
         <div className="search">
           <label htmlFor="q" className="sr-only">
             Search cards
@@ -158,16 +257,7 @@ export function App() {
 
       <main className={selected ? 'layout has-detail' : 'layout'}>
         <section className="results" aria-live="polite">
-          {load.status === 'loading' && <p className="state">Loading card data…</p>}
-          {load.status === 'error' && (
-            <div className="state error">
-              <p>{load.message}</p>
-              <p>
-                Build the card data first: <code>pnpm cards:fixture</code> for the small sample, or{' '}
-                <code>pnpm cards:build</code> for every card. Then reload.
-              </p>
-            </div>
-          )}
+          <LoadMessage load={load} />
           {load.status === 'ready' && (
             <>
               <p className="tally">
