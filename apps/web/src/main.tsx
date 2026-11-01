@@ -1,6 +1,11 @@
-import '@fontsource-variable/instrument-sans';
+import '@fontsource-variable/instrument-sans/wdth.css';
 import '@fontsource-variable/crimson-pro';
-import './styles.css';
+import 'mana-font/css/mana.min.css';
+import './styles/base.css';
+import './styles/card.css';
+import './styles/browser.css';
+import './styles/decks.css';
+import './styles/table.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';

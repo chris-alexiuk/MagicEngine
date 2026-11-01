@@ -1,0 +1,302 @@
+/* ----------------------------------------------------------------------- */
+/* A card: 63:88, rounded corners. The image when it loads (whole, never     */
+/* cropped or drawn over); otherwise a proxy drawn like a printed card.     */
+/* ----------------------------------------------------------------------- */
+
+.card {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  border-radius: var(--card-radius);
+  container-type: inline-size;
+  background: #0d0e10;
+}
+.card-img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: var(--card-radius);
+  opacity: 0;
+  user-select: none;
+}
+.card-img.loaded {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .card-img {
+    transition: opacity 160ms ease-out;
+  }
+}
+
+/* The proxy: a black border, a frame in the card's colour, name bar, art panel, type line, text box, P/T box */
+.cf {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: var(--card-radius);
+  background: #0e0f11;
+  padding: 3.4cqi;
+  color: #1c1b18;
+  font-family: var(--ui);
+  line-height: 1.18;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --fc: var(--f-colorless);
+}
+.cf.frame-w { --fc: var(--f-w); }
+.cf.frame-u { --fc: var(--f-u); }
+.cf.frame-b { --fc: var(--f-b); }
+.cf.frame-r { --fc: var(--f-r); }
+.cf.frame-g { --fc: var(--f-g); }
+.cf.frame-gold { --fc: var(--f-gold); }
+.cf.frame-land { --fc: var(--f-land); }
+.cf.frame-artifact { --fc: var(--f-artifact); }
+.cf-in {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2.2cqi;
+  height: 100%;
+  padding: 3.2cqi 3.2cqi 3.6cqi;
+  border-radius: 3.4cqi;
+  overflow: hidden;
+  background: linear-gradient(168deg, color-mix(in srgb, var(--fc) 82%, #fff) 0%, var(--fc) 38%, color-mix(in srgb, var(--fc) 72%, #000) 100%);
+}
+.cf-name,
+.cf-type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2cqi;
+  background: color-mix(in srgb, var(--fc) 34%, #fbf8f1);
+  border-radius: 3.6cqi / 4.6cqi;
+  box-shadow: inset 0 0 0 0.45cqi rgba(0, 0, 0, 0.32), 0 0.5cqi 0 rgba(0, 0, 0, 0.22);
+}
+.cf-name {
+  padding: 2.4cqi 3.4cqi;
+  font-size: max(10px, 7.4cqi);
+  font-weight: 680;
+  font-stretch: 86%;
+}
+.cf-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cf-cost {
+  flex: none;
+  font-size: 7.6cqi;
+}
+.cf-art {
+  position: relative;
+  flex: 0 0 27%;
+  display: grid;
+  place-items: center;
+  border-radius: 1.6cqi;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 28% 18%, rgba(255, 255, 255, 0.28), transparent 55%),
+    repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.035) 0 2cqi, transparent 2cqi 4cqi),
+    linear-gradient(160deg, color-mix(in srgb, var(--fc) 70%, #fff), color-mix(in srgb, var(--fc) 55%, #1d1d1f));
+  box-shadow: inset 0 0 0 0.5cqi rgba(0, 0, 0, 0.32);
+}
+.cf-glyph {
+  font-size: 22cqi;
+  color: rgba(20, 18, 15, 0.22);
+}
+.cf-land-mana {
+  display: flex;
+  gap: 2cqi;
+  font-size: 17cqi;
+}
+.cf-land-mana.n3,
+.cf-land-mana.n4,
+.cf-land-mana.n5 {
+  font-size: 11cqi;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 70%;
+}
+.kw-icons {
+  position: absolute;
+  left: 3cqi;
+  bottom: 2.4cqi;
+  display: flex;
+  gap: 2.4cqi;
+  font-size: 8.6cqi;
+  color: rgba(16, 15, 13, 0.82);
+}
+.cf-type {
+  padding: 1.8cqi 3.4cqi;
+  font-size: max(8.5px, 5.8cqi);
+  font-weight: 620;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.cf-text {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fc) 16%, #fbf8f1);
+  border-radius: 1.2cqi;
+  padding: 2.8cqi 4cqi 9cqi;
+  font-family: var(--rules);
+  font-size: max(9.5px, 6cqi);
+  /* Long text at a readable size runs off the bottom of the box; it fades rather than stops dead. */
+  mask-image: linear-gradient(180deg, #000 calc(100% - 9cqi), transparent calc(100% - 2cqi));
+  line-height: 1.2;
+  box-shadow: inset 0 0 0 0.4cqi rgba(0, 0, 0, 0.18);
+}
+.cf[data-len='s'] .cf-text {
+  font-size: max(9.5px, 7.2cqi);
+}
+.cf[data-len='l'] .cf-text {
+  font-size: max(9px, 5.3cqi);
+}
+.cf[data-len='xl'] .cf-text {
+  font-size: max(9px, 4.6cqi);
+}
+/* No rules text (basic lands): the art panel takes the room, with the mana it makes in it. */
+.cf[data-text='none'] .cf-text {
+  display: none;
+}
+.cf[data-text='none'] .cf-art {
+  flex: 1 1 auto;
+}
+.cf[data-text='none'] .cf-land-mana {
+  font-size: 26cqi;
+}
+.cf-line {
+  display: block;
+  margin-bottom: 0.32em;
+}
+.cf-text .mana-sym .ms-cost {
+  font-size: 0.74em;
+}
+.cf-pt {
+  position: absolute;
+  right: 3.2cqi;
+  bottom: 2.6cqi;
+  min-width: 17cqi;
+  text-align: center;
+  background: color-mix(in srgb, var(--fc) 46%, #fbf8f1);
+  border-radius: 2.6cqi / 3.6cqi;
+  padding: 0.8cqi 2.6cqi;
+  font-size: 7.6cqi;
+  font-weight: 760;
+  box-shadow: inset 0 0 0 0.45cqi rgba(0, 0, 0, 0.35), 0 0.6cqi 1.2cqi rgba(0, 0, 0, 0.3);
+}
+.cf-pt.loyalty {
+  background: #2a2a2c;
+  color: #f2f2f2;
+}
+.cf-pt.up {
+  color: #0f6a2c;
+}
+.cf-pt.down {
+  color: #a2231a;
+}
+
+/* Small cards: a compact face — name, cost, what kind of card it is, keyword icons, and its numbers, big. */
+@container (max-width: 148px) {
+  .cf {
+    padding: 4cqi;
+  }
+  .cf-in {
+    padding: 3.4cqi;
+    gap: 3cqi;
+  }
+  .cf-name {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1cqi;
+    padding: 2.6cqi 4cqi 2.2cqi;
+    font-size: max(8.5px, 11cqi);
+    font-stretch: 80%;
+    line-height: 1.12;
+  }
+  .cf-cost {
+    font-size: max(7.5px, 9cqi);
+    justify-content: flex-end;
+    align-self: flex-end;
+  }
+  .cf-art {
+    flex: 1 1 auto;
+  }
+  .cf-glyph {
+    font-size: 34cqi;
+  }
+  .kw-icons {
+    font-size: max(9px, 13cqi);
+    left: 4cqi;
+    bottom: 3cqi;
+    gap: 3cqi;
+  }
+  .cf-land-mana {
+    font-size: 26cqi;
+  }
+  .cf-land-mana.n3,
+  .cf-land-mana.n4,
+  .cf-land-mana.n5 {
+    font-size: 15cqi;
+  }
+  .cf-type,
+  .cf-text {
+    display: none;
+  }
+  .cf-pt {
+    position: static;
+    align-self: flex-end;
+    margin-top: -1cqi;
+    font-size: max(10px, 15cqi);
+    padding: 0.6cqi 4cqi;
+    min-width: 0;
+  }
+}
+@container (max-width: 64px) {
+  .cf-cost {
+    display: none;
+  }
+  .kw-icons {
+    display: none;
+  }
+}
+
+/* The back of a card: deep graphite with a quiet lozenge, never confused with a face */
+.card.back {
+  background: none;
+}
+.cf-back {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--card-radius);
+  background:
+    radial-gradient(70% 55% at 50% 50%, rgba(120, 150, 190, 0.18), transparent 70%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.025) 0 3px, transparent 3px 7px),
+    linear-gradient(160deg, #2a3038, #171a1f);
+  box-shadow: inset 0 0 0 3cqi #0e0f11, inset 0 0 0 4cqi rgba(140, 160, 190, 0.28);
+}
+.cf-back-mark {
+  width: 34%;
+  aspect-ratio: 1;
+  transform: rotate(45deg);
+  border: 0.9cqi solid rgba(160, 182, 210, 0.42);
+  border-radius: 12%;
+  box-shadow: 0 0 0 3cqi rgba(160, 182, 210, 0.08);
+}
+.cf-back-label {
+  position: absolute;
+  bottom: 7%;
+  right: 8%;
+  font-weight: 750;
+  font-size: max(10px, 14cqi);
+  color: #e9edf2;
+}
