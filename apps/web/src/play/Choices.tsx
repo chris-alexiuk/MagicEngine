@@ -1,4 +1,5 @@
 import {
+  apply,
   attackRestriction,
   attackTax,
   blockDeclarationProblem,
@@ -20,15 +21,25 @@ import {
   type TargetPrompt,
   type ZoneName,
 } from '@mtg/engine';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { RulesText } from '../components/bits';
-import { Actions } from './actionbar';
+import { CardBackFace } from '../components/Card';
+import { Actions, PlanArrows } from './actionbar';
 import { TableCard } from './cards';
 import { actionLabel, sameTarget, targetLabel } from './labels';
 import { publicName } from './log';
 import { liveCandidates, pickOf, promptRange, type Pick } from './pick';
 
 type SetPick = (p: Pick | null) => void;
+
+/** Whether the engine would take this answer now (tried on a copy of the state, so nothing changes). */
+function accepts(g: GameState, player: PlayerId, answer: ChoiceAnswer): boolean {
+  try {
+    return apply(g, { type: 'choose', player, answer }).ok;
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Small pieces
@@ -39,7 +50,7 @@ export function ObjectTile({ view, id, selected, onClick, note, disabled }: { vi
   const name = o ? publicName(id, view as unknown as GameState) : 'Hidden card';
   return (
     <button type="button" className={selected ? 'pick-tile selected' : 'pick-tile'} onClick={onClick} disabled={disabled || !onClick} aria-pressed={selected}>
-      <span className="pick-card">{o ? <TableCard cards={view.cards} o={o} sizes="76px" /> : <span className="card-back" />}</span>
+      <span className="pick-card">{o ? <TableCard cards={view.cards} o={o} sizes="240px" /> : <CardBackFace />}</span>
       <span className="pick-name">{note ? `${note} · ${name}` : name}</span>
     </button>
   );
@@ -184,7 +195,8 @@ export function TargetPicker({
   const last = at === prompts.length - 1;
   const next = () => (last ? onDone(picked) : setAt(at + 1));
   const players = candidates.filter((t) => t.kind === 'player');
-  const objects = candidates.filter((t) => t.kind === 'object');
+  // Cards on the table are picked there; only the ones elsewhere (graveyards, exile) get tiles here.
+  const objects = candidates.filter((t) => t.kind === 'object' && !['battlefield', 'hand', 'stack', 'command'].includes(g.objects[t.object]?.zone ?? ''));
   const entries = candidates.filter((t) => t.kind === 'ability');
   return (
     <div className="flow-step">
@@ -195,7 +207,9 @@ export function TargetPicker({
       {candidates.length === 0 ? (
         <p className="hint">No legal choices for this one.</p>
       ) : (
-        <p className="hint">Click a highlighted card or player, or pick below. {mine.length}/{hi} chosen.</p>
+        <p className="hint">
+          Click a lit card or player on the table{objects.length || players.length || entries.length ? ', or choose below' : ''}. {mine.length} of {hi} chosen.
+        </p>
       )}
       {players.length > 0 && (
         <div className="chip-row">
@@ -451,71 +465,93 @@ function attackTargetLabel(g: GameState, t: AttackTarget) {
 }
 const atKey = (t: AttackTarget) => (t.kind === 'player' ? `p:${t.player}` : `o:${t.object}`);
 
+/** Who each player last attacked, so the next attack defaults to them (a client remembers this too). */
+const lastDefender: Record<string, string> = {};
+
 function AttackersPanel({ g, p, setPick, answer }: { g: GameState; p: Extract<PendingChoice, { kind: 'declare_attackers' }>; setPick: SetPick; answer: (a: ChoiceAnswer) => void }) {
   // Each attacker's legal targets (CR 508.1c restrictions checked by the engine's own test).
   const options = useMemo(() => Object.fromEntries(p.attackers.map((id) => [id, p.targets.filter((t) => !attackRestriction(g, g.objects[id]!, t))])), [g, p]);
+  const keys = p.targets.map(atKey);
+  const [defender, setDefender] = useState<string>(() => (lastDefender[p.player] && keys.includes(lastDefender[p.player]!) ? lastDefender[p.player]! : (keys[0] ?? '')));
   const [plan, setPlan] = useState<Record<string, string>>(() => Object.fromEntries(p.attackers.filter((id) => mustAttack(g, g.objects[id]!) && options[id]?.length).map((id) => [id, atKey(options[id]![0]!)])));
   const [exert, setExert] = useState<string[]>([]);
-  const toggle = (id: string) => {
+  const setArrows = useContext(PlanArrows);
+  const targetFor = (id: string) => {
     const opts = options[id] ?? [];
-    if (!opts.length) return;
+    return opts.find((t) => atKey(t) === defender) ?? opts[0];
+  };
+  const toggle = (id: string) => {
+    const t = targetFor(id);
+    if (!t) return;
     setPlan((pl) => {
       const next = { ...pl };
-      if (next[id]) delete next[id];
-      else next[id] = atKey(opts[0]!);
+      if (next[id] === atKey(t)) delete next[id];
+      else next[id] = atKey(t);
       return next;
     });
   };
+  const choose = (key: string) => {
+    setDefender(key);
+    lastDefender[p.player] = key;
+  };
   useEffect(() => {
-    setPick(pickOf(p.attackers.map((object) => ({ kind: 'object', object })), Object.keys(plan).map((object) => ({ kind: 'object', object })), (t) => t.kind === 'object' && toggle(t.object)));
+    // Your creatures toggle; players and planeswalkers that can be attacked choose who the next attackers go after.
+    const objectTargets = p.targets.flatMap((t) => (t.kind === 'planeswalker' ? [t.object] : []));
+    const playerTargets = p.targets.flatMap((t) => (t.kind === 'player' ? [{ kind: 'player' as const, player: t.player }] : []));
+    const current = p.targets.find((t) => atKey(t) === defender);
+    const chosen: Target[] = [...Object.keys(plan).map((object): Target => ({ kind: 'object', object })), ...(p.targets.length > 1 && current ? [current.kind === 'player' ? { kind: 'player' as const, player: current.player } : { kind: 'object' as const, object: current.object }] : [])];
+
+    setPick(
+      pickOf([...p.attackers.map((object): Target => ({ kind: 'object', object })), ...(p.targets.length > 1 ? [...objectTargets.map((object): Target => ({ kind: 'object', object })), ...playerTargets] : [])], chosen, (t) => {
+        if (t.kind === 'object' && p.attackers.includes(t.object)) toggle(t.object);
+        else if (t.kind === 'object') choose(`o:${t.object}`);
+        else if (t.kind === 'player') choose(`p:${t.player}`);
+      }),
+    );
     return () => setPick(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, p]);
+  }, [plan, p, defender]);
   const attacks = Object.entries(plan).map(([attacker, key]) => ({ attacker, target: (options[attacker] ?? []).find((t) => atKey(t) === key)! })).filter((a) => a.target);
+  useEffect(() => {
+    setArrows(attacks.map((a) => ({ from: { id: a.attacker }, to: a.target.kind === 'player' ? { player: a.target.player } : { id: a.target.object }, kind: 'plan' as const })));
+    return () => setArrows([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(attacks)]);
   const tax = attacks.length ? attackTax(g, attacks) : '';
+  const exertable = attacks.filter((a) => p.exertable?.includes(a.attacker));
   return (
     <div className="flow-step">
-      <p className="flow-title">Declare attackers</p>
-      <p className="hint">Click creatures on your battlefield (or below) to attack with them.</p>
-      <ul className="combat-list">
-        {p.attackers.map((id) => {
-          const opts = options[id] ?? [];
-          const on = Boolean(plan[id]);
-          return (
-            <li key={id} className={on ? 'on' : ''}>
-              <label className="check">
-                <input type="checkbox" checked={on} disabled={!opts.length} onChange={() => toggle(id)} />
-                {publicName(id, g)}
-                {mustAttack(g, g.objects[id]!) && <span className="tag">must attack</span>}
-              </label>
-              {on && opts.length > 1 && (
-                <select value={plan[id]} onChange={(e) => setPlan({ ...plan, [id]: e.target.value })}>
-                  {opts.map((t) => (
-                    <option key={atKey(t)} value={atKey(t)}>
-                      → {attackTargetLabel(g, t)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {on && opts.length === 1 && <span className="muted">→ {attackTargetLabel(g, opts[0]!)}</span>}
-              {on && p.exertable?.includes(id) && (
-                <label className="check small">
-                  <input type="checkbox" checked={exert.includes(id)} onChange={() => setExert(exert.includes(id) ? exert.filter((x) => x !== id) : [...exert, id])} />
-                  exert
-                </label>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <p className="hint">Click your creatures to attack with them{p.targets.length > 1 ? '. To attack someone else, click their life total (or a planeswalker) first' : ''}.</p>
+      {p.targets.length > 1 && (
+        <div className="chip-row" role="radiogroup" aria-label="Attack">
+          {p.targets.map((t) => (
+            <button key={atKey(t)} type="button" role="radio" aria-checked={defender === atKey(t)} className={defender === atKey(t) ? 'chip-btn selected' : 'chip-btn'} onClick={() => choose(atKey(t))}>
+              {attackTargetLabel(g, t)}
+              <span className="chip-n">{attacks.filter((a) => atKey(a.target) === atKey(t)).length || ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {exertable.length > 0 && (
+        <div className="chip-row">
+          {exertable.map((a) => (
+            <label key={a.attacker} className="check small">
+              <input type="checkbox" checked={exert.includes(a.attacker)} onChange={() => setExert(exert.includes(a.attacker) ? exert.filter((x) => x !== a.attacker) : [...exert, a.attacker])} />
+              Exert {publicName(a.attacker, g)}
+            </label>
+          ))}
+        </div>
+      )}
       {tax && <p className="hint warn">Attacking this way costs {tax}; it’s paid automatically if you can.</p>}
       <Confirm ok label={attacks.length ? `Attack with ${attacks.length}` : 'No attack'} onClick={() => answer({ kind: 'declare_attackers', attacks, ...(exert.length ? { exert: exert.filter((x) => plan[x]) } : {}) })}>
-        <button type="button" className="ghost" onClick={() => setPlan(Object.fromEntries(p.attackers.filter((id) => options[id]?.length).map((id) => [id, atKey(options[id]![0]!)])))}>
-          All
+        <button type="button" className="secondary" onClick={() => setPlan(Object.fromEntries(p.attackers.flatMap((id) => (targetFor(id) ? [[id, atKey(targetFor(id)!)]] : []))))}>
+          Attack with all
         </button>
-        <button type="button" className="ghost" onClick={() => setPlan({})}>
-          None
-        </button>
+        {attacks.length > 0 && (
+          <button type="button" className="ghost" onClick={() => setPlan({})}>
+            Clear
+          </button>
+        )}
       </Confirm>
     </div>
   );
@@ -528,6 +564,12 @@ function BlockersPanel({ g, p, me, setPick, answer }: { g: GameState; p: Extract
   const [armed, setArmed] = useState<string | null>(null);
   const blocks = Object.entries(plan).flatMap(([blocker, list]) => list.map((attacker) => ({ blocker, attacker })));
   const problem = useMemo(() => blockDeclarationProblem(g, me, blocks), [g, me, blocks]);
+  const setArrows = useContext(PlanArrows);
+  useEffect(() => {
+    setArrows(blocks.map((b) => ({ from: { id: b.blocker }, to: { id: b.attacker }, kind: 'plan' as const })));
+    return () => setArrows([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(blocks)]);
   const assign = (blocker: string, attacker: string | null) => {
     setPlan((pl) => {
       const next = { ...pl };
@@ -557,8 +599,9 @@ function BlockersPanel({ g, p, me, setPick, answer }: { g: GameState; p: Extract
   }, [armed, plan, can]);
   return (
     <div className="flow-step">
-      <p className="flow-title">Declare blockers</p>
-      <p className="hint">{armed ? `Now click the attacker ${publicName(armed, g)} blocks.` : 'Click one of your creatures, then the attacker it blocks — or use the lists below.'}</p>
+      <p className="hint">{armed ? `Now click the attacker ${publicName(armed, g)} blocks.` : 'Click one of your creatures, then the attacker it blocks.'}</p>
+      <details className="combat-details">
+      <summary>Blocks as a list</summary>
       <ul className="combat-list">
         {p.blockers.map((b) => {
           const opts = can[b] ?? [];
@@ -590,13 +633,15 @@ function BlockersPanel({ g, p, me, setPick, answer }: { g: GameState; p: Extract
           );
         })}
       </ul>
-      <Confirm ok={!problem} why={problem} label={blocks.length ? `Block (${blocks.length})` : 'No blocks'} onClick={() => answer({ kind: 'declare_blockers', blocks })} />
+      </details>
+      <Confirm ok={!problem} why={problem} label={blocks.length ? `Block with ${blocks.length}` : 'No blocks'} onClick={() => answer({ kind: 'declare_blockers', blocks })} />
     </div>
   );
 }
 
-function DamagePanel({ g, p, answer }: { g: GameState; p: Extract<PendingChoice, { kind: 'assign_combat_damage' }>; answer: (a: ChoiceAnswer) => void }) {
-  const [plan, setPlan] = useState<Record<string, DamageAssignment[]>>(() => Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested.map((s) => ({ ...s }))])));
+function DamagePanel({ g, view, p, answer }: { g: GameState; view: PlayerView; p: Extract<PendingChoice, { kind: 'assign_combat_damage' }>; answer: (a: ChoiceAnswer) => void }) {
+  const suggested = () => Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested.map((s) => ({ ...s }))]));
+  const [plan, setPlan] = useState<Record<string, DamageAssignment[]>>(suggested);
   const recipients = (c: (typeof p.choices)[number]) => {
     const out: DamageAssignment['to'][] = c.blockers.map((object) => ({ kind: 'permanent', object }));
     if (c.trampleTarget) out.push(c.trampleTarget);
@@ -605,41 +650,53 @@ function DamagePanel({ g, p, answer }: { g: GameState; p: Extract<PendingChoice,
   };
   const label = (r: DamageAssignment['to']) => (r.kind === 'player' ? (g.players[r.player]?.name ?? r.player) : publicName(r.object, g));
   return (
-    <div className="flow-step">
-      <p className="flow-title">Assign combat damage</p>
+    <div className="flow-step damage">
+      <p className="hint">Each attacker’s damage starts as the engine suggests (lethal damage to each blocker in order). Move points with − and +.</p>
       {p.choices.map((c) => {
         const list = plan[c.attacker] ?? [];
         const total = list.reduce((n, a) => n + a.amount, 0);
+        const set = (r: DamageAssignment['to'], n: number) => {
+          const k = JSON.stringify(r);
+          const rest = list.filter((a) => JSON.stringify(a.to) !== k);
+          setPlan({ ...plan, [c.attacker]: n > 0 ? [...rest, { to: r, amount: n }] : rest });
+        };
         return (
           <div key={c.attacker} className="damage-box">
-            <p>
-              <strong>{publicName(c.attacker, g)}</strong> — {c.power} damage ({total} assigned)
-            </p>
-            {recipients(c).map((r) => {
-              const k = JSON.stringify(r);
-              const cur = list.find((a) => JSON.stringify(a.to) === k)?.amount ?? 0;
-              return (
-                <label key={k} className="dmg-row">
-                  <span>{label(r)}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={c.power}
-                    value={cur}
-                    onChange={(e) => {
-                      const n = Math.max(0, Math.min(c.power, Number(e.target.value) || 0));
-                      const rest = list.filter((a) => JSON.stringify(a.to) !== k);
-                      setPlan({ ...plan, [c.attacker]: n ? [...rest, { to: r, amount: n }] : rest });
-                    }}
-                  />
-                </label>
-              );
-            })}
+            <div className="damage-head">
+              <ObjectTile view={view} id={c.attacker} />
+              <p>
+                <strong>{publicName(c.attacker, g)}</strong>
+                <span className={total === c.power ? 'muted' : 'warn-text'}>
+                  {' '}
+                  {total} of {c.power} damage assigned
+                </span>
+              </p>
+            </div>
+            <ul className="damage-rows">
+              {recipients(c).map((r) => {
+                const k = JSON.stringify(r);
+                const cur = list.find((a) => JSON.stringify(a.to) === k)?.amount ?? 0;
+                return (
+                  <li key={k} className="dmg-row">
+                    <span className="dmg-name">{label(r)}</span>
+                    <span className="stepper">
+                      <button type="button" className="step-btn" disabled={cur <= 0} onClick={() => set(r, cur - 1)} aria-label={`One less to ${label(r)}`}>
+                        −
+                      </button>
+                      <span className="row-count">{cur}</span>
+                      <button type="button" className="step-btn" disabled={total >= c.power} onClick={() => set(r, cur + 1)} aria-label={`One more to ${label(r)}`}>
+                        +
+                      </button>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         );
       })}
-      <Confirm ok label="Assign" onClick={() => answer({ kind: 'assign_combat_damage', assignments: plan })}>
-        <button type="button" className="ghost" onClick={() => setPlan(Object.fromEntries(p.choices.map((c) => [c.attacker, c.suggested.map((s) => ({ ...s }))])))}>
+      <Confirm ok label="Assign damage" onClick={() => answer({ kind: 'assign_combat_damage', assignments: plan })}>
+        <button type="button" className="ghost" onClick={() => setPlan(suggested())}>
           Suggested
         </button>
       </Confirm>
@@ -780,12 +837,17 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
       return (
         <div className="flow-step">
           <p className="flow-title">Keep this hand of {hand.length}?</p>
+          <div className="tile-row opening">
+            {hand.map((id) => (
+              <ObjectTile key={id} view={view} id={id} />
+            ))}
+          </div>
           <p className="hint">
             {ps.mulligans ? `You’ve taken ${ps.mulligans} mulligan${ps.mulligans > 1 ? 's' : ''}. ` : ''}A mulligan draws seven new cards; you then put {next} on the bottom{g.config.freeMulligan && ps.mulligans === 0 ? ' (your first mulligan is free)' : ''}.
           </p>
           <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'mulligan', keep: true })}>
-              Keep
+              Keep {hand.length}
             </button>
             <button type="button" className="secondary" disabled={next >= g.config.startingHandSize} onClick={() => answer({ kind: 'mulligan', keep: false })}>
               Mulligan
@@ -862,7 +924,7 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
     case 'declare_blockers':
       return <BlockersPanel g={g} p={p} me={me} setPick={setPick} answer={answer} />;
     case 'assign_combat_damage':
-      return <DamagePanel g={g} p={p} answer={answer} />;
+      return <DamagePanel g={g} view={view} p={p} answer={answer} />;
     case 'trigger_targets':
       return <TriggerPanel g={g} view={view} p={p} setPick={setPick} answer={answer} />;
     case 'scry':
@@ -907,7 +969,7 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
     case 'copy_targets':
       return <CopyTargetsPanel g={g} view={view} p={p} setPick={setPick} answer={answer} />;
     case 'pay':
-      return <PayPanel p={p} answer={answer} />;
+      return <PayPanel g={g} p={p} answer={answer} />;
     case 'search':
       return (
         <ObjectPicker
@@ -1125,8 +1187,11 @@ function CopyTargetsPanel({ g, view, p, setPick, answer }: { g: GameState; view:
   );
 }
 
-function PayPanel({ p, answer }: { p: Extract<PendingChoice, { kind: 'pay' }>; answer: (a: ChoiceAnswer) => void }) {
+function PayPanel({ g, p, answer }: { g: GameState; p: Extract<PendingChoice, { kind: 'pay' }>; answer: (a: ChoiceAnswer) => void }) {
   const [x, setX] = useState(0);
+  // "You may pay": offered only when it can be paid now (it's otherwise refused).
+  const yes: ChoiceAnswer = { kind: 'pay', pay: true, ...(p.x ? { x } : {}) };
+  const can = useMemo(() => accepts(g, p.player, yes), [g, p, x]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="flow-step">
       <p className="flow-title">{p.sourceName}</p>
@@ -1139,15 +1204,23 @@ function PayPanel({ p, answer }: { p: Extract<PendingChoice, { kind: 'pay' }>; a
           <input type="number" min={0} {...(p.x.max !== undefined ? { max: p.x.max } : {})} value={x} onChange={(e) => setX(Math.max(0, Math.min(p.x?.max ?? Infinity, Number(e.target.value) || 0)))} />
         </label>
       )}
-      <Actions>
-        <button type="button" className="primary" onClick={() => answer({ kind: 'pay', pay: true, ...(p.x ? { x } : {}) })}>
-          Pay <RulesText text={p.cost} />
-        </button>
-        <button type="button" className="secondary" onClick={() => answer({ kind: 'pay', pay: false })}>
-          Don’t pay
-        </button>
+      <Actions hint={can ? null : 'You can’t pay this now.'}>
+        {can ? (
+          <>
+            <button type="button" className="primary" onClick={() => answer(yes)}>
+              Pay <RulesText text={p.cost} />
+            </button>
+            <button type="button" className="secondary" onClick={() => answer({ kind: 'pay', pay: false })}>
+              Don’t pay
+            </button>
+          </>
+        ) : (
+          <button type="button" className="primary" onClick={() => answer({ kind: 'pay', pay: false })}>
+            Don’t pay
+          </button>
+        )}
       </Actions>
-      <p className="hint">Mana is tapped for you automatically.</p>
+      {can && <p className="hint">Mana is tapped for you automatically.</p>}
     </div>
   );
 }
@@ -1214,20 +1287,24 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
       const n = p.choice === 'devour' ? 0 : (p.amount ?? 1);
       return <ObjectPicker key={`ae-${p.choice}`} view={view} candidates={p.candidates ?? []} min={n} max={p.choice === 'devour' ? (p.candidates?.length ?? 0) : n} label="Sacrifice" title={head} setPick={setPick} onDone={(sacrifice) => answer({ kind: 'as_enters', sacrifice })} />;
     }
-    default:
+    default: {
+      const yes = accepts(g, p.player, { kind: 'as_enters', pay: true });
       return (
         <div className="flow-step">
           {head}
           <Actions>
-            <button type="button" className="primary" onClick={() => answer({ kind: 'as_enters', pay: true })}>
-              {p.choice === 'pay_life' ? `Pay ${p.amount ?? 0} life` : 'Yes'}
-            </button>
-            <button type="button" className="secondary" onClick={() => answer({ kind: 'as_enters', pay: false })}>
+            {yes && (
+              <button type="button" className="primary" onClick={() => answer({ kind: 'as_enters', pay: true })}>
+                {p.choice === 'pay_life' ? `Pay ${p.amount ?? 0} life` : 'Yes'}
+              </button>
+            )}
+            <button type="button" className={yes ? 'secondary' : 'primary'} onClick={() => answer({ kind: 'as_enters', pay: false })}>
               {p.choice === 'pay_life' ? 'Don’t (it enters tapped)' : 'No'}
             </button>
           </Actions>
         </div>
       );
+    }
   }
 }
 

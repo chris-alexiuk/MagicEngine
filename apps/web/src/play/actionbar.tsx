@@ -1,10 +1,10 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import type { ArrowSpec } from './Arrows';
 
 /**
- * The action bar: like a digital client's OK / Pass button, the buttons for the decision at hand always appear in one
- * place (bottom-right), with the primary one last and largest. Panels render their buttons through <Actions>; the
- * table provides the element they go into.
+ * Where a decision's buttons go: the action bar at the bottom right of the table (or an overlay's own button row).
+ * Choice panels render their buttons through <Actions>, so every decision's buttons are in the same place.
  */
 export const ActionBarSlot = createContext<HTMLElement | null>(null);
 
@@ -18,3 +18,6 @@ export function Actions({ children, hint }: { children: ReactNode; hint?: ReactN
   );
   return el ? createPortal(content, el) : content;
 }
+
+/** Panels inside choices can draw arrows on the table (planned attacks and blocks). */
+export const PlanArrows = createContext<(a: ArrowSpec[]) => void>(() => {});

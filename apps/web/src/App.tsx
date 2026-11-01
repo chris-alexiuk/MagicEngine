@@ -71,6 +71,8 @@ export function App() {
   const [storageWarning, setStorageWarning] = useState(false);
   const view: View = hash.startsWith('#/decks') ? 'decks' : hash.startsWith('#/play') ? 'play' : 'cards';
   const deckId = /^#\/decks\/([^/?#]+)/.exec(hash)?.[1] ?? null;
+  const playtest = view === 'play' ? (/[?&]playtest=([^&]+)/.exec(hash)?.[1] ?? null) : null;
+  const [toolsEl, setToolsEl] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     loadCardDB(BASE)
@@ -96,7 +98,7 @@ export function App() {
           <h1 className="brand">MagicEngine</h1>
           <Nav view={view} />
         </div>
-        <span />
+        <div className="header-tools" ref={setToolsEl} />
         <button type="button" className="ghost storage-btn" onClick={() => setStorageOpen(true)}>
           Storage
         </button>
@@ -110,7 +112,15 @@ export function App() {
         <DecksView cards={load.loaded.db.cards} index={index} decks={decks} setDecks={setDecks} deckId={deckId} go={go} />
       ) : (
         <Suspense fallback={<p className="state page">Loading the rules engine…</p>}>
-          <PlayView db={load.loaded.db} decks={decks} lookup={index.get} onEditDeck={(id) => go(`#/decks/${id}`)} />
+          <PlayView
+            db={load.loaded.db}
+            decks={decks}
+            lookup={index.get}
+            onEditDeck={(id) => go(`#/decks/${id}`)}
+            toolsEl={toolsEl}
+            playtest={playtest}
+            clearPlaytest={() => history.replaceState(null, '', '#/play')}
+          />
         </Suspense>
       )}
       <StoragePanel open={storageOpen} onClose={() => setStorageOpen(false)} meta={load.status === 'ready' ? load.loaded.meta : null} />

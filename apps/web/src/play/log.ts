@@ -283,3 +283,19 @@ function manualText(op: ManualOp, ...states: GameState[]): string {
       return `draws ${plural(op.count, 'card')}`;
   }
 }
+
+/**
+ * A solo playtest calls the player "You", so lines narrated in the third person ("You draws a card") are put in the
+ * second person for display ("You draw a card").
+ */
+export function asYou(text: string): string {
+  return text.replace(/\bYou (\w+)/g, (all, verb: string) => {
+    if (verb === 'has') return 'You have';
+    if (verb === 'is') return 'You are';
+    if (verb === 'was') return 'You were';
+    if (!/s$/.test(verb) || /ss$/.test(verb) || verb.length < 3) return all;
+    if (/ies$/.test(verb)) return `You ${verb.slice(0, -3)}y`;
+    if (/(ch|sh|x|z|o)es$/.test(verb)) return `You ${verb.slice(0, -2)}`;
+    return `You ${verb.slice(0, -1)}`;
+  });
+}

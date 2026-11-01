@@ -1,6 +1,6 @@
 import type { CardDef } from '@mtg/schema';
 import type { GameObject } from '@mtg/engine';
-import { CardImage } from '../components/bits';
+import { CardBackFace, CardView } from '../components/Card';
 
 /** The card definition and face an object shows (a copy shows what it copies; CR 707.2). */
 export function shownCard(cards: Record<string, CardDef>, o: GameObject): { card: CardDef; face: number } | null {
@@ -10,15 +10,12 @@ export function shownCard(cards: Record<string, CardDef>, o: GameObject): { card
   return { card, face: o.copyOf?.face ?? o.face };
 }
 
-/**
- * A card at table size. The image comes from Scryfall's CDN through the image cache; while it loads, or if it can't,
- * the text proxy shows. Nothing is ever drawn over the card image, so the artist and copyright line stay visible.
- */
+/** A game object drawn as a card (its image, or its proxy). */
 export function TableCard({ cards, o, sizes, title }: { cards: Record<string, CardDef>; o: GameObject; sizes: string; title?: string }) {
   const shown = shownCard(cards, o);
   return (
     <span className="tc-frame" title={title}>
-      {shown ? <CardImage card={shown.card} faceIndex={shown.face} sizes={sizes} /> : <span className="card-back" />}
+      {shown ? <CardView card={shown.card} faceIndex={shown.face} sizes={sizes} /> : <CardBackFace />}
     </span>
   );
 }
@@ -27,7 +24,7 @@ export function TableCard({ cards, o, sizes, title }: { cards: Record<string, Ca
 export function CardBack({ label }: { label?: string }) {
   return (
     <span className="tc-frame">
-      <span className="card-back">{label}</span>
+      <CardBackFace {...(label ? { label } : {})} />
     </span>
   );
 }

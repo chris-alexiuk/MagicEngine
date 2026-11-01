@@ -4,7 +4,7 @@ import type { CardDef } from '@mtg/schema';
 import { apply, legalActions, type Action, type GameState } from '@mtg/engine';
 import { describe, expect, it } from 'vitest';
 import { narrate } from './log';
-import { DEFAULT_STOPS, decider, newGame, replay, shouldAutoPass, step, type GameSetup, type Stops } from './session';
+import { DEFAULT_STOPS, decider, newGame, replay, shouldAutoPass, step, type Ctx, type GameSetup, type Stops } from './session';
 
 const fixture = JSON.parse(
   readFileSync(new URL('../../../../packages/compiler/test/fixtures/scryfall-sample.json', import.meta.url), 'utf8'),
@@ -21,13 +21,14 @@ const setup: GameSetup = {
   ],
 };
 const stops: Record<string, Stops> = { p1: DEFAULT_STOPS, p2: DEFAULT_STOPS };
+const ctx: Ctx = { stops, passUntil: null, dummies: new Set() };
 
 function keepBoth(): { g: GameState; actions: Action[] } {
   let g = newGame(setup, cards).state;
   const actions: Action[] = [];
   while (g.pending?.kind === 'mulligan') {
     const a: Action = { type: 'choose', player: g.pending.player, answer: { kind: 'mulligan', keep: true } };
-    const r = step(g, a, stops, null);
+    const r = step(g, a, ctx);
     if (!r.ok) throw new Error(r.error);
     actions.push(...r.applied.steps.map((s) => s.action));
     g = r.applied.state;
@@ -64,12 +65,12 @@ describe('same-screen session', () => {
     let { g, actions } = keepBoth();
     const land = legalActions(g, 'p1').find((a) => a.type === 'play_land');
     expect(land).toBeTruthy();
-    const r = step(g, land!, stops, null);
+    const r = step(g, land!, ctx);
     if (!r.ok) throw new Error(r.error);
     g = r.applied.state;
     actions = [...actions, ...r.applied.steps.map((s) => s.action)];
     const lines: string[] = [];
-    const back = replay({ setup, actions, savedAt: '' }, cards, (before, after, events) => lines.push(...narrate(before, after, events, () => lines.length).map((l) => l.text)));
+    const back = replay({ setup, actions }, cards, (before, after, events) => lines.push(...narrate(before, after, events, () => lines.length).map((l) => l.text)));
     expect(back && JSON.stringify(back.zones)).toBe(JSON.stringify(g.zones));
     expect(lines.some((l) => /Ann plays (Forest|Island)\./.test(l))).toBe(true);
     // Draws name the card only in a line for the drawer.
@@ -81,7 +82,7 @@ describe('same-screen session', () => {
     let { g } = keepBoth();
     const kinnan = g.zones.command.find((id) => g.objects[id]!.card === 'Kinnan, Bonder Prodigy')!;
     const run = (a: Action) => {
-      const r = step(g, a, stops, null);
+      const r = step(g, a, ctx);
       if (!r.ok) throw new Error(`${JSON.stringify(a)}: ${r.error}`);
       g = r.applied.state;
     };
@@ -123,7 +124,7 @@ describe('same-screen session', () => {
 
   it('refuses an illegal action without changing anything', () => {
     const { g } = keepBoth();
-    const r = step(g, { type: 'pass', player: 'p2' }, stops, null);
+    const r = step(g, { type: 'pass', player: 'p2' }, ctx);
     expect(r.ok).toBe(false);
   });
 });
