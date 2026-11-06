@@ -964,7 +964,9 @@ export function matchesFilter(
   if (f.controller === 'enchanted' && (!ctx.source?.attachedToPlayer || controller !== ctx.source.attachedToPlayer)) return false;
   if (f.controller === 'defending') {
     // CR 506.2: the player the source is attacking (or whose planeswalker it's attacking).
-    const a = ctx.source ? g.combat?.attackers[ctx.source.id] : undefined;
+    // Mjölnir: an Equipment's or Aura's "defending player" is the one its attacking creature attacks.
+    const host = ctx.source?.attachedTo && g.objects[ctx.source.attachedTo.id]?.zcc === ctx.source.attachedTo.zcc ? ctx.source.attachedTo.id : undefined;
+    const a = ctx.source ? (g.combat?.attackers[ctx.source.id] ?? (host ? g.combat?.attackers[host] : undefined)) : undefined;
     const defender = a ? (a.target.kind === 'player' ? a.target.player : g.objects[a.target.object]?.controller) : undefined;
     if (!defender || controller !== defender) return false;
   }

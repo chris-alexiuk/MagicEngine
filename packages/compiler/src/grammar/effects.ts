@@ -359,6 +359,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     (_m, y: string, what: string, tapped: string | undefined, cond: string) =>
       `${y}ou may search your library for ${what}, put it onto the battlefield${tapped ?? ''}, then shuffle. If ${cond}, you may search your library for ${what}, put it onto the battlefield${tapped ?? ''}, then shuffle.`,
   );
+  // Mjölnir, Storm Hammer: "deals damage to each opponent equal to the number of tapped creatures that opponent controls" —
+  // counted for each of them, as "they control" (never a player named earlier).
+  text = text.replace(/(deals damage to each opponent equal to [^.]*?)\bthat opponent controls\b/g, '$1they control');
   // Bebop: "you may draw X cards, where X is …. If you do, you lose X life." — both with that X, if you draw.
   text = text.replace(/\b([Yy]ou may draw X cards), (where X is [^.]+)\. If you do, you lose X life\./, '$1 and lose X life, $2.');
   // Pull from the Deep: "Return up to one target instant card and up to one target sorcery card from your graveyard to your
