@@ -72,11 +72,13 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
   // Spectral Grasp: "can't block creatures you control".
   // Zurgo Bellstriker: "can't block creatures with power 2 or greater".
   // Hunted Ghoul: "can't block Humans"; Orcish Veteran: "can't block white creatures with power 2 or greater".
-  const cantBlockOf = /^can't block ((?:[a-z]+ )*creatures (?:you control|your opponents control|with power \d+ or (?:greater|less))|(?:(?:white|blue|black|red|green|artifact|nonartifact|colorless) )+creatures(?: with (?:power \d+ or (?:greater|less)|flying))?|[A-Z][a-z]+s)$/.exec(p);
+  const cantBlockOf = /^can't block ((?:[a-z]+ )*creatures (?:you control|your opponents control|with power \d+ or (?:greater|less)|with power greater than ~'s power)|(?:(?:white|blue|black|red|green|artifact|nonartifact|colorless) )+creatures(?: with (?:power \d+ or (?:greater|less)|flying))?|[A-Z][a-z]+s)$/.exec(p);
   if (cantBlockOf) {
     const pf = parseFilter(cantBlockOf[1]!, b);
     return pf && pf.plural ? { cantBlockOf: pf.filter } : null;
   }
+  // Heartwood Dryad: "can block creatures with shadow as though it had shadow".
+  if (p === 'can block creatures with shadow as though it had shadow') return { blocksShadow: true };
   const only = /^can block only (.+)$/.exec(p);
   if (only) {
     const pf = parseFilter(only[1]!, b);

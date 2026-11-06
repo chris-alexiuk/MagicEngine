@@ -461,6 +461,10 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
       (cost.other ??= []).push({ type: 'put_counters_self', counter: m[2]!.replace(/−/g, '-'), amount: parseAmount(m[1]!.replace(/^an$/, 'a')) ?? 1 });
     }
     // Millikin: "Mill a card" (CR 701.17b).
+    // Arc-Slogger: "Exile the top ten cards of your library".
+    else if (/^[Ee]xile the top (two|three|four|five|six|seven|eight|nine|ten) cards of your library$/.test(item)) (cost.other ??= []).push({ type: 'exile_top', amount: parseAmount(/^[Ee]xile the top (\w+)/.exec(item)![1]!) as number });
+    // Royal Herbalist: "Exile the top card of your library".
+    else if (/^[Ee]xile the top card of your library$/.test(item)) (cost.other ??= []).push({ type: 'exile_top', amount: 1 });
     else if (/^[Mm]ill (a card|two cards|three cards)$/.test(item)) (cost.other ??= []).push({ type: 'mill', amount: { 'a card': 1, 'two cards': 2, 'three cards': 3 }[/^[Mm]ill (.+)$/.exec(item)![1]!]! });
     // Relic of Progenitus, Plaza of Heroes: "Exile this artifact", "Exile this land" (CR 118.3).
     else if (/^[Ee]xile ~$/.test(item)) (cost.other ??= []).push({ type: 'exile_self_battlefield' });
@@ -506,6 +510,8 @@ export function parseCost(text: string, planeswalker: boolean, b: Binder | null 
     else if (/^[Dd]iscard a card with mana value X$/.test(item) && !planeswalker) (cost.other ??= []).push({ type: 'discard', amount: 1, filter: { manaValue: { op: 'eq', n: 'X' } } });
     // ("sacrifice any number of …" / "all …" is read only as a spell's additional cost.)
     else if (choiceCost(item, b) && !['any', 'all'].includes(String(choiceCost(item, b)!.amount))) (cost.other ??= []).push(choiceCost(item, b)!);
+    // Sandstone Deadfall: "Sacrifice two lands and this artifact" — those, and itself.
+    else if (/^[Ss]acrifice (?:two|three) [a-z]+ and ~$/.test(item) && choiceCost(item.replace(/ and ~$/, ''), b)) (cost.other ??= []).push(choiceCost(item.replace(/ and ~$/, ''), b)!, { type: 'sacrifice_self' });
     // Jarad: "Sacrifice a Swamp and a Forest"; Mount Doom: "Sacrifice Mount Doom and a legendary artifact" — each its own.
     else if (/^[Ss]acrifice (?:~|(?:a|an) [^,]+?) and (?:a|an) [^,]+$/.test(item)) {
       const m = /^[Ss]acrifice (~|(?:a|an) [^,]+?) and ((?:a|an) [^,]+)$/.exec(item)!;
@@ -1134,6 +1140,14 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const subject: Ref = toCreatures[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
     return { trigger: { type: 'deals_damage', subject, to: 'creatures', ...(toCreatures[2] ? { combat: true } : {}) }, it: subject, player: null };
   }
+  // Vampire Slayer: "Whenever this creature deals damage to a Vampire, destroy that creature." — a creature of that type.
+  const toSubtype = /^(~|enchanted creature|equipped creature) deals (combat )?damage to an? ([A-Z][a-z]+)$/.exec(t);
+  if (toSubtype && isSubtype(toSubtype[3]!)) {
+    const subject: Ref = toSubtype[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
+    b.eventAmount = true;
+    b.named['that creature'] = { ref: 'trigger_object' };
+    return { trigger: { type: 'deals_damage', subject, to: 'creature', hitFilter: { subtypes: [toSubtype[3]!] }, ...(toSubtype[2] ? { combat: true } : {}) }, it: subject, player: null };
+  }
   // "Whenever ~ deals damage to a player", "… to an opponent": "that player" is the player dealt damage.
   const damageTo = /^(~|enchanted creature|equipped creature) deals (combat )?damage to (a player|an opponent|a creature)$/.exec(t);
   if (damageTo && !(damageTo[2] && damageTo[3] !== 'an opponent')) {
@@ -1145,6 +1159,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       b.named['that creature'] = b.named['the other creature'] = { ref: 'trigger_object' };
       return { trigger: { type: 'deals_damage', subject, to: 'creature' }, it: subject, player: null };
     }
+    // Fungal Shambler: "… deals damage to an opponent, you draw a card and that opponent discards a card."
+    if (damageTo[3] === 'an opponent') b.named['that opponent'] ??= { ref: 'trigger_player' };
     return {
       trigger: { type: 'deals_damage', subject, to: damageTo[3] === 'a player' ? 'player' : 'opponent', ...(damageTo[2] ? { combat: true } : {}) },
       it: subject,
@@ -3301,7 +3317,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
       : null;
   }
   // Subject, then a predicate.
-  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? \d+\/\d+ (?:[A-Z][\w’'-]* )*artifact creature(?: with [a-z ,]+)?|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*(?: [A-Z][\w’'-]*)*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? (?:that's|that (?:is|are)) still (?:an? )?lands?)$/.exec(body);
+  const m = /^(.+?) (gets? .+|ha(?:s|ve) .+|can't .+|can block only .+|can block (?:an additional(?: \w+)?|\w+ additional|any number of) creatures?(?: each combat)?|can block creatures with shadow as though it had shadow|must be blocked if able|can attack as though (?:it|they) didn't have defender|attacks? each combat if able|(?:attacks? or )?blocks? each combat if able|attack or block each combat if able|doesn't untap during .+|don't untap during .+|loses? all abilities.*|loses? (?!all abilities)[a-z ,]+(?: and can't have(?: or gain)? [a-z ,]+)?|(?:is|are) (?:an? )?(?:(?:white|blue|black|red|green|colorless)(?: and | ))*(?:[A-Z][\w’'-]* )*(?:(?:artifact|enchantment) )*creature with base power and toughness \d+\/\d+.*|is an? (?:(?:white|blue|black|red|green|colorless) )?(?:[A-Z][\w’'-]* )+with base power and toughness \d+\/\d+.*|is an? (?:colorless )?(?:(?:Plains|Island|Swamp|Mountain|Forest) )?land(?: with .+| and .+)?|(?:is|are) (?:white|blue|black|red|green|colorless|the chosen color)|is an artifact creature|is an? \d+\/\d+ (?:[A-Z][\w’'-]* )*artifact creature(?: with [a-z ,]+)?|is an? (?:(?:white|blue|black|red|green) )?[A-Z][\w’'-]*(?: [A-Z][\w’'-]*)*|(?:is|are) goaded|(?:is|are) all colors|(?:is|are) (?:legendary|snow)(?:,? (?:and )?(?:gets?|ha(?:s|ve)) .+)?|(?:is|are) (?:every|all) creature types?|is an? (?:Plains|Island|Swamp|Mountain|Forest)|are (?:Plains|Islands|Swamps|Mountains|Forests)|(?:is|are) .+ in addition to (?:its|their) other (?:colors and )?(?:land |creature )?types.*|isn't a creature|aren't creatures|assigns combat damage equal to its toughness rather than its power|(?:is|are) (?:an? )?\d+\/\d+ (?:(?:white|blue|black|red|green) )?(?:[A-Z][\w-]* )*creatures? (?:that's|that (?:is|are)) still (?:an? )?lands?)$/.exec(body);
   if (!m) return null;
   const subject = parseObjectRef(m[1]!, b, 'static');
   if (!subject) return null;
@@ -4903,6 +4919,17 @@ export const returnIfPaidRule: GrammarRule = {
  * without paying its mana cost."
  */
 /** Consume Spirit: "Spend only black mana on X." — the spell's X paid in that color (CR 107.3). */
+/** Great Wall: "Creatures with plainswalk can be blocked as though they didn't have plainswalk." (CR 702.14) */
+export const ignoreLandwalkRule: GrammarRule = {
+  id: 'ignore_landwalk',
+  parse(line, original) {
+    const m = /^Creatures with (plains|island|swamp|mountain|forest)walk can be blocked as though they didn't have \1walk\.$/.exec(line);
+    // Staff of the Ages: "Creatures with landwalk abilities can be blocked as though they didn't have those abilities."
+    if (line === "Creatures with landwalk abilities can be blocked as though they didn't have those abilities.") return { kind: 'static', text: original, effect: { type: 'ignore_landwalk', walk: 'all' } } as StaticAbility;
+    return m ? ({ kind: 'static', text: original, effect: { type: 'ignore_landwalk', walk: m[1]! } } as StaticAbility) : null;
+  },
+};
+
 export const xColorRule: GrammarRule = {
   id: 'x_color',
   parse(line, original, ctx) {
@@ -5453,6 +5480,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   castOptionRule,
   reboundRule,
   xColorRule,
+  ignoreLandwalkRule,
   entersDayRule,
   entersPreparedRule,
   exertRule,

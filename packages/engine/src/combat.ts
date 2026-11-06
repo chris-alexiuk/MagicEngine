@@ -446,7 +446,9 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
     return `${aName} has intimidate.`;
   }
   // CR 702.28b: shadow blocks and is blocked only by shadow.
-  if (a('shadow') !== b('shadow')) return a('shadow') ? `${aName} has shadow.` : `${nameOf(g, blocker)} has shadow.`;
+  // Heartwood Dryad: "can block creatures with shadow as though it had shadow."
+  const asShadow = a('shadow') && chars(g, blocker).combat.some((r) => r.blocksShadow);
+  if (a('shadow') !== b('shadow') && !asShadow) return a('shadow') ? `${aName} has shadow.` : `${nameOf(g, blocker)} has shadow.`;
   // CR 702.31b: horsemanship can be blocked only by horsemanship.
   if (a('horsemanship') && !b('horsemanship')) return `${aName} has horsemanship.`;
   // CR 701.54c: "Your Ring-bearer … can't be blocked by creatures with greater power."
@@ -454,8 +456,10 @@ export function evasionProblem(g: GameState, blocker: GameObject, attacker: Game
   // CR 702.118b: skulk can't be blocked by creatures with greater power.
   if (a('skulk') && power(g, blocker) > power(g, attacker)) return `${aName} has skulk.`;
   // CR 702.14c: landwalk — unblockable while the defending player controls such a land.
+  // Great Wall: "Creatures with plainswalk can be blocked as though they didn't have plainswalk."
+  const ignored = new Set(abilitySources(g).flatMap((id) => (g.objects[id]!.zone === 'battlefield' ? objectAbilities(g, g.objects[id]!) : []).flatMap((x) => (x.kind === 'static' && x.effect.type === 'ignore_landwalk' ? [String(x.effect.walk)] : []))));
   for (const kw of chars(g, attacker).keywords) {
-    if (kw.id !== 'landwalk' || !kw.text) continue;
+    if (kw.id !== 'landwalk' || !kw.text || ignored.has(kw.text) || ignored.has('all')) continue;
     const words = kw.text.split(' ');
     const defenderLands = g.zones.battlefield
       .map((id) => g.objects[id]!)

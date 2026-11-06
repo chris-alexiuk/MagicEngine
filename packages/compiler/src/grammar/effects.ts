@@ -221,12 +221,22 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   }
   // Imagecrafter: "Choose a creature type other than Wall. Target creature becomes that type until end of turn." — its
   // creature types are replaced (CR 205.1a).
-  const typeBut = /^Choose a creature type other than (Wall)\. (.+?) (becomes?) that type until end of turn\.$/.exec(text.trim());
+  // Elsewhere Flask, Terraformer: "Choose a basic land type. Each land you control becomes that type until end of turn."
+  const landTypeThat = /^Choose a basic land type\. (.+?) (becomes?) that type until end of turn\.$/.exec(text.trim());
+  if (landTypeThat) {
+    const r = attempt(b, (b) => {
+      const fx = parseEffectText(`${landTypeThat[1]} ${landTypeThat[2]} the basic land type of your choice until end of turn.`, b);
+      return fx?.length === 2 && fx[0]!.type === 'choose_value' ? fx : null;
+    });
+    if (r) return r;
+  }
+  // Mistform Wakecaster: "Choose a creature type. Each creature you control becomes that type until end of turn."
+  const typeBut = /^Choose a creature type(?: other than (Wall))?\. (.+?) (becomes?) that type until end of turn\.$/.exec(text.trim());
   if (typeBut) {
     const r = attempt(b, (b) => {
       const fx = parseEffectText(`${typeBut[2]} ${typeBut[3]} the creature type of your choice until end of turn.`, b);
       if (fx?.length !== 2 || fx[0]!.type !== 'choose_value') return null;
-      return [{ ...fx[0]!, except: [typeBut[1]!] }, fx[1]!];
+      return [{ ...fx[0]!, ...(typeBut[1] ? { except: [typeBut[1]] } : {}) }, fx[1]!];
     });
     if (r) return r;
   }
@@ -371,6 +381,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   text = text.replace(/^(~ deals [^.]+\. If (?:~|this spell) [^,.]+, )it also deals /, '$1~ deals ');
   // Heated Argument: "If you do, ~ also deals 2 damage to that creature's controller."
   text = text.replace(/(^|\s)~ also deals /g, '$1~ deals ');
+  // Flay: "Then that player discards another card at random unless they pay {1}." — another one.
+  text = text.replace(/\bdiscards another card at random\b/, 'discards a card at random');
   // Rhystic Syphon: "Unless target player pays {3}, that player loses 5 life and you gain 5 life."
   text = text.replace(/^Unless (target player|target opponent) pays ((?:\{[^}]+\})+), that player ([^.]+)\.$/, (_m, who: string, cost: string, rest: string) => `${capitalise(who)} ${rest} unless that player pays ${cost}.`);
   // Rhystic Tutor: "Unless any player pays {2}, search your library for a card, put that card into your hand, then shuffle."
@@ -1108,6 +1120,23 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Victimize: "Sacrifice a creature. If you do, return the chosen cards …" — not optional, but what follows
       // happens only if it was done (CR 608.2c).
       const ifDone = sentences[i + 1] && !/^(?:You may|Pay) /.test(s) ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
+      // Self-Inflicted Wound: "Target opponent sacrifices a green or white creature of their choice. If that player does, they
+      // lose 2 life." — only if they could.
+      const sacDone = sentences[i + 1] && / sacrifices /.test(s) ? /^If (?:that player|they) does?, (?:they|that player) (\w+?)s? (.+)$/.exec(sentences[i + 1]!) : null;
+      if (sacDone) {
+        const r = attempt(b, (b) => {
+          const first = parseSentence(s, b);
+          const who = first?.length === 1 && first[0]!.type === 'sacrifice_choice' ? (first[0] as { who?: Ref }).who : undefined;
+          if (!who || who.ref === 'you' || who.ref === 'players') return null;
+          const then = parseClause(`${sacDone[1]}s ${sacDone[2]}`, b, who);
+          return then ? [{ type: 'may_do', effects: first!, then: then.effects, who, mandatory: true } as EffectNode] : null;
+        });
+        if (r) {
+          out.push(...r);
+          i++;
+          continue;
+        }
+      }
       // Gilded Drake: "Exchange control of this creature and up to one target creature an opponent controls. If you don't
       // or can't make an exchange, sacrifice this creature." — the exchange isn't optional (CR 701.12a).
       const noExchange = /^Exchange control of /.test(s) && sentences[i + 1] ? /^If you don't or can't make an exchange, (.+)$/.exec(sentences[i + 1]!) : null;
@@ -1883,7 +1912,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // — only you see it.
       const looks = /^[Ll]ook at (.+?)'s hand$/.exec(s);
       const reveals = /^(.+?) reveals (?:their|his or her) hand$/.exec(s) ?? looks;
-      const chooses = reveals && sentences[i + 1] ? /^You (may )?choose (a|an|one|two|X) (.+?) from it(?: with mana value (\d+) or (less|greater))?(?: and (exile|discard) (?:that card|it))?$/.exec(sentences[i + 1]!) : null;
+      // Extortion: "choose up to two cards from it".
+      const chooses = reveals && sentences[i + 1] ? /^You (may )?choose (a|an|one|two|X|up to (?:one|two|three)) (.+?) from it(?: with mana value (\d+) or (less|greater))?(?: and (exile|discard) (?:that card|it))?$/.exec(sentences[i + 1]!) : null;
+      if (chooses && /^up to /.test(chooses[2]!)) {
+        chooses[2] = chooses[2]!.replace(/^up to /, '');
+        chooses[1] = 'may ';
+      }
       if (reveals && chooses) {
         const r = attempt(b, (b) => {
           const who = parsePlayerRef(reveals[1]!, b);
@@ -2979,6 +3013,17 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
 }
 
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  // Stunted Growth: "Target player chooses three cards from their hand and puts them on top of their library in any order."
+  const choosesPuts = /^(.+?) chooses (a card|two cards|three cards) from (?:their|his or her) hand and puts (?:it|them) on top of (?:their|his or her) library(?: in any order)?$/.exec(s);
+  if (choosesPuts) {
+    const r = attempt(b, (b) => {
+      const who = parsePlayerRef(choosesPuts[1]!, b);
+      if (!who || who.ref === 'you' || who.ref === 'players') return null;
+      const amount = choosesPuts[2] === 'a card' ? 1 : choosesPuts[2] === 'two cards' ? 2 : 3;
+      return [{ type: 'choose_from_hand', who, filter: {}, amount, then: 'library_top', theirChoice: true } as EffectNode];
+    });
+    if (r) return r;
+  }
   // Mind Maggots: "discard any number of creature cards" — none is fine.
   const discardAnyNumber = /^(?:[Yy]ou may d|D)iscard any number of (.+? cards)$/.exec(s);
   if (discardAnyNumber && discardAnyNumber[1] !== 'cards') {
@@ -3629,8 +3674,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // (each of them on their own).
   // Coral Atoll: "sacrifice it unless you return an untapped Island you control to its owner's hand"
   // Grip of Amnesia: "Counter target spell unless its controller exiles all cards from their graveyard."
-  // Deep Spawn: "sacrifice this creature unless you mill two cards".
-  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?|returns?|taps?|mills?(?= \w+ cards?$)|exiles(?= all cards from their graveyard$)) (.+)$/.exec(s);
+  // Deep Spawn: "sacrifice this creature unless you mill two cards"; Junk Golem: "… unless you remove a +1/+1 counter from it".
+  const unlessDoes = /^(.+) unless (that player|they|he or she|its controller|that creature's controller|.+?) (discards?|sacrifices?|returns?|taps?|mills?(?= \w+ cards?$)|removes?(?= an? \S+ counter from (?:it|~)$)|exiles(?= all cards from their graveyard$)|exile(?= an? [a-z ]*card from your graveyard$)) (.+)$/.exec(s);
   if (unlessDoes) {
     const r = attempt(b, (b) => {
       const third = (v: string) => (v.endsWith('s') ? v : `${v}s`);
@@ -3668,7 +3713,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         return m ? { effects: [{ type: 'lose_life', amount: Number(m[1]), who: payer, paid: true } as EffectNode] } : null;
       };
       const actions = parts.map(([v, o]) =>
-        /^pays?$/.test(v) ? payLife(o) : /^taps?$/.test(v) ? tapOne(o) : /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
+        /^pays?$/.test(v) ? payLife(o) : /^taps?$/.test(v) ? tapOne(o) : /^removes?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Remove ${o}`, b); return e?.length === 1 && e[0]!.type === 'remove_counters' ? { effects: e } : null; }) : null) : /^returns?$/.test(v) ? (payer.ref === 'you' ? attempt(b, (b) => { const e = parseSentence(`Return ${strip(o)}`, b); return e?.length === 1 && e[0]!.type === 'move_chosen' ? { effects: e } : null; }) : null) : attempt(b, (b) => parseClause(`${third(v)} ${strip(o)}`, b, payer)),
       );
       if (actions.some((a) => !a)) return null;
       if (otherThanIt && parts.some(([v], k) => /^sacrifices?$/.test(v) && (unlessDoes[4]!.startsWith('another ') || (alt && k === 1 && alt[3]!.startsWith('another '))))) {
@@ -7296,7 +7341,8 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Mist Dragon: "{0}: This creature loses flying." — indefinitely (CR 611.2a), as its "gains flying" does.
-  const loseForGood = /^~ loses ([a-z ]+)$/.exec(c);
+  // Elder Land Wurm: "When this creature blocks, it loses defender." — "it" being this creature.
+  const loseForGood = /^~ loses ([a-z ]+)$/.exec(c) ?? (b.it?.ref === 'self' || (!b.it && b.itIsSource) ? /^[Ii]t loses ([a-z ]+)$/.exec(c) : null);
   if (loseForGood && !/^all abilities$/.test(loseForGood[1]!)) {
     const kws = parseKeywordList(loseForGood[1]!, b);
     if (kws && !kws.some((k) => k.text || k.cost || k.n !== undefined)) return [{ type: 'modify', what: { ref: 'self' }, loseKeywords: kws.map((k) => k.id), until: 'game' }];

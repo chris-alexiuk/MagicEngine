@@ -695,6 +695,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     if (!pf || pf.plural) return null;
     return { type: 'count', who: 'you', filter: { ...pf.filter, ...(dont[1] === 'another' ? { other: true } : {}) }, max: 0 };
   }
+  // Kavu Runner: "as long as no opponent controls a white or blue creature".
+  const noOpp = /^no opponent controls (an? .+)$/.exec(t);
+  if (noOpp) {
+    const cond = parseCondition(`an opponent controls ${noOpp[1]}`, b);
+    return cond ? { type: 'not', cond } : null;
+  }
   const control = /^(you|an opponent|each opponent|your opponents) controls? (a|an|another|no|at least \w+|\w+ or more|\w+ or fewer|exactly \w+) (other )?(?!more )(.+)$/.exec(t);
   if (control) {
     const c = count(control[2]!);

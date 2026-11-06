@@ -355,7 +355,8 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (ab.oncePerTurn && o.activatedTurn?.[ability] === g.turn) return;
       if (ab.oncePerGame && o.activatedOnce?.[ability]) return;
       if (cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
-      if (cost.untap && !o.tapped) return;
+      // CR 302.6: the untap symbol needs the same control-since-your-turn-began as {T}.
+      if (cost.untap && (!o.tapped || !canActivateTapAbilities(g, o))) return;
       if (cost.other?.some((c) => c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, o, c))) return;
       // Forge Anew: the first equip ability this turn for {0}.
       const freeEquip = freeEquipAvailable(g, player, ab);
@@ -566,7 +567,7 @@ function defaultCostChoices(g: GameState, player: PlayerId, source: GameObject, 
     } else if (c.type === 'pay_life' && g.players[player]!.life < lifeCost(g, player, source, c)) return null;
     else if (c.type === 'pay_energy' && (g.players[player]!.counters?.energy ?? 0) < n) return null;
     // CR 701.17b: "Mill a card" as a cost needs a card to mill.
-    else if (c.type === 'mill' && zoneList(g, 'library', player).length < n) return null;
+    else if ((c.type === 'mill' || c.type === 'exile_top') && zoneList(g, 'library', player).length < n) return null;
     else if (c.type === 'remove_counters') {
       // The kind asked for; otherwise any counter but loyalty and +1/+1 first (they matter most).
       let left = n;
