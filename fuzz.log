@@ -1,0 +1,14 @@
+
+> magic-engine@ fuzz /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/engine fuzz -- ../../apps/web/public/cards.json.gz --games 60 --seed 178
+
+
+> @mtg/engine@0.1.0 fuzz /home/runner/work/MagicEngine/MagicEngine/packages/engine
+> tsx scripts/fuzz.ts -- ../../apps/web/public/cards.json.gz --games 60 --seed 178
+
+60 games, 2225 turns, 74099 actions in 177.3 s (2.39 ms/action)
+  slowest action: 32 ms (game 18) 
+  triggers 364, auto-resolved 1542, manual 18, fizzled 6, tokens 67
+  crash: 0
+  rejected: 0
+  invariant: 0
