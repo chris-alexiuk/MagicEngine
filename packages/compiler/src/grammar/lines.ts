@@ -4234,6 +4234,16 @@ export const quantityReplacementRule: GrammarRule = {
 export const staticPreventionRule: GrammarRule = {
   id: 'static_prevention',
   parse(line, original, ctx) {
+    // Temple Altisaur: "If a source would deal damage to another Dinosaur you control, prevent all but 1 of that damage."
+    const allBut = /^(If a source would deal damage to .+?), prevent all but (\w+) of that damage\.$/.exec(line);
+    if (allBut) {
+      const n = parseAmount(allBut[2]!);
+      const r = typeof n === 'number' ? staticPreventionRule.parse(`${allBut[1]}, prevent that damage.`, original, ctx) : null;
+      const e = r && 'effect' in r ? (r.effect as StaticPreventionNode) : null;
+      if (!e || e.type !== 'prevent_damage' || e.then) return null;
+      e.allBut = n as number;
+      return r;
+    }
     const env = envOf(ctx);
     if (!env || /\b(?:Instant|Sorcery)\b/.test(env.typeLine)) return null;
     // Guardian Naga: "During your turn, prevent all damage that would be dealt to this creature." — the same as "… during
@@ -4336,6 +4346,11 @@ export const staticPreventionRule: GrammarRule = {
       else if (/^(?:equipped|enchanted) creature$/.test(who)) {
         node.toAttached = true;
         b.it = { ref: 'trigger_object' };
+      } else if (/^(?:another|other) /.test(who) && / you control$/.test(who)) {
+        // Temple Altisaur: "another Dinosaur you control" — each other one.
+        const pf = parseFilter(who.replace(/^(?:another|other) /, ''), b);
+        if (!pf || pf.filter.zone || pf.filter.controller !== 'you') return null;
+        node.to = { ...pf.filter, other: true };
       } else return null;
       if (pm[2]) {
         const follow = pm[2]
@@ -4434,9 +4449,10 @@ export const staticPreventionRule: GrammarRule = {
         if (part === 'you') node.toYou = true;
         else if (self(part)) node.toSelf = true;
         else {
-          const other = /^other /.test(part);
-          const pf = node.to ? null : parseFilter(part.replace(/^other /, ''), b);
-          if (!pf || !pf.plural) return null;
+          // Temple Altisaur: "another Dinosaur you control" — each other one.
+          const other = /^(?:an)?other /.test(part);
+          const pf = node.to ? null : parseFilter(part.replace(/^(?:an)?other /, ''), b);
+          if (!pf || (!pf.plural && !/^another /.test(part))) return null;
           node.to = { ...pf.filter, ...(other ? { other: true as const } : {}) };
         }
       }

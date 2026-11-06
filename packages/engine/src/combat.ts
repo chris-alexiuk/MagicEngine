@@ -1159,6 +1159,11 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
         hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (host !== undefined && o.id === host) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
       }
       if (!hit) continue;
+      // Temple Altisaur: "prevent all but 1 of that damage".
+      if (e.allBut !== undefined) {
+        less += Math.max(0, amount - e.allBut);
+        continue;
+      }
       if (e.half) halves++;
       // Orbs of Warding: "prevent 1 of that damage" — each such effect takes its share (CR 615.7).
       else if (e.amount) less += e.amount;

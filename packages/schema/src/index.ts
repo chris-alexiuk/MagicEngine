@@ -981,6 +981,8 @@ export interface StaticPreventionNode extends EffectNode {
   atMost?: number;
   /** Goblin Furrier: "Prevent all damage that this creature would deal to snow creatures" — only to those. */
   bySelfTo?: ObjectFilter;
+  /** Temple Altisaur: "prevent all but 1 of that damage" — that much is still dealt. */
+  allBut?: number;
 }
 
 export interface TriggerExtraNode extends EffectNode {

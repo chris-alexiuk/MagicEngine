@@ -3928,6 +3928,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 707.10: "Copy target instant or sorcery spell", "copy that spell twice", "copy it for each …",
   // "Copy target activated or triggered ability you control", "copy that ability".
   // Storm of Saruman: "copy it, except the copy isn't legendary" (CR 707.9b).
+  // Double Major: "…, except it isn't legendary if the spell is legendary" — the same.
+  s = s.replace(/, except it isn't legendary if the spell is legendary$/, ", except the copy isn't legendary");
   const nonlegendary = /, except the copy isn't legendary$/.test(s);
   // Storm King's Thunder: "copy that spell X times" — the X paid for the spell that made the delayed trigger.
   const copy = /^[Cc]opy (.+?)(?: (twice|three times|X times)| for each (.+))?$/.exec(s.replace(/, except the copy isn't legendary$/, ''));
