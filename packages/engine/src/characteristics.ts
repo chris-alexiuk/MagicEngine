@@ -393,9 +393,14 @@ function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pic
     out.pt = (o) => [staticAmount(g, e.power, source, perObject ? o : undefined), staticAmount(g, e.toughness, source, perObject ? o : undefined)];
   }
   if (e.setPower !== undefined || e.setToughness !== undefined) {
+    // Opalescence, March of the Machines: "each equal to its mana value" — each affected object's own.
+    const perObjectSet = /"ref":"affected"/.test(JSON.stringify([e.setPower, e.setToughness]));
     out.set = {
       layer: e.setLayer ?? '7b',
-      pt: () => [e.setPower === undefined ? null : staticAmount(g, e.setPower, source), e.setToughness === undefined ? null : staticAmount(g, e.setToughness, source)],
+      pt: (o?: GameObject) => [
+        e.setPower === undefined ? null : staticAmount(g, e.setPower, source, perObjectSet ? o : undefined),
+        e.setToughness === undefined ? null : staticAmount(g, e.setToughness, source, perObjectSet ? o : undefined),
+      ],
     };
   }
   return out;
@@ -617,9 +622,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
   const effects = effectsMemo.list;
   // Necromancy: "it becomes an Aura" — its own ability's effect, from when it resolved (layer 4).
   if (o.becameAura && o.zone === 'battlefield' && !c.subtypes.includes('Aura')) c.subtypes = [...c.subtypes, 'Aura'];
+  // CR 613.6: an effect that starts to apply in one layer keeps applying to the same objects in later layers (March of
+  // the Machines' "noncreature artifact" is a creature by layer 7b, and still gets its P/T there).
+  const started = new Set<ActiveEffect>();
   // CR 613.1d: layer 4 — type-changing effects.
   for (const e of effects) {
     if (!e.types || !e.applies(o, c)) continue;
+    started.add(e);
     if (e.types.lose) {
       const lose = e.types.lose;
       c.types = c.types.filter((t) => !lose.includes(t));
@@ -709,7 +718,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
   // CR 613.4a / 613.4b: layer 7a (characteristic-defining abilities), then 7b (effects that set P/T).
   for (const layer of ['7a', '7b'] as const) {
     for (const e of effects) {
-      if (e.set?.layer !== layer || !e.applies(o, c)) continue;
+      if (e.set?.layer !== layer || !(started.has(e) || e.applies(o, c))) continue;
       const [p, t] = e.set.pt(o);
       if (p !== null) c.power = p;
       if (t !== null) c.toughness = t;
@@ -719,7 +728,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
   c.baseToughness = c.toughness;
   // CR 613.4c: layer 7c — effects and counters that modify power and toughness.
   for (const e of effects) {
-    if (!e.pt || !e.applies(o, c)) continue;
+    if (!e.pt || !(started.has(e) || e.applies(o, c))) continue;
     const [p, t] = e.pt(o);
     c.power += p;
     c.toughness += t;

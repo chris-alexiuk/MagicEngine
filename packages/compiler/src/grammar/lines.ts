@@ -3314,6 +3314,18 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (subject) return { type: 'continuous', affected: subject.ref, setPower: Number(base[2]), setToughness: Number(base[3]), setLayer: '7b' };
   }
   // Aettir and Priwen: "Equipped creature has base power and toughness X/X, where X is your life total."; Dollmaker's Shop:
+  // Opalescence: "Each other non-Aura enchantment is a creature in addition to its other types and has base power and base
+  // toughness each equal to its mana value."; March of the Machines: "Each noncreature artifact is an artifact creature with
+  // power and toughness each equal to its mana value." — layers 4 and 7b, each object's own mana value (CR 613.4b).
+  const byMv =
+    /^(.+?) (?:is|are) (?:an? )?creatures? in addition to (?:its|their) other types and ha(?:s|ve) base power and base toughness each equal to its mana value$/.exec(body) ??
+    /^(.+?) (?:is|are) (?:an? )?artifact creatures? with power and toughness each equal to its mana value$/.exec(body);
+  if (byMv) {
+    const subject = parseObjectRef(byMv[1]!.replace(/^Each /, 'each '), b, 'static');
+    if (!subject || subject.ref.ref !== 'all') return null;
+    const mv = { kind: 'stat', stat: 'mana_value', of: { ref: 'affected' } } as never;
+    return { type: 'continuous', affected: subject.ref, addTypes: { types: ['Creature'], subtypes: [] }, setPower: mv, setToughness: mv, setLayer: '7b' };
+  }
   // "Creatures you control have base power and toughness each equal to the number of creatures you control." (layer 7b)
   const baseCount = /^(.+?) ha(?:s|ve) base power and toughness (?:each equal to (.+)|X\/X, where X is (.+))$/.exec(body);
   if (baseCount) {
