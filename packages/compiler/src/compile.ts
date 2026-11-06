@@ -3,6 +3,7 @@ import { COLORS, keywordSupported, manualModes, SCHEMA_VERSION, stripReminder } 
 import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
+import { registerPoolSubtypes } from './grammar/words.js';
 
 /** Layouts that are not game pieces in a normal game (front_card: theme/tutorial cards from starter products). */
 const SKIP_LAYOUTS = new Set(['art_series', 'planar', 'scheme', 'vanguard', 'reversible_card_back', 'front_card']);
@@ -33,6 +34,7 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
   const skipped: Record<SkipReason, number> = { layout: 0, digital_only: 0, un_set: 0, no_oracle_id: 0, duplicate: 0 };
   const cards = new Map<string, CardDef>();
   const tokens = new Map<string, CardDef>();
+  registerPoolSubtypes(input.flatMap((c) => [c.type_line ?? '', ...(c.card_faces ?? []).map((f) => f.type_line ?? '')]));
 
   for (const card of input) {
     const reason = skipReason(card);
@@ -146,6 +148,7 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
  * measured against the full card pool without downloading Scryfall data again.
  */
 export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry): CardDB {
+  registerPoolSubtypes([...db.cards, ...db.tokens].flatMap((c) => c.faces.map((f) => f.typeLine)));
   const reparse = (card: CardDef): CardDef => {
     const faces = card.faces.map((f) => {
       const p = registry.parse(f.oracle, { cardName: card.name, faceName: f.name, typeLine: f.typeLine, manaCost: f.manaCost });
