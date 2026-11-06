@@ -351,6 +351,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   );
   // Sword of Sinew and Steel: "destroy up to one target planeswalker and up to one target artifact" — each its own target.
   // Urgent Necropsy: "Destroy up to one target artifact, up to one target creature, … and up to one target planeswalker."
+  // Claim Jumper: "you may search your library for a Plains card and put it onto the battlefield tapped. Then if an opponent
+  // controls more lands than you, repeat this process once. If you search your library this way, shuffle." — the second
+  // search checks the condition again after the first (each search shuffles; one more shuffle changes nothing).
+  text = text.replace(
+    /\b([Yy])ou may search your library for ([^.]+?) and put it onto the battlefield( tapped)?\. Then if ([^,.]+), repeat this process once\. If you search your library this way, shuffle\./,
+    (_m, y: string, what: string, tapped: string | undefined, cond: string) =>
+      `${y}ou may search your library for ${what}, put it onto the battlefield${tapped ?? ''}, then shuffle. If ${cond}, you may search your library for ${what}, put it onto the battlefield${tapped ?? ''}, then shuffle.`,
+  );
   // Bebop: "you may draw X cards, where X is …. If you do, you lose X life." — both with that X, if you draw.
   text = text.replace(/\b([Yy]ou may draw X cards), (where X is [^.]+)\. If you do, you lose X life\./, '$1 and lose X life, $2.');
   // Pull from the Deep: "Return up to one target instant card and up to one target sorcery card from your graveyard to your
@@ -2354,6 +2362,14 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (out.length !== 1 || last?.type !== 'deal_damage' || (last.to as Ref | undefined)?.ref !== 'target' || last.from) return null;
         last.excessToController = true;
         last.excessAlways = true;
+        continue;
+      }
+      // Commandeer: "Gain control of target noncreature spell. You may choose new targets for it." — its new controller.
+      if (s === 'You may choose new targets for it' && out.length && out[out.length - 1]!.type === 'gain_control') {
+        const what = out[out.length - 1]!.what as Ref;
+        const spec = what.ref === 'target' ? b.targets[(what as { index?: number }).index ?? 0] : undefined;
+        if (!spec || (spec.filter as { zone?: string } | undefined)?.zone !== 'stack') return null;
+        out.push({ type: 'may', effects: [{ type: 'retarget', what }] });
         continue;
       }
       // CR 707.10c: "You may choose new targets for the copy."

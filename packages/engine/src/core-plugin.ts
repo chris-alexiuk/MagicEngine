@@ -4724,6 +4724,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   gain_control(node, ctx) {
+    // Commandeer: "Gain control of target noncreature spell." — the spell's controller changes for good (CR 110.2a): it
+    // resolves for its new controller, and a permanent spell enters under that player's control.
+    if (Object.keys(node).every((k) => k === 'type' || k === 'what' || k === 'text')) {
+      for (const o of refObjects(ctx, ref(node, 'what')).filter((x) => x.zone === 'stack')) {
+        const entry = ctx.g.stack.find((e) => e.kind === 'spell' && e.object === o.id);
+        if (!entry) continue;
+        entry.controller = ctx.controller;
+        o.controller = ctx.controller;
+      }
+    }
     // Layer 2 (CR 613.1b): locked to the objects it affected (CR 611.2c).
     const objects = refObjects(ctx, ref(node, 'what')).filter((o) => o.zone === 'battlefield');
     if (!objects.length) return true;
