@@ -401,6 +401,11 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it|~) escaped$/.test(t)) return { type: 'paid', cost: 'escape' };
   // CR 702.166b: "if this spell was bargained"
   if (/^(?:~|it) was bargained$/.test(t)) return { type: 'paid', cost: 'bargain' };
+  // Dispelling Exhale: "If a Dragon was beheld" — its optional behold cost was paid (CR 701.4).
+  if (/^an? [A-Z]\w+ was beheld$/.test(t)) return { type: 'paid', cost: 'behold' };
+  // Silumgar's Scorn: "If you revealed a Dragon card or controlled a Dragon as you cast this spell" — either, as it was cast.
+  const revealedOr = /^you revealed an? ([A-Z]\w+) card or controlled an? \1 as you cast ~$/.exec(t);
+  if (revealedOr && isSubtype(revealedOr[1]!)) return { type: 'or', any: [{ type: 'paid', cost: 'reveal' }, { type: 'controlled_at_cast', subtypes: [revealedOr[1]!] }] };
   // Face of Divinity: "As long as another Aura is attached to enchanted creature" — anyone's.
   const alsoOn = /^another (Aura|Equipment) is attached to (?:enchanted|equipped) creature$/.exec(t);
   if (alsoOn) return { type: 'count', who: 'all', filter: { subtypes: [alsoOn[1]!], attachedTo: 'attached', other: true }, min: 1 };

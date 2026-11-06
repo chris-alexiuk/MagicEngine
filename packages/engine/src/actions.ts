@@ -10,7 +10,7 @@ import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-dow
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility, StaticAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
-import { canActivateTapAbilities, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
+import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
 import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
@@ -936,7 +936,11 @@ function cast(
   const opponents = livePlayers(g).filter((p) => p !== player);
   const giftTo = paid.includes('gift') ? (costChoices.giftTo ?? opponents[0]) : undefined;
   if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
+  // Silumgar's Scorn: "if you … controlled a Dragon as you cast this spell" — noted now, for cards that ask.
+  const askedTypes = [...new Set([...JSON.stringify(g.cards[o.card]!.faces).matchAll(/"type":"controlled_at_cast","subtypes":\[([^\]]*)\]/g)].flatMap((m) => JSON.parse(`[${m[1]}]`) as string[]))];
+  const controlledAtCast = askedTypes.filter((t) => g.zones.battlefield.some((id) => g.objects[id]!.controller === player && chars(g, g.objects[id]!).subtypes.includes(t)));
   o.cast = {
+    ...(controlledAtCast.length ? { controlledAtCast } : {}),
     by: player,
     // Where it was cast from — a foretold or plotted card from exile too ("if this spell was cast from exile").
     from: castFrom,

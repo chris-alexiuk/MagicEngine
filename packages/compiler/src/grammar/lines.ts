@@ -4925,12 +4925,13 @@ export const castOptionRule: GrammarRule = {
     const mayBend = /^As an additional cost to cast ~, you may waterbend \{(\d+)\}$/.exec(t);
     if (mayBend) return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'additional', kind: 'additional', cost: { mana: `{${mayBend[1]}}`, waterbend: Number(mayBend[1]) } } as CastOptionNode };
     // CR 702.166a (bargain): "As an additional cost to cast this spell, you may sacrifice an artifact, enchantment, or token."
-    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+|blight \d+)$/.exec(t);
+    // Dispelling Exhale: "you may behold a Dragon"; Silumgar's Scorn: "you may reveal a Dragon card from your hand".
+    const mayAdditional = /^As an additional cost to cast ~, you may (sacrifice .+|discard .+|tap .+|collect evidence \d+|blight \d+|behold an? [A-Z]\w+|reveal an? [A-Z]\w+ card from your hand)$/.exec(t);
     if (mayAdditional) {
       const choice = choiceCost(mayAdditional[1]!.replace(/^\w/, (x) => x.toUpperCase()), b);
       if (!choice) return null;
       // "If evidence was collected, …" (CR 701.59c) names it.
-      const id = choice.type === 'collect_evidence' ? 'collect_evidence' : 'alt';
+      const id = choice.type === 'collect_evidence' ? 'collect_evidence' : choice.type === 'behold' ? 'behold' : choice.type === 'reveal_from_hand' ? 'reveal' : 'alt';
       return { kind: 'static', text: original, effect: { type: 'cast_option', id, kind: 'additional', cost: { other: [choice] } } as CastOptionNode };
     }
     // CR 702.42a: "You may choose all modes of this spell instead of just the number specified. If you do, you pay an additional [cost]."

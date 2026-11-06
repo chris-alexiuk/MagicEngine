@@ -10,7 +10,7 @@ import { isRingBearer } from './ring.js';
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
   'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
-  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color',
+  'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast',
 ];
 
 /** What happened this turn, for conditions like "if a creature died this turn". */
@@ -701,6 +701,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     // CR 712.4a: "if you both own and control ~ and a creature named …".
     // Zanam Djinn: "as long as blue is the most common color among all permanents or is tied for most common" — each
     // permanent counts once for each of its colors (with no colored permanents, all five are tied at zero).
+    // Silumgar's Scorn: "or controlled a Dragon as you cast this spell" — recorded as it was cast.
+    case 'controlled_at_cast':
+      return Boolean(source?.cast?.controlledAtCast?.some((t) => (cond.subtypes as string[]).includes(t)));
     case 'most_common_color': {
       const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
       for (const id of g.zones.battlefield) for (const c of chars(g, g.objects[id]!).colors) if (c in counts) counts[c]!++;
