@@ -159,6 +159,12 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const pf = parseFilter(noneThere[1] ?? noneThere[2]!, b);
     if (pf && pf.plural && !pf.filter.zone) return { type: 'count', who: 'all', filter: pf.filter, max: 0 };
   }
+  // Glacial Crasher: "unless there is a Mountain on the battlefield" — anyone's.
+  const someThere = /^(?:there is an? (.+?) on the battlefield|an? (.+?) is on the battlefield)$/.exec(t);
+  if (someThere) {
+    const pf = parseFilter(someThere[1] ?? someThere[2]!, b);
+    if (pf && !pf.plural && !pf.filter.zone && !pf.filter.controller && !pf.filter.controlledBy) return { type: 'count', who: 'all', filter: pf.filter, min: 1 };
+  }
   // Cosmos Elixir: "if your life total is greater than your starting life total" (CR 103.4).
   // Path of Bravery: "As long as your life total is greater than or equal to your starting life total".
   const vsStart = /^your life total is (greater|less) than (or equal to )?your starting life total$/.exec(t);

@@ -973,6 +973,8 @@ export interface StaticPreventionNode extends EffectNode {
   half?: 'up';
   /** Orbs of Warding: "prevent 1 of that damage" — that much of it. */
   amount?: number;
+  /** Callous Giant: "If a source would deal 3 or less damage to this creature" — only that small an amount. */
+  atMost?: number;
 }
 
 export interface TriggerExtraNode extends EffectNode {
@@ -1015,6 +1017,8 @@ export interface CombatRules {
   mustBeBlocked?: 'one' | 'all';
   /** "can't attack unless defending player controls an Island" (CR 508.1c) */
   attackOnlyIfDefenderControls?: ObjectFilter;
+  /** Goblin Mutant: "can't attack if defending player controls an untapped creature with power 3 or greater" (CR 508.1c) */
+  attackNotIfDefenderControls?: ObjectFilter;
   /** Scrapdiver Serpent: "can't be blocked as long as defending player controls an artifact" (as landwalk, CR 702.14c). */
   unblockableIfDefenderControls?: ObjectFilter;
   /** CR 509.1a: "can block an additional creature each combat" (1); "can block any number of creatures" (99). */

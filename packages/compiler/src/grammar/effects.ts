@@ -1167,10 +1167,11 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // Shadow of the Goblin: "discard a card. If you do, draw a card." — only with a card to discard.
       // Dawn of a New Age: "remove a hope counter from this enchantment. If you do, draw a card." — only with one there.
       // Clockwork Hydra: "remove a +1/+1 counter from it. If you do, it deals 1 damage to any target." — itself.
+      // Woeleecher: "Remove a -1/-1 counter from target creature. If you do, you gain 2 life." — only with one there.
       const fromIt = /^Remove (?:a|an|one|two|three) \S+ counters? from it$/.test(s) && (b.it?.ref === 'self' || (b.it?.ref === 'trigger_object' && b.itIsSource));
       // Charnel Troll: "exile a creature card from your graveyard. If you do, put a +1/+1 counter on this creature. Otherwise,
       // sacrifice it." — only with one there to exile.
-      if (ifDone && (fromIt || /^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from ~$|Exile (?:a|an|one|two) [a-z ]*cards? from your graveyard$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
+      if (ifDone && (fromIt || /^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from (?:~|target (?:creature|permanent))$|Exile (?:a|an|one|two) [a-z ]*cards? from your graveyard$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
         const first = parseSentence(s, b);
         const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
         if (!first || !then) return null;
@@ -3503,6 +3504,9 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   }
   // Sea Gate Restoration: "You have no maximum hand size for the rest of the game."
   if (/^You have no maximum hand size for the rest of the game$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', until: 'game' }];
+  // Live Long and Prosper: "You have no maximum hand size until your next turn"; Spoils of the Vault-likes "this turn".
+  const noMaxFor = /^You have no maximum hand size (until your next turn|until end of turn|this turn)$/.exec(s);
+  if (noMaxFor) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'no_max_hand_size', ...(noMaxFor[1] === 'until your next turn' ? { until: 'your_next_turn' } : {}) }];
   // Inspired Idea: "Your maximum hand size is reduced by three for the rest of the game."
   const handLess = /^Your maximum hand size is (reduced|increased) by (one|two|three|four|five|six|seven) for the rest of the game$/.exec(s);
   if (handLess) {

@@ -208,6 +208,12 @@ function otherRestriction(g: GameState, o: GameObject, target: AttackTarget): st
     const ok = defender && g.zones.battlefield.some((id) => g.objects[id]!.controller === defender && matchesFilter(g, g.objects[id]!, f, { controller: defender, source: o }));
     if (!ok) return `${nameOf(g, o)} can’t attack unless that player controls a ${[...(f.subtypes ?? []), ...(f.types ?? [])].join(' or ') || 'matching permanent'}.`;
   }
+  for (const r of chars(g, o).combat) {
+    if (!r.attackNotIfDefenderControls) continue;
+    const defender = defenderOf(g, target);
+    const f = r.attackNotIfDefenderControls;
+    if (defender && g.zones.battlefield.some((id) => g.objects[id]!.controller === defender && matchesFilter(g, g.objects[id]!, f, { controller: defender, source: o }))) return `${nameOf(g, o)} can’t attack while that player controls a ${[...(f.subtypes ?? []), ...(f.types ?? [])].join(' or ') || 'matching permanent'} like that.`;
+  }
   return null;
 }
 
@@ -1105,7 +1111,7 @@ export function dealDamage(
 
 /** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): { all: boolean; halves: number; less?: number; then?: PreventionFollowUp; batch?: string; once?: true } {
+function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean, amount = 0): { all: boolean; halves: number; less?: number; then?: PreventionFollowUp; batch?: string; once?: true } {
   let halves = 0;
   let less = 0;
   // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
@@ -1135,6 +1141,8 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       if (!staticConditionHolds(g, e, holder) && !(e.then && !e.eachSource && combatFollowUps?.has(batchKey))) continue;
       // The Mindskinner: "If a source you control would deal damage …"; Ironscale Hydra: "If a creature would deal …".
       if (e.from && !matchesFilter(g, source, e.from, { controller: holder.controller, source: holder, anyZone: true })) continue;
+      // Callous Giant: "3 or less damage".
+      if (e.atMost !== undefined && amount > e.atMost) continue;
       let hit = false;
       // Defang: "Prevent all damage that would be dealt by enchanted creature."
       const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
@@ -1200,7 +1208,7 @@ function runPreventedFollowUps(g: GameState, source: GameObject, to: DamageRecip
 
 /** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
 function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
-  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat) : ({ all: false, halves: 0 } as ReturnType<typeof staticallyPrevented>);
+  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat, amount) : ({ all: false, halves: 0 } as ReturnType<typeof staticallyPrevented>);
   if (fixed.all) {
     events.push({ type: 'prevented', source: source.id, amount, to });
     // "remove a +1/+1 counter from this creature": once for all the damage dealt to it at once.

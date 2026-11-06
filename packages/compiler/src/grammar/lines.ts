@@ -2638,6 +2638,14 @@ export const continuousRule: GrammarRule = {
       conds.push({ type: 'not', cond: unlessCond });
       rest = unless[1]!;
     }
+    // Branded Brawlers: "This creature can't block if you control an untapped land." — continuously (CR 611.3a).
+    // ("… can't attack if defending player controls …" is checked per attack, elsewhere.)
+    const ifCant = !unless ? /^(~ can't (?:attack|block|attack or block)) if (?!defending player)(.+)$/.exec(rest) : null;
+    const ifCond = ifCant ? attempt(b, (b) => parseCondition(ifCant[2]!, b)) : null;
+    if (ifCant && ifCond) {
+      conds.push(ifCond);
+      rest = ifCant[1]!;
+    }
     // CR 702.95: soulbond — "As long as ~ is paired with another creature, each of those creatures has …" ("both
     // creatures have …"): the creature and its partner, while they're paired.
     const paired = /^As long as (?:~|this creature) is paired with another creature, (?:each of those creatures|both creatures) (.+)$/.exec(rest);
@@ -4269,7 +4277,14 @@ export const staticPreventionRule: GrammarRule = {
         who = h[2];
         if (h[1]) node.damage = h[1].trim() as 'combat' | 'noncombat';
       } else if ((h = /^(.+?) would be dealt damage$/.exec(head))) who = h[1];
-      else if ((h = /^a source( you control)? would deal damage to (.+)$/.exec(head))) {
+      else if ((h = /^a source would deal (\w+) or less damage to (.+)$/.exec(head))) {
+        // Callous Giant: "If a source would deal 3 or less damage to this creature".
+        const n = parseAmount(h[1]!);
+        if (typeof n !== 'number') return null;
+        node.atMost = n;
+        node.eachSource = true;
+        who = h[2];
+      } else if ((h = /^a source( you control)? would deal damage to (.+)$/.exec(head))) {
         if (h[1]) node.from = { controller: 'you' };
         node.eachSource = true;
         who = h[2];
@@ -4818,7 +4833,9 @@ export const castOptionRule: GrammarRule = {
     if (additional) return make('additional', additional[1]!);
     // Timely Ward: "You may cast this spell as though it had flash if it targets a commander."; Bard's Company: "… if you control
     // a Human." (CR 702.8a)
-    const flashIf = /^You may cast ~ as though it had flash if (?!you pay )(.+)$/.exec(t);
+    // Hungering Yeti: "As long as you control a green or blue permanent, you may cast this spell as though it had flash."
+    const flashAsLong = /^As long as (.+?), you may cast ~ as though it had flash$/.exec(t);
+    const flashIf = flashAsLong ? ([t, flashAsLong[1]!] as unknown as RegExpExecArray) : /^You may cast ~ as though it had flash if (?!you pay )(.+)$/.exec(t);
     if (flashIf) {
       const targets = /^it targets (?:a|an) (.+)$/.exec(flashIf[1]!);
       if (targets) {

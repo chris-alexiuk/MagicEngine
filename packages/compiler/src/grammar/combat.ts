@@ -69,6 +69,12 @@ export function parseCombatRule(predicate: string, b: Binder): CombatRules | nul
     const pf = parseFilter(unless[1]!, b);
     return pf && !pf.plural ? { attackOnlyIfDefenderControls: pf.filter } : null;
   }
+  // Goblin Mutant: "can't attack if defending player controls an untapped creature with power 3 or greater" (CR 508.1c)
+  const unlessNot = /^can't attack if defending player controls (?:a|an) (.+)$/.exec(p);
+  if (unlessNot) {
+    const pf = parseFilter(unlessNot[1]!, b);
+    return pf && !pf.plural ? { attackNotIfDefenderControls: pf.filter } : null;
+  }
   // Spectral Grasp: "can't block creatures you control".
   // Zurgo Bellstriker: "can't block creatures with power 2 or greater".
   // Hunted Ghoul: "can't block Humans"; Orcish Veteran: "can't block white creatures with power 2 or greater".
