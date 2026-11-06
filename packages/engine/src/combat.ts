@@ -1146,7 +1146,8 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
       let hit = false;
       // Defang: "Prevent all damage that would be dealt by enchanted creature."
       const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
-      if (e.bySelf && source.id === holder.id) hit = true;
+      // Goblin Furrier: "… that this creature would deal to snow creatures" — only to those.
+      if (e.bySelf && source.id === holder.id) hit = !e.bySelfTo || (to.kind === 'permanent' && Boolean(g.objects[to.object]) && matchesFilter(g, g.objects[to.object]!, e.bySelfTo, { controller: holder.controller, source: holder }));
       else if (e.byAttached && attachedHost !== undefined && source.id === attachedHost) hit = true;
       // Statecraft: "… dealt to and dealt by creatures you control".
       else if (e.by && matchesFilter(g, source, e.by, { controller: holder.controller, source: holder })) hit = true;

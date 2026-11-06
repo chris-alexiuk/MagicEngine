@@ -1605,7 +1605,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // Dark Depths: "When Dark Depths has no ice counters on it, …"
   // Endrek Sahr: "When you control seven or more Thrulls, sacrifice Endrek Sahr."
   // Darksteel Reactor: "When this artifact has twenty or more charge counters on it, you win the game."
-  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^~ has no \S+ counters on it$/.test(t) || /^~ has (?:\w+) or (?:more|fewer) \S+ counters on (?:it|him|her)$/.test(t))) {
+  // Endangered Armodon: "When you control a creature with toughness 2 or less, sacrifice this creature."
+  if (word === 'When' && (/^you control no /.test(t) || /^you control (?:\w+) or more /.test(t) || /^you control an? \w+ with (?:power|toughness) \d+ or (?:less|greater)$/.test(t) || /^~ has no \S+ counters on it$/.test(t) || /^~ has (?:\w+) or (?:more|fewer) \S+ counters on (?:it|him|her)$/.test(t))) {
     const cond = parseCondition(t, b);
     if (cond) return { trigger: { type: 'state', condition: cond }, it: { ref: 'self' }, player: null };
   }
@@ -4347,6 +4348,13 @@ export const staticPreventionRule: GrammarRule = {
         const node: StaticPreventionNode = { type: 'prevent_damage', toSelf: true, from: pf.filter, ...(bySelf[1] ? { damage: 'combat' as const } : {}) };
         return { kind: 'static', text: original, effect: node };
       }
+    }
+    // Goblin Furrier: "Prevent all damage that this creature would deal to snow creatures."
+    const selfTo = /^Prevent all (combat |noncombat )?damage that (?:~|this creature) would deal to (.+)\.$/.exec(line);
+    if (selfTo) {
+      const pf = parseFilter(selfTo[2]!, new Binder(env));
+      if (!pf || !pf.plural || pf.filter.zone) return null;
+      return { kind: 'static', text: original, effect: { type: 'prevent_damage', bySelf: true, bySelfTo: pf.filter, ...(selfTo[1] ? { damage: selfTo[1].trim() as 'combat' | 'noncombat' } : {}) } as StaticPreventionNode };
     }
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|sources you control|creatures(?: it's blocking| blocking it)?))?( during your turn)?\.$/.exec(line);
     if (!m) return null;

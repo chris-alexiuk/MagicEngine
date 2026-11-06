@@ -159,6 +159,21 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
     const pf = parseFilter(noneThere[1] ?? noneThere[2]!, b);
     if (pf && pf.plural && !pf.filter.zone) return { type: 'count', who: 'all', filter: pf.filter, max: 0 };
   }
+  // Zanam Djinn: "blue is the most common color among all permanents or is tied for most common".
+  const mostCommon = /^(white|blue|black|red|green) is the most common color among all permanents or is tied for most common$/.exec(t);
+  if (mostCommon) return { type: 'most_common_color', color: { white: 'W', blue: 'U', black: 'B', red: 'R', green: 'G' }[mostCommon[1]!]! };
+  // Zealots en-Dal: "if all nonland permanents you control are white" — none of them is nonwhite.
+  const allAre = /^all (.+?) you control are (white|blue|black|red|green)$/.exec(t);
+  if (allAre) {
+    const pf = parseFilter(`non${allAre[2]} ${allAre[1]}`, b);
+    if (pf && pf.plural && !pf.filter.zone) return { type: 'count', who: 'you', filter: pf.filter, max: 0 };
+  }
+  // Rampaging Cyclops: "as long as two or more creatures are blocking it" — this creature (CR 509.1h).
+  const blockingIt = /^(\w+) or more creatures are blocking (?:it|~|this creature)$/.exec(t);
+  if (blockingIt) {
+    const n = parseAmount(blockingIt[1]!);
+    if (typeof n === 'number') return { type: 'amount', amount: { kind: 'blockers', of: { ref: 'self' } }, op: 'ge', n };
+  }
   // Glacial Crasher: "unless there is a Mountain on the battlefield" — anyone's.
   const someThere = /^(?:there is an? (.+?) on the battlefield|an? (.+?) is on the battlefield)$/.exec(t);
   if (someThere) {
