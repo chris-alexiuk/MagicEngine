@@ -734,9 +734,10 @@ export class ParserRegistry {
         /\bchoose (?:one|two|three|four|five|one or both|one or more|any number|up to one|up to two) —$/i.test(line) ||
         /\bchoose one that hasn['’]t been chosen(?: this turn)?(?: —|\.)$/i.test(line) ||
         /^Choose (?:one|two)\. If .+ instead\.$/.test(line) ||
-        /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line)
+        /\b[Cc]hoose (?:one|two|three|four|five)\. You may choose the same mode more than once\.$/.test(line) ||
+        /^Choose up to \w+ \{P\} worth of modes\. You may choose the same mode more than once\.$/.test(line)
       ) {
-        while (i + 1 < lines.length && lines[i + 1]!.startsWith('• ')) block.push(lines[++i]!);
+        while (i + 1 < lines.length && (lines[i + 1]!.startsWith('• ') || /^(?:\{P\})+ — /.test(lines[i + 1]!))) block.push(lines[++i]!);
         if (tail) block[block.length - 1] += tail;
       }
       // CR 706.3b: a die roll and its results table are one ability.

@@ -127,6 +127,18 @@ function parseProgramText(text: string, b: Binder): Program | null {
     roll.table = table;
     return { ...(b.targets.length ? { targets: b.targets } : {}), effects: top.effects };
   }
+  // CR 700.2i: "Choose up to five {P} worth of modes. You may choose the same mode more than once." — each mode costs its
+  // pawprints; the chosen ones add up to no more than five, and the same mode may be chosen again.
+  const paws = /^Choose up to (\w+) \{P\} worth of modes\. You may choose the same mode more than once\.$/.exec(head!.trim());
+  if (paws) {
+    const budget = parseAmount(paws[1]!);
+    const rows = bullets.map((l) => /^((?:\{P\})+) — (.+)$/.exec(l));
+    if (typeof budget !== 'number' || rows.length < 2 || rows.some((r) => !r)) return null;
+    const inner = parseProgram(['Choose one —', ...rows.map((r) => `• ${r![2]}`)].join('\n'), b);
+    if (!inner?.modes) return null;
+    const options = inner.modes.options.map((o, i) => ({ ...o, weight: rows[i]![1]!.length / 3 }));
+    return { ...inner, modes: { ...inner.modes, options, min: 1, max: budget, repeat: true, budget } };
+  }
   // CR 700.2d: "Choose three. You may choose the same mode more than once."
   const repeat = /^Choose (one|two|three|four|five)\. You may choose the same mode more than once\.$/.exec(head!.trim());
   if (repeat) {

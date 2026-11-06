@@ -95,18 +95,23 @@ export function ModePicker({
 }) {
   const [modes, setModes] = useState<number[]>(() => (initial && (!feasible || feasible(initial)) ? initial : []));
   const blocked = useMemo(() => new Set(menu.options.map((_, i) => i).filter((i) => feasible && !feasible([i]))), [menu, feasible]);
+  // CR 700.2i: pawprint modes add up to no more than the budget.
+  const weight = (i: number) => menu.options[i]?.weight ?? 1;
+  const spent = modes.reduce((n, m) => n + weight(m), 0);
+  const overBudget = (i: number) => menu.budget !== undefined && spent + weight(i) > menu.budget;
   const toggle = (i: number) => {
+    if (menu.repeat && overBudget(i)) return;
     if (menu.repeat) setModes([...modes, i].sort((a, b) => a - b));
     else if (modes.includes(i)) setModes(modes.filter((m) => m !== i));
     else if (menu.max === 1) setModes([i]);
     else if (modes.length < menu.max) setModes([...modes, i].sort((a, b) => a - b));
   };
   const fits = !feasible || modes.length === 0 || feasible(modes);
-  const ok = modes.length >= menu.min && modes.length <= menu.max && fits;
+  const ok = modes.length >= menu.min && modes.length <= menu.max && fits && (menu.budget === undefined || spent <= menu.budget);
   return (
     <div className="flow-step">
       <p className="flow-title">
-        Choose {menu.min === menu.max ? menu.min : `${menu.min}–${menu.max}`} mode{menu.max === 1 ? '' : 's'}
+        {menu.budget !== undefined ? `Choose up to ${menu.budget} {P} worth of modes (${spent} chosen)` : `Choose ${menu.min === menu.max ? menu.min : `${menu.min}–${menu.max}`} mode${menu.max === 1 ? '' : 's'}`}
         {menu.repeat ? ' (a mode can be chosen more than once)' : ''}
       </p>
       <ul className="mode-list">
@@ -116,7 +121,8 @@ export function ModePicker({
           const noTargets = blocked.has(i);
           return (
             <li key={i}>
-              <button type="button" className={n ? 'mode selected' : 'mode'} disabled={used || noTargets} onClick={() => toggle(i)} aria-pressed={n > 0}>
+              <button type="button" className={n ? 'mode selected' : 'mode'} disabled={used || noTargets || (menu.repeat && overBudget(i))} onClick={() => toggle(i)} aria-pressed={n > 0}>
+                {opt.weight && <span className="mode-cost">{'{P}'.repeat(opt.weight)}</span>}
                 <span className="mode-text">
                   <RulesText text={opt.text} />
                 </span>

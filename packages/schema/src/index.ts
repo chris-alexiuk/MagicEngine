@@ -164,6 +164,8 @@ export interface ModeChoice {
    * same object, CR 400.7): a mode this object's ability had chosen before can't be chosen again (CR 700.2a–b).
    */
   unchosen?: 'turn' | 'ever';
+  /** CR 700.2i: "Choose up to five {P} worth of modes" — the most pawprints the chosen modes may add up to. */
+  budget?: number;
 }
 
 export interface ModeOption {
@@ -174,6 +176,8 @@ export interface ModeOption {
   manual?: true;
   /** CR 702.172a (spree) / 702.183a (tiered): the additional cost paid for choosing this mode. */
   cost?: string;
+  /** CR 700.2i, 107.18: the pawprints ({P}) this mode counts toward its spell's budget. */
+  weight?: number;
 }
 
 export interface ActivatedAbility extends AbilityBase, Program {

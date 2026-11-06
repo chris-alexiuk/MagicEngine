@@ -40,6 +40,10 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
       if ((!p.modes.repeat && new Set(chosen).size !== chosen.length) || chosen.some((m) => !p.modes!.options[m])) {
         throw new RulesError('Choose each mode at most once.');
       }
+      // CR 700.2i: pawprint modes add up to no more than the budget ("up to five {P} worth of modes").
+      if (p.modes.budget !== undefined && chosen.reduce((n, m) => n + (p.modes!.options[m]!.weight ?? 1), 0) > p.modes.budget) {
+        throw new RulesError(`Choose up to ${p.modes.budget} {P} worth of modes.`);
+      }
       for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);
       if (chosen.some((m) => p.modes!.options[m]!.manual)) manual = true;
     }

@@ -30,7 +30,9 @@ export interface ModeMenu {
   repeat: boolean;
   /** Modes that can't be chosen again ("choose one that hasn't been chosen this turn"). */
   used: number[];
-  options: { text: string; manual: boolean; cost?: string }[];
+  /** CR 700.2i: "Choose up to five {P} worth of modes" — the most pawprints the chosen modes may add up to. */
+  budget?: number;
+  options: { text: string; manual: boolean; cost?: string; /** Its pawprints ({P}). */ weight?: number }[];
 }
 
 interface Reading {
@@ -103,7 +105,8 @@ export function choiceModes(g: GameState, a: Choosing): ModeMenu | null {
     max,
     repeat: Boolean(m.repeat),
     used,
-    options: m.options.map((opt) => ({ text: opt.text, manual: Boolean(opt.manual), ...(opt.cost ? { cost: opt.cost } : {}) })),
+    ...(m.budget !== undefined ? { budget: m.budget } : {}),
+    options: m.options.map((opt) => ({ text: opt.text, manual: Boolean(opt.manual), ...(opt.cost ? { cost: opt.cost } : {}), ...(opt.weight ? { weight: opt.weight } : {}) })),
   };
 }
 
