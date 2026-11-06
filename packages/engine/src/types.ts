@@ -477,6 +477,8 @@ export interface ContinuousEffect {
   switchPT?: true;
   /** CR 611.2a: "until end of turn", or for the rest of the game when no duration is stated. */
   until: 'eot' | 'game';
+  /** CR 511.3: "until end of combat" — it ends as the end of combat step ends. */
+  endOfCombat?: true;
   /** CR 611.2b: "for as long as ~ remains tapped" — it ends once that object isn't tapped (or is gone). */
   whileTapped?: ObjectRef;
   /** Sower of Temptation: "for as long as ~ remains on the battlefield"; `player`: "for as long as you control ~". */

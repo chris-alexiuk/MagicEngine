@@ -388,6 +388,8 @@ function emptyManaPools(g: GameState, combatEnds: boolean): void {
 /** Ends the current step and moves on. */
 export function endStep(g: GameState, events: GameEvent[]): void {
   emptyManaPools(g, g.step === 'end_of_combat');
+  // CR 511.3: "until end of combat" effects end as the end of combat step ends.
+  if (g.step === 'end_of_combat' && g.effects.some((e) => e.endOfCombat)) g.effects = g.effects.filter((e) => !e.endOfCombat);
   if (g.step === 'cleanup') {
     if (g.extraCleanup) {
       // CR 514.3a: after players act in a cleanup step, another cleanup step follows.

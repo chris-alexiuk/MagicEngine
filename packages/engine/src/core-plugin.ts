@@ -984,6 +984,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
           controller: ctx.controller, objects: [{ id: o.id, zcc: o.zcc }], power: p, toughness: t,
           until: node.until === 'game' ? 'game' : 'eot',
+          ...(node.until === 'eoc' ? { endOfCombat: true as const } : {}),
         });
       }
       return true;
@@ -1023,6 +1024,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
       until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' || node.until === 'source_controlled' || node.until === 'source_present' ? 'game' : 'eot',
       ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
+      ...(node.until === 'eoc' ? { endOfCombat: true as const } : {}),
       // Aegis Angel: "for as long as you control this creature" (CR 611.2b).
       ...(node.until === 'source_controlled' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc, player: ctx.controller } } : {}),
       // Skilled Animator: "for as long as this creature remains on the battlefield".

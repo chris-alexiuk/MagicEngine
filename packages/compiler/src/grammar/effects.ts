@@ -3578,6 +3578,19 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const { zone: _z, ...filter } = pf.filter;
     return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash', until: when === 'your next turn' ? 'your_next_turn' : 'eot', filter }];
   }
+  // CR 511.3: Murk Dwellers: "it gets +2/+0 until end of combat" — like "until end of turn", ending sooner.
+  const untilEoc = / until end of combat$/.exec(s.replace(/\.$/, ''));
+  if (untilEoc) {
+    const base = s.replace(/\.$/, '').slice(0, untilEoc.index);
+    const inner = attempt(b, (b) => parseSentence(`${base} until end of turn`, b));
+    if (inner && inner.every((x) => x.type === 'modify' && x.until === 'eot')) return inner.map((x) => ({ ...x, until: 'eoc' }));
+  }
+  // Yuan Shao's Infantry: "this creature can't be blocked this combat" — ends with the combat (CR 511.3).
+  const thisCombat = /^(.+? can't be blocked) this combat$/.exec(s.replace(/\.$/, ''));
+  if (thisCombat) {
+    const inner = attempt(b, (b) => parseSentence(`${thisCombat[1]} this turn`, b));
+    if (inner && inner.every((x) => x.type === 'modify' && x.until === 'eot')) return inner.map((x) => ({ ...x, until: 'eoc' }));
+  }
   // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
   const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
   if (whileTapped) {
@@ -3743,9 +3756,12 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     if (r) return r;
   }
   // Circular Logic: "Counter target spell unless its controller pays {1} for each card in your graveyard"; Spell Stutter:
-  // "{2} plus an additional {1} for each Faerie you control" — generic mana, counted as it resolves.
-  const unlessEach = /^(.+) unless (.+?) pays \{(\d+)\}(?: plus an additional \{(\d+)\})? for each (.+)$/.exec(s);
-  if (unlessEach) {
+  // "{2} plus an additional {1} for each Faerie you control" — generic mana, counted as it resolves. Fettergeist: "unless you
+  // pay {1} for each other creature you control".
+  const unlessEach = /^(.+) unless (.+?) pays? \{(\d+)\}(?: plus an additional \{(\d+)\})? for each (.+)$/.exec(s);
+  // Phantasmal Sphere: "put a +1/+1 counter on this creature, then sacrifice this creature unless you pay …" — the payment
+  // spares only the last instruction, which this rule can't split off.
+  if (unlessEach && !/, then /.test(unlessEach[1]!)) {
     const r = attempt(b, (b) => {
       const before = b.clone();
       const inner = parseSentence(unlessEach[1]!, b);
