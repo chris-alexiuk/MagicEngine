@@ -2831,9 +2831,15 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   }
   // Giada: "Each other Angel you control enters with an additional +1/+1 counter on it for each Angel you already control";
   // Arwen: "… enters with a number of additional +1/+1 counters on it equal to Arwen's toughness".
+  // Hooded Hydra: "As this creature is turned face up, put five +1/+1 counters on it." (CR 708.8)
+  const faceUp = /^As (?:~|this creature) is turned face up, put (a|an|one|two|three|four|five|six|seven|eight|nine|ten) (\S+) counters? on (?:it|~|this creature)$/.exec(body);
+  if (faceUp) {
+    const n = parseAmount(faceUp[1]!.replace(/^an?$/, 'one'));
+    return typeof n === 'number' ? { type: 'as_turned_face_up', counter: faceUp[2]!, amount: n } : null;
+  }
   const extraMany =
     /^Each (other )?(.+?) enters with an additional (\S+) counter on it for each (.+?) you already control$/.exec(body) ??
-    /^Each (other )?(.+?) enters with a number of additional (\S+) counters on it equal to (.+)$/.exec(body) ??
+    /^Each (other )?(.+?) enters with a number of additional (\S+) counters on it equal to (.+?)(?= and as an? [A-Z]\w* in addition to its other types$|$)/.exec(body) ??
     // Bloodspore Thrinax: "… enters with an additional X +1/+1 counters on it, where X is the number of +1/+1 counters on this
     // creature."
     /^Each (other )?(.+?) enters with an additional X (\S+) counters on it, where X is (.+)$/.exec(body);
@@ -2843,7 +2849,10 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
     const already = /for each/.test(body);
     const amount = already ? parseForEach(`${extraMany[4]} you control`, b) : parseCount(extraMany[4]!, b);
     if (!amount || amount.kind === 'x') return null;
-    return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extraMany[1] ? { other: true } : {}) }, counter: extraMany[3]!, amount, ...(already ? { notEntering: true } : {}) };
+    // Master Biomancer: "… and as a Mutant in addition to its other types" — a creature type it keeps (layer 4).
+    const asType = / and as an? ([A-Z]\w*) in addition to its other types$/.exec(body);
+    if (asType && !isSubtype(asType[1]!)) return null;
+    return { type: 'enter_counters_others', filter: { ...pf.filter, ...(extraMany[1] ? { other: true } : {}) }, counter: extraMany[3]!, amount, ...(already ? { notEntering: true } : {}), ...(asType ? { asSubtypes: [asType[1]!] } : {}) };
   }
   // Spelunking: "Lands you control enter untapped." — the controller orders replacement effects (CR 616.1), so it wins.
   const untapped = /^(.+?) you control enter untapped$/.exec(body);

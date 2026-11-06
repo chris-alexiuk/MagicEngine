@@ -347,6 +347,14 @@ function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: 
   delete o.faceDown;
   // CR 702.37b: megamorph — a +1/+1 counter as it's turned face up.
   if (face.keywords.some((k) => k.id === 'megamorph') && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+  // Hooded Hydra: "As this creature is turned face up, put five +1/+1 counters on it." (CR 708.8 — put on, CR 122.6)
+  for (const a of face.abilities) {
+    if (a.kind !== 'static' || a.effect.type !== 'as_turned_face_up') continue;
+    const counter = String(a.effect.counter);
+    if (counterBlocked(g, o, counter)) continue;
+    const n = replaceQuantity(g, 'counters', Number(a.effect.amount ?? 1), { player: o.controller, object: o, counter });
+    if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+  }
   events.push({ type: 'turned_face_up', object: id });
   // CR 116.3: a player who takes a special action receives priority afterward.
   givePriority(g, player);

@@ -198,6 +198,11 @@ function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]
         }
         const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter });
         if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+        // Master Biomancer: "and as a Mutant in addition to its other types" — for as long as it's this object (CR 614.1c).
+        const asSubtypes = effect.asSubtypes as string[] | undefined;
+        if (asSubtypes?.length) {
+          g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: src.id, zcc: src.zcc }, controller: src.controller, objects: [{ id: o.id, zcc: o.zcc }], types: [], subtypes: asSubtypes, retainTypes: true, until: 'game' });
+        }
       }
     }
   }
