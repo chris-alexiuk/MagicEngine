@@ -331,6 +331,15 @@ function choiceCostOf(item: string, b: Binder | null): EffectNode | null {
     if (tap[3]) pf.filter.sharesColorWithSource = true;
     return { type: 'tap_creatures', amount, filter: pf.filter };
   }
+  // Halo Fountain: "Untap a tapped creature you control", "Untap fifteen tapped creatures you control".
+  const untapCost = /^[Uu]ntap (a|an|another|\w+)( other)? tapped (.+)$/.exec(item);
+  if (untapCost && b) {
+    const amount = parseAmount(untapCost[1]!.replace(/^an(?:other)?$/, 'a'));
+    const pf = parseFilter(untapCost[3]!, b);
+    if (!pf || typeof amount !== 'number' || amount < 1 || pf.plural !== amount > 1 || pf.filter.controller !== 'you' || pf.filter.zone) return null;
+    if (untapCost[1] === 'another' || untapCost[2]) pf.filter.other = true;
+    return { type: 'tap_creatures', amount, filter: pf.filter, untap: true };
+  }
   // War Room: "Pay life equal to the number of colors in your commanders' color identity"
   const lifeEqual = /^[Pp]ay life equal to (.+)$/.exec(item);
   if (lifeEqual && b) {
@@ -2839,7 +2848,8 @@ function parseOthersEnterTapped(body: string, b: Binder): EffectNode | null {
   return { type: 'enter_tapped_others', filter: pf.filter };
 }
 
-/** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you." */
+/** CR 508.1g: "Creatures can't attack you unless their controller pays {2} for each creature they control that's attacking you."
+ * Norn's Annex: "{W/P}" — Phyrexian mana, paid with {W} or 2 life (CR 107.4f). */
 function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
   // Sandwurm Convergence: "Creatures with flying can't attack you or planeswalkers you control." (CR 508.1c)
   // Rite of the Raging Storm: "Creatures named Lightning Rager can't attack you or planeswalkers you control."
@@ -2871,7 +2881,7 @@ function parseAttackTax(body: string, b: Binder): AttackTaxNode | null {
     const x = per ? (n === 1 ? per : { ...per, times: n * (per.times ?? 1) }) : undefined;
     return { type: 'attack_tax', cost: x ? '{X}' : `{${n}}`, ...(x ? { x } : {}), subject, ...(one[2] === 'block' ? { blocks: true } : one[2] === 'attack or block' ? { alsoBlocks: true } : {}) };
   }
-  const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX])\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
+  const m = /^(.*?creatures) can't attack you( or planeswalkers you control)? unless their controller pays ((?:\{(?:\d+|[WUBRGCX]|[WUBRG]\/P)\})+) for each (?:creature they control that's attacking you|of those creatures)(?:, where X is (.+))?$/i.exec(body);
   if (!m || /X/.test(m[3]!) !== Boolean(m[4])) return null;
   const x = m[4] ? parseCount(m[4], b) : undefined;
   if (x === null || (x && m[3] !== '{X}')) return null;

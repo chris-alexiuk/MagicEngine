@@ -3,7 +3,7 @@ import { evalCondition } from './conditions.js';
 import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
-import { planManaOnly } from './autotap.js';
+import { planManaOnly, settlePhyrexian } from './autotap.js';
 import { canActivateTapAbilities, hasRule, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { anyColorChoices, parseManaCost, payFromPool, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
@@ -42,7 +42,8 @@ export function unblockedAttackers(g: GameState, player: PlayerId): ObjectId[] {
 export function tapCostCandidates(g: GameState, player: PlayerId, source: GameObject, c: EffectNode): ObjectId[] {
   return g.zones.battlefield.filter((id) => {
     const o = g.objects[id]!;
-    return id !== source.id && o.controller === player && !o.tapped && matchesFilter(g, o, (c.filter ?? {}) as ObjectFilter, { controller: player, source });
+    // Halo Fountain: "Untap a tapped creature you control" — the same choice, of tapped ones.
+    return id !== source.id && o.controller === player && (c.untap ? o.tapped : !o.tapped) && matchesFilter(g, o, (c.filter ?? {}) as ObjectFilter, { controller: player, source });
   });
 }
 
@@ -321,7 +322,7 @@ export function checkOtherCosts(g: GameState, player: PlayerId, o: GameObject, c
       const chosen = choices.crew ?? [];
       const ok = tapCostCandidates(g, player, o, c);
       const count = c.upTo ? chosen.length <= n : chosen.length === n;
-      if (!count || new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${c.upTo ? 'up to ' : ''}${n} untapped creature(s) you control to tap.`);
+      if (!count || new Set(chosen).size !== chosen.length || !chosen.every((id) => ok.includes(id))) throw new RulesError(`Choose ${c.upTo ? 'up to ' : ''}${n} ${c.untap ? 'tapped' : 'untapped'} creature(s) you control to ${c.untap ? 'untap' : 'tap'}.`);
     } else if (c.type === 'crew') {
       // CR 702.122a: untapped creatures you control (not this one) with total power N or greater.
       const chosen = choices.crew ?? [];
@@ -455,7 +456,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       if (o.counters[counter]! <= 0) delete o.counters[counter];
       if (n > 0) events.push({ type: 'counters', object: o.id, counter, delta: -n });
     } else if (c.type === 'crew' || c.type === 'station' || c.type === 'tap_creatures') {
-      for (const id of choices.crew ?? []) setTapped(g, id, true, events);
+      for (const id of choices.crew ?? []) setTapped(g, id, !c.untap, events);
     } else if (c.type === 'return_unblocked' || c.type === 'return_permanents') {
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
@@ -694,8 +695,17 @@ export function payDuringResolution(g: GameState, player: PlayerId, mana: string
   }
   const cost = parseManaCost(mana);
   if (cost.unsupported.length) throw new RulesError(`Paying ${mana} isn’t supported yet.`);
+  // CR 107.4f: Phyrexian symbols (Norn's Annex's "{W/P}") — mana when it can be paid, else 2 life each.
+  const life = cost.phyrexian.length ? settlePhyrexian(g, player, cost, undefined, x, true) : 0;
+  const ps = g.players[player]!;
+  if (life && ps.life < life) throw new RulesError(`You can’t pay ${mana}.`);
   if (!payFromPool(spendablePool(g, player, OTHER_PURPOSE), cost, x)) autoTap(g, player, cost, x, events);
   if (!payMana(g, player, cost, x, OTHER_PURPOSE)) throw new RulesError(`You can’t pay ${mana}.`);
+  if (life) {
+    const lost = lifeLoss(g, player, life);
+    ps.life -= lost;
+    events.push({ type: 'life', player, delta: -lost, life: ps.life });
+  }
 }
 
 /** Processors' costs: cards in exile an opponent of `player` owns. */
