@@ -437,6 +437,9 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you cast (?:~|this spell) during your main phase$/.test(t)) return { type: 'cast_in_main_phase' };
   // CR 702.33d: "if it was kicked" / "if this spell was kicked".
   if (/^(?:it|~|he|she) was kicked$/.test(t)) return { type: 'kicked' };
+  // CR 702.33c: "if it was kicked with its {2}{U} kicker" — one of two kicker costs.
+  const kickedWith = /^(?:it|~|he|she|this spell|this creature) was kicked with its ((?:\{[^}]+\})+) kicker$/.exec(t);
+  if (kickedWith) return { type: 'kicked_with', cost: kickedWith[1]! };
   // CR 702.104b: "if tribute wasn't paid".
   if (t === "tribute wasn't paid") return { type: 'not', cond: { type: 'tribute_paid' } };
   if (t === 'tribute was paid') return { type: 'tribute_paid' };

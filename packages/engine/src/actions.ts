@@ -613,15 +613,18 @@ function cast(
   modes: number[] | undefined,
   events: GameEvent[],
   costChoices: CostChoices,
-  kickedArg: boolean | number,
+  kickedArg: boolean | number | number[],
   altId?: string,
   extras: string[] = [],
   /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
   during?: { free?: boolean; suspended?: true; exileOnLeave?: true },
   divide?: number[],
 ): void {
-  const kicks = typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
+  // "Kicker {1}{U} and/or {B}": which of its two kicker costs (CR 702.33c).
+  const which = Array.isArray(kickedArg) ? [...new Set(kickedArg)] : undefined;
+  const kicks = which ? (which.length ? 1 : 0) : typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
   const kicked = kicks > 0;
+  let kickedWith: string[] | undefined;
   const o = obj(g, id);
   // CR 722.3c: a prepare spell's copy in exile is cast as its prepare spell, by the prepared permanent's controller.
   const prepared = o.prepareOf ? preparedSource(g, o, player) : undefined;
@@ -784,10 +787,20 @@ function cast(
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (kicked) {
     // CR 702.33a: the kicker cost is paid in addition (CR 601.2f); CR 702.33c: multikicker, any number of times.
-    const kicker = face.keywords.find((k) => (k.id === 'kicker' || k.id === 'multikicker') && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
+    const kicker = face.keywords.find((k) => (k.id === 'kicker' || k.id === 'multikicker') && k.cost && /^(\{[^}]+\})+(?: and\/or (\{[^}]+\})+)?$/.test(k.cost));
     if (!kicker) throw new RulesError(`${face.name} has no kicker cost the engine can pay.`);
     if (kicker.id === 'kicker' && kicks > 1) throw new RulesError(`${face.name} can be kicked only once.`);
-    for (let i = 0; i < kicks; i++) addCost(cost, parseManaCost(kicker.cost!));
+    const parts = kicker.cost!.split(' and/or ');
+    if (parts.length > 1) {
+      // CR 702.33c: "Kicker [cost 1] and/or [cost 2]" — either, or both.
+      const chosen = which ?? parts.map((_, i) => i);
+      if (!chosen.every((i) => parts[i] !== undefined)) throw new RulesError(`${face.name} has kicker costs ${parts.join(' and ')}.`);
+      for (const i of chosen) addCost(cost, parseManaCost(parts[i]!));
+      kickedWith = chosen.map((i) => parts[i]!);
+    } else {
+      if (which && which.some((i) => i !== 0)) throw new RulesError(`${face.name} has one kicker cost.`);
+      for (let i = 0; i < kicks; i++) addCost(cost, parseManaCost(kicker.cost!));
+    }
   }
   // Strive: "costs {2}{W} more to cast for each target beyond the first" (CR 601.2f).
   addPerTargetCost(castFace, targets, cost);
@@ -946,7 +959,9 @@ function cast(
     from: castFrom,
     before,
     // A kicker that isn't mana ("Kicker—Sacrifice an artifact or Goblin") is paid as an optional additional cost.
-    ...(kicked ? { kicked: true as const, kicks } : extras.includes('kicker') ? { kicked: true as const, kicks: 1 } : {}),
+    // Vodalian Mindsinger: "for each time it was kicked" — each of its two kicker costs paid counts (CR 702.33c).
+    ...(kicked ? { kicked: true as const, kicks: kickedWith ? kickedWith.length : kicks } : extras.includes('kicker') ? { kicked: true as const, kicks: 1 } : {}),
+    ...(kickedWith ? { kickedWith } : {}),
     ...(paid.length ? { paid } : {}),
     ...(colorsSpent ? { colors: colorsSpent } : {}),
     // Wistfulness: "if {G}{G} was spent to cast it" — how much of each color.

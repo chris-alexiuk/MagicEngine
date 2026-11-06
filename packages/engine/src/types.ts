@@ -246,7 +246,7 @@ export interface GameObject {
    */
   /** `giftTo`: the opponent promised the gift (CR 702.174a). */
   /** hasteUntil: the permanent it becomes has haste through this turn (Arena of Glory's mana; MAX for good). */
-  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true; convoked?: ObjectRef[]; sacrificed?: number; /** Subtypes among permanents its caster controlled as it was cast (only for cards that ask). */ controlledAtCast?: string[]; spent?: Partial<Record<'W' | 'U' | 'B' | 'R' | 'G' | 'C', number>> };
+  cast?: { by: PlayerId; from: ZoneName; kicked?: true; kicks?: number; /** "Kicker A and/or B": the kicker costs paid. */ kickedWith?: string[]; colors?: number; before?: number; copy?: true; paid?: string[]; suspended?: true; giftTo?: PlayerId; uncounterable?: true; mainPhase?: true; manaSpent?: number; hasteUntil?: number; enterCounters?: Record<string, number>; phyrexianLife?: number; offSorceryTiming?: true; convoked?: ObjectRef[]; sacrificed?: number; /** Subtypes among permanents its caster controlled as it was cast (only for cards that ask). */ controlledAtCast?: string[]; spent?: Partial<Record<'W' | 'U' | 'B' | 'R' | 'G' | 'C', number>> };
   /** CR 707.10: a copy of a spell (it ceases to exist off the stack, CR 704.5e). */
   spellCopy?: true;
   /** CR 722.3a: a permanent with a prepare spell that is prepared. */
@@ -860,8 +860,8 @@ export type Action =
       x?: number;
       autoTap?: boolean;
       /** CR 702.33a: pay the kicker cost too. */
-      /** Kicked (CR 702.33a), or how many times for multikicker (CR 702.33c). */
-      kicked?: boolean | number;
+      /** Kicked (CR 702.33a), or how many times for multikicker (CR 702.33c); for "Kicker A and/or B", which of the two (0, 1) — `true` is both. */
+      kicked?: boolean | number | number[];
       /** CR 118.9: an alternative cost to cast it with, by id ("evoke", "dash", "escape", "alt"). */
       alt?: string;
       /** CR 601.2f: optional additional costs paid, by id ("buyback", "entwine"). */

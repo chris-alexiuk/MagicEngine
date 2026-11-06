@@ -45,7 +45,8 @@ export function actionLabel(g: GameState, a: Action): string {
       else if (o?.zone === 'exile' && !a.alt) parts.push('from exile');
       if (a.alt) parts.push(ALT_NAMES[a.alt] ?? `(${a.alt.replace(/_/g, ' ')})`);
       for (const x of a.extras ?? []) parts.push(x === 'fuse' ? 'fused' : `paying ${x.replace(/_/g, ' ')}`);
-      if (a.kicked) parts.push(typeof a.kicked === 'number' && a.kicked > 1 ? `kicked ×${a.kicked}` : 'kicked');
+      if (Array.isArray(a.kicked)) parts.push(a.kicked.length > 1 ? 'kicked twice' : `kicked (${a.kicked[0] === 0 ? 'first' : 'second'} kicker)`);
+      else if (a.kicked) parts.push(typeof a.kicked === 'number' && a.kicked > 1 ? `kicked ×${a.kicked}` : 'kicked');
       if (a.x !== undefined) parts.push(`(X = ${a.x})`);
       return parts.join(' ');
     }

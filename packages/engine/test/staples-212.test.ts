@@ -8,6 +8,8 @@ const CARDS = [
   makeCard({ name: 'Whelp', type_line: 'Creature — Dragon', mana_cost: '{4}', power: '2', toughness: '2', oracle_text: '' }),
   makeCard({ name: 'Insight Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: 'Draw two cards.' }),
   makeCard({ name: 'Forest', type_line: 'Basic Land — Forest', mana_cost: '', oracle_text: '({T}: Add {G}.)' }),
+  makeCard({ name: 'Battlemage Lite', type_line: 'Creature — Human Wizard', mana_cost: '{0}', power: '2', toughness: '2', oracle_text: 'Kicker {U} and/or {R}\nWhen this creature enters, if it was kicked with its {U} kicker, draw a card.\nWhen this creature enters, if it was kicked with its {R} kicker, this creature deals 2 damage to target player.' }),
+  makeCard({ name: 'Mindsinger Lite', type_line: 'Creature — Merfolk Wizard', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: 'Kicker {U} and/or {R}\nThis creature enters with two +1/+1 counters on it for each time it was kicked.' }),
 ];
 
 function settle(g: GameState): GameState {
@@ -41,6 +43,31 @@ describe("slice 290: Dragons of Tarkir's reveal and behold costs", () => {
       const whelp = give(g, 'alice', 'Whelp', 'battlefield');
       g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Exhale Lite', 'hand'), targets: [[{ kind: 'player', player: 'bob' }]], ...(behold ? { extras: ['behold'], costs: { reveal: [whelp] } } : {}) } as never));
       expect(g.players.bob!.life).toBe(behold ? 17 : 19);
+    }
+  });
+  it('Battlemages: "Kicker {U} and/or {R}" — each kicker its own payment and its own condition (CR 702.33c)', () => {
+    for (const [kicked, drew, dmg] of [[[0], 1, 0], [[1], 0, 2], [true, 1, 2]] as const) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      g.players.alice!.pool.U = 1;
+      g.players.alice!.pool.R = 1;
+      const hand = g.zones.hand.alice!.length;
+      g = act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Battlemage Lite', 'hand'), kicked } as never);
+      for (let i = 0; i < 30 && (g.stack.length || g.pending); i++) {
+        if (g.pending) g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'trigger_targets', targets: [[{ kind: 'player', player: 'bob' }]] } } as never);
+        else g = act(g, { type: 'pass', player: g.priority! });
+      }
+      expect([g.zones.hand.alice!.length - hand, 20 - g.players.bob!.life]).toEqual([drew, dmg]);
+    }
+  });
+  it('"for each time it was kicked" counts each of two kicker costs paid', () => {
+    for (const [kicked, n] of [[[1], 2], [true, 4]] as const) {
+      let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+      g.players.alice!.pool.U = 1;
+      g.players.alice!.pool.R = 1;
+      const m = give(g, 'alice', 'Mindsinger Lite', 'hand');
+      g = act(g, { type: 'cast', player: 'alice', object: m, kicked } as never);
+      for (let i = 0; i < 10 && g.stack.length && !g.pending; i++) g = act(g, { type: 'pass', player: g.priority! });
+      expect(g.objects[m]!.counters['+1/+1']).toBe(n);
     }
   });
 });

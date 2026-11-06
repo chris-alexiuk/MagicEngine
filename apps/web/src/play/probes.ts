@@ -40,7 +40,13 @@ export function extraCasts(g: GameState, player: PlayerId, id: string, listed: A
     const f = def.faces[a.face ?? 0];
     const kicker = f?.keywords.find((k) => k.id === 'kicker' || k.id === 'multikicker');
     if (!kicker) continue;
-    if (kicker.id === 'kicker') {
+    if (kicker.id === 'kicker' && kicker.cost?.includes(' and/or ')) {
+      // "Kicker {1}{U} and/or {B}": either kicker, or both (CR 702.33c).
+      for (const which of [[0], [1], [0, 1]]) {
+        const k: Action = { ...a, kicked: which };
+        if (ok(k)) out.push(k);
+      }
+    } else if (kicker.id === 'kicker') {
       const k: Action = { ...a, kicked: true };
       if (ok(k)) out.push(k);
     } else {
