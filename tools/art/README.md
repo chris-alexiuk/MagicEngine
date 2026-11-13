@@ -10,12 +10,14 @@ is. The first cards get a large size (sharp in a preview), the rest a smaller on
 is used up. Nothing is cropped: the artist and copyright line stay on every card.
 
 The **Card art bundle** workflow runs it on GitHub (which can reach the CDN) and publishes the result to
-the `art` branch:
+the `art` branch. Its settings are `request.json`; the workflow runs whenever that file changes on main
+(or from the Actions tab):
 
 ```
-gh workflow run art.yml -f budget_mb=236 -f sharp=2500
-git fetch origin art && git archive FETCH_HEAD | tar -x -C apps/web/public/art   # or copy next to the built app
+git fetch origin art && mkdir -p apps/web/public/art && git archive FETCH_HEAD | tar -x -C apps/web/public/art
 ```
+
+(or copy the files into an `art` folder next to the built app).
 
 The app looks for `art/manifest.json` beside itself at start-up. With one, a card whose image is in the
 bundle is drawn from it (a pack is fetched when a card in it first comes into view); any other card falls
