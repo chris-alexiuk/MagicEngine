@@ -1,0 +1,6 @@
+cards: 7091 (8137 images: 564 of other-name printings, 314 of tokens; 0 not available)
+most-played rank reached: 12244
+large (488px): 1534 images; small (300px): 6603
+bytes: 236.0 MB in 457 packs (largest 536 KB)
+manifest: 488 KB
+took 196 s
