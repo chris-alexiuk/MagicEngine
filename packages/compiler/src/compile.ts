@@ -1,5 +1,5 @@
 import type { Automation, CardDB, CardDef, Color, FaceDef, LegalityCode } from '@mtg/schema';
-import { COLORS, keywordSupported, manualModes, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
+import { COLORS, keywordSupported, linkTokenArt, manualModes, SCHEMA_VERSION, stripReminder } from '@mtg/schema';
 import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
@@ -59,6 +59,8 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
   }
 
   linkMelds([...cards.values()]);
+  // The tokens cards make are drawn with the printed tokens' scans.
+  linkTokenArt([...cards.values(), ...tokens.values()], [...tokens.values()]);
   // The names each card is also printed under.
   const altNames = collectAltNames(input, opts.altNames ?? new Map());
   for (const def of cards.values()) {
@@ -168,8 +170,10 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
     return { ...card, faces, automation: automationOf(faces) };
   };
   const cards = db.cards.map(reparse);
+  const tokens = db.tokens.map(reparse);
   linkMelds(cards);
-  return { ...db, schema: SCHEMA_VERSION, cards, tokens: db.tokens.map(reparse) };
+  linkTokenArt([...cards, ...tokens], tokens);
+  return { ...db, schema: SCHEMA_VERSION, cards, tokens };
 }
 
 /**

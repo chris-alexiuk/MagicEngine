@@ -7,15 +7,15 @@
  * The most-played cards (by EDHREC rank) are downloaded from the CDN, re-encoded as WebP — the first `--sharp` of them
  * at `--large-width`, the rest at `--small-width` — and concatenated into pack files of about equal size, with a
  * manifest saying where each image is. A card's printings under other names ("Seymour Guado" for Kinnan, Bonder
- * Prodigy) come with it, at the small size. It stops when `--budget-mb` is reached. The whole scan is always kept:
- * nothing is cropped, so the artist and copyright line stay on every card.
+ * Prodigy) and the tokens it makes come with it, at the small size. It stops when `--budget-mb` is reached. The whole
+ * scan is always kept: nothing is cropped, so the artist and copyright line stay on every card.
  *
  *   --budget-mb 236      total size of the packs
  *   --max-packs 470      how many pack files at most (the host limits the number of files)
  *   --sharp 2500         how many of the most-played cards get the large size
  *   --large-width 488    --large-quality 80
  *   --small-width 300    --small-quality 72
- *   --extra file         card names (one per line) that are always included, at the large size
+ *   --extra file         card or token names (one per line) that are always included (cards at the large size)
  *   --limit N            stop after N cards (trial runs)
  *   --ext wasm           extension of the pack files (a host may serve only some)
  *   --fake               draw placeholder images instead of downloading (for testing the bundle offline)
@@ -61,21 +61,41 @@ const extra = new Set(opt('extra') ? (await readFile(opt('extra'), 'utf8')).spli
 const BASICS = new Set(['plains', 'island', 'swamp', 'mountain', 'forest', 'wastes']);
 const forced = (c) => extra.has(c.name.toLowerCase()) || BASICS.has(c.name.toLowerCase());
 
-// Most played first; the cards asked for by name and the basic lands before anything.
-const cards = db.cards
+// Most played first; the cards asked for by name and the basic lands before anything. A token asked for by name
+// ("Orc Army": the engine makes those itself, so no card's text describes them) is in the list like a card.
+const cards = [...db.cards, ...(db.tokens ?? []).filter(forced)]
   .filter((c) => c.faces.some((f) => f.img))
   .sort((a, b) => Number(forced(b)) - Number(forced(a)) || (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.name.localeCompare(b.name))
   .slice(0, LIMIT);
 
-/** The images of one card: each face's own, then the printings it has other names on. */
+/** The images of the tokens a card's abilities make (the card data gives each the image of its printed token). */
+function tokenImages(card) {
+  const out = [];
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (!v || typeof v !== 'object') return;
+    if (typeof v.typeLine === 'string' && /(?:^|\s)Token\b/.test(v.typeLine) && typeof v.img === 'string') out.push(v.img);
+    Object.values(v).forEach(walk);
+  };
+  for (const f of card.faces) walk(f.abilities);
+  return out;
+}
+
+/** Images already taken by an earlier card (a Treasure is made by hundreds of cards, and bundled once). */
+const taken = new Set();
+
+/** The images of one card not yet in the bundle: each face's own, the printings it has other names on, its tokens. */
 function imagesOf(card) {
   const out = [];
-  const add = (img, alias) => {
+  const add = (img, kind) => {
     const key = img && keyOf(img);
-    if (key && !out.some((x) => x.key === key)) out.push({ key, img, alias });
+    if (!key || taken.has(key)) return;
+    taken.add(key);
+    out.push({ key, img, kind });
   };
-  for (const f of card.faces) add(f.img, false);
-  for (const a of card.aka ?? []) (add(a.img, true), add(a.backImg, true));
+  for (const f of card.faces) add(f.img, 'face');
+  for (const a of card.aka ?? []) (add(a.img, 'alias'), add(a.backImg, 'alias'));
+  for (const img of tokenImages(card)) add(img, 'token');
   return out;
 }
 
@@ -129,14 +149,16 @@ const CHUNK = 96;
 for (let at = 0; at < cards.length && total < BUDGET; at += CHUNK) {
   const jobs = cards.slice(at, at + CHUNK).flatMap((card, i) => {
     const large = at + i < SHARP;
-    // A printing under another name is the rarer sight, so it takes the small size unless the card was asked for by name.
-    return imagesOf(card).map((image) => ({ ...image, card, tier: forced(card) || (large && !image.alias) ? LARGE : SMALL }));
+    // A printing under another name is the rarer sight and a token is seen small, so those take the small size (a
+    // card asked for by name gets its other printings large too).
+    const printedToken = card.layout === 'token' || card.layout === 'double_faced_token';
+    return imagesOf(card).map((image) => ({ ...image, card, tier: !printedToken && ((forced(card) && image.kind !== 'token') || (large && image.kind === 'face')) ? LARGE : SMALL }));
   });
   const encoded = await pool(jobs, 12, async (job) => {
     const source = FAKE ? await fake(job.card) : await download(job.img);
     if (!source) return null;
     try {
-      return { key: job.key, card: job.card, width: job.tier.width, bytes: await encode(source, job.tier) };
+      return { key: job.key, card: job.card, kind: job.kind, width: job.tier.width, bytes: await encode(source, job.tier) };
     } catch (err) {
       console.warn(`  unreadable ${job.img}: ${err.message}`);
       return null;
@@ -214,7 +236,7 @@ const manifest = {
 await writeFile(join(OUT, 'manifest.json'), JSON.stringify(manifest));
 const lastRank = Math.max(0, ...[...covered].map((c) => c.rank ?? 0));
 const report = [
-  `cards: ${covered.size} (${done.length} images; ${missing} not available)`,
+  `cards: ${[...covered].filter((c) => c.layout !== 'token' && c.layout !== 'double_faced_token').length} (${done.length} images: ${done.filter((e) => e.kind === 'alias').length} of other-name printings, ${done.filter((e) => e.kind === 'token').length} of tokens; ${missing} not available)`,
   `most-played rank reached: ${lastRank}`,
   `large (${LARGE.width}px): ${done.filter((e) => e.width === LARGE.width).length} images; small (${SMALL.width}px): ${done.filter((e) => e.width === SMALL.width).length}`,
   `bytes: ${(bytes / 1e6).toFixed(1)} MB in ${packs.length} packs (largest ${(Math.max(0, ...packs.map((p) => p.size)) / 1e3).toFixed(0)} KB)`,
