@@ -841,6 +841,17 @@ span.pile {
 .dock-left .command {
   --cmd-w: clamp(46px, 4.6vw, 66px);
 }
+/* Floating mana sits just above the plate, out of the column: the dock keeps its height whatever is in the pool. */
+.dock-left {
+  position: relative;
+}
+.dock-left .pool {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 9;
+  white-space: nowrap;
+}
 .dock-left .plate .life {
   min-width: 54px;
   height: 54px;
@@ -1238,10 +1249,21 @@ span.pile {
   flex: 0 1 auto;
   min-width: 0;
 }
+/* Seven cards across whatever the panel has: its width less its padding and the six gaps. */
 .kind-mulligan .pick-card,
 .kind-bottom_cards .pick-card {
-  width: clamp(96px, min(12vw, 34vh), 200px);
+  width: min(clamp(96px, min(12vw, 34vh), 200px), calc((min(1120px, 100vw - 36px) - 118px) / 7));
   max-width: 100%;
+}
+@media (max-width: 760px) {
+  .kind-mulligan .tile-row,
+  .kind-bottom_cards .tile-row {
+    flex-wrap: wrap;
+  }
+  .kind-mulligan .pick-card,
+  .kind-bottom_cards .pick-card {
+    width: clamp(78px, calc((100vw - 106px) / 3), 150px);
+  }
 }
 .damage-box {
   display: grid;

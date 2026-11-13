@@ -140,6 +140,11 @@ describe('clicking a card', () => {
     expect(asYou('You has no cards left.')).toBe('You have no cards left.');
     expect(asYou('You draw Llanowar Elves.')).toBe('You draw Llanowar Elves.');
     expect(asYou('Ann attacks You.')).toBe('Ann attacks You.');
+    expect(asYou('You keeps their hand.')).toBe('You keep your hand.');
+    expect(asYou('You searches their library.')).toBe('You search your library.');
+    expect(asYou('You wins')).toBe('You win');
+    expect(asYou('You’s graveyard')).toBe('Your graveyard');
+    expect(asYou('Ann shuffles their library.')).toBe('Ann shuffles their library.');
   });
 });
 

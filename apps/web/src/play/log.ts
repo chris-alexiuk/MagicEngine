@@ -14,6 +14,14 @@ export interface LogLine {
   text: string;
   /** Shown only to this player (their own hidden cards). */
   only?: PlayerId;
+  /** Not shown to this player: they get a line of their own that says more ("You draw Forest."). */
+  not?: PlayerId;
+}
+
+/** Whether a log line is for this viewer (`all`: an open-hands table, where every private line shows). */
+export function lineFor(l: LogLine, viewer: PlayerId | null, all = false): boolean {
+  if (all) return l.not === undefined;
+  return (!l.only || l.only === viewer) && (l.not === undefined || l.not !== viewer);
 }
 
 export const STEP_NAME: Record<Step, string> = {
@@ -63,7 +71,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function narrate(before: GameState, after: GameState, events: GameEvent[], nextId: () => number): LogLine[] {
   const out: LogLine[] = [];
   const turn = after.turn;
-  const push = (kind: LogKind, text: string, only?: PlayerId) => out.push({ id: nextId(), turn, kind, text, ...(only ? { only } : {}) });
+  const push = (kind: LogKind, text: string, only?: PlayerId, not?: PlayerId) => out.push({ id: nextId(), turn, kind, text, ...(only ? { only } : {}), ...(not ? { not } : {}) });
   const who = (p: PlayerId) => after.players[p]?.name ?? before.players[p]?.name ?? p;
   const name = (id: string) => publicName(id, after, before);
   const target = (t: AttackTarget) => (t.kind === 'player' ? who(t.player) : name(t.object));
@@ -74,7 +82,10 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
   const milled = new Set(events.flatMap((e) => (e.type === 'milled' ? e.objects : [])));
   const opening = !after.started;
 
-  for (const e of events) {
+  // What a player did comes before what paying for it did ("You activate Goblin Cratermaker" before "Goblin Cratermaker dies").
+  const did = events.findIndex((e) => e.type === 'cast' || e.type === 'ability_activated');
+  const ordered = did > 0 ? [events[did]!, ...events.slice(0, did), ...events.slice(did + 1)] : events;
+  for (const e of ordered) {
     switch (e.type) {
       case 'game_started':
         push('turn', `The game begins. ${who(e.order[0]!)} goes first.`);
@@ -92,7 +103,7 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
         if (opening) break;
         if (e.revealed) push('info', `${who(e.player)} draws ${realName(e.object, after, before)} (revealed).`);
         else {
-          push('info', `${who(e.player)} draws a card.`);
+          push('info', `${who(e.player)} draws a card.`, undefined, e.player);
           push('info', `You draw ${realName(e.object, after, before)}.`, e.player);
         }
         break;
@@ -289,6 +300,8 @@ function manualText(op: ManualOp, ...states: GameState[]): string {
  * second person for display ("You draw a card").
  */
 export function asYou(text: string): string {
+  // "You’s graveyard" → "Your graveyard"; "You keeps their hand" → "You keep your hand".
+  text = text.replace(/\bYou[’']s\b/g, 'Your').replace(/^(You \w+ (?:[^.]*? )?)their\b/, '$1your');
   return text.replace(/\bYou (\w+)/g, (all, verb: string) => {
     if (verb === 'has') return 'You have';
     if (verb === 'is') return 'You are';

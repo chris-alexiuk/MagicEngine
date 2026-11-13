@@ -393,7 +393,7 @@ export function ObjectPicker({
     <div className="flow-step">
       <p className="flow-title">{title}</p>
       <p className="hint">
-        {min === max ? `Choose ${min}` : max >= candidates.length && min === 0 ? 'Choose any number' : `Choose ${min}–${max}`}
+        {min === max ? `Choose ${min}` : min === 0 ? (max >= candidates.length && candidates.length > 1 ? 'Choose any number' : `Choose up to ${Math.min(max, candidates.length)}`) : `Choose ${min}–${max}`}
         {ordered ? ' (in order: the first you pick comes first)' : ''}. {chosen.length} chosen.
       </p>
       <div className="tile-row">
@@ -840,20 +840,22 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
     case 'mulligan': {
       const ps = g.players[me]!;
       const next = Math.max(0, ps.mulligans + 1 - (g.config.freeMulligan ? 1 : 0));
+      // What keeping now costs: a card on the bottom for each mulligan taken (the first is free in multiplayer).
+      const owed = Math.max(0, ps.mulligans - (g.config.freeMulligan ? 1 : 0));
       return (
         <div className="flow-step">
-          <p className="flow-title">Keep this hand of {hand.length}?</p>
+          <p className="flow-title">{owed ? `Keep ${hand.length - owed} of these ${hand.length}?` : `Keep this hand of ${hand.length}?`}</p>
           <div className="tile-row opening">
             {hand.map((id) => (
               <ObjectTile key={id} view={view} id={id} />
             ))}
           </div>
           <p className="hint">
-            {ps.mulligans ? `You’ve taken ${ps.mulligans} mulligan${ps.mulligans > 1 ? 's' : ''}. ` : ''}A mulligan draws seven new cards; you then put {next} on the bottom{g.config.freeMulligan && ps.mulligans === 0 ? ' (your first mulligan is free)' : ''}.
+            {ps.mulligans ? `You’ve taken ${ps.mulligans} mulligan${ps.mulligans > 1 ? 's' : ''}. ` : ''}{owed ? `If you keep, you put ${owed} of these on the bottom. ` : ''}A mulligan draws seven new cards{next ? `, and keeping that hand puts ${next} on the bottom` : ''}{g.config.freeMulligan && ps.mulligans === 0 ? ' (your first mulligan is free)' : ''}.
           </p>
           <Actions>
             <button type="button" className="primary" onClick={() => answer({ kind: 'mulligan', keep: true })}>
-              Keep {hand.length}
+              {owed ? `Keep, then bottom ${owed}` : `Keep ${hand.length}`}
             </button>
             <button type="button" className="secondary" disabled={next >= g.config.startingHandSize} onClick={() => answer({ kind: 'mulligan', keep: false })}>
               Mulligan
@@ -987,7 +989,7 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
           label="Take these"
           title={
             <>
-              Search: <RulesText text={p.text} />
+              <RulesText text={p.text} />
             </>
           }
           setPick={setPick}
@@ -1266,7 +1268,7 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
     </>
   );
   if (p.options?.length) {
-    const label = (o: string) => (p.choice === 'player' ? (g.players[o]?.name ?? o) : p.choice === 'color' ? ({ W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' } as Record<string, string>)[o] ?? o : o);
+    const label = (o: string) => (p.choice === 'player' || p.choice === 'enchant' ? (g.players[o]?.name ?? o) : p.choice === 'color' ? ({ W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' } as Record<string, string>)[o] ?? o : o);
     return <OptionsPanel title={p.sourceName} text={p.text} options={p.options} label={label} onChoose={(choice) => answer({ kind: 'as_enters', choice })} />;
   }
   switch (p.choice) {
@@ -1288,6 +1290,9 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
         />
       );
     }
+    case 'enchant':
+      // An Aura put onto the battlefield without being cast: what it enters attached to (CR 303.4f).
+      return <ObjectPicker key="ae-enchant" view={view} candidates={p.candidates ?? []} min={1} max={1} label="Attach" title={head} setPick={setPick} onDone={([attach]) => attach && answer({ kind: 'as_enters', attach })} />;
     case 'devour':
     case 'sacrifice_or_leave': {
       const n = p.choice === 'devour' ? 0 : (p.amount ?? 1);

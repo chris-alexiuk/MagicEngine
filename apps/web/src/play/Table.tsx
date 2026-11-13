@@ -13,11 +13,11 @@ import { cardClass, Command, Elsewhere, Hand, MySeat, OpponentSeat, Piles, Plate
 import { shownCard } from './cards';
 import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices } from './Choices';
 import { actionLabel, actionObject, targetLabel } from './labels';
-import { asYou, narrate, publicName, STEP_NAME, type LogLine } from './log';
+import { asYou, lineFor, narrate, publicName, STEP_NAME, type LogLine } from './log';
 import { useCardMotion } from './motion';
 import type { Pick } from './pick';
 import { openView, previewTaps } from './preview';
-import { extraCasts } from './probes';
+import { extraCasts, hasXRange } from './probes';
 import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, dummiesOf, modeOf, newGame, peekPass, replay, saveGame, step, type Ctx, type GameSetup, type PassUntil, type Stops } from './session';
 
 type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
@@ -230,9 +230,10 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
 
   // ---- clicking cards -------------------------------------------------------
   const optionsFor = (id: string) => {
-    const listed = byObject.get(id) ?? [];
-    const extra = myPriority && viewer ? extraCasts(g, viewer, id, listed) : [];
-    return { listed, extra };
+    // X spells and abilities are listed as a range: the menu asks for the number.
+    const all = byObject.get(id) ?? [];
+    const extra = myPriority && viewer ? extraCasts(g, viewer, id, all) : [];
+    return { listed: all.filter((a) => !hasXRange(a)), extra };
   };
   const onCard = (id: string, el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
@@ -322,11 +323,19 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const keyState = useRef({ pass, endTurn, undo, myPriority, flow, menu });
   keyState.current = { pass, endTurn, undo, myPriority, flow, menu };
   useEffect(() => {
+    // A button clicked with the mouse doesn't keep the keyboard: Space after "Attack with all" is the main button, not
+    // that one again. (A button reached with Tab keeps it — `detail` is 0 for a keyboard click.)
+    const onClick = (e: MouseEvent) => {
+      const b = (e.target as HTMLElement | null)?.closest('button');
+      if (e.detail > 0 && b && b.closest('.actions, .tools, .stops-pop')) b.blur();
+    };
+    document.addEventListener('click', onClick);
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
       const k = keyState.current;
       if (e.key === 'Escape') {
+        setShowStops(false);
         if (k.menu) setMenu(null);
         else if (k.flow) {
           setFlow(null);
@@ -353,7 +362,10 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('click', onClick);
+    };
   }, []);
 
   // ---- layout -------------------------------------------------------------------
@@ -546,7 +558,7 @@ const PHASES: [Step[], string][] = [
 
 function Midline({ g, view, who, log, viewer, logViewer, pick, onFocus, onHover }: { g: GameState; view: PlayerView; who: PlayerId | null; log: LogLine[]; viewer: PlayerId | null; logViewer: PlayerId | null; pick: Pick | null; onFocus: (i: number | null) => void; onHover: (id: string | null, el?: HTMLElement) => void }) {
   const name = (p: PlayerId) => g.players[p]?.name ?? p;
-  const last = [...log].reverse().find((l) => !l.only || l.only === logViewer);
+  const last = [...log].reverse().find((l) => lineFor(l, logViewer));
   return (
     <div className="midline">
       <div className="phase-track" aria-label="Turn structure">
@@ -668,7 +680,13 @@ function CardMenu({ g, view, id, rect, actions, extra, onChoose, onView, onClose
     };
   }, [onClose]);
   useEffect(() => ref.current?.querySelector<HTMLButtonElement>('button')?.focus(), []);
-  const xs = extra.filter((a) => a.type === 'cast' && a.x !== undefined) as Choosing[];
+  // One X picker for each spell face or ability that takes an X.
+  const xGroups = new Map<string, Choosing[]>();
+  for (const a of extra) {
+    if ((a.type !== 'cast' && a.type !== 'activate') || a.x === undefined || (a.type === 'cast' && a.kicked)) continue;
+    const key = a.type === 'cast' ? `cast:${a.face ?? 0}:${a.alt ?? ''}` : `activate:${a.ability}`;
+    xGroups.set(key, [...(xGroups.get(key) ?? []), a]);
+  }
   const kicks = extra.filter((a) => a.type === 'cast' && a.kicked);
   return (
     <div ref={ref} className="card-menu" role="menu" aria-label={publicName(id, view as unknown as GameState)} style={{ left: pos.left, top: pos.top }}>
@@ -678,7 +696,9 @@ function CardMenu({ g, view, id, rect, actions, extra, onChoose, onView, onClose
           <RulesText text={actionLabel(g, a)} />
         </button>
       ))}
-      {xs.length > 0 && <XCast g={g} options={xs} onChoose={onChoose} />}
+      {[...xGroups].map(([key, xs]) => (
+        <XCast key={key} g={g} options={xs} onChoose={onChoose} />
+      ))}
       <button type="button" role="menuitem" className="menu-item quiet" onClick={onView}>
         View card
       </button>
@@ -779,7 +799,7 @@ function GameOver({ g, onNew }: { g: GameState; onNew: () => void }) {
   if (hidden) return null;
   return (
     <div className="game-over" role="status">
-      <p className="over-title">{g.winner ? `${g.players[g.winner]!.name} wins` : 'The game is a draw'}</p>
+      <p className="over-title">{g.winner ? asYou(`${g.players[g.winner]!.name} wins`) : 'The game is a draw'}</p>
       <div className="btn-row">
         <button type="button" className="primary" onClick={onNew}>
           New game
@@ -829,7 +849,7 @@ function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChang
 
 function LogDrawer({ log, viewer, all, names, onClose }: { log: LogLine[]; viewer: PlayerId | null; all: boolean; names: Record<PlayerId, string> | null; onClose: () => void }) {
   const ref = useRef<HTMLOListElement>(null);
-  const shown = log.filter((l) => all || !l.only || l.only === viewer).slice(-400);
+  const shown = log.filter((l) => lineFor(l, viewer, all)).slice(-400);
   useEffect(() => {
     const el = ref.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -891,7 +911,7 @@ function ZoneDialog({ g, view, player, zone, h, onClose }: { g: GameState; view:
       <form method="dialog" className="sheet-inner">
         <header className="sheet-head">
           <h2 id="zone-title">
-            {g.players[player]!.name}’s {zone} <span className="muted">{ids.length}</span>
+            {asYou(`${g.players[player]!.name}’s ${zone}`)} <span className="muted">{ids.length}</span>
           </h2>
           <button type="submit" className="ghost">
             Close

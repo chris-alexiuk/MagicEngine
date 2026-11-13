@@ -348,9 +348,7 @@
 .stack-entry + .stack-entry {
   margin-top: calc(var(--sc-w) * 1.397 * -0.85);
 }
-.stack-entry:hover {
-  z-index: 3;
-}
+/* A hovered card stays under the ones below it in the pile, so moving the pointer down reaches each title in turn. */
 .stack-gutter {
   display: flex;
   flex-direction: column;
@@ -383,8 +381,18 @@
 .stack-entry:hover .stack-card-btn .card {
   transform: translateX(4px);
 }
-.stack-entry.has-issue .card {
-  box-shadow: 0 0 0 2px var(--warn);
+/* A problem card is marked on its own title strip only: an outline of the whole card would frame the pile under it. */
+.stack-entry.has-issue::after {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 0;
+  width: var(--sc-w);
+  height: calc(var(--sc-w) * 1.397 * 0.15);
+  border: 2px solid var(--warn);
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  pointer-events: none;
 }
 .unknown-card {
   display: grid;

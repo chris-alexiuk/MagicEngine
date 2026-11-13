@@ -7,8 +7,9 @@ import type { Action } from '@mtg/engine';
 export function clickOutcome(listed: readonly Action[], extra: readonly Action[]): { kind: 'act'; action: Action } | { kind: 'menu' } | { kind: 'none' } {
   const all = [...listed, ...extra];
   if (!all.length) return { kind: 'none' };
-  // A spell with X always asks for the number.
-  if (all.length === 1 && !(all[0]!.type === 'cast' && all[0]!.x !== undefined)) return { kind: 'act', action: all[0]! };
+  // A spell or ability with X always asks for the number (those come in `extra`, one for each X).
+  const asksX = (a: Action) => (a.type === 'cast' || a.type === 'activate') && a.x !== undefined;
+  if (all.length === 1 && !(all[0]!.type === 'cast' && all[0]!.x !== undefined) && !extra.some(asksX)) return { kind: 'act', action: all[0]! };
   return { kind: 'menu' };
 }
 

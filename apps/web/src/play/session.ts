@@ -122,7 +122,9 @@ export function shouldAutoPass(g: GameState, p: PlayerId, stops: Stops, passUnti
   const top = g.stack[g.stack.length - 1];
   // "Pass until end of turn": keep passing this turn, unless something targets this player or what they control.
   if (passUntil && passUntil.player === p && passUntil.turn === g.turn && (!top || top.controller === p || !touches(g, top, p))) return true;
-  const nothing = () => stops.skipIfNothing && !legalActions(g, p).some(meaningful);
+  // Mana in the pool is something to do: the player made it for a reason, and passing would lose it.
+  const floating = Object.values(g.players[p]?.pool ?? {}).some((n) => n > 0) || (g.players[p]?.restricted?.length ?? 0) > 0;
+  const nothing = () => stops.skipIfNothing && !floating && !legalActions(g, p).some(meaningful);
   if (!top) return !(g.active === p ? stops.mine : stops.theirs).includes(g.step) || nothing();
   // Their own spell or ability on top: let the others respond to it.
   if (top.controller === p && !stops.hold) return true;

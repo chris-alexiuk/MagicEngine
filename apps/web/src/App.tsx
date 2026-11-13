@@ -133,7 +133,7 @@ function BrowserView({ load, storageOpen, setStorageOpen }: { load: LoadState; s
   const deferredQuery = useDeferredValue(query);
   const [identity, setIdentity] = useState<Color[]>([]);
   const [levels, setLevels] = useState<Automation[]>([]);
-  const [sort, setSort] = useState<SortKey>('name');
+  const [sort, setSort] = useState<SortKey>('popularity');
   const [limit, setLimit] = useState(PAGE);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);

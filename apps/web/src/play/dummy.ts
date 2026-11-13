@@ -76,6 +76,7 @@ function candidates(g: GameState, p: PendingChoice): ChoiceAnswer[] {
       return [{ kind: 'choose_objects', objects: p.candidates.slice(0, p.min) }];
     case 'as_enters':
       if (p.options?.length) return p.options.map((choice) => ({ kind: 'as_enters', choice }));
+      if (p.choice === 'enchant') return (p.candidates ?? []).map((attach) => ({ kind: 'as_enters', attach }));
       if (p.choice === 'copy') return [{ kind: 'as_enters', copy: null }];
       if (p.choice === 'reveal' || p.choice === 'discard_or_leave') return [{ kind: 'as_enters', reveal: null }];
       if (p.choice === 'devour') return [{ kind: 'as_enters', sacrifice: [] }];
