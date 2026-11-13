@@ -64,6 +64,24 @@ export interface CardDef {
   set: string;
   rarity: string;
   automation: Automation;
+  /**
+   * Other names this card is printed under in English — a Universes Beyond or Secret Lair printing's own name
+   * ("Seymour Guado" is Kinnan, Bonder Prodigy; "Godzilla, King of the Monsters" is Zilortha, Strength Incarnate).
+   * A deck list may call the card by any of them; rules text and the game always use `name`.
+   */
+  aka?: AltName[];
+}
+
+/** A name a card is also printed under, with the printing that carries it. */
+export interface AltName {
+  /** The printed name ("A // B" for a card with two named faces). */
+  name: string;
+  /** That printing: set code (lower case) and collector number. */
+  set: string;
+  number: string;
+  /** Its image, as a path relative to the Scryfall image CDN (see imageUrl()); a second path for a back face. */
+  img?: string;
+  backImg?: string;
 }
 
 export interface FaceDef {

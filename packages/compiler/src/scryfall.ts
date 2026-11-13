@@ -21,6 +21,9 @@ export interface ScryfallFace {
   defense?: string;
   image_uris?: ScryfallImageUris;
   oracle_id?: string;
+  /** The name this printing gives the face instead of its own (Universes Beyond and Secret Lair reskins). */
+  flavor_name?: string;
+  printed_name?: string;
 }
 
 export interface ScryfallCard {
@@ -50,6 +53,14 @@ export interface ScryfallCard {
   card_faces?: ScryfallFace[];
   game_changer?: boolean;
   edhrec_rank?: number;
+  /** Printing details — on every card object, read from the all-printings file (see printings.ts). */
+  lang?: string;
+  collector_number?: string;
+  released_at?: string;
+  /** The name this printing gives the card instead of its own ("Seymour Guado" on a Kinnan, Bonder Prodigy). */
+  flavor_name?: string;
+  /** The name as printed, when that isn't the card's name. */
+  printed_name?: string;
 }
 
 export interface ScryfallBulkItem {

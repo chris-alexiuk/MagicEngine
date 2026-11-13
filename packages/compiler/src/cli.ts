@@ -1,19 +1,26 @@
 /**
  * Builds the compiled card DB.
  *
- *   tsx src/cli.ts --input path/to/oracle-cards.json --out dir
+ *   tsx src/cli.ts --input path/to/oracle-cards.json [--printings path/to/default-cards.json] --out dir
  *   tsx src/cli.ts --download [--cache .cache] --out dir
+ *
+ * `--download` fetches Scryfall's Oracle Cards (one printing of each card: what gets compiled) and Default Cards
+ * (every English printing: read only for the other names cards are printed under).
  *
  * Writes to `out`: cards.json.gz, cards.meta.json, coverage.json, coverage.md
  */
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createWriteStream, existsSync } from 'node:fs';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import type { CardDBMeta } from '@mtg/schema';
 import { compileCards } from './compile.js';
 import { buildCoverage, coverageMarkdown } from './coverage.js';
+import type { AltNameTable } from './printings.js';
+import { readAltNames } from './printings-file.js';
 import type { ScryfallBulkItem, ScryfallCard } from './scryfall.js';
 
 // Scryfall asks API clients to send a descriptive User-Agent and an Accept header.
@@ -21,6 +28,8 @@ const HEADERS = { 'User-Agent': 'MagicEngine/0.1 (card compiler)', Accept: 'appl
 
 interface Args {
   input?: string;
+  /** With --input: a file of printings to read alternate names from. */
+  printings?: string;
   download: boolean;
   cache: string;
   out: string;
@@ -32,6 +41,7 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--input') args.input = argv[++i];
+    else if (a === '--printings') args.printings = argv[++i];
     else if (a === '--download') args.download = true;
     else if (a === '--cache') args.cache = argv[++i] ?? args.cache;
     else if (a === '--out') args.out = argv[++i] ?? args.out;
@@ -45,18 +55,18 @@ function fromCwd(p: string): string {
   return resolve(process.env.INIT_CWD ?? process.cwd(), p);
 }
 
-async function download(cacheDir: string): Promise<{ file: string; updatedAt: string }> {
-  // List every bulk file and pick Oracle Cards by its documented type.
+/** Downloads one of Scryfall's bulk files (by its documented type) into the cache, streamed to disk. */
+async function download(cacheDir: string, type: 'oracle_cards' | 'default_cards'): Promise<{ file: string; updatedAt: string }> {
   const listRes = await fetch('https://api.scryfall.com/bulk-data', { headers: HEADERS });
   const body = await listRes.text();
   if (!listRes.ok) throw new Error(`bulk-data lookup failed: HTTP ${listRes.status}: ${body.slice(0, 300)}`);
   const list = JSON.parse(body) as { data?: ScryfallBulkItem[] };
-  const item = list.data?.find((d) => d.type === 'oracle_cards');
+  const item = list.data?.find((d) => d.type === type);
   // Scryfall now publishes gzipped JSON Lines; older responses had a plain JSON array.
   const url = item?.jsonl_download_uri ?? item?.download_uri;
-  if (!item || !url) throw new Error(`no oracle_cards download in the bulk-data list: ${body.slice(0, 600)}`);
+  if (!item || !url) throw new Error(`no ${type} download in the bulk-data list: ${body.slice(0, 600)}`);
   const ext = item.jsonl_download_uri ? '.jsonl.gz' : '.json';
-  const file = join(cacheDir, `oracle-cards-${item.updated_at.replace(/[:.+]/g, '-')}${ext}`);
+  const file = join(cacheDir, `${type.replace('_', '-')}-${item.updated_at.replace(/[:.+]/g, '-')}${ext}`);
   if (existsSync(file)) {
     console.log(`using cached ${file}`);
     return { file, updatedAt: item.updated_at };
@@ -64,10 +74,28 @@ async function download(cacheDir: string): Promise<{ file: string; updatedAt: st
   const size = item.compressed_size ?? item.size;
   console.log(`downloading ${size ? `${(size / 1e6).toFixed(0)} MB ` : ''}from ${url}`);
   const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) throw new Error(`bulk download failed: HTTP ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`bulk download failed: HTTP ${res.status}`);
   await mkdir(cacheDir, { recursive: true });
-  await writeFile(file, Buffer.from(await res.arrayBuffer()));
+  // To a temporary name first, so an interrupted download is never mistaken for a cached file.
+  await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(`${file}.part`));
+  await rename(`${file}.part`, file);
   return { file, updatedAt: item.updated_at };
+}
+
+/**
+ * The other names cards are printed under, from a file of printings. The card DB is worth having without them, so a
+ * failure here (the download, an unexpected format) is a warning, not the end of the build.
+ */
+async function altNamesFrom(file: () => Promise<string>): Promise<AltNameTable | undefined> {
+  try {
+    const { table, printings } = await readAltNames(await file());
+    const names = [...table.values()].reduce((n, list) => n + list.length, 0);
+    console.log(`alternate names: ${names} on ${table.size} cards (from ${printings} printings)`);
+    return table;
+  } catch (err) {
+    console.warn(`::warning::Alternate card names are missing from this build: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
 }
 
 /** Reads Scryfall card objects from .json (array), .jsonl or .jsonl.gz / .json.gz. */
@@ -92,10 +120,13 @@ async function main(): Promise<void> {
 
   let inputFile: string;
   let updatedAt: string | undefined;
+  let altNames: AltNameTable | undefined;
   if (args.download) {
-    ({ file: inputFile, updatedAt } = await download(fromCwd(args.cache)));
+    ({ file: inputFile, updatedAt } = await download(fromCwd(args.cache), 'oracle_cards'));
+    altNames = await altNamesFrom(async () => (await download(fromCwd(args.cache), 'default_cards')).file);
   } else {
     inputFile = fromCwd(args.input!);
+    if (args.printings) altNames = await altNamesFrom(async () => fromCwd(args.printings!));
   }
 
   const raw = await readCards(inputFile);
@@ -104,6 +135,7 @@ async function main(): Promise<void> {
     source: args.download
       ? { kind: 'scryfall-oracle-cards', ...(updatedAt ? { updatedAt } : {}) }
       : { kind: 'fixture' },
+    ...(altNames ? { altNames } : {}),
   });
   const report = buildCoverage(db);
 
@@ -131,6 +163,7 @@ async function main(): Promise<void> {
     `compiled ${db.cards.length} cards + ${db.tokens.length} tokens in ${Date.now() - started} ms\n` +
       `  json ${mb(json.length)} MB → gz ${mb(gz.length)} MB\n` +
       `  coverage: full ${report.totals.full}, partial ${report.totals.partial}, manual ${report.totals.manual}\n` +
+      `  cards with other printed names: ${db.cards.filter((c) => c.aka?.length).length}\n` +
       `  skipped: ${JSON.stringify(skipped)}\n` +
       `  wrote ${outDir}`,
   );

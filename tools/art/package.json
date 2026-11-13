@@ -1,0 +1,9 @@
+{
+  "name": "magicengine-art",
+  "private": true,
+  "type": "module",
+  "description": "Builds the card-art bundle for hosts that can't load images from Scryfall's CDN (see README.md).",
+  "dependencies": {
+    "sharp": "0.34.4"
+  }
+}

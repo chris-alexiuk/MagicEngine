@@ -1,0 +1,58 @@
+name: Card art bundle
+
+# Builds a bundle of card images for a host that can't load them from Scryfall's CDN (a page whose
+# security policy only allows its own files). The most-played cards are downloaded, re-encoded and
+# packed by tools/art/build.mjs, and published to the `art` branch, replacing what was there.
+# Run on demand: the bundle only needs rebuilding when the cards worth bundling change.
+on:
+  workflow_dispatch:
+    inputs:
+      budget_mb:
+        description: Total size of the bundle, in MB
+        default: '236'
+      sharp:
+        description: How many of the most-played cards get the large size
+        default: '2500'
+      limit:
+        description: Stop after this many cards (0 = no limit; for trial runs)
+        default: '0'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: card-art
+  cancel-in-progress: true
+
+jobs:
+  art:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the image library
+        run: npm install --prefix tools/art --no-audit --no-fund
+      - name: Card DB from the reports branch
+        run: |
+          git fetch --depth 1 origin reports
+          git show FETCH_HEAD:cards.json.gz > /tmp/cards.json.gz
+      - name: Download, encode and pack
+        run: |
+          set -o pipefail
+          node tools/art/build.mjs --pool /tmp/cards.json.gz --out /tmp/art \
+            --budget-mb "${{ inputs.budget_mb }}" --sharp "${{ inputs.sharp }}" --limit "${{ inputs.limit }}" \
+            --extra tools/art/extra.txt 2>&1 | tee /tmp/art-build.log
+      - name: Summary
+        run: cat /tmp/art/report.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish to the art branch
+        run: |
+          cp /tmp/art-build.log /tmp/art/build.log
+          cd /tmp/art
+          git init -q -b art
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -qm "Card art bundle for ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" art

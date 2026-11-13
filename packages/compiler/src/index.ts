@@ -9,3 +9,5 @@ export type { GrammarRule, ParseContext, ParseResult } from './parser.js';
 export { CORE_RULES } from './rules/index.js';
 export { parseTypeLine } from './typeline.js';
 export type { ScryfallCard, ScryfallFace } from './scryfall.js';
+export { altNamesOf, collectAltNames, altNamesFor } from './printings.js';
+export type { AltNameTable } from './printings.js';

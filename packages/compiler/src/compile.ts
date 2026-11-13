@@ -4,6 +4,7 @@ import { defaultRegistry, type ParserRegistry } from './parser.js';
 import type { ScryfallCard, ScryfallFace } from './scryfall.js';
 import { parseTypeLine } from './typeline.js';
 import { registerPoolSubtypes } from './grammar/words.js';
+import { altNamesFor, collectAltNames, type AltNameTable } from './printings.js';
 
 /** Layouts that are not game pieces in a normal game (front_card: theme/tutorial cards from starter products). */
 const SKIP_LAYOUTS = new Set(['art_series', 'planar', 'scheme', 'vanguard', 'reversible_card_back', 'front_card']);
@@ -22,6 +23,8 @@ export interface CompileOptions {
   registry?: ParserRegistry;
   source?: CardDB['source'];
   builtAt?: string;
+  /** Alternate names read from other printings (printings.ts). The input's own printings are always read for theirs. */
+  altNames?: AltNameTable;
 }
 
 export interface CompileResult {
@@ -56,6 +59,12 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
   }
 
   linkMelds([...cards.values()]);
+  // The names each card is also printed under.
+  const altNames = collectAltNames(input, opts.altNames ?? new Map());
+  for (const def of cards.values()) {
+    const aka = altNamesFor(altNames, def.id, [def.name, ...def.faces.map((f) => f.name)]);
+    if (aka.length) def.aka = aka;
+  }
   const byName = (a: CardDef, b: CardDef) => a.name.localeCompare(b.name);
   return {
     db: {

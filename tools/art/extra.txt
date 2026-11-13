@@ -1,0 +1,3 @@
+# Cards that are always in the art bundle, at the large size, whatever their rank. One name per line.
+Kinnan, Bonder Prodigy
+Dack Fayden, Helping Hand
