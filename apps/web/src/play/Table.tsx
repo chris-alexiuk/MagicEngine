@@ -944,7 +944,7 @@ function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChang
   const same = (a: Step[], b: Step[]) => a.length === b.length && b.every((x) => a.includes(x));
   return (
     <div className="stops-pop" role="dialog" aria-label="Stops">
-      <p className="pop-title">Where {name} stops</p>
+      <p className="pop-title">{name === 'You' ? 'Where you stop' : `Where ${name} stops`}</p>
       <p className="hint">With nothing on the stack, priority is passed for you everywhere else. Combat choices and anything you could answer always stop. To stop somewhere once, click that step in the turn bar.</p>
       <div className="stops-presets" role="group" aria-label="Presets">
         {(

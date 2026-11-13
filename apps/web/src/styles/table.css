@@ -1409,8 +1409,8 @@ button.pile:hover .pile-name {
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(10, 9, 8, 0.7);
-  backdrop-filter: blur(3px);
+  /* A plain scrim: the cards behind are never blurred. */
+  background: rgba(10, 9, 8, 0.84);
 }
 .overlay-panel {
   max-width: min(1120px, 100%);

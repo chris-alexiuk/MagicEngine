@@ -398,8 +398,7 @@ select.text-input {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: rgba(18, 19, 22, 0.94);
-  backdrop-filter: blur(8px);
+  background: #151312;
   border-bottom: 1px solid var(--line-soft);
   padding: 12px 22px;
   display: grid;
@@ -521,8 +520,8 @@ select.text-input {
   box-shadow: var(--shadow-pop);
 }
 .sheet::backdrop {
-  background: rgba(6, 7, 9, 0.66);
-  backdrop-filter: blur(2px);
+  /* A plain scrim: card images behind a dialog are never blurred. */
+  background: rgba(8, 7, 6, 0.78);
 }
 .sheet-inner {
   padding: 18px 20px 20px;

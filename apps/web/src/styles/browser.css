@@ -416,7 +416,7 @@
   box-shadow: var(--shadow-pop);
 }
 .storage::backdrop {
-  background: rgba(6, 7, 9, 0.66);
+  background: rgba(8, 7, 6, 0.78);
 }
 .storage-inner {
   padding: 18px 22px 22px;
