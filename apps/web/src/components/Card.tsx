@@ -1,6 +1,7 @@
 import type { CardDef, FaceDef } from '@mtg/schema';
 import { imageUrl } from '@mtg/schema';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useBundledArt } from '../art';
 import { keywordIcons, KeywordIcons, ManaCost, ManaSymbol, RulesText, TypeIcon } from './mana';
 
 /**
@@ -144,12 +145,37 @@ export function CardBackFace({ label }: { label?: string }) {
 // A card: image when possible, proxy otherwise
 // ---------------------------------------------------------------------------
 
+/** True once the element is on screen or about to be (at once where that can't be watched, or when `now`). */
+function useSeen(ref: RefObject<Element | null>, now: boolean): boolean {
+  const [seen, setSeen] = useState(now || typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    const el = ref.current;
+    if (seen || !el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setSeen(true);
+      },
+      { rootMargin: '300px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref, seen]);
+  return seen;
+}
+
+/** Another printing's scan to draw instead of the card's own (a deck's "Seymour Guado" for Kinnan, Bonder Prodigy). */
+export interface Printing {
+  img?: string;
+  backImg?: string;
+}
+
 export function CardView({
   card,
   faceIndex = 0,
   sizes,
   eager = false,
   stats,
+  printing,
 }: {
   card: CardDef;
   faceIndex?: number;
@@ -157,19 +183,30 @@ export function CardView({
   sizes: string;
   eager?: boolean;
   stats?: Stats;
+  printing?: Printing | undefined;
 }) {
   const face = card.faces[faceIndex] ?? card.faces[0]!;
   // Split and adventure halves share the front image.
-  const path = face.img ?? card.faces[0]!.img;
+  const own = face.img ?? card.faces[0]!.img;
+  const other = printing && (faceIndex > 0 && face.img ? printing.backImg : printing.img);
+  const path = other ?? own;
   const noImages = useImagesBlocked();
+  const ref = useRef<HTMLSpanElement>(null);
+  const seen = useSeen(ref, eager);
+  // Art shipped with the app comes first (a host that blocks the CDN has nothing else); then the CDN.
+  const art = useBundledArt(path, seen);
+  const fromBundle = art.bundled && !art.failed;
   const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading');
-  useEffect(() => setState('loading'), [path]);
-  const tryImage = Boolean(path) && !noImages && state !== 'failed';
+  useEffect(() => setState('loading'), [path, fromBundle]);
+  const tryImage = Boolean(path) && state !== 'failed' && (fromBundle ? art.url !== null : !noImages);
   return (
-    <span className={`card${state === 'loaded' && tryImage ? ' has-img' : ''}`}>
+    <span ref={ref} className={`card${state === 'loaded' && tryImage ? ' has-img' : ''}`}>
       {/* The proxy sits underneath while the image loads, so a slow or blocked image never leaves a blank card. */}
       {(state !== 'loaded' || !tryImage) && <ProxyFace face={face} {...(stats ? { stats } : {})} />}
-      {tryImage && (
+      {tryImage && fromBundle && (
+        <img className={state === 'loaded' ? 'card-img loaded' : 'card-img'} src={art.url!} alt={face.name} decoding="async" draggable={false} onLoad={() => setState('loaded')} onError={() => setState('failed')} />
+      )}
+      {tryImage && !fromBundle && (
         <img
           className={state === 'loaded' ? 'card-img loaded' : 'card-img'}
           src={imageUrl(path!, 'normal')}

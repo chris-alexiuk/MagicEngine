@@ -6,8 +6,9 @@
  *
  * The most-played cards (by EDHREC rank) are downloaded from the CDN, re-encoded as WebP — the first `--sharp` of them
  * at `--large-width`, the rest at `--small-width` — and concatenated into pack files of about equal size, with a
- * manifest saying where each image is. It stops when `--budget-mb` is reached. The whole scan is always kept: nothing
- * is cropped, so the artist and copyright line stay on every card.
+ * manifest saying where each image is. A card's printings under other names ("Seymour Guado" for Kinnan, Bonder
+ * Prodigy) come with it, at the small size. It stops when `--budget-mb` is reached. The whole scan is always kept:
+ * nothing is cropped, so the artist and copyright line stay on every card.
  *
  *   --budget-mb 236      total size of the packs
  *   --max-packs 470      how many pack files at most (the host limits the number of files)
@@ -66,15 +67,15 @@ const cards = db.cards
   .sort((a, b) => Number(forced(b)) - Number(forced(a)) || (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.name.localeCompare(b.name))
   .slice(0, LIMIT);
 
-/** The images of one card: each face's own, and — for the large tier — the printings it has other names on. */
-function imagesOf(card, large) {
+/** The images of one card: each face's own, then the printings it has other names on. */
+function imagesOf(card) {
   const out = [];
-  const add = (img) => {
+  const add = (img, alias) => {
     const key = img && keyOf(img);
-    if (key && !out.some((x) => x.key === key)) out.push({ key, img });
+    if (key && !out.some((x) => x.key === key)) out.push({ key, img, alias });
   };
-  for (const f of card.faces) add(f.img);
-  if (large) for (const a of card.aka ?? []) (add(a.img), add(a.backImg));
+  for (const f of card.faces) add(f.img, false);
+  for (const a of card.aka ?? []) (add(a.img, true), add(a.backImg, true));
   return out;
 }
 
@@ -127,8 +128,9 @@ let missing = 0;
 const CHUNK = 96;
 for (let at = 0; at < cards.length && total < BUDGET; at += CHUNK) {
   const jobs = cards.slice(at, at + CHUNK).flatMap((card, i) => {
-    const large = at + i < SHARP || forced(card);
-    return imagesOf(card, large).map((image) => ({ ...image, card, tier: large ? LARGE : SMALL }));
+    const large = at + i < SHARP;
+    // A printing under another name is the rarer sight, so it takes the small size unless the card was asked for by name.
+    return imagesOf(card).map((image) => ({ ...image, card, tier: forced(card) || (large && !image.alias) ? LARGE : SMALL }));
   });
   const encoded = await pool(jobs, 12, async (job) => {
     const source = FAKE ? await fake(job.card) : await download(job.img);

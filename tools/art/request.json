@@ -1,8 +1,8 @@
 {
   "note": "The settings of the card art bundle. Changing this file on main rebuilds the bundle (see README.md).",
-  "budget_mb": 24,
-  "sharp": 250,
-  "limit": 600,
+  "budget_mb": 236,
+  "sharp": 1500,
+  "limit": 0,
   "large_width": 488,
   "small_width": 300,
   "max_packs": 470
