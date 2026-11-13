@@ -1,5 +1,6 @@
 {
-  "note": "The settings of the card art bundle. Changing this file on main rebuilds the bundle (see README.md).",
+  "note": "The settings of the card art bundle. Changing this file on main rebuilds the bundle (see README.md); bump `build` to rebuild with the same settings (new card data, say).",
+  "build": 2,
   "budget_mb": 236,
   "sharp": 1500,
   "limit": 0,
