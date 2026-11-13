@@ -7,8 +7,8 @@ images can be shipped with the app.
 `build.mjs` downloads the most-played cards' scans (by EDHREC rank), re-encodes them as WebP and
 concatenates them into pack files of about equal size, with a `manifest.json` that says where each image
 is. The first cards get a large size (sharp in a preview), the rest a smaller one, until the size budget
-is used up; a card's printings under other names come with it, at the smaller size. Nothing is cropped:
-the artist and copyright line stay on every card.
+is used up; a card's printings under other names and the printed tokens it makes come with it, at the
+smaller size. Nothing is cropped or retouched: the artist and copyright line stay on every card.
 
 The **Card art bundle** workflow runs it on GitHub (which can reach the CDN) and publishes the result to
 the `art` branch. Its settings are `request.json`; the workflow runs whenever that file changes on main

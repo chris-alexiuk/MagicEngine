@@ -1,5 +1,6 @@
-import type { Automation, CardDef, Color } from '@mtg/schema';
+import type { AltName, Automation, CardDef, Color } from '@mtg/schema';
 import { COLORS } from '@mtg/schema';
+import type { Printing } from '../skins';
 
 /** A saved deck. Cards are referenced by their name in the card DB. */
 export interface DeckCard {
@@ -19,6 +20,45 @@ export interface Deck {
   updatedAt: string;
   /** Where it was imported from, if anywhere. */
   source?: string;
+  /**
+   * Cards the list asked for as a printing with a name of its own ("Seymour Guado" for Kinnan, Bonder Prodigy), by
+   * card name: the deck shows and plays them with that printing's art. The card is the same card either way.
+   */
+  skins?: Record<string, DeckSkin>;
+}
+
+export interface DeckSkin {
+  /** The name on that printing. */
+  as: string;
+  set: string;
+  number: string;
+}
+
+/** The printing a deck draws a card with, when the deck asked for one and the card data still has it. */
+export function skinOf(deck: Pick<Deck, 'skins'>, card: CardDef): AltName | undefined {
+  const skin = deck.skins?.[card.name];
+  if (!skin) return undefined;
+  return card.aka?.find((a) => a.name === skin.as && a.set === skin.set && a.number === skin.number) ?? card.aka?.find((a) => a.name === skin.as);
+}
+
+/** Every chosen printing of a deck's cards, by card name, as image paths (what a game needs to draw them). */
+export function deckPrintings(deck: Pick<Deck, 'skins'>, lookup: (name: string) => CardDef | undefined): Record<string, Printing> {
+  const out: Record<string, Printing> = {};
+  for (const name of Object.keys(deck.skins ?? {})) {
+    const card = lookup(name);
+    const aka = card && skinOf(deck, card);
+    if (aka?.img) out[name] = { img: aka.img, ...(aka.backImg ? { backImg: aka.backImg } : {}), ...(aka.artist ? { artist: aka.artist } : {}) };
+  }
+  return out;
+}
+
+/** A deck's skins without the ones for cards that are no longer in it. */
+export function pruneSkins(deck: Deck): Deck {
+  if (!deck.skins) return deck;
+  const names = new Set([...deck.commanders, ...deck.main.map((c) => c.name), ...deck.sideboard.map((c) => c.name)]);
+  const kept = Object.fromEntries(Object.entries(deck.skins).filter(([n]) => names.has(n)));
+  const { skins: _, ...rest } = deck;
+  return Object.keys(kept).length ? { ...rest, skins: kept } : rest;
 }
 
 export const DECK_SIZE = 100;

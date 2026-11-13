@@ -1,9 +1,10 @@
 import type { Characteristics, GameObject, GameState, PlayerId, PlayerView, Target } from '@mtg/engine';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { CardBackFace, CardView, type Stats } from '../components/Card';
 import { ManaSymbol } from '../components/mana';
+import { ringOf, SeatMat, type SeatLook } from '../components/Mat';
 import { shownCard } from './cards';
-import { fitCardWidth, itemWidth, RATIO, type Item } from './fit';
+import { fitCardWidth, fitRow, itemWidth, RATIO, type Item } from './fit';
 import { publicName } from './log';
 import { isChosen, type Pick } from './pick';
 
@@ -133,6 +134,7 @@ function Permanent({ g, view, o, h, attached, members, pair }: { g: GameState; v
             {shown && !(o.faceDown && o.controller !== view.viewer) ? <CardView card={shown.card} faceIndex={shown.face} sizes="146px" stats={stats} /> : <CardBackFace {...(stats.pt ? { label: stats.pt } : {})} />}
           </span>
         ))}
+        {o.token && <span className="token-mark" title="Token">T</span>}
         {count > 1 && <span className="count-badge">×{count}</span>}
         {pair && <span className={`pair-badge${atk ? ' atk' : ' blk'}`} title={atk ? `Attacker ${pair}` : `Blocks attacker ${pair}`}>{pair}</span>}
       </button>
@@ -200,7 +202,9 @@ function useSize<T extends HTMLElement>(): [React.RefObject<T | null>, { w: numb
 }
 
 /** Lands are drawn a little smaller than creatures, so the creatures read first. */
-const LAND_SCALE = 0.85;
+const LAND_SCALE = 0.88;
+/** The room between a seat's lands and its other permanents in the back lane. */
+const GROUP_GAP = 22;
 
 function Lanes({ g, view, player, h, far, maxW }: { g: GameState; view: PlayerView; player: PlayerId; h: BoardHandlers; far: boolean; maxW: number }) {
   const [ref, size] = useSize<HTMLDivElement>();
@@ -228,11 +232,17 @@ function Lanes({ g, view, player, h, far, maxW }: { g: GameState; view: PlayerVi
   const backLands = group(g, lands, h, attachedTo, () => true);
   const backOther = group(g, other, h, attachedTo, (o) => Boolean(o.token));
   const items = (list: { o: GameObject; members: string[] }[], scale = 1): Item[] => list.map(({ o, members }) => ({ tapped: o.tapped, stack: members.length, scale }));
-  const cw = useMemo(
-    () => fitCardWidth([items(front), [...items(backLands, LAND_SCALE), ...items(backOther)]], { width: size.w, height: size.h, max: maxW, min: 36, chips: 15, emptyLane: Math.min(48, size.h * 0.18) }),
+  // Two lanes; or, while there are few enough permanents, one row of larger cards (lands, creatures, the rest). The
+  // row is sized as if everything were tapped, so tapping for mana never resizes or rearranges the table.
+  const [cw, oneRow] = useMemo((): [number, boolean] => {
+    // The back lane holds two groups, set further apart than cards within a group (GROUP_GAP in the stylesheet).
+    const others = items(backOther).map((it, i) => (i === 0 && backLands.length ? { ...it, pad: GROUP_GAP - 8 } : it));
+    const two = fitCardWidth([items(front), [...items(backLands, LAND_SCALE), ...others]], { width: size.w - 2, height: size.h, max: maxW, min: 36, chips: 15, emptyLane: Math.min(48, size.h * 0.18) });
+    const tapped = (list: Item[]) => list.map((it) => ({ ...it, tapped: true }));
+    const one = fitRow([tapped(items(backLands, LAND_SCALE)), tapped(items(front)), tapped(items(backOther))], { width: size.w, height: size.h, max: maxW, min: 36, chips: 15, groupGap: 28 });
+    return one > two ? [one, true] : [two, false];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [size.w, size.h, maxW, JSON.stringify([items(front), items(backLands), items(backOther)])],
-  );
+  }, [size.w, size.h, maxW, JSON.stringify([items(front), items(backLands), items(backOther)])]);
   const pairs = combatPairs(g);
   const render = (list: { o: GameObject; members: string[] }[]) =>
     list.map(({ o, members }) => <Permanent key={o.id} g={g} view={view} o={o} h={h} attached={attachedTo.get(o.id) ?? []} members={members} {...(pairs.get(o.id) ? { pair: pairs.get(o.id)! } : {})} />);
@@ -251,8 +261,22 @@ function Lanes({ g, view, player, h, far, maxW }: { g: GameState; view: PlayerVi
       </div>
     </div>
   );
+  const style = { ['--cw' as string]: `${cw}px`, ['--ch' as string]: `${(cw * RATIO).toFixed(1)}px` };
+  if (oneRow) {
+    return (
+      <div ref={ref} className={`lanes one-row${far ? ' far' : ' near'}`} style={style}>
+        <div className="lane-lands" aria-label="Lands">
+          {render(backLands)}
+        </div>
+        {frontLane}
+        <div className="lane-other" aria-label="Other permanents">
+          {render(backOther)}
+        </div>
+      </div>
+    );
+  }
   return (
-    <div ref={ref} className={`lanes${far ? ' far' : ' near'}${size.w ? '' : ' measuring'}`} style={{ ['--cw' as string]: `${cw}px`, ['--ch' as string]: `${(cw * RATIO).toFixed(1)}px` }}>
+    <div ref={ref} className={`lanes${far ? ' far' : ' near'}${size.w ? '' : ' measuring'}`} style={style}>
       {far ? backLane : frontLane}
       {far ? frontLane : backLane}
     </div>
@@ -282,7 +306,7 @@ export function Pool({ g, player }: { g: GameState; player: PlayerId }) {
 }
 
 /** Life, name and status. The plate is the player's button when a player can be chosen (a target, who to attack). */
-export function Plate({ g, player, h, deciding, me }: { g: GameState; player: PlayerId; h: BoardHandlers; deciding: boolean; me?: boolean }) {
+export function Plate({ g, player, h, deciding, me, look }: { g: GameState; player: PlayerId; h: BoardHandlers; deciding: boolean; me?: boolean; look?: SeatLook }) {
   const ps = g.players[player]!;
   const t: Target = { kind: 'player', player };
   const pickable = Boolean(h.pick?.players.has(player));
@@ -302,7 +326,7 @@ export function Plate({ g, player, h, deciding, me }: { g: GameState; player: Pl
     return () => clearTimeout(t);
   }, [ps.life]);
   return (
-    <div className={`plate${me ? ' mine' : ''}${deciding ? ' deciding' : ''}${g.active === player ? ' active' : ''}${ps.lost ? ' lost' : ''}`} data-plate={player}>
+    <div className={`plate${me ? ' mine' : ''}${deciding ? ' deciding' : ''}${g.active === player ? ' active' : ''}${ps.lost ? ' lost' : ''}`} data-plate={player} style={{ ['--ring' as string]: ringOf(look?.colors ?? []) } as CSSProperties}>
       <button
         type="button"
         className={`life${pickable ? ' pickable' : ''}${chosen ? ' picked' : ''}${h.targeted.has(player) ? ' targeted' : ''}${delta ? (delta.n < 0 ? ' hurt' : ' healed') : ''}`}
@@ -320,7 +344,7 @@ export function Plate({ g, player, h, deciding, me }: { g: GameState; player: Pl
       <span className="plate-meta">
         <span className="plate-name">{ps.name}</span>
         <span className="plate-chips">
-          {g.active === player && <span className="chip turn-chip">Turn</span>}
+          {g.active === player && <span className="chip turn-chip">{me ? 'Your turn' : 'Their turn'}</span>}
           {ps.lost && <span className="chip warn-chip">Out</span>}
           {g.monarch === player && <span className="chip">Monarch</span>}
           {g.initiative === player && <span className="chip">Initiative</span>}
@@ -357,16 +381,25 @@ export function Piles({ g, view, player, h }: { g: GameState; view: PlayerView; 
   return (
     <div className="piles">
       <span className="pile" title={`Library: ${lib}`} aria-label={`Library, ${lib} cards`}>
-        <span className="pile-card">{lib ? <CardBackFace /> : <span className="pile-empty" />}</span>
-        <span className="pile-n">{lib}</span>
+        <span className={`pile-card${lib > 1 ? ' deep' : ''}`}>
+          {lib ? <CardBackFace /> : <span className="pile-empty" />}
+          <span className="pile-n">{lib}</span>
+        </span>
+        <span className="pile-name">Library</span>
       </span>
       <button type="button" className={`pile${lit(yard) ? ' lit' : ''}`} onClick={() => h.onZone(player, 'graveyard')} title={`Graveyard: ${yard.length}`} aria-label={`Graveyard, ${yard.length} cards`}>
-        <span className="pile-card">{top(yard)}</span>
-        <span className="pile-n">{yard.length}</span>
+        <span className="pile-card">
+          {top(yard)}
+          <span className="pile-n">{yard.length}</span>
+        </span>
+        <span className="pile-name">Graveyard</span>
       </button>
       <button type="button" className={`pile${lit(exiled) ? ' lit' : ''}`} onClick={() => h.onZone(player, 'exile')} title={`Exile: ${exiled.length}`} aria-label={`Exile, ${exiled.length} cards`}>
-        <span className="pile-card">{top(exiled)}</span>
-        <span className="pile-n">{exiled.length}</span>
+        <span className="pile-card">
+          {top(exiled)}
+          <span className="pile-n">{exiled.length}</span>
+        </span>
+        <span className="pile-name">Exile</span>
       </button>
     </div>
   );
@@ -564,11 +597,12 @@ function OtherHand({ g, view, player, h }: { g: GameState; view: PlayerView; pla
 // ---------------------------------------------------------------------------
 
 /** An opponent's seat: the edge bar (plate, command zone, hand, piles) above their lanes. */
-export function OpponentSeat({ g, view, player, h, deciding, maxW, extra }: { g: GameState; view: PlayerView; player: PlayerId; h: BoardHandlers; deciding: boolean; maxW: number; extra?: ReactNode }) {
+export function OpponentSeat({ g, view, player, h, deciding, maxW, extra, look }: { g: GameState; view: PlayerView; player: PlayerId; h: BoardHandlers; deciding: boolean; maxW: number; extra?: ReactNode; look: SeatLook }) {
   return (
     <section className={`seat opp${deciding ? ' deciding' : ''}${g.active === player ? ' active' : ''}${g.players[player]!.lost ? ' lost' : ''}`} data-player={player} aria-label={g.players[player]!.name}>
+      <SeatMat look={look} />
       <header className="seat-bar">
-        <Plate g={g} player={player} h={h} deciding={deciding} />
+        <Plate g={g} player={player} h={h} deciding={deciding} look={look} />
         <Command g={g} view={view} player={player} h={h} />
         <Pool g={g} player={player} />
         {extra}
@@ -582,12 +616,13 @@ export function OpponentSeat({ g, view, player, h, deciding, maxW, extra }: { g:
 }
 
 /** Your battlefield (your plate, hand and piles are in the dock below it). */
-export function MySeat({ g, view, player, h, deciding, maxW }: { g: GameState; view: PlayerView; player: PlayerId; h: BoardHandlers; deciding: boolean; maxW: number }) {
+export function MySeat({ g, view, player, h, deciding, maxW, look }: { g: GameState; view: PlayerView; player: PlayerId; h: BoardHandlers; deciding: boolean; maxW: number; look: SeatLook }) {
   return (
     <section className={`seat me${deciding ? ' deciding' : ''}${g.active === player ? ' active' : ''}`} data-player={player} aria-label={`${g.players[player]!.name}’s battlefield`}>
+      <SeatMat look={look} />
       <Lanes g={g} view={view} player={player} h={h} far={false} maxW={maxW} />
     </section>
   );
 }
 
-export { itemWidth };
+export { itemWidth, type SeatLook };

@@ -4,7 +4,7 @@ import type { CardDef } from '@mtg/schema';
 import { apply, legalActions, type Action, type GameState } from '@mtg/engine';
 import { describe, expect, it } from 'vitest';
 import { narrate } from './log';
-import { DEFAULT_STOPS, decider, newGame, replay, shouldAutoPass, step, type Ctx, type GameSetup, type Stops } from './session';
+import { DEFAULT_STOPS, decider, newGame, passUntilDone, peekPass, replay, shouldAutoPass, step, type Ctx, type GameSetup, type PassUntil, type Stops } from './session';
 
 const fixture = JSON.parse(
   readFileSync(new URL('../../../../packages/compiler/test/fixtures/scryfall-sample.json', import.meta.url), 'utf8'),
@@ -120,6 +120,69 @@ describe('same-screen session', () => {
     expect(lands()).toBeGreaterThanOrEqual(4);
     run(second!);
     expect(g.commanderCasts[kinnan]).toBe(2);
+  });
+
+  it('"to the end step" passes through the rest of the turn and stops there, where the seat usually wouldn\'t', () => {
+    const { g } = keepBoth();
+    // With the usual stops, passing from the first main phase of turn 1 runs to the second, then on to the next turn.
+    const until: PassUntil = { player: 'p1', turn: g.turn, step: 'end' };
+    const r = step(g, { type: 'pass', player: 'p1' }, { ...ctx, passUntil: until });
+    if (!r.ok) throw new Error(r.error);
+    const end = r.applied.state;
+    expect([end.turn, end.step, end.priority, end.stack.length]).toEqual([g.turn, 'end', 'p1', 0]);
+    // It's done once reached: the next pass is an ordinary one (here, on to Ben's turn).
+    expect(passUntilDone(end, until)).toBe(true);
+    expect(passUntilDone(g, until)).toBe(false);
+    expect(shouldAutoPass(end, 'p1', DEFAULT_STOPS, until)).toBe(false);
+    expect(peekPass(end, 'p1', ctx)).toEqual({ kind: 'end' });
+  });
+
+  it('ending the turn before combat attacks with nothing rather than asking', () => {
+    let { g } = keepBoth();
+    const run = (a: Action, c: Ctx = ctx) => {
+      const r = step(g, a, c);
+      if (!r.ok) throw new Error(`${JSON.stringify(a)}: ${r.error}`);
+      g = r.applied.state;
+    };
+    // Ann gets a creature that could attack onto the battlefield, then comes back round to her next turn.
+    const bears = g.zones.hand.p1!.find((id) => g.objects[id]!.card === 'Grizzly Bears') ?? g.zones.library.p1!.find((id) => g.objects[id]!.card === 'Grizzly Bears')!;
+    run({ type: 'manual', player: 'p1', op: { kind: 'move', object: bears, to: 'battlefield' } });
+    run({ type: 'pass', player: 'p1' }, { ...ctx, passUntil: { player: 'p1', turn: g.turn } });
+    expect(g.active).toBe('p2');
+    run({ type: 'pass', player: 'p2' }, { ...ctx, passUntil: { player: 'p2', turn: g.turn } });
+    // Ben drew to eight on the draw: he discards down at cleanup.
+    if (g.pending?.kind === 'discard_to_hand_size') run({ type: 'choose', player: 'p2', answer: { kind: 'discard_to_hand_size', objects: g.zones.hand.p2!.slice(0, g.pending.count) } });
+    expect([g.active, g.step, g.priority]).toEqual(['p1', 'main1', 'p1']);
+    // An ordinary pass from the main phase stops to ask what attacks…
+    const asked = step(g, { type: 'pass', player: 'p1' }, ctx);
+    expect(asked.ok && asked.applied.state.pending?.kind).toBe('declare_attackers');
+    // …"to the end step" doesn't: nothing attacks, and Ann is in her end step.
+    run({ type: 'pass', player: 'p1' }, { ...ctx, passUntil: { player: 'p1', turn: g.turn, step: 'end' } });
+    expect([g.step, g.priority, g.pending]).toEqual(['end', 'p1', null]);
+    expect(g.objects[bears]!.tapped).toBe(false);
+  });
+
+  it('"to the end step" works on another player\'s turn too', () => {
+    let { g } = keepBoth();
+    // Ann ends her turn; Ben's begins, and Ben stops in his first main phase.
+    const endTurn = step(g, { type: 'pass', player: 'p1' }, { ...ctx, passUntil: { player: 'p1', turn: g.turn } });
+    if (!endTurn.ok) throw new Error(endTurn.error);
+    g = endTurn.applied.state;
+    expect([g.active, g.step, g.priority]).toEqual(['p2', 'main1', 'p2']);
+    // Ann asks to be stopped at Ben's end step; Ben passes through his turn.
+    const until: PassUntil = { player: 'p1', turn: g.turn, step: 'end' };
+    for (let i = 0; i < 12 && !(g.step === 'end' && g.priority === 'p1'); i++) {
+      if (g.pending?.kind === 'declare_attackers') {
+        const r = step(g, { type: 'choose', player: 'p2', answer: { kind: 'declare_attackers', attacks: [] } }, { ...ctx, passUntil: until });
+        if (!r.ok) throw new Error(r.error);
+        g = r.applied.state;
+        continue;
+      }
+      const r = step(g, { type: 'pass', player: g.priority! }, { ...ctx, passUntil: until });
+      if (!r.ok) throw new Error(r.error);
+      g = r.applied.state;
+    }
+    expect([g.active, g.step, g.priority]).toEqual(['p2', 'end', 'p1']);
   });
 
   it('refuses an illegal action without changing anything', () => {

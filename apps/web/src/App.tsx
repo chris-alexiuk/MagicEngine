@@ -10,6 +10,7 @@ import type { Deck } from './deck/model';
 import { buildIndex } from './deck/names';
 import { loadDecks, saveDecks, syncPins } from './deck/store';
 import { compileQuery, FILTER_HELP, sortCards, type SortKey } from './search';
+import { setTokenArt } from './skins';
 
 const BASE = import.meta.env.BASE_URL;
 // The rules engine is most of the bundle: load it when the table is first opened.
@@ -76,7 +77,10 @@ export function App() {
 
   useEffect(() => {
     loadCardDB(BASE)
-      .then((loaded) => setLoad({ status: 'ready', loaded }))
+      .then((loaded) => {
+        setTokenArt(loaded.db.tokens);
+        setLoad({ status: 'ready', loaded });
+      })
       .catch((err: unknown) => setLoad({ status: 'error', message: err instanceof Error ? err.message : String(err) }));
   }, []);
 

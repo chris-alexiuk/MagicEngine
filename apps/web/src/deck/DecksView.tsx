@@ -3,14 +3,16 @@ import { COLORS } from '@mtg/schema';
 import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AUTOMATION_LABEL, AutomationMark } from '../components/bits';
 import { CardView } from '../components/Card';
+import { lookOf, SeatMat } from '../components/Mat';
 import { CardDetail } from '../components/CardDetail';
 import { ManaCost, ManaSymbol, TypeIcon } from '../components/mana';
 import { compileQuery, sortCards } from '../search';
 import { Coverage, CurveChart, deckStats, Identity, PipChart } from './bits';
 import { deckToText } from './exportDeck';
 import { importText } from './importDeck';
-import { addCard, commanderProblem, emptyDeck, pairProblem, validateDeck, type Deck, type ProblemKind } from './model';
+import { addCard, commanderProblem, emptyDeck, pairProblem, pruneSkins, skinOf, validateDeck, type Deck, type ProblemKind } from './model';
 import type { CardIndex } from './names';
+import { withPrinting } from '../skins';
 import { EXPORT_HELP, fetchDeckText, parseDeckUrl, RemoteImportError } from './remote';
 import type { ImportResult } from './importDeck';
 
@@ -88,6 +90,13 @@ function Preview({ card, rect }: { card: CardDef; rect: DOMRect }) {
   );
 }
 
+/** A card as a deck draws it: with the printing the deck asked for, if it asked for one. */
+function dressed(deck: Pick<Deck, 'skins'>, card: CardDef): CardDef;
+function dressed(deck: Pick<Deck, 'skins'>, card: CardDef | undefined): CardDef | undefined;
+function dressed(deck: Pick<Deck, 'skins'>, card: CardDef | undefined): CardDef | undefined {
+  return card && withPrinting(card, skinOf(deck, card));
+}
+
 // ---------------------------------------------------------------------------
 // The deck list
 // ---------------------------------------------------------------------------
@@ -95,7 +104,10 @@ function Preview({ card, rect }: { card: CardDef; rect: DOMRect }) {
 export function DecksView({ cards, index, decks, setDecks, deckId, go }: { cards: CardDef[]; index: CardIndex; decks: Deck[]; setDecks: (d: Deck[]) => void; deckId: string | null; go: (route: string) => void }) {
   const [importing, setImporting] = useState(false);
   const deck = deckId ? decks.find((d) => d.id === deckId) : undefined;
-  const save = (d: Deck) => setDecks(decks.some((x) => x.id === d.id) ? decks.map((x) => (x.id === d.id ? { ...d, updatedAt: new Date().toISOString() } : x)) : [...decks, d]);
+  const save = (next: Deck) => {
+    const d = pruneSkins(next);
+    setDecks(decks.some((x) => x.id === d.id) ? decks.map((x) => (x.id === d.id ? { ...d, updatedAt: new Date().toISOString() } : x)) : [...decks, d]);
+  };
   const playtest = (id: string) => go(`#/play?playtest=${id}`);
 
   if (deckId && deck) {
@@ -146,7 +158,7 @@ export function DecksView({ cards, index, decks, setDecks, deckId, go }: { cards
         <ul className="deck-tiles">
           {decks.map((d) => {
             const report = validateDeck(d, index.get);
-            const cmd = d.commanders.map((n) => index.get(n)).filter((c): c is CardDef => Boolean(c));
+            const cmd = d.commanders.map((n) => dressed(d, index.get(n))).filter((c): c is CardDef => Boolean(c));
             return (
               <li key={d.id} className="deck-tile">
                 <a className="deck-tile-link" href={`#/decks/${d.id}`}>
@@ -188,7 +200,7 @@ export function DecksView({ cards, index, decks, setDecks, deckId, go }: { cards
             {
               label: 'Create deck',
               run: (r, name, source) => {
-                const d: Deck = { ...emptyDeck(name), commanders: r.commanders.slice(0, 2), main: r.main, sideboard: r.sideboard, ...(source ? { source } : {}) };
+                const d: Deck = pruneSkins({ ...emptyDeck(name), commanders: r.commanders.slice(0, 2), main: r.main, sideboard: r.sideboard, ...(source ? { source } : {}), ...(Object.keys(r.skins).length ? { skins: r.skins } : {}) });
                 setDecks([...decks, d]);
                 setImporting(false);
                 go(`#/decks/${d.id}`);
@@ -215,7 +227,7 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
   const [menu, setMenu] = useState<{ name: string; rect: DOMRect; commander: boolean } | null>(null);
   const preview = usePreview();
   const report = useMemo(() => validateDeck(deck, index.get), [deck, index]);
-  const commanders = deck.commanders.map((n) => index.get(n));
+  const commanders = deck.commanders.map((n) => dressed(deck, index.get(n)));
 
   const set = (patch: Partial<Deck>) => onChange({ ...deck, ...patch });
   const add = (name: string, n = 1) => set({ main: addCard(deck.main, name, n) });
@@ -234,7 +246,7 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
     return false;
   };
 
-  const rows: Row[] = useMemo(() => deck.main.map((e) => ({ ...e, card: index.get(e.name) })).sort((a, b) => (a.card?.cmc ?? 99) - (b.card?.cmc ?? 99) || a.name.localeCompare(b.name)), [deck.main, index]);
+  const rows: Row[] = useMemo(() => deck.main.map((e) => ({ ...e, card: dressed(deck, index.get(e.name)) })).sort((a, b) => (a.card?.cmc ?? 99) - (b.card?.cmc ?? 99) || a.name.localeCompare(b.name)), [deck.main, deck.skins, index]); // eslint-disable-line react-hooks/exhaustive-deps
   const grouped = useMemo(() => {
     const out: { title: string; type: string; rows: Row[] }[] = [];
     const used = new Set<string>();
@@ -259,11 +271,20 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
   };
   const openMenu = (name: string, el: HTMLElement, commander = false) => setMenu({ name, rect: el.getBoundingClientRect(), commander });
   const menuCard = menu ? index.get(menu.name) : undefined;
+  /** Draws a card with one of its other-name printings (or, with none, its usual one). */
+  const setSkin = (card: CardDef, aka?: NonNullable<CardDef['aka']>[number]) => {
+    const { [card.name]: _, ...rest } = deck.skins ?? {};
+    const skins = aka ? { ...rest, [card.name]: { as: aka.name, set: aka.set, number: aka.number } } : rest;
+    const { skins: __, ...bare } = deck;
+    onChange(Object.keys(skins).length ? { ...bare, skins } : bare);
+  };
+  const skinName = (name: string) => deck.skins?.[name]?.as;
 
   return (
     <div className="editor">
       <div className="editor-main">
         <header className="deck-banner" style={bannerTint(report.identity)}>
+          <SeatMat look={{ ...lookOf(commanders), colors: [...report.identity] }} />
           <div className={`banner-cards n${Math.max(1, commanders.length)}`}>
             {commanders.length ? (
               commanders.map((c, i) =>
@@ -284,7 +305,7 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
               All decks
             </button>
             <input className="deck-name" value={deck.name} onChange={(e) => set({ name: e.target.value })} aria-label="Deck name" />
-            <p className="banner-sub">{deck.commanders.join(' & ') || 'No commander yet'}</p>
+            <p className="banner-sub">{deck.commanders.map((n) => (skinName(n) ? `${n} (as ${skinName(n)})` : n)).join(' & ') || 'No commander yet'}</p>
             <div className="banner-stats">
               <Identity colors={report.identity} />
               <span className={report.total === 100 ? 'stat ok' : 'stat warn'}>
@@ -419,6 +440,7 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
                         </span>
                         <button type="button" className="row-name" onClick={(e) => openMenu(r.name, e.currentTarget)} {...preview.bind(r.card)}>
                           {r.name}
+                          {skinName(r.name) && <span className="row-as"> as {skinName(r.name)}</span>}
                         </button>
                         {r.card && <ManaCost cost={r.card.faces[0]!.manaCost} />}
                         {r.card && <AutomationMark level={r.card.automation} />}
@@ -450,7 +472,7 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
               {deck.sideboard.map((c) => (
                 <li key={`s-${c.name}`} className="deck-row">
                   <span className="row-count">{c.count}</span>
-                  <span className="row-name static" {...preview.bind(index.get(c.name))}>
+                  <span className="row-name static" {...preview.bind(dressed(deck, index.get(c.name)))}>
                     {c.name}
                   </span>
                   <button type="button" className="ghost tiny" onClick={() => set({ sideboard: deck.sideboard.filter((x) => x.name !== c.name), main: addCard(deck.main, c.name, c.count) })}>
@@ -478,7 +500,10 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
                   { label: '−1', run: () => add(menu.name, -1), keep: (deck.main.find((x) => x.name === menu.name)?.count ?? 0) > 1 },
                   ...(menuCard && canCommand(menuCard) ? [{ label: deck.commanders.length ? 'Make second commander' : 'Make commander', run: () => makeCommander(menuCard) }] : []),
                 ]),
-            ...(menuCard ? [{ label: 'Details', run: () => setDetail(menuCard) }] : []),
+            // A printing with a name of its own: draw the card with it, or go back to the usual one.
+            ...(menuCard?.aka ?? []).filter((a) => a.img && skinOf(deck, menuCard!) !== a).map((a) => ({ label: `Show as ${a.name} (${a.set.toUpperCase()})`, run: () => setSkin(menuCard!, a) })),
+            ...(menuCard && skinOf(deck, menuCard) ? [{ label: 'Show the usual printing', run: () => setSkin(menuCard) }] : []),
+            ...(menuCard ? [{ label: 'Details', run: () => setDetail(dressed(deck, menuCard)) }] : []),
           ]}
         />
       )}
@@ -519,7 +544,8 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
             {
               label: 'Replace this deck’s cards',
               run: (r, _name, source) => {
-                onChange({ ...deck, commanders: r.commanders.slice(0, 2), main: r.main, sideboard: r.sideboard, ...(source ? { source } : {}) });
+                const { skins: _, ...bare } = deck;
+                onChange({ ...bare, commanders: r.commanders.slice(0, 2), main: r.main, sideboard: r.sideboard, ...(source ? { source } : {}), ...(Object.keys(r.skins).length ? { skins: r.skins } : {}) });
                 setImporting(false);
               },
             },
@@ -529,7 +555,8 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
                 let main = deck.main;
                 for (const c of r.main) main = addCard(main, c.name, c.count);
                 const cmds = deck.commanders.length ? deck.commanders : r.commanders.slice(0, 2);
-                onChange({ ...deck, commanders: cmds, main });
+                const skins = { ...r.skins, ...deck.skins };
+                onChange({ ...deck, commanders: cmds, main, ...(Object.keys(skins).length ? { skins } : {}) });
                 setImporting(false);
               },
             },

@@ -151,6 +151,9 @@ function compileFace(card: ScryfallCard, face: ScryfallFace, index: number, regi
   // DFC faces carry their own images; split/adventure/flip share the card image (first face only).
   const imageSource = face.image_uris?.normal ?? (index === 0 ? card.image_uris?.normal : undefined);
   if (imageSource) out.img = imageSource.replace(IMAGE_PREFIX, '');
+  // With the image, its credit (a face of its own image has an artist of its own).
+  const artist = face.artist ?? (out.img ? card.artist : undefined);
+  if (artist && out.img) out.artist = artist;
   return out;
 }
 

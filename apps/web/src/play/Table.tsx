@@ -10,6 +10,7 @@ import { Actions, ActionBarSlot, PlanArrows } from './actionbar';
 import { Arrows, type ArrowSpec } from './Arrows';
 import { clickOutcome, dragAction } from './click';
 import { cardClass, Command, Elsewhere, Hand, MySeat, OpponentSeat, Piles, Plate, Pool, type BoardHandlers } from './Board';
+import { lookOf as matLook, type SeatLook } from '../components/Mat';
 import { shownCard } from './cards';
 import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices } from './Choices';
 import { actionLabel, actionObject, targetLabel } from './labels';
@@ -18,7 +19,8 @@ import { useCardMotion } from './motion';
 import type { Pick } from './pick';
 import { openView, previewTaps } from './preview';
 import { extraCasts, hasXRange } from './probes';
-import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, dummiesOf, modeOf, newGame, peekPass, replay, saveGame, step, type Ctx, type GameSetup, type PassUntil, type Stops } from './session';
+import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, dummiesOf, modeOf, newGame, passUntilDone, peekPass, replay, saveGame, step, TURN_STEPS, type Ctx, type GameSetup, type PassUntil, type Stops } from './session';
+import { withPrinting } from '../skins';
 
 type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
 
@@ -71,9 +73,9 @@ export function startLive(setup: GameSetup, cards: Record<string, CardDef>): Liv
   return { setup, cards, state: first.state, actions: first.steps.map((s) => s.action), marks: [], log, history: [] };
 }
 
-/** How wide hand cards are: as large as the window's height allows while the whole hand stays on screen. */
+/** How wide hand cards are: large enough to read their names and art (their lower part sits below the window's edge). */
 function useHandWidth(): number {
-  const calc = () => Math.round(Math.min(150, Math.max(78, window.innerHeight * 0.13, Math.min(window.innerWidth * 0.075, 120))));
+  const calc = () => Math.round(Math.min(164, Math.max(84, window.innerHeight * 0.152, Math.min(window.innerWidth * 0.08, 124))));
   const [w, setW] = useState(calc);
   useEffect(() => {
     const on = () => setW(calc());
@@ -114,6 +116,13 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const tableRef = useRef<HTMLDivElement>(null);
   const handW = useHandWidth();
   const ctx: Ctx = { stops, passUntil, dummies };
+  // What each seat is dressed in: its commanders' colours, and its first commander's art for the playmat.
+  const looks = useMemo(() => {
+    const out: Record<PlayerId, SeatLook> = {};
+    for (const s of live.setup.seats) out[s.id] = matLook(s.commanders.map((n) => live.cards[n] && withPrinting(live.cards[n]!, s.skins?.[n])));
+    return out;
+  }, [live.setup, live.cards]);
+  const lookOf = (p: PlayerId): SeatLook => looks[p] ?? { colors: [] };
 
   // Who sits at the bottom, and whose hand and choices the screen shows.
   const who = decider(g);
@@ -151,7 +160,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const top = g.stack[g.stack.length - 1];
 
   // ---- acting -------------------------------------------------------------
-  const commit = (r: ReturnType<typeof step>, extraMark = true): boolean => {
+  const commit = (r: ReturnType<typeof step>, extraMark = true, until: PassUntil = passUntil): boolean => {
     if (!r.ok) return false;
     const lines = r.applied.steps.flatMap((s) => narrate(s.before, s.after, s.events, nextLogId));
     const actions = [...live.actions, ...r.applied.steps.map((s) => s.action)];
@@ -165,7 +174,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     setPickState(null);
     setPlanArrows([]);
     setHover(null);
-    if (passUntil && r.applied.state.turn !== passUntil.turn) setPassUntil(null);
+    setPassUntil(until && !passUntilDone(r.applied.state, until) ? until : null);
     return true;
   };
   const act = (action: Action, fromList = true): boolean => {
@@ -186,13 +195,13 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     else act(a);
   };
   const pass = () => viewer && act({ type: 'pass', player: viewer });
-  const endTurn = () => {
-    if (!viewer) return;
-    const until = { player: viewer, turn: g.turn };
-    setPassUntil(until);
-    const r = step(g, { type: 'pass', player: viewer }, { ...ctx, passUntil: until });
-    if (!commit(r)) setError({ text: r.ok ? '' : r.error, bug: true });
+  /** Passes priority, and keeps passing for this seat until the turn ends or (with a step) that step is reached. */
+  const passUntilThen = (until: NonNullable<PassUntil>) => {
+    const r = step(g, { type: 'pass', player: until.player }, { ...ctx, passUntil: until });
+    if (!commit(r, true, until)) setError({ text: r.ok ? '' : r.error, bug: true });
   };
+  const endTurn = () => viewer && passUntilThen({ player: viewer, turn: g.turn });
+  const toStep = (s: Step) => viewer && passUntilThen({ player: viewer, turn: g.turn, step: s });
 
   // ---- undo (solo and open hands): back to before the last decision ----------
   const undoable = canUndoIn(mode) && live.marks.length > 0 && !curtained;
@@ -320,8 +329,8 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
         : `To ${STEP_TO[peek.step] ?? STEP_NAME[peek.step].toLowerCase()}`;
 
   // ---- keys: Space/Enter primary, Esc cancel, F2 pass, F6 pass to end of turn, Z undo -----
-  const keyState = useRef({ pass, endTurn, undo, myPriority, flow, menu });
-  keyState.current = { pass, endTurn, undo, myPriority, flow, menu };
+  const keyState = useRef({ pass, endTurn, toStep, undo, myPriority, flow, menu, step: g.step });
+  keyState.current = { pass, endTurn, toStep, undo, myPriority, flow, menu, step: g.step };
   useEffect(() => {
     // A button clicked with the mouse doesn't keep the keyboard: Space after "Attack with all" is the main button, not
     // that one again. (A button reached with Tab keeps it — `detail` is 0 for a keyboard click.)
@@ -353,6 +362,9 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
       } else if (e.key === 'F2' && k.myPriority && !k.flow) {
         e.preventDefault();
         k.pass();
+      } else if (e.key === 'F4' && k.myPriority && !k.flow && TURN_STEPS.indexOf(k.step) < TURN_STEPS.indexOf('end')) {
+        e.preventDefault();
+        k.toStep('end');
       } else if (e.key === 'F6' && k.myPriority && !k.flow) {
         e.preventDefault();
         k.endTurn();
@@ -381,23 +393,47 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const [overlayBarEl, setOverlayBarEl] = useState<HTMLElement | null>(null);
   const prompt = error || (pendingMine && !overlayChoice) || flow;
   const nOpp = others.length;
-  const oppMax = nOpp === 1 ? 104 : nOpp === 2 ? 92 : 84;
+  // The largest a battlefield card is drawn; each seat's cards shrink from there to fit its room.
+  const oppMax = nOpp === 1 ? 138 : nOpp === 2 ? 112 : 96;
+  const myMax = 164;
+  const beforeEnd = TURN_STEPS.indexOf(g.step) < TURN_STEPS.indexOf('end');
 
   return (
     <PlanArrows.Provider value={setPlanArrows}>
       <ActionBarSlot.Provider value={barEl}>
-        <div className={`play mode-${mode} seats-${g.order.length}${prompt ? ' prompting' : ''}${myPriority ? ' my-priority' : ''}`} style={{ ['--hand-w' as string]: `${handW}px` }}>
+        <div className={`play mode-${mode} seats-${g.order.length}${prompt ? ' prompting' : ''}${myPriority ? ' my-priority' : ''}${viewer && who === viewer ? ' my-move' : ''}`} style={{ ['--hand-w' as string]: `${handW}px` }}>
           <div className="table" ref={tableRef} tabIndex={-1}>
             <div className={`opps n${nOpp}`}>
               {others.map((p) => (
-                <OpponentSeat key={p} g={g} view={view} player={p} h={h} deciding={who === p && !dummies.has(p)} maxW={oppMax} />
+                <OpponentSeat key={p} g={g} view={view} player={p} h={h} deciding={who === p && !dummies.has(p)} maxW={oppMax} look={lookOf(p)} />
               ))}
             </div>
-            <Midline g={g} view={view} who={who} log={live.log} viewer={viewer} logViewer={mode === 'open' ? null : viewer} pick={curtained ? null : pick} onFocus={setStackFocus} onHover={h.onHover} />
-            <MySeat g={g} view={view} player={seat} h={h} deciding={who === seat} maxW={128} />
+            <TurnBar
+              g={g}
+              view={view}
+              who={who}
+              log={live.log}
+              viewer={viewer}
+              logViewer={mode === 'open' ? null : viewer}
+              pick={curtained ? null : pick}
+              onFocus={setStackFocus}
+              onHover={h.onHover}
+              stops={stops[(viewer ?? humans[0])!] ?? DEFAULT_STOPS}
+              goTo={myPriority && !flow ? toStep : null}
+              toggleStop={
+                viewer
+                  ? (s) => {
+                      const mine = stops[viewer] ?? DEFAULT_STOPS;
+                      const k = g.active === viewer ? 'mine' : 'theirs';
+                      setStop(viewer, { ...mine, [k]: mine[k].includes(s) ? mine[k].filter((x) => x !== s) : [...mine[k], s] });
+                    }
+                  : null
+              }
+            />
+            <MySeat g={g} view={view} player={seat} h={h} deciding={who === seat} maxW={myMax} look={lookOf(seat)} />
             <div className="dock">
               <div className="dock-left">
-                <Plate g={g} player={seat} h={h} deciding={who === seat} me />
+                <Plate g={g} player={seat} h={h} deciding={who === seat} me look={lookOf(seat)} />
                 <Command g={g} view={view} player={seat} h={h} />
                 <Pool g={g} player={seat} />
               </div>
@@ -416,8 +452,13 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 <button type="button" className="primary pass" onClick={pass} title="Space or F2">
                   {passLabel}
                 </button>
+                {beforeEnd && (
+                  <button type="button" className="secondary" title="Pass until this turn’s end step and stop there, unless something targets you first (F4)" onClick={() => toStep('end')}>
+                    To end step
+                  </button>
+                )}
                 {(passLabel !== 'End turn' || top) && (
-                  <button type="button" className="secondary" title={`Pass until the turn ends, unless something targets you (F6)`} onClick={endTurn}>
+                  <button type="button" className="secondary" title="Pass until the turn ends, unless something targets you (F6)" onClick={endTurn}>
                     {g.active === viewer ? 'End turn' : 'Pass turn'}
                   </button>
                 )}
@@ -435,6 +476,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 {pendingMine && !overlayChoice ? (
                   <>
                     <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
+                    <Resolving g={g} view={view} />
                     {choicePanel}
                   </>
                 ) : flow ? (
@@ -477,6 +519,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 <ActionBarSlot.Provider value={overlayBarEl}>
                   <div className={`overlay-panel kind-${pendingMine.kind}`}>
                     <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
+                    <Resolving g={g} view={view} />
                     {choicePanel}
                     <div className="overlay-actions" ref={setOverlayBarEl} />
                   </div>
@@ -530,6 +573,31 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   );
 }
 
+/** What a choice is for: the spell or ability that stopped partway through resolving to ask. */
+function Resolving({ g, view }: { g: GameState; view: PlayerView }) {
+  const e = g.resolving?.entry;
+  if (!e) return null;
+  const id = e.kind === 'spell' ? e.object : e.source.id;
+  const o = view.objects[id];
+  const shown = o ? shownCard(view.cards, o) : null;
+  const text = e.kind === 'ability' ? e.text : (shown?.card.faces[shown.face]?.oracle ?? '');
+  return (
+    <div className="resolving">
+      {shown && (
+        <span className="resolving-card">
+          <CardView card={shown.card} faceIndex={shown.face} sizes="60px" />
+        </span>
+      )}
+      <p>
+        <strong>{e.kind === 'spell' ? publicName(e.object, g).split(' // ')[0] : e.sourceName}</strong>
+        <span className="resolving-text">
+          <RulesText text={text} />
+        </span>
+      </p>
+    </div>
+  );
+}
+
 const STEP_TO: Partial<Record<Step, string>> = {
   beginning_of_combat: 'combat',
   declare_attackers: 'combat',
@@ -544,38 +612,95 @@ const STEP_TO: Partial<Record<Step, string>> = {
 };
 
 // ---------------------------------------------------------------------------
-// The midline: turn and phase, the latest event, and the stack
+// The turn bar: whose turn it is, where in it we are (a later step is a button: pass until then), the latest event,
+// and the stack
 // ---------------------------------------------------------------------------
 
-const PHASES: [Step[], string][] = [
-  [['untap', 'upkeep'], 'Upkeep'],
-  [['draw'], 'Draw'],
-  [['main1'], 'Main'],
-  [['beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat'], 'Combat'],
-  [['main2'], 'Main 2'],
-  [['end', 'cleanup'], 'End'],
+const PHASES: { steps: Step[]; label: string; goto: Step }[] = [
+  { steps: ['untap', 'upkeep'], label: 'Upkeep', goto: 'upkeep' },
+  { steps: ['draw'], label: 'Draw', goto: 'draw' },
+  { steps: ['main1'], label: 'Main 1', goto: 'main1' },
+  { steps: ['beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat'], label: 'Combat', goto: 'beginning_of_combat' },
+  { steps: ['main2'], label: 'Main 2', goto: 'main2' },
+  { steps: ['end', 'cleanup'], label: 'End', goto: 'end' },
 ];
 
-function Midline({ g, view, who, log, viewer, logViewer, pick, onFocus, onHover }: { g: GameState; view: PlayerView; who: PlayerId | null; log: LogLine[]; viewer: PlayerId | null; logViewer: PlayerId | null; pick: Pick | null; onFocus: (i: number | null) => void; onHover: (id: string | null, el?: HTMLElement) => void }) {
+function TurnBar({
+  g,
+  view,
+  who,
+  log,
+  viewer,
+  logViewer,
+  pick,
+  onFocus,
+  onHover,
+  stops,
+  goTo,
+  toggleStop,
+}: {
+  g: GameState;
+  view: PlayerView;
+  who: PlayerId | null;
+  log: LogLine[];
+  viewer: PlayerId | null;
+  logViewer: PlayerId | null;
+  pick: Pick | null;
+  onFocus: (i: number | null) => void;
+  onHover: (id: string | null, el?: HTMLElement) => void;
+  /** The seat's usual stops, marked on the steps. */
+  stops: Stops;
+  /** Passes until a later step of this turn (null when the seat can't pass now). */
+  goTo: ((s: Step) => void) | null;
+  /** Adds or removes a usual stop for this kind of turn (the seat's own, or another player's). */
+  toggleStop: ((s: Step) => void) | null;
+}) {
   const name = (p: PlayerId) => g.players[p]?.name ?? p;
   const last = [...log].reverse().find((l) => lineFor(l, logViewer));
+  const at = TURN_STEPS.indexOf(g.step);
+  const mine = g.active === viewer;
+  const usual = mine ? stops.mine : stops.theirs;
   return (
-    <div className="midline">
-      <div className="phase-track" aria-label="Turn structure">
-        <span className="turn-label">{g.started ? <>Turn {g.turn} · <strong>{name(g.active)}</strong></> : 'Opening hands'}</span>
-        {g.started && (
-          <ol className="phases">
-            {PHASES.map(([steps, label]) => {
-              const now = steps.includes(g.step);
-              return (
-                <li key={label} className={now ? 'now' : ''} aria-current={now ? 'step' : undefined} title={now ? STEP_NAME[g.step] : label}>
-                  {now && g.step !== 'main1' && g.step !== 'main2' && label === 'Combat' ? STEP_NAME[g.step].replace(/ step$/, '') : label}
-                </li>
-              );
-            })}
-          </ol>
+    <div className="turnbar">
+      <div className="turn-now">
+        {g.started ? (
+          <>
+            {/* A player's own count: everyone's first turn is turn 1, then everyone's second is turn 2. */}
+            <span className="turn-no">Turn {g.players[g.active]?.turnsBegun ?? g.turn}</span>
+            <span className="turn-who">{mine ? 'Your turn' : `${name(g.active)}’s turn`}</span>
+          </>
+        ) : (
+          <span className="turn-who">Opening hands</span>
         )}
       </div>
+      {g.started && (
+        <ol className="steps" aria-label="Steps of the turn">
+          {PHASES.map((ph) => {
+            const now = ph.steps.includes(g.step);
+            const later = TURN_STEPS.indexOf(ph.goto) > at;
+            const can = later && Boolean(goTo);
+            const stop = ph.steps.some((s) => usual.includes(s));
+            const label = now && ph.label === 'Combat' ? STEP_NAME[g.step].replace(/ step$/, '') : ph.label;
+            const whose = mine ? 'your turns' : 'other players’ turns';
+            return (
+              <li key={ph.label} className={`step${now ? ' now' : later ? ' later' : ' past'}${stop ? ' stop' : ''}`} aria-current={now ? 'step' : undefined}>
+                <button
+                  type="button"
+                  aria-disabled={!can}
+                  onClick={() => can && goTo?.(ph.goto)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    toggleStop?.(ph.goto);
+                  }}
+                  title={`${can ? `Pass until ${ph.label === 'End' ? 'the end step' : ph.label.toLowerCase()} and stop there. ` : ''}${toggleStop ? `Right-click to ${stop ? 'stop' : 'start'} stopping here on ${whose}.` : ''}`}
+                >
+                  {label}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
       <p className="ticker" aria-live="polite">
         {who && who !== viewer && !g.over ? <span className="waiting">Waiting for {name(who)}… </span> : null}
         {last ? asYou(last.text) : ''}
@@ -585,7 +710,7 @@ function Midline({ g, view, who, log, viewer, logViewer, pick, onFocus, onHover 
   );
 }
 
-/** The stack, as overlapping cards at the right of the midline (top of the stack in front). */
+/** The stack, as overlapping cards at the right of the turn bar (top of the stack in front). */
 function StackZone({ g, view, pick, onFocus, onHover }: { g: GameState; view: PlayerView; pick: Pick | null; onFocus: (i: number | null) => void; onHover: (id: string | null, el?: HTMLElement) => void }) {
   if (!g.stack.length) return null;
   return (
@@ -815,10 +940,28 @@ function GameOver({ g, onNew }: { g: GameState; onNew: () => void }) {
 function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChange: (s: Stops) => void; name: string; onClose: () => void }) {
   const steps: Step[] = ['upkeep', 'draw', 'main1', 'beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat', 'main2', 'end'];
   const toggle = (list: Step[], s: Step) => (list.includes(s) ? list.filter((x) => x !== s) : [...list, s]);
+  type Pick2 = { mine: Step[]; theirs: Step[] };
+  const same = (a: Step[], b: Step[]) => a.length === b.length && b.every((x) => a.includes(x));
   return (
     <div className="stops-pop" role="dialog" aria-label="Stops">
       <p className="pop-title">Where {name} stops</p>
-      <p className="hint">With nothing on the stack, priority is passed for you everywhere else. Combat choices and anything you could answer always stop.</p>
+      <p className="hint">With nothing on the stack, priority is passed for you everywhere else. Combat choices and anything you could answer always stop. To stop somewhere once, click that step in the turn bar.</p>
+      <div className="stops-presets" role="group" aria-label="Presets">
+        {(
+          [
+            ['Main phases', { mine: ['main1', 'main2'], theirs: [] }],
+            ['Every step of my turn', { mine: steps, theirs: [] }],
+            ['Every step of every turn', { mine: steps, theirs: steps }],
+          ] as [string, Pick2][]
+        ).map(([label, v]) => {
+          const on = same(stops.mine, v.mine) && same(stops.theirs, v.theirs);
+          return (
+            <button key={label} type="button" className={on ? 'chip-btn selected' : 'chip-btn'} aria-pressed={on} onClick={() => onChange({ ...stops, mine: v.mine, theirs: v.theirs, ...(v.mine.length > 2 ? { skipIfNothing: false } : {}) })}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
       {(['mine', 'theirs'] as const).map((k) => (
         <div key={k} className="stops-row">
           <span className="stops-label">{k === 'mine' ? 'Your turn' : 'Their turns'}</span>
@@ -839,7 +982,7 @@ function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChang
         <input type="checkbox" checked={stops.hold} onChange={(e) => onChange({ ...stops, hold: e.target.checked })} />
         Hold priority after I cast or activate
       </label>
-      <p className="hint keys">Keys: Space or Enter for the main button · F2 pass · F6 pass to end of turn · Z undo · Esc cancel</p>
+      <p className="hint keys">Keys: Space or Enter for the main button. F2 pass, F4 to the end step, F6 end the turn, Z undo, Esc cancel.</p>
       <button type="button" className="ghost tiny" onClick={onClose}>
         Done
       </button>

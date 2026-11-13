@@ -91,7 +91,8 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
         push('turn', `The game begins. ${who(e.order[0]!)} goes first.`);
         break;
       case 'turn_began':
-        push('turn', `Turn ${e.turn} — ${who(e.player)}`);
+        // A player's own count of turns: everyone's first turn is turn 1.
+        push('turn', `Turn ${after.players[e.player]?.turnsBegun ?? e.turn} — ${who(e.player)}`);
         break;
       case 'mulligan':
         push('info', `${who(e.player)} mulligans (${plural(e.count, 'mulligan')} so far).`);

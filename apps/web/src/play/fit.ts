@@ -11,6 +11,8 @@ export interface Item {
   scale?: number;
   /** How many cards are stacked in it (a pile of identical lands shows a sliver of each, up to four). */
   stack?: number;
+  /** Extra room before it, in pixels (the first of a group that's set apart from the one before). */
+  pad?: number;
 }
 
 /** One lane: its items, laid out in rows (wrapping when they don't fit on one). */
@@ -36,7 +38,7 @@ export function itemWidth(it: Item, w: number): number {
   const s = it.scale ?? 1;
   const base = (it.tapped ? w * RATIO : w) * s;
   const extra = Math.min(Math.max((it.stack ?? 1) - 1, 0), 3) * base * 0.18;
-  return base + extra;
+  return base + extra + (it.pad ?? 0);
 }
 
 /** Rows a lane needs at card width w, filling each row before starting the next. */
@@ -78,4 +80,26 @@ export function fitCardWidth(lanes: Lane[], o: FitOptions): number {
     if (fits && total <= o.height) return w;
   }
   return min;
+}
+
+/**
+ * The card width at which every group fits side by side in one row, at most one card high (0 when even the minimum
+ * doesn't). Groups are kept apart by `groupGap`.
+ */
+export function fitRow(groups: Lane[], o: FitOptions & { groupGap?: number }): number {
+  const gap = o.gap ?? 8;
+  const chips = o.chips ?? 14;
+  const groupGap = o.groupGap ?? 24;
+  const min = o.min ?? 40;
+  const max = o.max ?? 140;
+  const filled = groups.filter((g) => g.length);
+  if (o.width <= 0 || o.height <= 0) return 0;
+  const tall = Math.max(...filled.flat().map((it) => it.scale ?? 1), 0);
+  for (let w = max; w >= min; w -= 2) {
+    if (w * RATIO * tall + chips > o.height) continue;
+    let total = Math.max(filled.length - 1, 0) * groupGap;
+    for (const g of filled) total += g.reduce((n, it) => n + itemWidth(it, w), 0) + (g.length - 1) * gap;
+    if (total <= o.width) return w;
+  }
+  return 0;
 }

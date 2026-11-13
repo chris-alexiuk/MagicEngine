@@ -2,6 +2,7 @@ import type { CardDef, FaceDef } from '@mtg/schema';
 import { imageUrl } from '@mtg/schema';
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import { useBundledArt } from '../art';
+import type { Printing } from '../skins';
 import { keywordIcons, KeywordIcons, ManaCost, ManaSymbol, RulesText, TypeIcon } from './mana';
 
 /**
@@ -62,6 +63,19 @@ export function frameOf(face: FaceDef): string {
   return 'colorless';
 }
 
+/**
+ * The colours of a proxy's field (where a printed card has its art): a card's one colour, a two-colour card's two
+ * side by side, gold for more; a land takes the colours of the mana it makes.
+ */
+function fieldOf(face: FaceDef): string {
+  const of = (list: readonly string[]) => (list.length === 1 || list.length === 2 ? list.map((c) => c.toLowerCase()) : null);
+  const own = of(face.colors);
+  if (own) return own.join(' ');
+  if (face.colors.length > 2) return 'gold';
+  if (face.types.includes('Land')) return of(landMana(face).filter((c) => c !== 'C'))?.join(' ') ?? (landMana(face).length > 2 ? 'gold' : 'land');
+  return face.types.includes('Artifact') ? 'artifact' : 'colorless';
+}
+
 /** How much rules text there is, which sets its size in the text box. */
 function textLength(oracle: string): 's' | 'm' | 'l' | 'xl' {
   const n = oracle.replace(/\([^)]*\)/g, '').length;
@@ -97,7 +111,7 @@ export function ProxyFace({ face, stats }: { face: FaceDef; stats?: Stats }) {
   const reminderless = face.oracle.replace(/\s*\([^)]*\)/g, '');
   const lands = landMana(face);
   return (
-    <span className={`cf frame-${frameOf(face)}`} data-len={textLength(face.oracle)} {...(reminderless.trim() ? {} : { 'data-text': 'none' })} aria-hidden="true">
+    <span className={`cf frame-${frameOf(face)}`} data-field={fieldOf(face)} data-len={textLength(face.oracle)} {...(reminderless.trim() ? {} : { 'data-text': 'none' })} aria-hidden="true">
       <span className="cf-in">
         <span className="cf-name">
           <span className="cf-title">{face.name}</span>
@@ -163,11 +177,6 @@ function useSeen(ref: RefObject<Element | null>, now: boolean): boolean {
   return seen;
 }
 
-/** Another printing's scan to draw instead of the card's own (a deck's "Seymour Guado" for Kinnan, Bonder Prodigy). */
-export interface Printing {
-  img?: string;
-  backImg?: string;
-}
 
 export function CardView({
   card,
@@ -196,15 +205,26 @@ export function CardView({
   // Art shipped with the app comes first (a host that blocks the CDN has nothing else); then the CDN.
   const art = useBundledArt(path, seen);
   const fromBundle = art.bundled && !art.failed;
-  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading');
-  useEffect(() => setState('loading'), [path, fromBundle]);
+  // How the image named by `src` fared. Kept with the name, so nothing has to be reset when the card changes (a
+  // reset after the fact can land on top of an image that loaded at once, and leave the proxy showing for good).
+  const src = fromBundle ? (art.url ?? '') : `cdn:${path ?? ''}`;
+  const [done, setDone] = useState<{ src: string; ok: boolean } | null>(null);
+  const state: 'loading' | 'loaded' | 'failed' = done?.src === src ? (done.ok ? 'loaded' : 'failed') : fromBundle && art.cached ? 'loaded' : 'loading';
   const tryImage = Boolean(path) && state !== 'failed' && (fromBundle ? art.url !== null : !noImages);
   return (
     <span ref={ref} className={`card${state === 'loaded' && tryImage ? ' has-img' : ''}`}>
       {/* The proxy sits underneath while the image loads, so a slow or blocked image never leaves a blank card. */}
       {(state !== 'loaded' || !tryImage) && <ProxyFace face={face} {...(stats ? { stats } : {})} />}
       {tryImage && fromBundle && (
-        <img className={state === 'loaded' ? 'card-img loaded' : 'card-img'} src={art.url!} alt={face.name} decoding="async" draggable={false} onLoad={() => setState('loaded')} onError={() => setState('failed')} />
+        <img
+          className={state === 'loaded' ? `card-img loaded${art.cached && done?.src !== src ? ' at-once' : ''}` : 'card-img'}
+          src={art.url!}
+          alt={face.name}
+          decoding={art.cached ? 'sync' : 'async'}
+          draggable={false}
+          onLoad={() => setDone({ src, ok: true })}
+          onError={() => setDone({ src, ok: false })}
+        />
       )}
       {tryImage && !fromBundle && (
         <img
@@ -218,11 +238,11 @@ export function CardView({
           draggable={false}
           onLoad={() => {
             noteImage(true);
-            setState('loaded');
+            setDone({ src, ok: true });
           }}
           onError={() => {
             noteImage(false);
-            setState('failed');
+            setDone({ src, ok: false });
           }}
         />
       )}

@@ -1,5 +1,6 @@
 import type { CardDBMeta } from '@mtg/schema';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { artBundleSize, useArtBundle } from '../art';
 import {
   BUDGET_CHOICES,
   clearImageCache,
@@ -16,6 +17,8 @@ export function StoragePanel({ open, onClose, meta }: { open: boolean; onClose: 
   const [quota, setQuota] = useState<{ usage: number; quota: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const supported = imageCacheSupported();
+  // Re-read when a bundle of scans arrives with the app.
+  const bundled = useArtBundle() ? artBundleSize() : null;
 
   const refresh = useCallback(async () => {
     setStats(await imageCacheStats());
@@ -61,7 +64,12 @@ export function StoragePanel({ open, onClose, meta }: { open: boolean; onClose: 
 
         <section>
           <h3>Card images</h3>
-          {!supported && (
+          {bundled !== null && (
+            <p>
+              Scans of the {bundled.toLocaleString()} most-played cards, and of the tokens they make, come with the app: they show even where the image server can’t be reached. Any other card is drawn by the app, with its rules text.
+            </p>
+          )}
+          {!supported && bundled === null && (
             <p className="muted">
               Image caching needs a secure connection (https or localhost). Images still load; the browser’s normal cache
               handles them.
@@ -114,6 +122,13 @@ export function StoragePanel({ open, onClose, meta }: { open: boolean; onClose: 
             </p>
           </section>
         )}
+
+        <section>
+          <h3>About</h3>
+          <p className="muted small">
+            MagicEngine is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC. Card data and card images come from Scryfall.
+          </p>
+        </section>
       </form>
     </dialog>
   );

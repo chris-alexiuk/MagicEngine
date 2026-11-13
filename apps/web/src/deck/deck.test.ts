@@ -4,8 +4,10 @@ import type { CardDef } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
 import { deckToText } from './exportDeck';
 import { importText } from './importDeck';
-import { commanderProblem, copyLimit, pairProblem, validateDeck, type Deck } from './model';
-import { buildIndex, normalizeName } from './names';
+import { commanderProblem, copyLimit, deckPrintings, pairProblem, pruneSkins, skinOf, validateDeck, type Deck } from './model';
+import { akaByPrinting, buildIndex, normalizeName } from './names';
+import { compileQuery } from '../search';
+import { withPrinting } from '../skins';
 import { parseCardLine, parseDeckText } from './parse';
 import { archidektToText, moxfieldToText, parseDeckUrl } from './remote';
 
@@ -29,7 +31,24 @@ const extra: CardDef[] = [
   make({ name: 'Seven Test', type_line: 'Creature — Dwarf', oracle_text: 'A deck can have up to seven cards named Seven Test.', color_identity: ['R'] }),
   make({ name: 'Banned Thing', type_line: 'Artifact', legalities: { commander: 'banned' } }),
 ];
-const cards = [...compileCards(fixture).db.cards, ...extra];
+// Kinnan's printing in the Final Fantasy "Through the Ages" series is named for Seymour Guado; a double-faced card's
+// other-name printing names each face.
+const kinnanRaw = fixture.find((c) => c.name === 'Kinnan, Bonder Prodigy')!;
+const delverRaw = fixture.find((c) => c.name.startsWith('Delver of Secrets'))!;
+const scan = (id: string, side = 'front') => ({ normal: `https://cards.scryfall.io/normal/${side}/a/b/${id}.jpg?1` });
+const printings: ScryfallCard[] = [
+  { ...kinnanRaw, id: 'fca-55', lang: 'en', set: 'fca', collector_number: '55', released_at: '2025-06-13', flavor_name: 'Seymour Guado', image_uris: scan('fca-55') },
+  {
+    ...delverRaw,
+    id: 'sld-700',
+    lang: 'en',
+    set: 'sld',
+    collector_number: '700',
+    released_at: '2024-01-01',
+    card_faces: [{ ...delverRaw.card_faces![0]!, flavor_name: 'Small Monster', image_uris: scan('sld-700') }, { ...delverRaw.card_faces![1]!, flavor_name: 'Big Monster', image_uris: scan('sld-700', 'back') }],
+  },
+];
+const cards = [...compileCards([...fixture, ...printings]).db.cards, ...extra];
 const index = buildIndex(cards);
 const card = (n: string) => index.get(n)!;
 
@@ -138,6 +157,60 @@ describe('resolveImport', () => {
     const r = importText('Commander\n1 Kinnan, Bonder Prodigy\nDeck\n1 Island\n2 Island\n1 Kinnan, Bonder Prodigy', index);
     expect(r.main).toEqual([{ name: 'Island', count: 3 }]);
     expect(r.notes.join(' ')).toMatch(/kept it as commander/);
+  });
+});
+
+describe('other printed names', () => {
+  const kinnan = card('Kinnan, Bonder Prodigy');
+
+  it('a name from another printing finds the card, and says which printing', () => {
+    expect(index.find('Seymour Guado')).toEqual({ card: kinnan, aka: { name: 'Seymour Guado', set: 'fca', number: '55', img: 'front/a/b/fca-55.jpg?1' } });
+    expect(index.lookup('seymour guado')).toBe(kinnan);
+    // The card's own name is just the card.
+    expect(index.find('Kinnan, Bonder Prodigy')).toEqual({ card: kinnan });
+    // Both faces' names, or the front one.
+    expect(index.find('Small Monster // Big Monster')!.card.name).toMatch(/^Delver of Secrets/);
+    expect(index.find('Small Monster')!.aka!.backImg).toBe('back/a/b/sld-700.jpg?1');
+    expect(index.find('Nobody At All')).toBeUndefined();
+  });
+
+  it('a rebalanced Arena name ("A-…") is the card', () => {
+    expect(index.lookup('A-Sol Ring')).toBe(card('Sol Ring'));
+    expect(index.lookup('A-')).toBeUndefined();
+  });
+
+  it('a deck list using the other name imports the card and remembers the printing', () => {
+    const r = importText('Commander\n1 Seymour Guado (FCA) 55\n\nDeck\n1 Sol Ring\n1 Forest', index);
+    expect(r.unmatched).toEqual([]);
+    expect(r.commanders).toEqual(['Kinnan, Bonder Prodigy']);
+    expect(r.skins).toEqual({ 'Kinnan, Bonder Prodigy': { as: 'Seymour Guado', set: 'fca', number: '55' } });
+    expect(r.notes.join(' ')).toContain('Seymour Guado is Kinnan, Bonder Prodigy');
+  });
+
+  it('so does the card’s own name with that printing’s set and number', () => {
+    expect(akaByPrinting(kinnan, 'FCA', '55')?.name).toBe('Seymour Guado');
+    expect(akaByPrinting(kinnan, 'IKO', '192')).toBeUndefined();
+    const r = importText('1 Kinnan, Bonder Prodigy (FCA) 55 *F*\n1 Sol Ring (CMM) 400', index);
+    expect(r.skins).toEqual({ 'Kinnan, Bonder Prodigy': { as: 'Seymour Guado', set: 'fca', number: '55' } });
+  });
+
+  it('the deck is drawn and played with that printing, and exported with it', () => {
+    const r = importText('Commander\n1 Seymour Guado\n\nDeck\n1 Sol Ring', index);
+    const deck: Deck = { id: 'd', name: 'T', commanders: r.commanders, main: r.main, sideboard: [], updatedAt: '', skins: r.skins };
+    expect(skinOf(deck, kinnan)?.img).toBe('front/a/b/fca-55.jpg?1');
+    expect(withPrinting(kinnan, skinOf(deck, kinnan)).faces[0]!.img).toBe('front/a/b/fca-55.jpg?1');
+    // The card itself is untouched: its own name, text and usual scan.
+    expect(kinnan.faces[0]!.img).not.toBe('front/a/b/fca-55.jpg?1');
+    expect(deckPrintings(deck, index.get)).toEqual({ 'Kinnan, Bonder Prodigy': { img: 'front/a/b/fca-55.jpg?1' } });
+    const text = deckToText(deck);
+    expect(text).toContain('1 Kinnan, Bonder Prodigy (FCA) 55');
+    expect(importText(text, index).skins).toEqual(r.skins);
+    // A card that left the deck takes its printing with it.
+    expect(pruneSkins({ ...deck, commanders: [] }).skins).toBeUndefined();
+  });
+
+  it('searching by the other name finds the card', () => {
+    expect(cards.filter(compileQuery('seymour').test).map((c) => c.name)).toEqual(['Kinnan, Bonder Prodigy']);
   });
 });
 

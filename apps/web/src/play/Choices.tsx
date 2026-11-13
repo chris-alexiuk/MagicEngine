@@ -64,10 +64,11 @@ function TargetChip({ g, t, selected, onClick }: { g: GameState; t: Target; sele
   );
 }
 
-function Confirm({ ok, label = 'Confirm', why, onClick, children }: { ok: boolean; label?: string; why?: string | null; onClick: () => void; children?: React.ReactNode }) {
+/** The button that answers a choice. `quiet`: an answer of "nothing", which shouldn't be the one Space presses. */
+function Confirm({ ok, label = 'Confirm', why, onClick, children, quiet }: { ok: boolean; label?: string; why?: string | null; onClick: () => void; children?: React.ReactNode; quiet?: boolean }) {
   return (
     <Actions hint={why ? <span className="warn-text">{why}</span> : null}>
-      <button type="button" className="primary confirm" disabled={!ok} onClick={onClick}>
+      <button type="button" className={quiet ? 'secondary confirm' : 'primary confirm'} disabled={!ok} onClick={onClick}>
         {label}
       </button>
       {children}
@@ -389,12 +390,26 @@ export function ObjectPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, chosen]);
   const problem = chosen.length < min ? `Choose ${min === max ? min : `at least ${min}`}.` : (extraOk?.(chosen) ?? null);
+  const most = Math.min(max, candidates.length);
+  // Nothing chosen where nothing has to be: the button says so, and isn't the main one (Space mustn't skip the choice).
+  const none = min === 0 && chosen.length === 0;
+  const button = !candidates.length ? 'Continue' : none ? `${label} none` : chosen.length === 1 ? `${label} ${publicName(chosen[0]!, view as unknown as GameState)}` : `${label} ${chosen.length}`;
   return (
     <div className="flow-step">
       <p className="flow-title">{title}</p>
       <p className="hint">
-        {min === max ? `Choose ${min}` : min === 0 ? (max >= candidates.length && candidates.length > 1 ? 'Choose any number' : `Choose up to ${Math.min(max, candidates.length)}`) : `Choose ${min}–${max}`}
-        {ordered ? ' (in order: the first you pick comes first)' : ''}. {chosen.length} chosen.
+        {!candidates.length
+          ? 'None of these can be chosen.'
+          : min === max
+            ? `Choose ${min}`
+            : min === 0
+              ? most === 1
+                ? 'Choose one, or none'
+                : max >= candidates.length
+                  ? 'Choose any number'
+                  : `Choose up to ${most}`
+              : `Choose ${min}–${max}`}
+        {candidates.length ? `${ordered ? ' (in order: the first you pick comes first)' : ''}.${most > 1 ? ` ${chosen.length} chosen.` : ''}` : ''}
       </p>
       <div className="tile-row">
         {candidates.map((id) => (
@@ -402,7 +417,7 @@ export function ObjectPicker({
         ))}
       </div>
       {children}
-      <Confirm ok={!problem && chosen.length <= max} why={chosen.length ? problem : null} label={label} onClick={() => onDone(chosen)} />
+      <Confirm ok={!problem && chosen.length <= max} why={chosen.length ? problem : null} label={button} quiet={none && candidates.length > 0} onClick={() => onDone(chosen)} />
     </div>
   );
 }
@@ -1018,8 +1033,8 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
         >
           {(p.revealed?.length || p.seen?.length) ? (
             <>
-              <p className="hint">{p.revealed?.length ? 'Revealed:' : 'You also see:'}</p>
-              <div className="tile-row">
+              <p className="hint">{p.revealed?.length ? 'Revealed:' : p.candidates.length ? 'You also see:' : 'You see:'}</p>
+              <div className="tile-row seen">
                 {[...(p.revealed ?? []), ...(p.seen ?? [])].filter((id) => !p.candidates.includes(id)).map((id) => (
                   <ObjectTile key={id} view={view} id={id} />
                 ))}

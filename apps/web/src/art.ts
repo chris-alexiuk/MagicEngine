@@ -153,25 +153,17 @@ export function useArtBundle(): boolean {
 
 /**
  * The bundled image for a card face: `bundled` says whether there is one at all, `url` is set once it has been read.
- * Nothing is fetched until `wanted` (the card is on screen, or about to be).
+ * Nothing is fetched until `wanted` (the card is on screen, or about to be). An image read before is there at once
+ * (`cached`): a card that moves from the hand to the battlefield shows its scan from the first frame.
  */
-export function useBundledArt(img: string | undefined, wanted: boolean): { bundled: boolean; url: string | null; failed: boolean } {
+export function useBundledArt(img: string | undefined, wanted: boolean): { bundled: boolean; url: string | null; failed: boolean; cached: boolean } {
   const present = useArtBundle();
   const key = img ? artKey(img) : null;
   const bundled = Boolean(present && key && manifest?.images[key]);
-  const [state, setState] = useState<{ key: string | null; url: string | null; failed: boolean }>(() => ({ key, url: (key && ready.get(key)) ?? null, failed: false }));
+  const cached = bundled ? ready.get(key!) : undefined;
+  const [state, setState] = useState<{ key: string | null; url: string | null; failed: boolean }>({ key: null, url: null, failed: false });
   useEffect(() => {
-    if (!bundled || !img || !key) {
-      setState({ key, url: null, failed: false });
-      return;
-    }
-    const have = ready.get(key);
-    if (have) {
-      setState({ key, url: have, failed: false });
-      return;
-    }
-    setState({ key, url: null, failed: false });
-    if (!wanted) return;
+    if (!bundled || !img || !key || cached || !wanted) return;
     let live = true;
     void artUrl(img).then((url) => {
       if (live) setState({ key, url, failed: url === null });
@@ -179,6 +171,7 @@ export function useBundledArt(img: string | undefined, wanted: boolean): { bundl
     return () => {
       live = false;
     };
-  }, [bundled, img, key, wanted]);
-  return { bundled, url: state.key === key ? state.url : null, failed: state.key === key && state.failed };
+  }, [bundled, img, key, wanted, cached]);
+  const mine = state.key === key;
+  return { bundled, url: cached ?? (mine ? state.url : null), failed: !cached && mine && state.failed, cached: Boolean(cached) };
 }

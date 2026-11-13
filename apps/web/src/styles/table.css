@@ -1,6 +1,8 @@
 /* ======================================================================= */
-/* The table: opponents across the top, a midline (turn, latest event, the  */
-/* stack), your battlefield, then your dock (plate, hand, piles, buttons).  */
+/* The table: opponents across the top, the turn bar (whose turn, where in  */
+/* it, the latest event, the stack), your battlefield, then your dock       */
+/* (life, commander, hand, piles, buttons). Each seat's cards lie on its    */
+/* own playmat.                                                             */
 /* ======================================================================= */
 
 .app.view-play {
@@ -16,9 +18,10 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  --dock-h: calc(var(--hand-w) * 1.397 + 20px);
-  --pile-w: 34px;
-  --cmd-w: 60px;
+  /* The hand shows the upper two thirds of its cards; the rest is below the window's edge. */
+  --dock-h: calc(var(--hand-w) * 0.95 + 18px);
+  --pile-w: 46px;
+  --cmd-w: 78px;
 }
 .table {
   position: absolute;
@@ -28,9 +31,11 @@
   display: grid;
   grid-template-rows: minmax(0, 0.8fr) auto minmax(0, 1fr) var(--dock-h);
   background:
-    radial-gradient(ellipse 80% 65% at 50% 52%, rgba(255, 255, 255, 0.035), transparent 70%),
-    radial-gradient(ellipse 90% 80% at 50% 50%, var(--felt), var(--felt-edge) 88%);
+    var(--grain),
+    radial-gradient(ellipse 85% 70% at 50% 46%, color-mix(in srgb, var(--felt) 88%, #fff) 0%, var(--felt) 45%, var(--felt-edge) 100%);
+  /* Clipped, not scrollable: the hand's lower part is below the edge, and focusing a card mustn't scroll the table. */
   overflow: hidden;
+  overflow: clip;
   outline: none;
 }
 .seats-3 .table,
@@ -39,15 +44,15 @@
 }
 /* A solo playtest: the dummy gets a slim strip, you get the table. */
 .mode-solo .table {
-  grid-template-rows: minmax(118px, 0.34fr) auto minmax(0, 1fr) var(--dock-h);
+  grid-template-rows: minmax(112px, 0.3fr) auto minmax(0, 1fr) var(--dock-h);
 }
 
-/* ---- Seats -------------------------------------------------------------- */
+/* ---- Seats and their playmats --------------------------------------------- */
 
 .opps {
   display: grid;
-  gap: 8px;
-  padding: 8px 10px 6px;
+  gap: 10px;
+  padding: 10px 12px 0;
   min-height: 0;
 }
 .opps.n2 {
@@ -57,34 +62,42 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .seat {
+  position: relative;
+  isolation: isolate;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  border-radius: 16px;
 }
 .seat.opp {
-  padding: 5px 8px 6px;
-  border: 1px solid var(--line-soft);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.015);
-  --pile-w: 26px;
-  --cmd-w: 30px;
+  padding: 8px 14px 10px;
+  --pile-w: 30px;
+  --cmd-w: 36px;
 }
-.seat.opp.active {
-  border-color: #3b4049;
-  background: rgba(255, 255, 255, 0.03);
+.opps:not(.n2):not(.n3) .seat.opp {
+  --pile-w: 36px;
+  --cmd-w: 46px;
 }
 .seat.opp.lost {
   opacity: 0.45;
 }
 .seat.me {
-  padding: 6px 14px 2px;
+  margin: 0 12px;
+  padding: 10px 16px 8px;
+}
+/* The seat whose turn it is: its mat is lit. */
+.seat.active .mat {
+  --scrim: 0.5;
+}
+.seat.active .mat::after {
+  border-color: rgba(255, 255, 255, 0.24);
 }
 .seat-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
+  gap: 10px;
+  min-height: 48px;
   min-width: 0;
 }
 .seat-bar .grow {
@@ -147,8 +160,45 @@
   margin-left: auto;
 }
 .lane-lands .perm {
-  --w: calc(var(--cw) * 0.85);
-  --h: calc(var(--ch) * 0.85);
+  --w: calc(var(--cw) * 0.88);
+  --h: calc(var(--ch) * 0.88);
+}
+/* Few permanents: one row of larger cards — lands, creatures, the rest. */
+.lanes.one-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+.lanes.one-row .lane.front,
+.lanes.one-row .lane-lands,
+.lanes.one-row .lane-other {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  align-content: center;
+  margin: 0;
+}
+/* An empty lane says what goes there (your own seat, and a lone opponent's). */
+.lanes.near .lane.front:empty::before,
+.lanes.near .lane-lands:empty::before,
+.lanes.near .lane-other:empty::before,
+.mode-open .opps:not(.n2):not(.n3) .lane.front:empty::before,
+.mode-hotseat .opps:not(.n2):not(.n3) .lane.front:empty::before {
+  content: 'Creatures';
+  align-self: center;
+  padding: 5px 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.42);
+  white-space: nowrap;
+}
+.lanes.near .lane-lands:empty::before {
+  content: 'Lands';
+}
+.lanes.near .lane-other:empty::before {
+  content: 'Artifacts, enchantments, planeswalkers';
 }
 
 /* ---- A permanent: the card, sideways when tapped (with room kept for it), chips under it ---- */
@@ -190,6 +240,9 @@
   height: var(--h);
   transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1), left 160ms ease, top 180ms ease;
 }
+.perm-face .card {
+  box-shadow: 0 5px 12px -5px rgba(0, 0, 0, 0.85), 0 1px 2px rgba(0, 0, 0, 0.5);
+}
 .perm.tapped .perm-face {
   top: calc((var(--w) - var(--h)) / 2);
   left: calc(var(--i) * var(--off) + (var(--h) - var(--w)) / 2);
@@ -227,7 +280,7 @@
 .perm-chips > span {
   padding: 0 5px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.62);
   color: var(--ink);
   white-space: nowrap;
 }
@@ -246,15 +299,32 @@
   color: #fff;
 }
 .perm-chips .chip-ctr {
-  background: rgba(70, 76, 88, 0.92);
+  background: rgba(64, 58, 53, 0.94);
 }
 .perm.sick .perm-chips::before {
   content: 'sick';
   padding: 0 5px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(0, 0, 0, 0.5);
   color: var(--ink-3);
   font-weight: 550;
+}
+.token-mark {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f2eee8;
+  color: #1a1715;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 .count-badge {
   position: absolute;
@@ -264,10 +334,10 @@
   z-index: 2;
   padding: 0 6px;
   border-radius: 4px;
-  background: #3c424c;
-  color: var(--ink);
+  background: #f2eee8;
+  color: #1a1715;
   font-size: 10.5px;
-  font-weight: 750;
+  font-weight: 800;
   line-height: 14px;
 }
 .perm:has(.count-badge) .perm-chips {
@@ -330,7 +400,7 @@
 }
 /* Lands that only make mana: clickable to tap them, but not lit up. */
 .tcard.mana-only .card {
-  box-shadow: none;
+  box-shadow: 0 5px 12px -5px rgba(0, 0, 0, 0.85);
 }
 .tcard.mana-only:hover .card {
   box-shadow: 0 0 0 2px rgba(79, 179, 255, 0.55);
@@ -338,7 +408,6 @@
 .tcard.will-tap .card {
   outline: 2px dashed var(--act);
   outline-offset: 3px;
-  filter: brightness(1.1);
 }
 .tcard.selected .card {
   box-shadow: 0 0 0 2px #fff, 0 0 18px rgba(255, 255, 255, 0.35);
@@ -362,60 +431,69 @@
   box-shadow: 0 0 0 2px #ffa45c, 0 0 14px rgba(255, 164, 92, 0.45);
 }
 
-/* ---- Plates: life, name, status ------------------------------------------ */
+/* ---- Plates: life in a ring of the seat's colours, name, status -------------- */
 
 .plate {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 .life {
   position: relative;
   display: grid;
   place-items: center;
-  min-width: 46px;
+  flex: none;
+  width: 46px;
   height: 46px;
-  padding: 0 9px;
-  border-radius: 999px;
-  background: #24272d;
-  border: 2px solid #3a3f47;
+  padding: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ring, #959ba3);
   color: var(--ink);
-  font-size: 21px;
-  font-weight: 760;
-  font-variant-numeric: tabular-nums;
   cursor: default;
+  box-shadow: 0 3px 10px -3px rgba(0, 0, 0, 0.8);
 }
-.seat.opp .life {
-  min-width: 40px;
-  height: 40px;
-  font-size: 18px;
+.life-n {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #191614;
+  font-size: 19px;
+  font-weight: 760;
+  font-stretch: 88%;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
-.plate.active .life {
-  border-color: #6b7380;
+.opps:not(.n2):not(.n3) .seat.opp .life {
+  width: 52px;
+  height: 52px;
 }
-.my-priority .plate.mine .life {
-  border-color: var(--act);
-  box-shadow: 0 0 14px -3px rgba(79, 179, 255, 0.7);
+.opps:not(.n2):not(.n3) .seat.opp .life-n {
+  font-size: 22px;
+}
+/* Whoever has to decide: the ring glows. */
+.plate.deciding .life {
+  box-shadow: 0 0 0 2px #191614, 0 0 0 4px var(--act), 0 0 18px 2px rgba(79, 179, 255, 0.55);
 }
 .life.pickable {
   cursor: pointer;
-  border-color: var(--act);
-  box-shadow: var(--act-ring);
+  box-shadow: 0 0 0 2px #191614, var(--act-ring);
 }
-.life.picked {
+.life.picked .life-n {
   background: var(--act);
   color: var(--act-ink);
 }
 .life.targeted {
-  border-color: var(--tgt);
-  box-shadow: 0 0 0 2px var(--tgt), 0 0 16px rgba(255, 200, 87, 0.5);
+  box-shadow: 0 0 0 2px #191614, 0 0 0 4px var(--tgt), 0 0 16px rgba(255, 200, 87, 0.5);
 }
 .life-delta {
   position: absolute;
   top: -10px;
-  right: -16px;
-  font-size: 14px;
+  right: -18px;
+  font-size: 15px;
   font-weight: 800;
   pointer-events: none;
   text-shadow: 0 1px 3px #000;
@@ -427,10 +505,10 @@
   color: var(--heal);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .life.hurt {
+  .life.hurt .life-n {
     animation: hurt 700ms ease-out;
   }
-  .life.healed {
+  .life.healed .life-n {
     animation: healed 700ms ease-out;
   }
   .life-delta {
@@ -440,13 +518,11 @@
 @keyframes hurt {
   0% {
     background: #7a2a24;
-    border-color: var(--danger);
   }
 }
 @keyframes healed {
   0% {
     background: #1f5a3c;
-    border-color: var(--heal);
   }
 }
 @keyframes rise {
@@ -470,14 +546,15 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 1px;
+  gap: 2px;
 }
 .plate-name {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
 .plate-chips {
   display: flex;
@@ -487,18 +564,19 @@
 .chip {
   font-size: 10.5px;
   line-height: 16px;
-  padding: 0 6px;
+  padding: 0 7px;
   border-radius: 999px;
-  background: var(--panel-3);
+  background: rgba(0, 0, 0, 0.5);
   color: var(--ink-2);
   white-space: nowrap;
 }
 .turn-chip {
-  background: #434954;
-  color: var(--ink);
+  background: var(--ink);
+  color: #1a1715;
+  font-weight: 650;
 }
 .warn-chip {
-  background: rgba(240, 106, 95, 0.18);
+  background: rgba(240, 106, 95, 0.22);
   color: #ffb4ab;
 }
 .plate-chips:empty {
@@ -509,7 +587,7 @@
 
 .piles {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: flex-end;
   flex: none;
 }
@@ -518,7 +596,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   padding: 0;
   border: 0;
   background: none;
@@ -537,19 +615,56 @@ span.pile {
 .pile-card .card {
   position: absolute;
   inset: 0;
+  box-shadow: 0 3px 8px -3px rgba(0, 0, 0, 0.8);
+}
+/* A library with cards under the top one */
+.pile-card.deep .card {
+  box-shadow: 1px -1px 0 #0e0d0c, 2px -2px 0 #3a3531, 3px -3px 0 #0e0d0c, 4px -4px 0 #3a3531, 0 3px 8px -3px rgba(0, 0, 0, 0.8);
 }
 .pile-empty {
   display: block;
   position: absolute;
   inset: 0;
-  border: 1px dashed #3d424a;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
   border-radius: var(--card-radius);
+  background: rgba(0, 0, 0, 0.2);
 }
+/* How many cards, on the pile's corner */
 .pile-n {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  z-index: 1;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f2eee8;
+  color: #1a1715;
   font-size: 11px;
-  color: var(--ink-2);
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.seat.opp .pile-n {
+  min-width: 15px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+}
+.pile-name {
+  font-size: 10.5px;
+  font-stretch: 84%;
   line-height: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.seat.opp .pile-name {
+  display: none;
+}
+button.pile:hover .pile-name {
+  color: var(--ink);
 }
 .pile.lit .pile-card .card,
 .pile.lit .pile-empty {
@@ -557,14 +672,14 @@ span.pile {
 }
 .command {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex: none;
 }
 .cmd-slot {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   width: var(--cmd-w);
 }
 .cmd-card {
@@ -575,8 +690,11 @@ span.pile {
   background: none;
   cursor: default;
 }
+.cmd-card .card {
+  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.85);
+}
 .cmd-tax {
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 13px;
   color: var(--ink-2);
   white-space: nowrap;
@@ -594,7 +712,7 @@ span.pile {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(10, 11, 13, 0.85);
+  background: rgba(12, 11, 10, 0.88);
   border: 1px solid var(--line);
   font-size: 17px;
   box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.8);
@@ -611,99 +729,140 @@ span.pile {
 .other-hand {
   display: flex;
   align-items: center;
-  padding-left: 8px;
+  padding-left: 10px;
   flex: none;
 }
 .mini-card {
   position: relative;
-  width: 17px;
+  width: 22px;
   aspect-ratio: 63 / 88;
-  margin-left: -9px;
+  margin-left: -11px;
 }
 .mini-card .card {
   position: absolute;
   inset: 0;
+  box-shadow: 0 2px 5px -2px rgba(0, 0, 0, 0.8);
 }
 .other-hand.open {
-  padding-left: 24px;
+  padding-left: 26px;
 }
 .other-hand.open .mini-card {
-  width: 50px;
-  margin-left: -22px;
+  width: 54px;
+  margin-left: -24px;
 }
 .other-hand.open .mini-card:hover {
   z-index: 2;
 }
 .other-hand-n {
-  margin-left: 5px;
+  margin-left: 6px;
   font-size: 12px;
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- The midline: turn and phase, latest event, the stack -------------------- */
+/* ---- The turn bar: whose turn, the steps (a later one is a button), latest event, the stack ---- */
 
-.midline {
+.turnbar {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 34px;
-  padding: 0 14px;
-  background: rgba(0, 0, 0, 0.22);
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 18px;
+  height: 46px;
+  padding: 0 18px;
   z-index: 3;
 }
-.phase-track {
+.turn-now {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: none;
 }
-.turn-label {
-  font-size: 12.5px;
-  color: var(--ink-2);
+.turn-no {
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: #1a1715;
+  font-size: 14px;
+  font-weight: 740;
+  font-stretch: 88%;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.turn-who {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
   white-space: nowrap;
 }
-.turn-label strong {
-  color: var(--ink);
-  font-weight: 650;
-}
-.phases {
+.steps {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 1px;
   list-style: none;
   margin: 0;
-  padding: 0;
-}
-.phases li {
-  font-size: 11px;
-  padding: 1px 8px;
+  padding: 3px;
+  flex: none;
   border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.step button {
+  position: relative;
+  display: block;
+  padding: 5px 12px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-size: 12.5px;
+  line-height: 1.2;
   color: var(--ink-3);
   white-space: nowrap;
+  cursor: default;
 }
-.phases li.now {
+.step.later button {
+  color: var(--ink-2);
+}
+.step.later button[aria-disabled='false'] {
+  cursor: pointer;
+}
+.step.later button[aria-disabled='false']:hover {
   background: var(--panel-3);
   color: var(--ink);
-  font-weight: 650;
 }
-.my-priority .phases li.now {
-  background: var(--act-soft);
-  color: var(--act-strong);
-  box-shadow: inset 0 0 0 1px rgba(79, 179, 255, 0.5);
+.step.now button {
+  background: var(--panel-3);
+  color: var(--ink);
+  font-weight: 680;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.my-priority .step.now button,
+.my-move .step.now button {
+  background: var(--act);
+  color: var(--act-ink);
+  box-shadow: 0 0 16px -4px var(--act);
+}
+/* A usual stop: a pip under the step's name. */
+.step.stop button::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  translate: -50% 0;
+  background: currentColor;
+  opacity: 0.75;
 }
 .ticker {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: center;
 }
 .ticker .waiting {
   color: var(--ink);
@@ -715,7 +874,7 @@ span.pile {
   translate: 0 -50%;
   z-index: 20;
   padding: 10px 12px 8px;
-  background: rgba(22, 24, 28, 0.92);
+  background: rgba(24, 21, 19, 0.94);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow-pop);
@@ -729,7 +888,7 @@ span.pile {
   padding: 0;
 }
 .stack-item {
-  --sw: clamp(82px, 6.8vw, 118px);
+  --sw: clamp(92px, 7.6vw, 132px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -796,8 +955,8 @@ span.pile {
   width: 100%;
   padding: 7px;
   border-radius: 8px;
-  background: linear-gradient(170deg, #343944, #22262d);
-  border: 1px solid #454b57;
+  background: linear-gradient(170deg, #3b352f, #26221f);
+  border: 1px solid #4d453f;
   text-align: left;
   font-size: 11px;
   line-height: 1.25;
@@ -817,7 +976,7 @@ span.pile {
   color: var(--ink-2);
 }
 
-/* ---- The dock: your plate, hand, piles and the action bar --------------------- */
+/* ---- The dock: your life, commander, hand, piles and the action bar ------------ */
 
 .dock {
   position: relative;
@@ -825,37 +984,43 @@ span.pile {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
-  gap: 14px;
-  padding: 0 14px 8px;
+  gap: 18px;
+  padding: 0 18px 10px;
   min-height: 0;
 }
 .dock-left {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 14px;
   padding-bottom: 2px;
-  min-width: 150px;
-  max-width: 260px;
+  min-width: 0;
+  max-width: 340px;
 }
 .dock-left .command {
-  --cmd-w: clamp(46px, 4.6vw, 66px);
+  --cmd-w: clamp(58px, calc(var(--hand-w) * 0.56), 92px);
 }
-/* Floating mana sits just above the plate, out of the column: the dock keeps its height whatever is in the pool. */
-.dock-left {
-  position: relative;
-}
+/* Floating mana sits just above the plate, out of the row: the dock keeps its height whatever is in the pool. */
 .dock-left .pool {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   z-index: 9;
   white-space: nowrap;
 }
+.dock-left .plate {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 150px;
+}
 .dock-left .plate .life {
-  min-width: 54px;
-  height: 54px;
-  font-size: 25px;
+  width: 66px;
+  height: 66px;
+  padding: 4px;
+}
+.dock-left .plate .life-n {
+  font-size: 29px;
 }
 .dock-hand {
   display: flex;
@@ -867,30 +1032,28 @@ span.pile {
 .dock-right {
   display: flex;
   align-items: flex-end;
-  gap: 14px;
-}
-.dock-right .piles {
-  --pile-w: 34px;
+  gap: 18px;
 }
 
-/* The hand: overlapping, gently fanned; a card lifts and grows under the pointer */
+/* The hand: overlapping, gently fanned, its lower third below the edge; a card lifts and grows under the pointer */
 .hand {
   position: relative;
   flex: 1;
   min-width: 0;
-  height: calc(var(--hand-w) * 1.397 + 14px);
+  height: 100%;
+  margin: 0 8px;
 }
 .hand-empty,
 .hand-hidden {
   position: absolute;
-  inset: auto 0 30% 0;
+  inset: auto 0 34% 0;
   text-align: center;
   color: var(--ink-3);
   font-size: 13px;
 }
 .hand-card {
   position: absolute;
-  bottom: 6px;
+  bottom: calc(var(--hand-w) * -0.46 - 10px);
   width: var(--hand-w);
   padding: 0;
   border: 0;
@@ -902,16 +1065,16 @@ span.pile {
   cursor: default;
 }
 .hand-card .card {
-  box-shadow: 0 8px 18px -10px #000;
+  box-shadow: 0 8px 18px -8px #000, 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 .hand-zoom {
   position: absolute;
-  bottom: 16px;
+  bottom: 12px;
   z-index: 300;
-  width: calc(var(--hand-w) * 1.8);
+  width: min(calc(var(--hand-w) * 1.9), 300px);
   translate: -50% 0;
   pointer-events: none;
-  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.75));
+  filter: drop-shadow(0 18px 26px rgba(0, 0, 0, 0.8));
 }
 @media (prefers-reduced-motion: no-preference) {
   .hand-zoom {
@@ -936,7 +1099,7 @@ span.pile {
 .drag-ghost {
   position: fixed;
   z-index: 90;
-  width: 120px;
+  width: 130px;
   pointer-events: none;
   translate: -50% -60%;
   rotate: -3deg;
@@ -948,13 +1111,14 @@ span.pile {
   gap: 6px;
   align-items: flex-end;
   flex: none;
+  padding-bottom: 4px;
 }
 .else-slot {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: calc(var(--hand-w) * 0.62);
+  width: calc(var(--hand-w) * 0.5);
 }
 .else-card {
   display: block;
@@ -968,47 +1132,59 @@ span.pile {
   color: var(--ink-2);
 }
 
-/* The action bar: the decision's buttons, the main one large and on the right */
+/* The action bar: what moves the game on. The main button is large; the others sit in a row above it. */
 .action-bar {
   display: flex;
   justify-content: flex-end;
-  min-width: 200px;
-  max-width: 520px;
+  width: clamp(220px, 18vw, 272px);
 }
 .action-bar:empty {
-  min-width: 0;
+  width: 0;
 }
 .actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 6px;
+  width: 100%;
+  min-width: 0;
 }
 .actions-hint {
   margin: 0;
-  max-width: 300px;
+  max-width: 320px;
   font-size: 12px;
   color: var(--ink-2);
   text-align: right;
+  align-self: flex-end;
 }
 .actions-buttons {
   display: flex;
-  flex-direction: row-reverse;
-  flex-wrap: wrap-reverse;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 6px;
 }
 .action-bar .actions .primary {
-  min-width: 168px;
-  padding: 13px 22px;
+  order: 2;
+  flex: 1 1 100%;
+  padding: 13px 18px;
   border-radius: 12px;
-  font-size: 16px;
+  font-size: 16.5px;
   box-shadow: 0 0 0 1px rgba(79, 179, 255, 0.45), 0 0 26px -6px rgba(79, 179, 255, 0.8);
 }
 .action-bar .actions .secondary,
 .action-bar .actions .ghost {
-  padding: 9px 14px;
-  border-radius: 10px;
+  order: 1;
+  flex: 1 1 auto;
+  padding: 7px 12px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  white-space: nowrap;
+  background: rgba(38, 34, 31, 0.92);
+}
+.action-bar .actions .secondary:hover:not(:disabled),
+.action-bar .actions .ghost:hover:not(:disabled) {
+  background: var(--panel-3);
 }
 
 /* ---- The decision panel (bottom right, above the dock) and overlays ------------- */
@@ -1022,7 +1198,7 @@ span.pile {
   max-height: 54%;
   overflow: auto;
   padding: 12px 14px;
-  background: rgba(27, 29, 34, 0.97);
+  background: rgba(30, 27, 25, 0.97);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow-pop);
@@ -1035,6 +1211,42 @@ span.pile {
   font-size: 12.5px;
   font-weight: 700;
   color: var(--act-strong);
+}
+/* What the choice is for: the card and the text that's resolving */
+.resolving {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  text-align: left;
+}
+.resolving-card {
+  flex: none;
+  width: 44px;
+}
+.resolving p {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.resolving strong {
+  display: block;
+  font-weight: 650;
+}
+.resolving-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  font-family: var(--rules);
+  font-size: 14.5px;
+  color: var(--ink-2);
+  white-space: pre-line;
 }
 .flow-step {
   display: grid;
@@ -1197,7 +1409,7 @@ span.pile {
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(8, 9, 11, 0.66);
+  background: rgba(10, 9, 8, 0.7);
   backdrop-filter: blur(3px);
 }
 .overlay-panel {
@@ -1223,17 +1435,39 @@ span.pile {
 .overlay .pick-name {
   display: none;
 }
+/* Cards shown for information beside the ones to choose from: smaller. */
+.overlay .tile-row.seen .pick-card {
+  width: clamp(84px, min(9vw, 14vh), 150px);
+}
+.overlay .tile-row.seen .pick-tile {
+  cursor: default;
+}
+/* The answer's buttons stay in view however much there is to scroll through. */
+.overlay-actions {
+  position: sticky;
+  bottom: -16px;
+  z-index: 2;
+  margin: 0 -22px -16px;
+  padding: 0 22px 16px;
+  background: linear-gradient(180deg, transparent, var(--panel) 26px);
+}
+.overlay-actions:empty {
+  display: none;
+}
 .overlay-actions .actions {
   align-items: center;
   margin-top: 14px;
 }
 .overlay-actions .actions-buttons {
+  flex-direction: row-reverse;
   justify-content: center;
 }
-.overlay-actions .actions .primary {
+.overlay-actions .actions .primary,
+.overlay-actions .actions .secondary.confirm {
   min-width: 150px;
   padding: 11px 22px;
   font-size: 15.5px;
+  border-radius: 10px;
 }
 .kind-mulligan,
 .kind-bottom_cards {
@@ -1425,6 +1659,15 @@ span.pile {
   font-size: 11.5px;
   padding: 2px 8px;
 }
+.stops-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.stops-presets .chip-btn {
+  font-size: 12.5px;
+  padding: 3px 11px;
+}
 .stops-pop .keys {
   font-size: 12px;
 }
@@ -1440,7 +1683,7 @@ span.pile {
   width: min(380px, 92vw);
   display: flex;
   flex-direction: column;
-  background: rgba(24, 26, 31, 0.98);
+  background: rgba(27, 24, 22, 0.98);
   border-left: 1px solid var(--line);
   box-shadow: -20px 0 40px -20px #000;
 }
@@ -1495,7 +1738,7 @@ span.pile {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: #0d0e10;
+  background: #100e0d;
 }
 .curtain-inner {
   max-width: 480px;
@@ -1529,7 +1772,7 @@ span.pile {
   gap: 12px;
   justify-items: center;
   padding: 22px 30px;
-  background: rgba(22, 24, 28, 0.96);
+  background: rgba(27, 24, 22, 0.96);
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow-pop);
@@ -1714,7 +1957,7 @@ span.pile {
     flex-direction: column;
     min-height: calc(100dvh - 90px);
     overflow: visible;
-    padding-bottom: 84px;
+    padding-bottom: 124px;
   }
   .opps,
   .opps.n2,
@@ -1735,14 +1978,18 @@ span.pile {
   .seat-bar {
     flex-wrap: wrap;
   }
-  .midline {
+  .turnbar {
     height: auto;
     flex-wrap: wrap;
     padding: 6px 10px;
     gap: 6px;
   }
-  .phases li {
-    padding: 1px 5px;
+  .steps {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .step button {
+    padding: 5px 8px 6px;
   }
   .ticker {
     flex-basis: 100%;
@@ -1757,6 +2004,17 @@ span.pile {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
   }
+  /* On a phone the hand is shown whole: there's no pointer to lift a card with. */
+  .hand {
+    height: calc(var(--hand-w) * 1.397 + 14px);
+  }
+  .hand-card {
+    bottom: 6px;
+  }
+  .dock-left .plate {
+    flex-direction: row;
+    align-items: center;
+  }
   .dock-left {
     flex-direction: row;
     flex-wrap: wrap;
@@ -1770,35 +2028,41 @@ span.pile {
     z-index: 45;
     justify-content: space-between;
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-    background: rgba(18, 19, 22, 0.96);
+    background: rgba(19, 17, 16, 0.96);
     border-top: 1px solid var(--line);
   }
   .action-bar {
+    width: auto;
     min-width: 0;
     flex: 1;
   }
-  .action-bar .actions .primary {
-    min-width: 0;
+  .dock-right {
+    align-items: flex-end;
+    gap: 10px;
+  }
+  .dock-right .piles {
+    --pile-w: 32px;
+    gap: 6px;
+  }
+  .dock-right .pile-name {
+    display: none;
   }
   .prompt-panel {
     position: fixed;
     left: 8px;
     right: 8px;
-    bottom: 84px;
+    bottom: 116px;
     width: auto;
     max-height: 44vh;
   }
-  .actions-buttons {
-    flex-wrap: nowrap;
-  }
   .action-bar .actions .secondary,
   .action-bar .actions .ghost {
-    padding: 8px 10px;
-    font-size: 13px;
-    white-space: nowrap;
+    padding: 7px 8px;
+    font-size: 12.5px;
   }
   .action-bar .actions .primary {
     padding: 11px 14px;
+    font-size: 15.5px;
     white-space: nowrap;
   }
   .actions-hint {

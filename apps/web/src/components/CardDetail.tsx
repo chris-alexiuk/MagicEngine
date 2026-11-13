@@ -123,9 +123,24 @@ export function CardDetail({ card, onClose }: { card: CardDef; onClose: () => vo
         {card.gameChanger && <p className="gc">On the Commander Game Changers list.</p>}
       </section>
 
+      {card.aka && card.aka.length > 0 && (
+        <section className="detail-section">
+          <h3>Also printed as</h3>
+          <ul className="chips">
+            {card.aka.map((a) => (
+              <li key={`${a.set}-${a.number}`} title={`${a.set.toUpperCase()} ${a.number}`}>
+                {a.name}
+              </li>
+            ))}
+          </ul>
+          <p className="muted small">The same card under another name. A deck list can use either.</p>
+        </section>
+      )}
+
       <p className="detail-foot">
         {card.set.toUpperCase()} {card.rarity}
       </p>
+      {face.artist && <p className="detail-foot">Illustrated by {face.artist}</p>}
     </article>
   );
 }

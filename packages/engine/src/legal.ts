@@ -5,11 +5,11 @@ import { planAutoTap } from './autotap.js';
 import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
-import { anyColorChoices, manaOption, parseManaCost, shortfall } from './mana.js';
+import { anyColorChoices, MANA_COLORS, manaOption, parseManaCost, shortfall } from './mana.js';
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addCost, additionalMana, addModeCosts, foldX, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf, hasNoManaCost } from './actions.js';
-import { bonusManaChoices, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, processCostCandidates, lifeCost, unblockedAttackers } from './payment.js';
+import { bonusManaChoices, manaBonusAsks, craftCandidates, crewCandidates, crewPower, tapCostCandidates, discardCandidates, exileCostCandidates, returnCostCandidates, counterCostCandidates, revealCostCandidates, sacrificeCandidates, blightCandidates, foodCandidates, processCostCandidates, lifeCost, unblockedAttackers } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { cantDivide, defaultTargets, targetCandidates, targetingAs } from './targets.js';
 import type { TargetRef, Action, CompiledProgram, CostChoices, GameObject, GameState, ManaColor, ObjectId, PlayerId, Target } from './types.js';
@@ -29,6 +29,15 @@ import { enteringBanned, faceOf, zoneList } from './zones.js';
  * change it using targetPrompts(). Choices and manual moves aren't listed; the
  * pending choice and the UI cover those.
  */
+/** The types of mana one way of activating a mana ability makes, where that's plain from the ability. */
+function manaTypesMade(effect: AddManaEffect | undefined, choice: number | string | undefined): ManaColor[] | undefined {
+  if (!effect) return undefined;
+  const types = (list: readonly string[]) => (list.length && list.every((c) => (MANA_COLORS as readonly string[]).includes(c)) ? ([...new Set(list)] as ManaColor[]) : undefined);
+  if (effect.combination || effect.anyColor) return typeof choice === 'string' ? types([...choice]) : undefined;
+  const option = effect.options?.[typeof choice === 'number' ? choice : 0];
+  return option ? types(option) : undefined;
+}
+
 /** The mixes of `n` mana from `colors` ("GGU"), or just the single-color ones when there would be too many to list. */
 function manaMixes(colors: string[], n: number): string[] {
   const all = (k: number, from: string[]): string[] => (k === 0 ? [''] : from.flatMap((c, i) => all(k - 1, from.slice(i)).map((rest) => c + rest)));
@@ -347,10 +356,16 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       if (ab.timing === 'sorcery' && !sorcerySpeed) return;
       // CR 107.6: {Q} — untapping it is the cost (Pili-Pala).
       if (ab.cost.untap && (!o.tapped || !canActivateTapAbilities(g, o))) return;
-      // Selvala: "{G}, {T}: Add X mana …" — with that mana already in the pool (mana abilities aren't autotapped for).
+      // Selvala: "{G}, {T}: Add X mana …"; a Signet's "{1}, {T}: Add {G}{U}" — with that mana in the pool, or with other
+      // sources that can make it (tapped for as it's activated; never the permanent itself).
+      let tapForCost = false;
       if (ab.cost.mana) {
-        const need = shortfall(spendablePool(g, player, { kind: 'ability', source: o }), parseManaCost(ab.cost.mana));
-        if (!need || need.specific.length || need.generic > 0) return;
+        const cost = parseManaCost(ab.cost.mana);
+        const need = shortfall(spendablePool(g, player, { kind: 'ability', source: o }), cost);
+        if (!need || need.specific.length || need.generic > 0) {
+          if (cost.unsupported.length || cost.x > 0 || !planAutoTap(g, player, cost, 0, [id], { kind: 'ability', source: o })) return;
+          tapForCost = true;
+        }
       }
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       if (ab.oncePerTurn && o.activatedTurn?.[-1 - ability] === g.turn) return;
@@ -363,7 +378,7 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
         if (!picked) return;
         costs = picked;
       }
-      const extra = withCosts(costs);
+      const extra = { ...withCosts(costs), ...(tapForCost ? { autoTap: true } : {}) };
       const from = out.length;
       // One entry per way to make the mana ("{R} or {G}", "one mana of any color"); with "If …, add … instead" (Urza's
       // Tower, Incubation Druid), the ways the usual mana can be made.
@@ -382,9 +397,16 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
           if (manaOption(opt, o)) out.push({ type: 'activate_mana', player, object: id, ability, choice, ...extra });
         });
       } else if (!effect?.options || manaOption(effect.options[0]!, o)) out.push({ type: 'activate_mana', player, object: id, ability, ...extra });
-      // Fertile Ground: "… adds an additional one mana of any color" — each color it could add, too.
-      const bonus = ab.cost.tap ? bonusManaChoices(g, o) : [];
-      if (bonus.length) out.splice(from, out.length - from, ...out.slice(from).flatMap((a) => bonus.map((b) => ({ ...a, bonus: [b] }) as Action)));
+      // Fertile Ground: "… adds an additional one mana of any color" — each color it could add, too. Kinnan: "one mana
+      // of any type that permanent produced" — each type this way of making its mana makes, when there's more than one.
+      if (ab.cost.tap && manaBonusAsks(g, o)) {
+        const listed = out.splice(from, out.length - from);
+        for (const a of listed) {
+          const bonus = bonusManaChoices(g, o, a.type === 'activate_mana' ? manaTypesMade(effect, a.choice) : undefined);
+          if (bonus.length) for (const b of bonus) out.push({ ...a, bonus: [b] } as Action);
+          else out.push(a);
+        }
+      }
     });
     if (!banned) activatedAbilities(g, o).forEach((ab, ability) => {
       if (!mine && !ab.anyPlayer) return;

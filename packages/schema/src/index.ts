@@ -83,6 +83,8 @@ export interface AltName {
   /** Its image, as a path relative to the Scryfall image CDN (see imageUrl()); a second path for a back face. */
   img?: string;
   backImg?: string;
+  /** Who illustrated that printing. */
+  artist?: string;
 }
 
 export interface FaceDef {
@@ -106,6 +108,8 @@ export interface FaceDef {
   manualKeywords?: string[];
   /** Image path relative to the Scryfall image CDN; see imageUrl(). */
   img?: string;
+  /** Who illustrated the image: shown wherever the art is used without the rest of the card. */
+  artist?: string;
 }
 
 /** A keyword ability as printed, e.g. { id: 'ward', cost: '{2}' } or { id: 'bushido', n: 1 }. */

@@ -24,6 +24,8 @@ export interface ScryfallFace {
   /** The name this printing gives the face instead of its own (Universes Beyond and Secret Lair reskins). */
   flavor_name?: string;
   printed_name?: string;
+  /** Who illustrated this face (a double-faced card's faces can differ). */
+  artist?: string;
 }
 
 export interface ScryfallCard {
@@ -61,6 +63,8 @@ export interface ScryfallCard {
   flavor_name?: string;
   /** The name as printed, when that isn't the card's name. */
   printed_name?: string;
+  /** Who illustrated this printing. */
+  artist?: string;
 }
 
 export interface ScryfallBulkItem {

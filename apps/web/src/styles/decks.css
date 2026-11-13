@@ -104,15 +104,17 @@
   min-width: 0;
 }
 .deck-banner {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 22px;
-  padding: 18px 20px;
+  padding: 20px 22px;
   border-radius: 16px;
-  border: 1px solid var(--line-soft);
-  background:
-    linear-gradient(115deg, color-mix(in srgb, var(--tint-a, #888) 22%, transparent) 0%, transparent 48%, color-mix(in srgb, var(--tint-b, #888) 16%, transparent) 100%),
-    var(--panel);
+}
+/* The deck's mat is a backdrop for text here, so it's dimmer than at the table. */
+.deck-banner .mat {
+  --scrim: 0.74;
 }
 .banner-cards {
   display: flex;

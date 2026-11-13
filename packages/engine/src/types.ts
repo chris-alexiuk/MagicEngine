@@ -854,7 +854,17 @@ export type Action =
   | { type: 'foretell' | 'plot' | 'suspend'; player: PlayerId; object: ObjectId; autoTap?: boolean }
   /** `choice`: which option or color — or, for "any combination of colors", the mix ("GGU"). */
   /** `bonus`: for "whenever … is tapped for mana, its controller adds an additional one mana of any color" (Fertile Ground), each such trigger's color (or option). */
-  | { type: 'activate_mana'; player: PlayerId; object: ObjectId; ability: number; choice?: number | ManaColor | ManaMix; costs?: CostChoices; bonus?: (number | ManaColor)[] }
+  | {
+      type: 'activate_mana';
+      player: PlayerId;
+      object: ObjectId;
+      ability: number;
+      choice?: number | ManaColor | ManaMix;
+      costs?: CostChoices;
+      bonus?: (number | ManaColor)[];
+      /** The ability has a mana cost of its own (a Signet's {1}): tap other sources for it as needed (CR 605.3a). */
+      autoTap?: boolean;
+    }
   | {
       type: 'cast';
       player: PlayerId;

@@ -1,7 +1,8 @@
 /*
  * MagicEngine — visual system
  *
- * A dark, neutral table so the cards are the brightest things on screen. One accent, azure, means exactly one
+ * A table at night. The room and the table top are warm charcoal, so the cards are the brightest things on screen;
+ * each seat's cards lie on its own playmat, cut from its commander's art. One accent, azure, means exactly one
  * thing: "you can act" (a lit card, your priority, the main button). Combat is drawn in ember red, targets in gold.
  * Interface type is Instrument Sans; rules text is Crimson Pro, a nod to the face printed in a card's text box.
  * Mana and card symbols come from the Mana font (SIL OFL 1.1), self-hosted.
@@ -16,17 +17,17 @@
 }
 
 :root {
-  --bg: #121316;
-  --felt: #191b1f;
-  --felt-edge: #0f1012;
-  --panel: #1b1d22;
-  --panel-2: #22252b;
-  --panel-3: #2c3037;
-  --line: #34383f;
-  --line-soft: #26292f;
-  --ink: #eceef1;
-  --ink-2: #a9afb9;
-  --ink-3: #767d89;
+  --bg: #131110;
+  --felt: #1d1a18;
+  --felt-edge: #0c0b0a;
+  --panel: #1e1b19;
+  --panel-2: #272321;
+  --panel-3: #342f2b;
+  --line: #433d38;
+  --line-soft: #2c2825;
+  --ink: #f2eee8;
+  --ink-2: #b9b0a6;
+  --ink-3: #8e857b;
 
   --act: #4fb3ff;
   --act-strong: #79c6ff;
@@ -56,6 +57,8 @@
   --rules: 'Crimson Pro Variable', Georgia, serif;
 
   --card-radius: 4.75% / 3.4%; /* 3 mm corners on a 63 × 88 mm card */
+  /* A fine grain, laid over the table top and the playmats. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
   --radius: 10px;
   --header-h: 0px;
   --shadow-pop: 0 18px 40px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.06);
@@ -154,7 +157,7 @@ code {
 }
 .secondary:hover:not(:disabled) {
   border-color: var(--ink-3);
-  background: #343941;
+  background: color-mix(in srgb, var(--panel-3) 82%, #fff);
 }
 .ghost {
   background: transparent;

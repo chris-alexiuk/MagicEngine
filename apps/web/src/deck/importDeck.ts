@@ -1,5 +1,5 @@
-import { addCard, commanderProblem, type DeckCard } from './model';
-import type { CardIndex } from './names';
+import { addCard, commanderProblem, type DeckCard, type DeckSkin } from './model';
+import { akaByPrinting, type CardIndex } from './names';
 import { parseDeckText, type ParsedText } from './parse';
 
 export interface Unmatched {
@@ -18,6 +18,8 @@ export interface ImportResult {
   /** Lines that weren't cards (with why). */
   skipped: ParsedText['skipped'];
   notes: string[];
+  /** Cards listed as a printing with a name of its own, by card name. */
+  skins: Record<string, DeckSkin>;
 }
 
 /** Matches parsed lines to cards (by DB name) and decides the commanders. */
@@ -28,14 +30,19 @@ export function resolveImport(parsed: ParsedText, index: CardIndex): ImportResul
   const unmatched: Unmatched[] = [];
   const notes: string[] = [];
   const tentative: { name: string; count: number }[] = [];
+  const skins: Record<string, DeckSkin> = {};
 
   for (const e of parsed.entries) {
-    const card = index.lookup(e.name);
-    if (!card) {
+    const found = index.find(e.name);
+    if (!found) {
       unmatched.push({ line: e.line, raw: e.raw, name: e.name });
       continue;
     }
+    const card = found.card;
     const name = card.name;
+    // By the name on the printing ("Seymour Guado"), or by the card's own name with that printing's set and number.
+    const aka = found.aka ?? akaByPrinting(card, e.set, e.number);
+    if (aka && !skins[name]) skins[name] = { as: aka.name, set: aka.set, number: aka.number };
     switch (e.section) {
       case 'commander':
         if (!commanders.includes(name)) commanders.push(name);
@@ -70,7 +77,9 @@ export function resolveImport(parsed: ParsedText, index: CardIndex): ImportResul
       notes.push(`${c} was in the deck too; kept it as commander only.`);
     }
   }
-  return { ...(parsed.title ? { title: parsed.title } : {}), commanders, main, sideboard, unmatched, skipped: parsed.skipped, notes };
+  const named = Object.entries(skins);
+  if (named.length) notes.push(`${named.length === 1 ? 'One card is' : `${named.length} cards are`} listed under another printed name: ${named.slice(0, 4).map(([n, k]) => `${k.as} is ${n}`).join('; ')}${named.length > 4 ? '; …' : ''}.`);
+  return { ...(parsed.title ? { title: parsed.title } : {}), commanders, main, sideboard, unmatched, skipped: parsed.skipped, notes, skins };
 }
 
 export function importText(text: string, index: CardIndex): ImportResult {

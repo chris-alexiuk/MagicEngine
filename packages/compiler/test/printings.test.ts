@@ -29,6 +29,14 @@ describe('alternate names from printings', () => {
     expect(altNamesOf(printing(kinnan, { printed_name: 'KINNAN, BONDER PRODIGY' }))).toEqual([]);
   });
 
+  it('an image comes with its artist: the card\'s own, and each other-name printing\'s', () => {
+    const own = { ...kinnan, artist: 'Jesper Ejsing' };
+    const db = compileCards([own, { ...seymour, artist: 'Tetsuya Nomura' }]).db;
+    const card = db.cards.find((c) => c.name === 'Kinnan, Bonder Prodigy')!;
+    expect(card.faces[0]!.artist).toBe('Jesper Ejsing');
+    expect(card.aka).toEqual([{ name: 'Seymour Guado', set: 'fca', number: '55', img: 'front/a/b/p-fca-55.jpg?1', artist: 'Tetsuya Nomura' }]);
+  });
+
   it('a name on several printings is kept once, with the earliest', () => {
     const table = collectAltNames([seymourFoil, seymour, printing(kinnan, { set: 'sld', collector_number: '9', released_at: '2026-01-01', flavor_name: 'Another Name' })]);
     expect(table.get(kinnan.oracle_id!)!.map((x) => [x.alt.name, x.alt.number])).toEqual([['Seymour Guado', '55'], ['Another Name', '9']]);

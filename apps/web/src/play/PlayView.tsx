@@ -6,6 +6,7 @@ import { deckCount, validateDeck, type Deck } from '../deck/model';
 import { narrate, type LogLine } from './log';
 import { cardsFor, clearSavedGame, dummySeat, loadSavedGame, modeOf, replay, saveGame, seatFromDeck, type GameSetup, type Mode } from './session';
 import { nextLogId, startLive, Table, type Live } from './Table';
+import { setSeatSkins } from '../skins';
 
 const SEAT_IDS = ['p1', 'p2', 'p3', 'p4'];
 const MODE_KEY = 'mtg-play-mode';
@@ -22,9 +23,12 @@ export function PlayView({ db, decks, lookup, onEditDeck, toolsEl, playtest, cle
   const saved = useMemo(() => (live ? null : loadSavedGame()), [live]);
   const dummyLand = lookup('Wastes') ? 'Wastes' : 'Plains';
 
+  /** What each seat's cards are drawn with (the printings its deck asked for). */
+  const dress = (setup: GameSetup) => setSeatSkins(Object.fromEntries(setup.seats.map((s) => [s.id, s.skins ?? {}])));
   const start = (setup: GameSetup) => {
     try {
       const cards = cardsFor(setup.seats, db, lookup);
+      dress(setup);
       const l = startLive(setup, cards);
       setLive(l);
       saveGame({ setup, actions: l.actions, marks: [], savedAt: new Date().toISOString() });
@@ -44,7 +48,7 @@ export function PlayView({ db, decks, lookup, onEditDeck, toolsEl, playtest, cle
     if (!playtest) return;
     const deck = decks.find((d) => d.id === playtest);
     clearPlaytest();
-    if (deck) start({ seats: [seatFromDeck('p1', 'You', deck), dummySeat('p2', dummyLand)], seed: Math.floor(Math.random() * 2 ** 31), firstPlayer: 'p1', mode: 'solo' });
+    if (deck) start({ seats: [seatFromDeck('p1', 'You', deck, lookup), dummySeat('p2', dummyLand)], seed: Math.floor(Math.random() * 2 ** 31), firstPlayer: 'p1', mode: 'solo' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playtest]);
 
@@ -52,6 +56,7 @@ export function PlayView({ db, decks, lookup, onEditDeck, toolsEl, playtest, cle
     if (!saved) return;
     try {
       const cards = cardsFor(saved.setup.seats, db, lookup);
+      dress(saved.setup);
       const log: LogLine[] = [];
       const state = replay(saved, cards, (before, after, events) => log.push(...narrate(before, after, events, nextLogId)));
       if (!state) {
@@ -96,10 +101,10 @@ function Setup({ decks, lookup, onStart, saved, onResume, notice, onEditDeck, du
     const seed = Math.floor(Math.random() * 2 ** 31);
     if (mode === 'solo') {
       const deck = decks.find((d) => d.id === picks[0])!;
-      onStart({ seats: [seatFromDeck('p1', 'You', deck), dummySeat('p2', dummyLand)], seed, mode, ...(first === 'random' ? {} : { firstPlayer: first === 'p2' ? 'p2' : 'p1' }) });
+      onStart({ seats: [seatFromDeck('p1', 'You', deck, lookup), dummySeat('p2', dummyLand)], seed, mode, ...(first === 'random' ? {} : { firstPlayer: first === 'p2' ? 'p2' : 'p1' }) });
       return;
     }
-    const list = SEAT_IDS.slice(0, count).map((id, i) => seatFromDeck(id, names[i]!.trim() || `Player ${i + 1}`, decks.find((d) => d.id === picks[i])!));
+    const list = SEAT_IDS.slice(0, count).map((id, i) => seatFromDeck(id, names[i]!.trim() || `Player ${i + 1}`, decks.find((d) => d.id === picks[i])!, lookup));
     onStart({ seats: list, seed, mode, ...(first !== 'random' ? { firstPlayer: first } : {}) });
   };
 

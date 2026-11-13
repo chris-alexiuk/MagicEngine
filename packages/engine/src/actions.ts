@@ -93,7 +93,7 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'choose':
       return choose(g, a.player, a.answer, events);
     case 'activate_mana':
-      return activateMana(g, a.player, a.object, a.ability, a.choice, events, a.costs, a.bonus);
+      return activateMana(g, a.player, a.object, a.ability, a.choice, events, a.costs, a.bonus, a.autoTap);
     case 'manual':
       return manual(g, a.player, a.op, events);
   }
@@ -416,6 +416,7 @@ function activateMana(
   events: GameEvent[],
   costs: CostChoices = {},
   bonus: (number | ManaColor)[] = [],
+  tapForCost = false,
 ): void {
   // CR 605.3a: mana abilities can be activated with priority, or while something asks for a mana payment.
   const paying = (g.pending?.kind === 'manual_resolution' || g.pending?.kind === 'pay') && g.pending.player === player;
@@ -426,7 +427,7 @@ function activateMana(
     if (g.pending) throw new RulesError(`Waiting for ${g.players[g.pending.player]!.name} to choose.`);
     if (g.priority !== player) throw new RulesError('You don’t have priority.');
   }
-  runManaAbility(g, player, id, index, choice, events, costs, bonus);
+  runManaAbility(g, player, id, index, choice, events, costs, bonus, tapForCost);
   // CR 117.3c: a player who activates an ability receives priority afterward.
   if (!paying) givePriority(g, player);
 }

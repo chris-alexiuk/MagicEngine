@@ -108,7 +108,8 @@ function termPredicate(term: Term): ((card: CardDef) => boolean) | string {
   const v = lower(term.value);
   switch (term.key) {
     case null:
-      return (c) => lower(c.name).includes(v);
+      // A card's own name, or a name it's printed under elsewhere ("seymour" finds Kinnan, Bonder Prodigy).
+      return (c) => lower(c.name).includes(v) || Boolean(c.aka?.some((a) => lower(a.name).includes(v)));
     case 't':
     case 'type':
       return (c) => c.faces.some((f) => lower(f.typeLine).includes(v));

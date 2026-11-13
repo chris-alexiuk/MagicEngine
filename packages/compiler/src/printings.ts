@@ -28,14 +28,14 @@ export function altNamesOf(card: ScryfallCard): { oracleId: string; alt: AltName
   const number = card.collector_number ?? '';
   const released = card.released_at ?? '';
   const faces: ScryfallFace[] = card.card_faces ?? [];
-  const entry = (oracleId: string | undefined, name: string, front?: string, back?: string) =>
-    oracleId ? [{ oracleId, released, alt: { name, set: card.set, number, ...(front ? { img: front } : {}), ...(back ? { backImg: back } : {}) } }] : [];
+  const entry = (oracleId: string | undefined, name: string, front?: string, back?: string, artist = card.artist ?? faces[0]?.artist) =>
+    oracleId ? [{ oracleId, released, alt: { name, set: card.set, number, ...(front ? { img: front } : {}), ...(back ? { backImg: back } : {}), ...(artist && front ? { artist } : {}) } }] : [];
 
   // A reversible card is two cards printed back to back, each with its own identity.
   if (card.layout === 'reversible_card') {
     return faces.flatMap((f) => {
       const n = otherName(f);
-      return n ? entry(f.oracle_id, n, img(f.image_uris?.normal)) : [];
+      return n ? entry(f.oracle_id, n, img(f.image_uris?.normal), undefined, f.artist ?? card.artist) : [];
     });
   }
   const oracleId = card.oracle_id ?? faces[0]?.oracle_id;

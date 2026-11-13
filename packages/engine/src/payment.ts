@@ -5,7 +5,7 @@ import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilt
 import { amountOf } from './resolve.js';
 import { planManaOnly, settlePhyrexian } from './autotap.js';
 import { canActivateTapAbilities, hasRule, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
-import { anyColorChoices, parseManaCost, payFromPool, type ManaCost } from './mana.js';
+import { anyColorChoices, parseManaCost, payFromPool, shortfall, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
@@ -510,6 +510,8 @@ export function runManaAbility(
   events: GameEvent[],
   costChoices: CostChoices = {},
   bonus: readonly (number | ManaColor)[] = [],
+  /** Tap other sources for the ability's own mana cost (a Signet's {1}) where the pool doesn't cover it. */
+  tapForCost = false,
 ): void {
   const o = obj(g, id);
   // CR 602.2: only an object's controller can activate its abilities.
@@ -550,6 +552,11 @@ export function runManaAbility(
   checkOtherCosts(g, player, o, ability.cost, costChoices);
   const manaCost = ability.cost.mana ? parseManaCost(ability.cost.mana) : null;
   if (manaCost) abilityCostReductions(g, o, ability, manaCost, player);
+  // CR 605.3a: the mana for a mana ability's own cost can be made while activating it — from anything but itself.
+  if (manaCost && tapForCost) {
+    const need = shortfall(spendablePool(g, player, { kind: 'ability', source: o }), manaCost);
+    if (!need || need.specific.length || need.generic > 0) autoTap(g, player, manaCost, 0, events, [id], { kind: 'ability', source: o });
+  }
   if (manaCost && !payMana(g, player, manaCost, 0, { kind: 'ability', source: o })) {
     throw new RulesError('Not enough mana in your pool to activate that.');
   }
@@ -613,16 +620,29 @@ const bonusChoice = (e: AddManaEffect): boolean => e.type === 'add_mana' && (Boo
 /**
  * Fertile Ground: "its controller adds an additional one mana of any color" — the ways the first such trigger can add its
  * mana as `tapped` is tapped for mana (an `activate_mana` action's `bonus`); empty when no trigger asks.
+ *
+ * Kinnan, Mirari's Wake: "one additional mana of any type that permanent produced" — a choice only when it made more
+ * than one type (a Signet's {G}{U}). `types` is what this activation makes, when that's known.
  */
-export function bonusManaChoices(g: GameState, tapped: GameObject): (number | ManaColor)[] {
+export function bonusManaChoices(g: GameState, tapped: GameObject, types?: readonly ManaColor[]): (number | ManaColor)[] {
   for (const { src, a } of manaTriggersOf(g, tapped)) {
     if (a.trigger.producedColor) continue;
+    if (a.effects.some((x) => (x as AddManaEffect).produced)) {
+      const made = [...new Set(types ?? [])];
+      if (made.length > 1) return made;
+      continue;
+    }
     const e = a.effects.find((x) => bonusChoice(x as AddManaEffect)) as AddManaEffect | undefined;
     if (!e) continue;
     if (e.anyColor) return anyColorChoices(g, a.trigger.its ? tapped.controller : src.controller, e.identity, e, src);
     return (e.options ?? []).map((_, i) => i);
   }
   return [];
+}
+
+/** Whether a permanent being tapped for mana triggers anything that adds mana by a choice (see `bonusManaChoices`). */
+export function manaBonusAsks(g: GameState, tapped: GameObject): boolean {
+  return manaTriggersOf(g, tapped).some(({ a }) => !a.trigger.producedColor && a.effects.some((x) => (x as AddManaEffect).produced || bonusChoice(x as AddManaEffect)));
 }
 
 function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], events: GameEvent[], bonus: readonly (number | ManaColor)[] = []): void {
@@ -641,7 +661,14 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
     // "its controller adds …"; "add …" — the trigger's controller.
     const controller = a.trigger.its ? tapped.controller : src.controller;
     for (const effect of a.effects) {
-      const run = effect.type === 'add_mana' && (effect as AddManaEffect).produced ? { type: 'add_mana', options: [[produced[0]!]] } : effect;
+      let run = effect;
+      if (effect.type === 'add_mana' && (effect as AddManaEffect).produced) {
+        // "one mana of any type that permanent produced": of the types it made, the one the action named — the first
+        // otherwise (tapped automatically, or there was only one).
+        const made = [...new Set(produced)];
+        const named = made.length > 1 ? bonus[asked++] : undefined;
+        run = { type: 'add_mana', options: [[typeof named === 'string' && made.includes(named) ? named : made[0]!]] };
+      }
       // "one mana of any color": the color the action named (CR 605.3b — chosen as the mana ability resolves); tapped
       // automatically, the color the permanent itself made, if it made one.
       let choice: number | ManaColor | undefined;

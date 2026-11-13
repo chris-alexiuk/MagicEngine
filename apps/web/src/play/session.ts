@@ -1,6 +1,7 @@
 import type { CardDB, CardDef } from '@mtg/schema';
 import { apply, createGame, legalActions, type Action, type GameEvent, type GameState, type PlayerId, type StackEntry, type Step } from '@mtg/engine';
-import type { Deck } from '../deck/model';
+import { deckPrintings, type Deck } from '../deck/model';
+import type { Printing } from '../skins';
 import { dummyAnswer } from './dummy';
 
 /**
@@ -24,6 +25,8 @@ export interface Seat {
   cards: string[];
   /** The practice dummy: it never acts, and its choices are answered for it. */
   dummy?: boolean;
+  /** Printings the deck asked for by another name, by card name: what those cards are drawn with. */
+  skins?: Record<string, Printing>;
 }
 
 export interface GameSetup {
@@ -74,13 +77,15 @@ export function cardsFor(seats: Seat[], db: CardDB, lookup: (name: string) => Ca
   return cards;
 }
 
-export function seatFromDeck(id: PlayerId, name: string, deck: Deck): Seat {
+export function seatFromDeck(id: PlayerId, name: string, deck: Deck, lookup?: (name: string) => CardDef | undefined): Seat {
+  const skins = lookup ? deckPrintings(deck, lookup) : {};
   return {
     id,
     name,
     deckName: deck.name,
     commanders: [...deck.commanders],
     cards: [...deck.commanders, ...deck.main.flatMap((c) => Array.from({ length: c.count }, () => c.name))],
+    ...(Object.keys(skins).length ? { skins } : {}),
   };
 }
 
@@ -113,15 +118,35 @@ export function touches(g: GameState, e: StackEntry, p: PlayerId): boolean {
   return e.targets.flat().some((t) => (t.kind === 'player' ? t.player === p : t.kind === 'object' ? g.objects[t.id]?.controller === p : false));
 }
 
-export type PassUntil = { player: PlayerId; turn: number } | null;
+/**
+ * "Pass for me until…": the rest of a turn (no step), or until a step of that turn — the seat then stops there, even
+ * where it usually wouldn't. Either way it stops early if something targets the player or what they control.
+ */
+export type PassUntil = { player: PlayerId; turn: number; step?: Step } | null;
+
+/** The steps of a turn, in order. */
+export const TURN_STEPS: readonly Step[] = ['untap', 'upkeep', 'draw', 'main1', 'beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat', 'main2', 'end', 'cleanup'];
+const stepAt = (s: Step) => TURN_STEPS.indexOf(s);
+
+/** Whether a "pass until" has been carried out (or the game has moved past it): it then no longer applies. */
+export function passUntilDone(g: GameState, u: PassUntil): boolean {
+  if (!u) return true;
+  if (g.turn !== u.turn) return true;
+  return u.step !== undefined && stepAt(g.step) >= stepAt(u.step);
+}
 
 /** Whether to pass priority for this seat without asking. */
 export function shouldAutoPass(g: GameState, p: PlayerId, stops: Stops, passUntil: PassUntil, dummy = false): boolean {
   if (g.over || g.pending || g.priority !== p) return false;
   if (dummy) return true;
   const top = g.stack[g.stack.length - 1];
-  // "Pass until end of turn": keep passing this turn, unless something targets this player or what they control.
-  if (passUntil && passUntil.player === p && passUntil.turn === g.turn && (!top || top.controller === p || !touches(g, top, p))) return true;
+  if (passUntil && passUntil.player === p && passUntil.turn === g.turn) {
+    const reached = passUntil.step !== undefined && stepAt(g.step) >= stepAt(passUntil.step);
+    // Keep passing until then, unless something targets this player or what they control.
+    if (!reached && (!top || top.controller === p || !touches(g, top, p))) return true;
+    // The step asked for: stop here with an empty stack, whatever the usual stops are.
+    if (reached && g.step === passUntil.step && !top) return false;
+  }
   // Mana in the pool is something to do: the player made it for a reason, and passing would lose it.
   const floating = Object.values(g.players[p]?.pool ?? {}).some((n) => n > 0) || (g.players[p]?.restricted?.length ?? 0) > 0;
   const nothing = () => stops.skipIfNothing && !floating && !legalActions(g, p).some(meaningful);
@@ -144,10 +169,15 @@ export function advance(g: GameState, ctx: Ctx, out: Applied = { state: g, steps
     if (s.over) break;
     let action: Action | null = null;
     if (s.pending) {
-      if (!ctx.dummies.has(s.pending.player)) break;
-      const a = dummyAnswer(s);
-      if (!a) break;
-      action = { type: 'choose', player: a.player, answer: a.answer };
+      if (ctx.dummies.has(s.pending.player)) {
+        const a = dummyAnswer(s);
+        if (!a) break;
+        action = { type: 'choose', player: a.player, answer: a.answer };
+      } else if (s.pending.kind === 'declare_attackers' && ctx.passUntil?.player === s.pending.player && !passUntilDone(s, ctx.passUntil)) {
+        // "End turn" (or "to the end step") from before combat: this seat attacks with nothing. If something has to
+        // attack, the engine refuses that below and the seat is asked after all.
+        action = { type: 'choose', player: s.pending.player, answer: { kind: 'declare_attackers', attacks: [] } };
+      } else break;
     } else {
       const p = s.priority;
       // "End turn" lasts only for the turn it was asked in.
