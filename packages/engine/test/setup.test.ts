@@ -47,21 +47,21 @@ describe('starting the game', () => {
 });
 
 describe('London mulligan', () => {
-  it('CR 103.5: a mulligan shuffles the hand back, draws seven, then puts one on the bottom', () => {
+  it('CR 103.5: a mulligan shuffles the hand back and draws seven; one goes on the bottom on keeping', () => {
     let g = start({ mulligan: true });
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: false } });
     // Everyone declares before mulligans happen.
     expect(g.pending).toEqual({ kind: 'mulligan', player: 'bob' });
     g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'mulligan', keep: true } });
-    expect(g.pending).toEqual({ kind: 'bottom_cards', player: 'alice', count: 1 });
+    // The process repeats for players who mulliganed: seven cards to look at before deciding.
+    expect(g.pending).toEqual({ kind: 'mulligan', player: 'alice' });
     expect(g.zones.hand.alice).toHaveLength(7);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: true } });
+    expect(g.pending).toEqual({ kind: 'bottom_cards', player: 'alice', count: 1 });
     const card = g.zones.hand.alice![0]!;
     g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'bottom_cards', objects: [card] } });
     expect(g.zones.hand.alice).toHaveLength(6);
     expect(g.zones.library.alice!.at(-1)).toBe(card);
-    // The process repeats for players who mulliganed.
-    expect(g.pending).toEqual({ kind: 'mulligan', player: 'alice' });
-    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: true } });
     expect(g.started).toBe(true);
     expect(g.players.alice!.mulligans).toBe(1);
   });
@@ -81,13 +81,14 @@ describe('London mulligan', () => {
     for (let i = 0; i < 6; i++) {
       g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: false } });
       if (g.pending?.player === 'bob') g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'mulligan', keep: true } });
-      const p = g.pending!;
-      if (p.kind === 'bottom_cards') {
-        g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'bottom_cards', objects: g.zones.hand.alice!.slice(0, p.count) } });
-      }
     }
-    expect(g.zones.hand.alice).toHaveLength(1);
+    // Six mulligans taken: a seventh would leave no cards.
+    expect(g.players.alice!.mulligans).toBe(6);
     expect(illegal(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: false } })).toMatch(/zero/);
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'mulligan', keep: true } });
+    expect(g.pending).toEqual({ kind: 'bottom_cards', player: 'alice', count: 6 });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'bottom_cards', objects: g.zones.hand.alice!.slice(0, 6) } });
+    expect(g.zones.hand.alice).toHaveLength(1);
   });
 
   it('only the deciding player can answer', () => {

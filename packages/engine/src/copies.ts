@@ -1,4 +1,5 @@
 import { SUBTYPES, type CardDef, type CopyExcept, type FaceDef } from '@mtg/schema';
+import { isCreatureType } from './creature-types.js';
 import { faceDownKey } from './face-down.js';
 import type { GameObject, GameState } from './types.js';
 
@@ -24,7 +25,6 @@ export function copiable(o: GameObject): CopyRef {
   return o.copyOf ? { ...o.copyOf } : { card: o.card, face: o.face };
 }
 
-const CREATURE_TYPES = new Set<string>(SUBTYPES.creature);
 
 function typeLine(face: FaceDef): string {
   const left = [...face.supertypes, ...face.types].join(' ');
@@ -41,10 +41,10 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
     f.types = [...x.setTypes];
     const allowed = new Set(x.setTypes.flatMap((t) => SUBTYPES[t.toLowerCase() as keyof typeof SUBTYPES] ?? []));
     if (x.setTypes.some((t) => t === 'Instant' || t === 'Sorcery')) for (const s of SUBTYPES.spell) allowed.add(s);
-    f.subtypes = f.subtypes.filter((s) => allowed.has(s));
+    f.subtypes = f.subtypes.filter((s) => allowed.has(s) || (x.setTypes!.includes('Creature') && isCreatureType(s)));
   }
   for (const t of x.addTypes ?? []) if (!f.types.includes(t)) f.types.push(t);
-  if (x.setCreatureTypes) f.subtypes = [...f.subtypes.filter((s) => !CREATURE_TYPES.has(s)), ...x.setCreatureTypes];
+  if (x.setCreatureTypes) f.subtypes = [...f.subtypes.filter((s) => !isCreatureType(s)), ...x.setCreatureTypes];
   for (const s of x.addSubtypes ?? []) if (!f.subtypes.includes(s)) f.subtypes.push(s);
   if (x.colors) f.colors = [...x.colors];
   if (x.addColors) f.colors = (['W', 'U', 'B', 'R', 'G'] as const).filter((c) => f.colors.includes(c) || x.addColors!.includes(c));

@@ -8,7 +8,7 @@ import { addLore } from './sagas.js';
 import { shuffleInPlace } from './rng.js';
 import { applyLifeGain, counterBlocked, replaceQuantity } from './quantities.js';
 import { playerRule } from './player-rules.js';
-import { createToken } from './permanents.js';
+import { canAttach, canEnchantPlayer, createToken, tokensToCreate } from './permanents.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -204,10 +204,18 @@ export function moveObject(
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean } = {},
+  /** `attached`: the effect says what an Aura it puts onto the battlefield is attached to, and attaches it (CR 303.4f doesn't ask). */
+  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean; attached?: boolean } = {},
 ): void {
   const o = obj(g, id);
   const from = o.zone;
+  // CR 111.8: a token that has left the battlefield can't move to another zone or come back — it stays where it is
+  // (and ceases to exist the next time state-based actions are checked). "Exile it, then return it" loses a token.
+  if (o.token && from !== 'battlefield' && from !== 'stack') return;
+  // CR 303.4f: an Aura put onto the battlefield without being cast — its controller chooses what it enchants as it
+  // enters (asked right after, before anyone can act). CR 303.4g: with nothing it could enchant, it stays where it is.
+  const auraHosts = to === 'battlefield' && from !== 'stack' && from !== 'battlefield' && !opts.faceDown && !opts.attached ? hostsForEnteringAura(g, o, opts.controller ?? o.controller, opts.face ?? 0) : undefined;
+  if (auraHosts && !auraHosts.hosts.length && !auraHosts.players.length) return;
   // CR 712.21: a melded permanent leaving the battlefield — one permanent leaves, and both its cards go to the new zone.
   const meld = from === 'battlefield' ? o.melded : undefined;
   // Grafdigger's Cage: "Creature cards in graveyards and libraries can't enter the battlefield." — it stays where it is.
@@ -383,7 +391,11 @@ export function moveObject(
     o.exiledBy = { id: instead.source.id, zcc: battlefieldZcc(g, instead.source) };
     if (instead.node.gainLife) applyLifeGain(g, instead.source.controller, instead.node.gainLife, events);
     // Kalitas, Traitor of Ghet: "… and create a 2/2 black Zombie creature token" — its controller's.
-    if (instead.node.createToken) createToken(g, instead.node.createToken, instead.source.controller, events);
+    if (instead.node.createToken) {
+      const made = instead.node.createToken;
+      const count = tokensToCreate(g, instead.source.controller, { types: made.types, subtypes: made.subtypes }, 1, events);
+      for (let i = 0; i < count; i++) createToken(g, made, instead.source.controller, events);
+    }
   }
 
   // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.
@@ -437,6 +449,7 @@ export function moveObject(
     // CR 122.6: entering with counters is having them put on it (Sigardian Paladin, Fairgrounds Trumpeter).
     if ((o.counters['+1/+1'] ?? 0) > 0) notePlusCounters(g, o, o.controller);
     onEnterBattlefield(g, o, events);
+    if (auraHosts && o.zone === 'battlefield') (g.asEnters ??= []).push({ object: o.id, zcc: o.zcc, node: { type: 'as_enters', choice: 'enchant' }, ...auraHosts });
   }
   events.push({
     type: 'moved',
@@ -461,6 +474,26 @@ export function moveObject(
     shuffleInPlace(g, zoneList(g, 'library', o.owner));
     events.push({ type: 'shuffled', player: o.owner });
   }
+}
+
+/**
+ * CR 303.4f: what an Aura card about to be put onto the battlefield (not as a resolving spell) could enchant, as
+ * `controller` will control it — undefined for anything that isn't an Aura. An Aura can't enchant something entering
+ * at the same time: permanents this resolution has just put onto the battlefield aren't offered.
+ */
+function hostsForEnteringAura(g: GameState, o: GameObject, controller: PlayerId, faceIndex: number): { hosts: { id: ObjectId; zcc: number }[]; players: PlayerId[] } | undefined {
+  const def = g.cards[o.card];
+  const face = def?.faces[faceIndex] ?? def?.faces[0];
+  if (!face?.subtypes.includes('Aura')) return undefined;
+  const enchant = face.keywords.find((k) => k.id === 'enchant' && (k.filter || k.player));
+  if (!enchant) return undefined;
+  // As it will be: on the battlefield, under that player's control.
+  const entering: GameObject = { ...o, controller, face: faceIndex };
+  if (enchant.player) return { hosts: [], players: livePlayers(g).filter((p) => canEnchantPlayer(g, entering, p)) };
+  const together = new Set((g.resolving?.moves ?? []).filter((m) => m.to === 'battlefield').map((m) => m.id));
+  const zone = enchant.filter!.zone;
+  const pool = zone === 'graveyard' ? Object.values(g.zones.graveyard).flat() : zone && zone !== 'battlefield' ? [] : g.zones.battlefield;
+  return { hosts: pool.filter((id) => id !== o.id && !together.has(id) && canAttach(g, entering, g.objects[id]!)).map((id) => ({ id, zcc: g.objects[id]!.zcc })), players: [] };
 }
 
 /** CR 712.21: the other card of a melded permanent that left the battlefield, put into the same zone as a new object. */

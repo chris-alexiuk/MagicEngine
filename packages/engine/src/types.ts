@@ -588,6 +588,8 @@ export interface Resolution {
   found?: Record<ObjectId, number>;
   /** What the latest "create … token" effect created ("the token", "sacrifice it"). */
   created?: ObjectRef[];
+  /** CR 614.1a: the "plus an additional token" replacements already applied to the token event in progress, by player. */
+  tokenAdds?: Record<PlayerId, string[]>;
   /** What the latest effect putting cards onto the battlefield put there ("They gain haste"). */
   movedOnto?: ObjectRef[];
   /** Permanents this resolution's proliferate put counters on (Ripples of Potential). */
@@ -746,6 +748,7 @@ export type PendingChoice =
    * CR 614.12: a choice made as a permanent enters. pay_life / reveal: decline and it enters tapped
    * (reveal lists the cards that qualify); color / creature_type: pick one of `options`;
    * copy: one of `candidates` to enter as a copy of, or none (CR 707.5).
+   * enchant: an Aura that wasn't cast enters attached to one of `candidates`, or to one of the players in `options` (CR 303.4f).
    */
   | {
       kind: 'as_enters';
@@ -790,7 +793,7 @@ export type ChoiceAnswer =
   | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
   | { kind: 'choose_objects'; objects: ObjectId[] }
   /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
-  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null; sacrifice?: ObjectId[] };
+  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null; sacrifice?: ObjectId[]; /** enchant: the object the Aura enters attached to (a player: `choice`). */ attach?: ObjectId };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
@@ -858,6 +861,11 @@ export type Action =
       object: ObjectId;
       face?: number;
       x?: number;
+      /**
+       * Only in what `legalActions` lists: the most X this player can pay for (the listed `x` is the least it can be cast
+       * with). A client asks for a number in between; `apply` ignores this field and checks the X it is given.
+       */
+      xMax?: number;
       autoTap?: boolean;
       /** CR 702.33a: pay the kicker cost too. */
       /** Kicked (CR 702.33a), or how many times for multikicker (CR 702.33c); for "Kicker A and/or B", which of the two (0, 1) — `true` is both. */
@@ -882,6 +890,8 @@ export type Action =
       /** Index into activatedAbilities() for that permanent. */
       ability: number;
       x?: number;
+      /** Only in what `legalActions` lists: the most X this player can pay for (see `cast`). */
+      xMax?: number;
       autoTap?: boolean;
       targets?: Target[][];
       modes?: number[];
@@ -1110,13 +1120,14 @@ export interface GameState {
   /** `cost`: airbend (CR 701.65a) — "by paying {2} rather than paying its mana cost". */
   /** anyColor: "… and you may spend mana as though it were mana of any color to cast that spell" (CR 609.4b); 'type': "… of any type". */
   /** exileOnLeave: "If that spell would be put into a graveyard, exile it instead." (Dire Fleet Daredevil; CR 614.1a). */
-  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; untilEndStep?: true; free?: true; cost?: string; anyColor?: true | 'type'; exileOnLeave?: true }[];
+  /** face: only that face may be cast — a card on an adventure, "but not as an Adventure" (CR 715.3d). */
+  mayPlay?: { object: ObjectRef; player: PlayerId; mode: 'play' | 'cast'; lastTurn: number; firstTurn?: number; untilEndStep?: true; free?: true; cost?: string; anyColor?: true | 'type'; exileOnLeave?: true; face?: number }[];
   /** Chainer, Nightmare Adept: "You may cast a creature spell from your graveyard this turn." — one spell, this turn. */
   graveyardGrants?: { player: PlayerId; filter: ObjectFilter; turn: number; key: string }[];
   /** CR 725: the player who is the monarch, once someone has become it. */
   monarch?: PlayerId | null;
   /** CR 614.12: permanents that just entered and still need their "as ~ enters" choice made. */
-  asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode; /** Tribute: the opponent chosen to decide. */ opponent?: PlayerId }[];
+  asEnters?: { object: ObjectId; zcc: number; node: AsEntersNode; /** Tribute: the opponent chosen to decide. */ opponent?: PlayerId; /** enchant (CR 303.4f): what the Aura could be attached to as it entered. */ hosts?: ObjectRef[]; players?: PlayerId[] }[];
   /** CR 500.7: extra turns to take, the most recently created first. */
   extraTurns?: PlayerId[];
   /** CR 731.1: the game's day/night designation, once it has one. */

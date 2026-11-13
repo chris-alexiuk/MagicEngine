@@ -15,9 +15,9 @@ import { auraTargetSpec } from './permanents.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
 import { targetingAs, targetPrompts, withTargetKicks } from './targets.js';
 import type { Action, GameObject, GameState, TargetPrompt } from './types.js';
-import { bestowedFace, fusedFace } from './zones.js';
+import { bestowedFace, fusedFace, nameOf } from './zones.js';
 
-export { defaultCastChoice } from './legal.js';
+export { defaultCastChoice, defaultChoiceAtX } from './legal.js';
 export { withCharsCache } from './characteristics.js';
 
 type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
@@ -106,7 +106,8 @@ export function choiceModes(g: GameState, a: Choosing): ModeMenu | null {
     repeat: Boolean(m.repeat),
     used,
     ...(m.budget !== undefined ? { budget: m.budget } : {}),
-    options: m.options.map((opt) => ({ text: opt.text, manual: Boolean(opt.manual), ...(opt.cost ? { cost: opt.cost } : {}), ...(opt.weight ? { weight: opt.weight } : {}) })),
+    // The compiler's "~" is the card itself: a player reads its name.
+    options: m.options.map((opt) => ({ text: opt.text.replace(/~/g, nameOf(g, r.source)), manual: Boolean(opt.manual), ...(opt.cost ? { cost: opt.cost } : {}), ...(opt.weight ? { weight: opt.weight } : {}) })),
   };
 }
 

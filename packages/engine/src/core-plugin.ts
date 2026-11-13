@@ -1,4 +1,5 @@
 import { dredgeOptions, drawOrDredge } from './dredge.js';
+import { CREATURE_TYPES } from './creature-types.js';
 import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
@@ -7,14 +8,14 @@ import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Colo
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
-import { applyLifeGain, extraTokens, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
+import { applyLifeGain, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
 import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong, isKeywordCounter } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { blight, blightCandidates, foodCandidates, payDuringResolution } from './payment.js';
-import { removeFromCombat, attach, canAttach, createEmblem, createToken, createTokenCopy, destroy, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
+import { removeFromCombat, alsoCreated, attach, canAttach, createEmblem, createToken, createTokenCopy, destroy, tokensToCreate, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -610,7 +611,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
         const onto = attachTo && attachTo.zone === 'battlefield' ? attachTo : undefined;
         if (node.attachTo && faceOf(ctx.g, o).subtypes.includes('Aura') && (!onto || !canAttach(ctx.g, o, onto))) continue;
-        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}) });
+        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}), ...(onto ? { attached: true } : {}) });
         const now = ctx.g.objects[o.id]!;
         if (now.zone === 'battlefield') movedOnto.push({ id: now.id, zcc: now.zcc });
         if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
@@ -1007,7 +1008,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // "becomes a 3/3 green Elemental creature" (layers 4, 5 and 7b).
       ...(Array.isArray(node.types) ? { types: node.types as string[], subtypes: (node.subtypes as string[]) ?? [], retainTypes: Boolean(node.retainTypes) } : {}),
       // Mirror Entity: "… and gain all creature types" (layer 4).
-      ...(node.allCreatureTypes ? { types: [], subtypes: [...SUBTYPES.creature], retainTypes: true } : {}),
+      ...(node.allCreatureTypes ? { types: [], subtypes: [...CREATURE_TYPES], retainTypes: true } : {}),
       // "the color of your choice", "the creature type of your choice" — chosen earlier as this resolved.
       ...(Array.isArray(node.colors) ? { colors: (node.colors as string[]).flatMap((c) => (c === 'chosen' ? (chosen.color ? [chosen.color] : []) : c === 'chosen_colors' ? (chosen.colors ?? []) : [c as Color])) } : {}),
       ...(Array.isArray(node.addColors) ? { addColors: node.addColors as Color[] } : {}),
@@ -1056,7 +1057,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // planeswalker they control" (CR 508.4) — for each opponent in turn, attacking them or one of their planeswalkers.
     if (node.attackingEach && face) {
       const g = ctx.g;
-      const memo = ctx.memo as { i?: number; created?: ObjectRef[] };
+      const memo = ctx.memo as { i?: number; created?: ObjectRef[]; adds?: string[] };
       const opponents = livePlayers(g).filter((p) => p !== ctx.controller);
       memo.created ??= [];
       let answer = answerOf(ctx, 'choose_option');
@@ -1075,7 +1076,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           answer = null;
           if (k > 0) at = { kind: 'planeswalker', object: walkers[k - 1]! };
         }
-        const count = replaceQuantity(g, 'tokens', n, { player: ctx.controller, made: { types: face.types, subtypes: face.subtypes } });
+        // One event, whoever each token attacks: "plus an additional" adds one token (CR 614.1a).
+        const count = tokensToCreate(g, ctx.controller, { types: face.types, subtypes: face.subtypes }, n, ctx.events, (memo.adds ??= []));
         for (let j = 0; j < count; j++) {
           const t = createToken(g, face, ctx.controller, ctx.events, { tapped: true });
           enterAttacking(g, t, ctx.source, at);
@@ -1107,6 +1109,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const copies = sources.map((original) => (original ? withExceptions(ctx.g, copiable(original), except) : undefined));
     if (!copies.length) return true;
     const created: ObjectRef[] = [];
+    // CR 614.1a: "create X Halflings and X Foods" is one event — "those tokens plus an additional Food token" (Peregrin
+    // Took) adds one Food to it, not one for each kind of token.
+    const adds: Record<string, string[]> = (node.sameEvent ? ctx.resolution?.tokenAdds : undefined) ?? {};
+    if (ctx.resolution) ctx.resolution.tokenAdds = adds;
     for (const [ci, copy] of copies.entries()) for (const p of players) {
       // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
       const copiedFace = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
@@ -1127,10 +1133,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // Peregrin Took, Xorn: "those tokens plus an additional Food token" (CR 614.1a; doubled too, CR 616.1).
       const copied = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
       const made = { types: (copied ?? face)?.types ?? [], subtypes: (copied ?? face)?.subtypes ?? [] };
-      for (const x of extraTokens(ctx.g, p, made, count)) {
-        const more = replaceQuantity(ctx.g, 'tokens', x.count, { player: p, made: { types: x.token.types, subtypes: x.token.subtypes } });
-        for (let i = 0; i < more; i++) createToken(ctx.g, x.token, p, ctx.events, {});
-      }
+      alsoCreated(ctx.g, p, made, count, ctx.events, (adds[p] ??= []));
     }
     if (ctx.resolution) ctx.resolution.created = created;
     return true;
@@ -1390,8 +1393,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     const who = node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller];
     for (const p of who) {
-      const o = createTokenCopy(g, { card: key, face: 0 }, p, ctx.events, { counters: { '+1/+1': n }, replace: true });
-      if (ctx.resolution) (ctx.resolution.created ??= []).push({ id: o.id, zcc: o.zcc });
+      // CR 614.1a: an Incubator is a token like any other (Doubling Season, Worldwalker Helm).
+      const count = tokensToCreate(g, p, { types: ['Artifact'], subtypes: ['Incubator'] }, 1, ctx.events);
+      for (let i = 0; i < count; i++) {
+        const o = createTokenCopy(g, { card: key, face: 0 }, p, ctx.events, { counters: { '+1/+1': n }, replace: true });
+        if (ctx.resolution) (ctx.resolution.created ??= []).push({ id: o.id, zcc: o.zcc });
+      }
     }
     return true;
   },
@@ -1473,7 +1480,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (node.revealHand) ctx.events.push({ type: 'revealed', player: p, objects: [...hand] });
       // Cracked Skull: "look at target player's hand. You may choose a nonland card from it." — seen whatever is in it.
       if (!candidates.length) return node.lookHand && hand.length ? { ask: { kind: 'choose_objects', player: ctx.controller, candidates: [], min: 0, max: 0, text: `Looking at: ${p}'s hand.`, seen: [...hand] } } : node.ifNone ? { expand: node.ifNone as EffectNode[] } : true;
-      if (candidates.length > n || node.optional) {
+      // Stunted Growth: "… and puts them on top of their library in any order" — with no cards to choose between, the
+      // order is still theirs.
+      const ordering = node.then === 'library_top' && Math.min(n, candidates.length) > 1;
+      if (candidates.length > n || node.optional || ordering) {
         return {
           ask: {
             kind: 'choose_objects',
@@ -1997,7 +2007,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     }
     // Imagecrafter: "a creature type other than Wall".
     const except = (node.except as string[] | undefined) ?? [];
-    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : SUBTYPES.creature.filter((t) => !except.includes(t));
+    const options = node.choice === 'color' ? ['W', 'U', 'B', 'R', 'G'] : node.choice === 'land_type' ? ['Plains', 'Island', 'Swamp', 'Mountain', 'Forest'] : CREATURE_TYPES.filter((t) => !except.includes(t));
     const text = node.choice === 'color' ? 'Choose a color.' : node.choice === 'land_type' ? 'Choose a basic land type.' : 'Choose a creature type.';
     if (!answer) return { ask: { kind: 'choose_option', player: ctx.controller, options, text, sourceName: sourceName(ctx) } };
     if (!options.includes(answer.choice)) throw new RulesError('Choose one of the options.');
@@ -2147,11 +2157,17 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const defending = ctx.trigger?.player;
     if (!src || !g.combat) return true;
     const made: ObjectRef[] = [];
+    const like = chars(g, src);
+    const adds: string[] = [];
     for (const p of livePlayers(g)) {
       if (p === ctx.controller || p === defending) continue;
-      const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, { tapped: true });
-      g.combat.attackers[t.id] = { zcc: t.zcc, target: { kind: 'player', player: p }, blocked: false, blockers: [] };
-      made.push({ id: t.id, zcc: t.zcc });
+      // CR 614.1a: token doublers apply to each (Parallel Lives: two attacking that player); one event in all.
+      const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events, adds);
+      for (let i = 0; i < count; i++) {
+        const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, { tapped: true });
+        g.combat.attackers[t.id] = { zcc: t.zcc, target: { kind: 'player', player: p }, blocked: false, blockers: [] };
+        made.push({ id: t.id, zcc: t.zcc });
+      }
     }
     if (!made.length || !ctx.resolution) return true;
     ctx.resolution.created = made;
@@ -2165,12 +2181,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const src = ctx.source;
     if (!src) return true;
     const made: ObjectRef[] = [];
+    const like = faceOf(g, src);
+    const adds: string[] = [];
     for (const p of livePlayers(g)) {
       if (p === ctx.controller) continue;
-      const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, {});
-      t.attacksPlayer = { player: p, turn: g.turn };
-      g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: t.id, zcc: t.zcc }, controller: ctx.controller, objects: [{ id: t.id, zcc: t.zcc }], keywords: [{ id: 'haste' }], until: 'eot' });
-      made.push({ id: t.id, zcc: t.zcc });
+      // CR 614.1a: token doublers apply to each; one event in all.
+      const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events, adds);
+      for (let i = 0; i < count; i++) {
+        const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, {});
+        t.attacksPlayer = { player: p, turn: g.turn };
+        g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: t.id, zcc: t.zcc }, controller: ctx.controller, objects: [{ id: t.id, zcc: t.zcc }], keywords: [{ id: 'haste' }], until: 'eot' });
+        made.push({ id: t.id, zcc: t.zcc });
+      }
     }
     if (!made.length || !ctx.resolution) return true;
     ctx.resolution.created = made;
@@ -2213,8 +2235,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     } else if (tokens.length > 1) {
       return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: tokens, min: 1, max: 1, text: 'Choose a creature token to copy.' } };
     }
-    const t = createTokenCopy(g, copiable(g.objects[pick]!), ctx.controller, ctx.events, {});
-    if (ctx.resolution) ctx.resolution.created = [{ id: t.id, zcc: t.zcc }];
+    // CR 614.1a: the copy is a token being created (Parallel Lives: two of them).
+    const like = chars(g, g.objects[pick]!);
+    const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events);
+    const made = Array.from({ length: count }, () => createTokenCopy(g, copiable(g.objects[pick]!), ctx.controller, ctx.events, {}));
+    if (ctx.resolution) ctx.resolution.created = made.map((t) => ({ id: t.id, zcc: t.zcc }));
     return true;
   },
 
@@ -2576,7 +2601,16 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // +1/+1 counter on the permanent, then you may put the card into your graveyard.
     // Hakbal: "each Merfolk creature you control explores" — one at a time, each finished before the next.
     const memo = ctx.memo as { card?: string; queue?: { id: string; zcc: number }[] };
-    memo.queue ??= refObjects(ctx, ref(node, 'what')).map((o) => ({ id: o.id, zcc: o.zcc }));
+    if (!memo.queue) {
+      const what = ref(node, 'what');
+      memo.queue = refObjects(ctx, what).map((o) => ({ id: o.id, zcc: o.zcc }));
+      // CR 701.44c: a permanent that has left the battlefield still explores, as it last existed — "it explores" on an
+      // enters trigger whose creature was killed in response still reveals the card (and gets no counter).
+      if (!memo.queue.length) {
+        const was = what.ref === 'self' && ctx.source && ctx.sourceZcc !== undefined ? { id: ctx.source.id, zcc: ctx.sourceZcc } : what.ref === 'trigger_object' ? ctx.trigger?.object : undefined;
+        if (was && ctx.g.lastKnown?.[was.id]?.zcc === was.zcc) memo.queue = [{ id: was.id, zcc: was.zcc }];
+      }
+    }
     let answer = answerOf(ctx, 'may');
     if (answer && memo.card) {
       const card = ctx.g.objects[memo.card];
@@ -2593,7 +2627,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         memo.queue.shift();
         continue;
       }
-      const player = o.controller;
+      // Whoever controlled it as it last existed does the exploring.
+      const was = ctx.g.lastKnown?.[r.id];
+      const player = o.zone === 'battlefield' && o.zcc === r.zcc ? o.controller : was?.zcc === r.zcc && was.controller ? was.controller : o.controller;
       const top = zoneList(ctx.g, 'library', player)[0];
       if (!top) {
         // CR 701.44b: it still explores, with nothing revealed (and so not a land).
@@ -2802,7 +2838,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           name: `${subtype} Army`, manaCost: '', typeLine: `Creature — ${subtype} Army`, supertypes: [], types: ['Creature'],
           subtypes: [...new Set([subtype, 'Army'])], oracle: '', colors: ['B'], keywords: [], abilities: [], unparsed: [], power: '0', toughness: '0',
         };
-        createToken(g, face, ctx.controller, ctx.events);
+        // CR 614.1a: the Army is a token being created (Doubling Season: two, and one of them gets the counters).
+        const count = tokensToCreate(g, ctx.controller, { types: face.types, subtypes: face.subtypes }, 1, ctx.events);
+        for (let i = 0; i < count; i++) createToken(g, face, ctx.controller, ctx.events);
       }
       const list = armies();
       if (list.length > 1) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: list, min: 1, max: 1, text: 'Choose an Army creature you control.' } };
@@ -5362,7 +5400,8 @@ function describeEffects(list: EffectNode[]): string {
 
 function describeSearch(node: EffectNode, count: number): string {
   const to = { hand: 'into your hand', battlefield: 'onto the battlefield', graveyard: 'into your graveyard', library: 'on top', exile: 'into exile' }[String(node.to)];
-  return `search your library for ${count >= 999 ? 'any number of' : `${node.upTo ? 'up to ' : ''}${count}`} card(s), put ${to}`;
+  const many = count >= 999 ? 'any number of cards' : `${node.upTo ? 'up to ' : ''}${count === 1 ? 'a card' : `${count} cards`}`;
+  return `Search your library for ${many} and put ${count === 1 ? 'it' : 'them'} ${to}.`;
 }
 
 // ---------------------------------------------------------------------------

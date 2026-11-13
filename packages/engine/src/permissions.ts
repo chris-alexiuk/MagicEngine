@@ -166,6 +166,16 @@ export function exileOnLeavePermission(g: GameState, player: PlayerId, o: GameOb
   return (g.mayPlay ?? []).some((p) => p.exileOnLeave && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
 }
 
+/**
+ * CR 715.3d: a card on an adventure may be cast from exile, "but not as an Adventure" — the one face every permission
+ * this player has for the card allows, or undefined when any face may be cast.
+ */
+export function permittedFace(g: GameState, player: PlayerId, o: GameObject): number | undefined {
+  if (o.zone !== 'exile') return undefined;
+  const live = (g.mayPlay ?? []).filter((p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
+  return live.length && live.every((p) => p.face !== undefined && p.face === live[0]!.face) ? live[0]!.face : undefined;
+}
+
 /** Airbend (CR 701.65a): a permission to cast this card by paying another cost rather than its mana cost. */
 export function permissionCost(g: GameState, player: PlayerId, o: GameObject): string | undefined {
   return (g.mayPlay ?? []).find((p) => p.cost !== undefined && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p))?.cost;

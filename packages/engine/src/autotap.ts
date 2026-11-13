@@ -1,15 +1,16 @@
 import { activationProhibited } from './cast-bans.js';
 import type { AddManaEffect } from '@mtg/schema';
-import { canActivateTapAbilities, manaAbilities, manaMultipliers, isBasicLand, matchesFilter, objectAbilities } from './characteristics.js';
+import { anyManaTriggers, canActivateTapAbilities, manaAbilities, manaMultipliers, isBasicLand, matchesFilter, objectAbilities } from './characteristics.js';
 import { abilitySources } from './zones.js';
 import type { ObjectFilter } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
-import { anyColorChoices, type ManaCost, manaOnly, manaOption, shortfall } from './mana.js';
+import { anyColorChoices, type ManaCost, manaOnly, manaOption, parseManaCost, shortfall } from './mana.js';
+import { runManaAbility } from './payment.js';
 import { playerRule } from './player-rules.js';
 import { cantLoseLife } from './quantities.js';
 import { RulesError } from './types.js';
 import { anyColorCost, asThoughAnyColor, canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
-import type { GameState, ManaColor, ObjectId, PlayerId } from './types.js';
+import type { GameEvent, GameState, ManaColor, ObjectId, PlayerId } from './types.js';
 
 export interface PlannedActivation {
   object: ObjectId;
@@ -29,7 +30,7 @@ interface Source {
   modes: Mode[];
 }
 
-function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose): Source[] {
+function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose, skipped?: { any: boolean }): Source[] {
   const out: Source[] = [];
   // CR 106.12b: Nyxbloom Ancient's "three times as much".
   const mult = manaMultipliers(g, player);
@@ -41,13 +42,20 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
     if (o.controller !== player || o.tapped || !canActivateTapAbilities(g, o) || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
     const modes: Mode[] = [];
     manaAbilities(g, o).forEach((ab, ability) => {
-      // Only simple "{T}: Add …" abilities are used automatically.
+      // Only simple "{T}: Add …" abilities are planned for here; the rest are tried one at a time when these fall short
+      // (planByTrying).
       // CR 602.5d: "Activate only as a sorcery" can't be activated while a spell or ability is being paid for.
-      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn || ab.timing === 'sorcery') return;
+      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn || ab.timing === 'sorcery') {
+        if (skipped) skipped.any = true;
+        return;
+      }
       // CR 602.5b: "Activate only if you control a Swamp."
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
       const effect = ab.effects[0] as AddManaEffect;
-      if (effect.type !== 'add_mana' || effect.times !== undefined || effect.eachColor) return;
+      if (effect.type !== 'add_mana' || effect.times !== undefined || effect.eachColor) {
+        if (skipped) skipped.any = true;
+        return;
+      }
       // CR 106.6: restricted mana only helps when it can be spent on this.
       if (effect.spend && !canSpend(g, player, effect.spend, purpose, o)) return;
       if (effect.anyColor) {
@@ -171,9 +179,22 @@ export function planManaOnly(g: GameState, player: PlayerId, cost: ManaCost, x: 
   // CR 609.4b: "as though it were mana of any color" — any mana pays its colored symbols.
   const anyColor = asThoughAnyColor(g, player, purpose);
   if (anyColor) cost = anyColorCost(cost, anyColor);
+  const skipped = { any: false };
+  const quick = planQuick(g, player, cost, x, exclude, purpose, skipped);
+  // Mana the quick plan can't count on: abilities it leaves out (Bloom Tender, a Signet, a Treasure), and mana added
+  // when a permanent is tapped for mana (Kinnan). Only then is it worth trying them one at a time.
+  if (cost.unsupported.length) return quick;
+  // With mana being added as permanents are tapped, the quick plan would tap more than it needs: one at a time instead.
+  const extra = anyManaTriggers(g);
+  if (quick ? !(extra && quick.length > 1) : !(skipped.any || extra)) return quick;
+  return planByTrying(g, player, cost, x, exclude, purpose, extra) ?? quick;
+}
+
+/** The quick plan: only abilities that are just "{T}: Add …", counted from their text. */
+function planQuick(g: GameState, player: PlayerId, cost: ManaCost, x: number, exclude: readonly ObjectId[], purpose: ManaPurpose, skipped?: { any: boolean }): PlannedActivation[] | null {
   const need = shortfall(spendablePool(g, player, purpose), cost, x);
   if (!need) return null;
-  const sources = manaSources(g, player, exclude, purpose);
+  const sources = manaSources(g, player, exclude, purpose, skipped);
   const used = new Set<ObjectId>();
   const plan: PlannedActivation[] = [];
   let surplus = 0; // extra mana from a source tapped for a color (e.g. the second {C} from Sol Ring)
@@ -203,15 +224,120 @@ export function planManaOnly(g: GameState, player: PlayerId, cost: ManaCost, x: 
   }
 
   let generic = need.generic - surplus;
+  // Generic mana from what makes the least first (a land before a Gilded Lotus), so little is left floating.
+  const most = (s: Source) => Math.max(...s.modes.map((m) => m.mana.length));
   const rest = sources
     .filter((s) => !used.has(s.object))
-    .sort((a, b) => flexibility(a) - flexibility(b));
+    .sort((a, b) => most(a) - most(b) || flexibility(a) - flexibility(b));
+  // A source that could make any color for generic mana makes one the player has a use for (what's left floating, a
+  // Gilded Lotus's third mana, is then worth something): the colors of the cards they could still cast.
+  let liked: Map<ManaColor, number> | null = null;
+  const like = (m: Mode) => {
+    if (!liked) {
+      liked = new Map();
+      const held = [...(g.zones.hand[player] ?? []), ...g.zones.command.filter((id) => g.objects[id]?.owner === player)];
+      for (const id of held) for (const sym of (g.cards[g.objects[id]!.card]?.faces[0]?.manaCost ?? '').match(/[WUBRGC]/g) ?? []) liked.set(sym as ManaColor, (liked.get(sym as ManaColor) ?? 0) + 1);
+    }
+    return m.mana.reduce((n, c) => n + (liked!.get(c) ?? 0), 0);
+  };
   for (const source of rest) {
     if (generic <= 0) break;
-    const mode = [...source.modes].sort((a, b) => b.mana.length - a.mana.length)[0]!;
+    const mode = [...source.modes].sort((a, b) => b.mana.length - a.mana.length || (source.modes.length > 1 ? like(b) - like(a) : 0))[0]!;
     used.add(source.object);
     plan.push(toActivation(source, mode));
     generic -= mode.mana.length;
   }
   return generic <= 0 ? plan : null;
+}
+
+/** A mana ability the engine can activate without asking anything, and the ways to (a color, or which of its options). */
+interface Try {
+  object: ObjectId;
+  ability: number;
+  choices: (number | ManaColor | undefined)[];
+  /** The colors a choice makes, as far as its text says (a counted amount makes at least one of these). */
+  colors: (choice: number | ManaColor | undefined) => ManaColor[];
+  /** "{1}, {T}: Add {G}{U}." — mana to pay first. */
+  mana?: string;
+  /** It costs more than a tap (a Treasure is sacrificed, a pain land deals damage): used after the ones that don't. */
+  dear: boolean;
+}
+
+function tries(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose, done: ReadonlySet<string>): Try[] {
+  const out: Try[] = [];
+  for (const id of g.zones.battlefield) {
+    const o = g.objects[id]!;
+    if (o.controller !== player || exclude.includes(id) || activationProhibited(g, player, o, true)) continue;
+    manaAbilities(g, o).forEach((ab, ability) => {
+      if (done.has(`${id}:${ability}`) || ab.cost.untap || ab.oncePerTurn || ab.maxPerTurn || ab.timing === 'sorcery') return;
+      // Its own cost must use it up — it taps, or it's sacrificed — and ask for nothing else.
+      const other = ab.cost.other ?? [];
+      if (!other.every((c) => c.type === 'sacrifice_self') || !(ab.cost.tap || other.length)) return;
+      if (ab.cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
+      if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+      const add = ab.effects.find((e) => e.type === 'add_mana') as AddManaEffect | undefined;
+      if (!add || add.combination) return;
+      if (add.spend && !canSpend(g, player, add.spend, purpose, o)) return;
+      const options = (add.options ?? []).map((opt) => manaOption(opt, o));
+      const choices: (number | ManaColor | undefined)[] = add.anyColor ? anyColorChoices(g, player, add.identity, add, o) : options.length > 1 ? options.flatMap((m, i) => (m ? [i] : [])) : [undefined];
+      if (!choices.length || (!add.anyColor && options.length === 1 && !options[0])) return;
+      const colors = (choice: number | ManaColor | undefined): ManaColor[] => (typeof choice === 'string' ? [choice] : (options[choice ?? 0] ?? []));
+      out.push({ object: id, ability, choices, colors, ...(ab.cost.mana ? { mana: ab.cost.mana } : {}), dear: other.length > 0 || ab.effects.length > 1 });
+    });
+  }
+  return out;
+}
+
+/**
+ * The slower plan, for mana the quick one can't count from an ability's text: activates mana abilities one at a time on
+ * a copy of the game — whatever makes a color still needed first, anything that costs more than a tap last — until the
+ * cost is covered or the quick plan can finish. What it returns has been done on the copy, in that order, so doing it
+ * for real does the same. Null if everything was tried and the cost still isn't covered.
+ */
+function planByTrying(g: GameState, player: PlayerId, cost: ManaCost, x: number, exclude: readonly ObjectId[], purpose: ManaPurpose, extra: boolean): PlannedActivation[] | null {
+  // The colors this cost has a use for at all (what a choice is worth beyond the color needed right now).
+  const useful = new Set<string>([...Object.keys(cost.specific).filter((c) => (cost.specific[c as ManaColor] ?? 0) > 0), ...cost.hybrid.flat(), ...cost.phyrexian.flat()]);
+  const { cards, ...rest } = g;
+  const sim: GameState = { ...structuredClone(rest), cards };
+  const events: GameEvent[] = [];
+  const plan: PlannedActivation[] = [];
+  const done = new Set<string>();
+  const run = (step: PlannedActivation): boolean => {
+    try {
+      runManaAbility(sim, player, step.object, step.ability, step.choice, events);
+      plan.push(step);
+      return true;
+    } catch (err) {
+      if (err instanceof RulesError) return false;
+      throw err;
+    }
+  };
+  for (let guard = 0; guard < 200; guard++) {
+    const need = shortfall(spendablePool(sim, player, purpose), cost, x);
+    if (!need) return null;
+    if (!need.specific.length && need.generic <= 0) return plan;
+    // The plain sources can be counted the rest of the way — unless tapping them adds mana of its own (Kinnan).
+    const finish = extra ? null : planQuick(sim, player, cost, x, exclude, purpose);
+    if (finish) return [...plan, ...finish];
+    // The next one to try: one that makes a color still needed, then the ones that cost only a tap, then no mana to pay.
+    const wanted = new Set(need.specific);
+    let best: { t: Try; choice: number | ManaColor | undefined; score: number } | null = null;
+    for (const t of tries(sim, player, exclude, purpose, done)) {
+      for (const choice of t.choices) {
+        const made = t.colors(choice);
+        const score = (made.some((c) => wanted.has(c)) ? 100 : 0) + (t.dear ? 0 : 20) + (t.mana ? 0 : 10) + made.filter((c) => useful.has(c)).length;
+        if (!best || score > best.score) best = { t, choice, score };
+      }
+    }
+    if (!best) return null;
+    const { t, choice } = best;
+    done.add(`${t.object}:${t.ability}`);
+    if (t.mana) {
+      // What it costs comes from the pool, or from the plain sources (never from itself).
+      const pay = planQuick(sim, player, parseManaCost(t.mana), 0, [...exclude, t.object], { kind: 'ability', source: sim.objects[t.object]! });
+      if (!pay || !pay.every(run)) continue;
+    }
+    run({ object: t.object, ability: t.ability, ...(choice !== undefined ? { choice } : {}) });
+  }
+  return null;
 }

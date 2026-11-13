@@ -24,7 +24,18 @@ export function copySpell(g: GameState, entry: StackEntry & { kind: 'spell' }, c
     timestamp: ++g.clock,
     spellCopy: true,
     ...(orig.copyOf ? { copyOf: { ...orig.copyOf } } : {}),
-    cast: { by: controller, from: 'stack', copy: true, ...(orig.cast?.kicked ? { kicked: true as const } : {}) },
+    // CR 707.10: a copy copies the choices made as the spell was cast, the additional and alternative costs paid among
+    // them — how many times it was kicked and with which kicker (CR 702.33f), a behold or reveal cost. It wasn't cast,
+    // so nothing about the casting itself (what its controller controlled then) carries over.
+    cast: {
+      by: controller,
+      from: 'stack',
+      copy: true,
+      ...(orig.cast?.kicked ? { kicked: true as const } : {}),
+      ...(orig.cast?.kicks !== undefined ? { kicks: orig.cast.kicks } : {}),
+      ...(orig.cast?.kickedWith ? { kickedWith: [...orig.cast.kickedWith] } : {}),
+      ...(orig.cast?.paid ? { paid: structuredClone(orig.cast.paid) } : {}),
+    },
   };
   g.objects[id] = o;
   g.stack.push({ ...structuredClone(entry), object: id, controller });

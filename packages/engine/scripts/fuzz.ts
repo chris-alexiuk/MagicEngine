@@ -61,11 +61,18 @@ const PLAYERS = opt('--players', 'mixed');
 const VERBOSE = args.includes('--verbose');
 const TOP = args.includes('--top');
 const FOCUS = args.includes('--focus') ? new RegExp(opt('--focus', '')) : null;
+/** `--format commander`: each deck gets a legendary creature of its colors as its commander (the command zone, the tax, CR 903.9). */
+const FORMAT = opt('--format', 'constructed') as 'commander' | 'constructed';
+/** `--as-is`: the pool was compiled by this checkout's compiler already (a reparse's `--save`), so it isn't compiled again. */
+const AS_IS = args.includes('--as-is');
+let commanderCasts = 0;
+let commanderPrompts = 0;
 const bySource = new Map<string, number>();
 
 let raw = readFileSync(dbPath);
 if (raw[0] === 0x1f && raw[1] === 0x8b) raw = gunzipSync(raw);
-const db = reparseDB(JSON.parse(raw.toString('utf8')) as CardDB);
+const parsed = JSON.parse(raw.toString('utf8')) as CardDB;
+const db = AS_IS ? parsed : reparseDB(parsed);
 
 // Small deterministic RNG for the bots (separate from the engine's).
 let s = SEED >>> 0;
@@ -381,6 +388,7 @@ function answerFor(g: GameState): { player: PlayerId; answer: ChoiceAnswer } | n
       if (p.choice === 'sacrifice_or_leave') return { player: me, answer: { kind: 'as_enters', sacrifice: [...(p.candidates ?? [])].sort(() => rnd() - 0.5).slice(0, p.amount ?? 1) } };
       if (p.choice === 'devour') return { player: me, answer: { kind: 'as_enters', sacrifice: (p.candidates ?? []).filter(() => rnd() < 0.3) } };
       if (p.choice === 'copy') return { player: me, answer: { kind: 'as_enters', copy: p.candidates?.length && rnd() < 0.9 ? pick(p.candidates) : null } };
+      if (p.choice === 'enchant' && p.candidates?.length) return { player: me, answer: { kind: 'as_enters', attach: pick(p.candidates) } };
       return { player: me, answer: { kind: 'as_enters', choice: pick(p.options ?? []) } };
     case 'declare_attackers': {
       const attacks = p.attackers
@@ -584,6 +592,8 @@ let decided = 0;
 const stats = { triggered: 0, resolvedAuto: 0, manual: 0, fizzled: 0, tokens: 0 };
 const t0 = Date.now();
 
+let xCasts = 0;
+let xPlayed = 0;
 for (let game = 0; game < GAMES; game++) {
   const count = PLAYERS === 'mixed' ? 2 + (game % 3) : Number(PLAYERS);
   const ids = ['p1', 'p2', 'p3', 'p4'].slice(0, count);
@@ -591,12 +601,15 @@ for (let game = 0; game < GAMES; game++) {
   const players = ids.map((id) => {
     const colors = shuffle([...(['W', 'U', 'B', 'R', 'G'] as Color[])]).slice(0, 2);
     const deck = makeDeck(colors);
+    const legends = FORMAT === 'commander' ? pool.filter((c) => c.faces[0]!.supertypes.includes('Legendary') && c.faces[0]!.types.includes('Creature') && c.colorIdentity.every((x) => colors.includes(x as Color)) && !deck.includes(c.name)) : [];
+    const commander = legends.length ? pick(legends).name : undefined;
+    if (commander) deck.push(commander);
     for (const n of deck) cards[n] = byName.get(n)!;
-    return { id, name: id, deck };
+    return { id, name: id, deck, ...(commander ? { commanders: [commander] } : {}) };
   });
   let g: GameState;
   try {
-    g = createGame({ players, cards, seed: SEED * 1000 + game, format: 'constructed' }).state;
+    g = createGame({ players, cards, seed: SEED * 1000 + game, format: FORMAT }).state;
   } catch (err) {
     failures.push({ game, kind: 'crash', detail: `createGame: ${String(err)}` });
     continue;
@@ -607,18 +620,28 @@ for (let game = 0; game < GAMES; game++) {
     let action: Action;
     let offered = false;
     const answer = answerFor(g);
+    if (g.pending?.kind === 'commander_zone') commanderPrompts++;
     if (answer) action = { type: 'choose', player: answer.player, answer: answer.answer };
     else if (g.priority) {
       const options = legalActions(g, g.priority);
+      if (options.some((a) => a.type === 'cast' && g.objects[a.object]?.zone === 'command')) commanderCasts++;
       // Nor activate the same ability over and over in one turn ("{0}: … gets -1/-0 until end of turn").
       const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual' && !(a.type === 'activate' && (used.get(`${g.turn}:${a.object}`) ?? 0) >= 6));
       // Bots don't pile up a huge stack (free abilities like "{0}: …" would otherwise loop for thousands of actions).
       const chosen = active.length && g.stack.length < 20 && rnd() < 0.75 ? pick(active) : options[0]!;
       offered = true;
-      action = rnd() < 0.5 ? randomiseTargets(g, chosen) : chosen;
+      // X spells and abilities are listed with the least X and the most that can be paid for: play any X in between
+      // (mostly small ones), with targets to match ("X target creatures", "with mana value X or less").
+      let base = chosen;
+      if ((base.type === 'cast' || base.type === 'activate') && base.xMax !== undefined && base.xMax > (base.x ?? 0) && rnd() < 0.7) {
+        const least = base.x ?? 0;
+        base = { ...base, x: least + 1 + Math.floor(rnd() * Math.min(base.xMax - least, rnd() < 0.7 ? 3 : 40)) };
+        xCasts++;
+      }
+      action = rnd() < 0.5 || base !== chosen ? randomiseTargets(g, base) : base;
       // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
       // (Multikicker: sometimes more than once — CR 702.33c.)
-      if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: rnd() < 0.5 ? true : 1 + Math.floor(rnd() * 3) };
+      if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: rnd() < 0.4 ? true : rnd() < 0.5 ? pick([[0], [1], [0, 1]]) : 1 + Math.floor(rnd() * 3) };
       // CR 702.47: sometimes splice the Arcane cards in hand onto it (refused if it isn't Arcane or there's no mana).
       if (action.type === 'cast' && rnd() < 0.5) {
         const cast = action;
@@ -659,6 +682,7 @@ for (let game = 0; game < GAMES; game++) {
       failures.push({ game, kind: 'crash', detail: (err as Error).stack?.split('\n').slice(0, 4).join(' | ') ?? String(err), action: label });
       break;
     }
+    if (r.ok && (action.type === 'cast' || action.type === 'activate') && (action.x ?? 0) > 0) xPlayed++;
     if (!r.ok && answer?.answer.kind === 'pay' && answer.answer.pay) {
       // Couldn't afford it: decline instead.
       r = apply(g, { type: 'choose', player: answer.player, answer: { kind: 'pay', pay: false } });
@@ -735,6 +759,8 @@ console.log(`${GAMES} games, ${turns} turns, ${actions} actions in ${(ms / 1000)
 console.log(`  slowest action: ${slowest.ms} ms (game ${slowest.game}) ${slowest.ms > 1000 ? slowest.action.slice(0, 200) : ''}`);
 if (TOP) for (const [k, v] of [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 15)) console.log(`  ${v} ${k}`);
 console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto}, manual ${stats.manual}, fizzled ${stats.fizzled}, tokens ${stats.tokens}`);
+console.log(`  X: ${xPlayed} casts and activations with X above 0 (of ${xCasts} tried)`);
+if (FORMAT === 'commander') console.log(`  commander: a cast from the command zone offered ${commanderCasts} times, ${commanderPrompts} command-zone choices`);
 const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);
 for (const k of ['crash', 'rejected', 'invariant'] as const) {
   const list = byKind(k);

@@ -1,4 +1,5 @@
 import { cardTypePlural, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
+import { CREATURE_TYPES, isCreatureType } from './creature-types.js';
 import { isRingBearer } from './ring.js';
 import type {
   AbilityNode,
@@ -130,11 +131,10 @@ interface ActiveEffect {
   applies(o: GameObject, c: Characteristics): boolean;
 }
 
-const CREATURE_TYPES = SUBTYPES.creature;
 /** Which card type each kind of subtype goes with (CR 205.3). */
 const SUBTYPE_OF_TYPE: Record<string, keyof typeof SUBTYPES> = { Creature: 'creature', Land: 'land', Artifact: 'artifact', Enchantment: 'enchantment', Planeswalker: 'planeswalker', Instant: 'spell', Sorcery: 'spell', Kindred: 'creature' };
 function subtypeKind(s: string): keyof typeof SUBTYPES | undefined {
-  return (Object.keys(SUBTYPES) as (keyof typeof SUBTYPES)[]).find((k) => SUBTYPES[k].includes(s));
+  return (Object.keys(SUBTYPES) as (keyof typeof SUBTYPES)[]).find((k) => SUBTYPES[k].includes(s)) ?? (isCreatureType(s) ? 'creature' : undefined);
 }
 const LAND_TYPES: readonly string[] = SUBTYPES.land;
 
@@ -202,12 +202,12 @@ export function grantedKeywordOff(g: GameState, o: GameObject, id: string): Keyw
 
 /** CR 205.3m / 702.73a: its creature types (changeling: all of them). */
 export function creatureTypesOf(c: Characteristics): readonly string[] {
-  return c.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : c.subtypes.filter((s) => CREATURE_TYPES.includes(s));
+  return c.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : c.subtypes.filter(isCreatureType);
 }
 
 /** CR 205.3m / 702.73a: whether it has a creature type one of this player's commanders has (changeling: all of them). */
 function sharesTypeWithCommander(g: GameState, c: Characteristics, player: PlayerId | undefined): boolean {
-  const kinds = (x: Characteristics) => (x.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : x.subtypes.filter((s) => CREATURE_TYPES.includes(s)));
+  const kinds = (x: Characteristics) => (x.keywords.some((k) => k.id === 'changeling') ? CREATURE_TYPES : x.subtypes.filter(isCreatureType));
   const mine = kinds(c);
   if (!mine.length) return false;
   for (const o of Object.values(g.objects)) {
@@ -294,6 +294,34 @@ function lostSets(g: GameState): { ids: Set<string>; retyped: Set<string> } {
     if (!removesAbilities(e)) continue;
     for (const r of e.objects) if (g.objects[r.id]?.zcc === r.zcc) mark(r.id, e);
   }
+  // CR 613.1d before 613.1f: who "creatures lose all abilities" reaches is decided with types already changed — an
+  // artifact March of the Machines makes a creature is a creature to Humility. The effects that add card types, read
+  // from what's printed (their own conditions aside), applied once.
+  const adders: { source: GameObject; e: ContinuousEffectNode }[] = [];
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id];
+    if (!source) continue;
+    for (const a of printedAbilities(faceOf(g, source))) {
+      if (a.kind !== 'static' || a.gate || a.effect.type !== 'continuous') continue;
+      const e = a.effect as ContinuousEffectNode;
+      if (e.addTypes?.types?.length && !e.addTypes.elsewhere && !e.condition) adders.push({ source, e });
+    }
+  }
+  const typedMemo = new Map<string, Characteristics>();
+  const typed = (o: GameObject): Characteristics => {
+    let c = typedMemo.get(o.id);
+    if (c) return c;
+    c = printed(faceOf(g, o));
+    const more = new Set<string>();
+    for (const fx of g.effects) {
+      const t = (fx as { types?: { types?: string[] } }).types?.types;
+      if (t?.length && fx.objects.some((r) => r.id === o.id && r.zcc === o.zcc)) for (const x of t) more.add(x);
+    }
+    for (const { source, e } of adders) if (affectedBy(g, e.affected, source, o, c)) for (const x of e.addTypes!.types!) more.add(x);
+    if ([...more].some((x) => !c!.types.includes(x))) c = { ...c, types: [...new Set([...c.types, ...more])] };
+    typedMemo.set(o.id, c);
+    return c;
+  };
   for (const id of abilitySources(g)) {
     const source = g.objects[id];
     if (!source || ids.has(id)) continue;
@@ -303,7 +331,7 @@ function lostSets(g: GameState): { ids: Set<string>; retyped: Set<string> } {
       if (!removesAbilities(e) || e.condition) continue;
       for (const oid of g.zones.battlefield) {
         const o = g.objects[oid]!;
-        if (affectedBy(g, e.affected, source, o, printed(faceOf(g, o)))) mark(oid, e);
+        if (affectedBy(g, e.affected, source, o, typed(o))) mark(oid, e);
       }
     }
   }
@@ -556,7 +584,8 @@ export function withCharsCache<T>(fn: () => T): T {
     if (--charsDepth === 0) {
       conditionMemo = amountMemo = null;
       effectsMemo = null;
-      grantedManaMemo = null;
+      // Answers about the board as it is now: an action changes the state in place, so none of them outlives the read.
+      grantedManaMemo = addsLandTypesMemo = cantActivateMemo = manaTriggerMemo = null;
     }
   }
 }
@@ -662,7 +691,7 @@ function layered(g: GameState, o: GameObject): Characteristics {
     if (!(e.creatureTypes || e.landTypes) || !e.applies(o, c)) continue;
     // CR 205.1b: "becomes a Bird" replaces its creature types; CR 305.7: "is an Island" replaces its land types,
     // and it loses the abilities its rules text gives it (its printed keywords here; the rest in objectAbilities).
-    if (e.creatureTypes) c.subtypes = [...c.subtypes.filter((s) => !CREATURE_TYPES.includes(s)), ...e.creatureTypes];
+    if (e.creatureTypes) c.subtypes = [...c.subtypes.filter((s) => !isCreatureType(s)), ...e.creatureTypes];
     if (e.landTypes) {
       c.subtypes = [...c.subtypes.filter((s) => !LAND_TYPES.includes(s)), ...e.landTypes];
       c.keywords = [];
@@ -1259,6 +1288,21 @@ function anyCantActivate(g: GameState): boolean {
   return v;
 }
 
+let manaTriggerMemo: { g: GameState; v: boolean } | null = null;
+/** Whether anything triggers on a permanent being tapped for mana (Kinnan, Mana Flare; High Tide this turn) — rare. */
+export function anyManaTriggers(g: GameState): boolean {
+  if (manaTriggerMemo?.g === g) return manaTriggerMemo.v;
+  let v = Boolean(g.manaTriggers?.some((f) => f.turn === g.turn));
+  for (const id of abilitySources(g)) {
+    if (v) break;
+    const o = g.objects[id];
+    if (!o || o.zone !== 'battlefield') continue;
+    v = objectAbilities(g, o).some((a) => a.kind === 'triggered' && a.trigger.type === 'tapped_for_mana');
+  }
+  if (charsDepth > 0) manaTriggerMemo = { g, v };
+  return v;
+}
+
 /** Whether anything grants a mana ability right now — rare, so other objects skip computing their characteristics. */
 function anyGrantedMana(g: GameState): boolean {
   if (grantedManaMemo?.g === g) return grantedManaMemo.v;
@@ -1415,7 +1459,7 @@ export function sourceHasQuality(g: GameState, holder: GameObject, source: GameO
     case 'objects': {
       const m = r.match;
       if (m.types && !m.types.every((t) => c.types.includes(t))) return false;
-      const creatureTypes = (x: string) => (c.keywords.some((k) => k.id === 'changeling') && CREATURE_TYPES.includes(x)) || c.subtypes.includes(x);
+      const creatureTypes = (x: string) => (c.keywords.some((k) => k.id === 'changeling') && isCreatureType(x)) || c.subtypes.includes(x);
       if (m.subtype && !creatureTypes(m.subtype)) return false;
       if (m.notSubtype && creatureTypes(m.notSubtype)) return false;
       if (m.chosenType && !(holder.chosen?.creatureType && creatureTypes(holder.chosen.creatureType))) return false;

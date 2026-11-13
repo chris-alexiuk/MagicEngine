@@ -92,21 +92,23 @@ export function cantLoseLife(g: GameState, player: PlayerId): boolean {
 
 /**
  * Peregrin Took, Xorn: the extra tokens to create as well when a player creates tokens (CR 614.1a), and how many —
- * for tokens matching `tokenFilter` (by the created face's types and subtypes).
+ * for tokens matching `tokenFilter` (by the created face's types and subtypes). `once`: "plus an additional …" adds one
+ * token to the whole event however many kinds of token it creates (`key` names the replacement, so a caller creating
+ * several kinds in one event applies it once); "plus that many …" follows the count.
  */
-export function extraTokens(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number): { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number }[] {
-  const out: { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number }[] = [];
+export function extraTokens(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number): { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number; key: string; once: boolean }[] {
+  const out: { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number; key: string; once: boolean }[] = [];
   if (n <= 0) return out;
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
-    for (const a of objectAbilities(g, source)) {
+    for (const [i, a] of objectAbilities(g, source).entries()) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
       const e = (a as StaticAbility).effect as QuantityReplacementNode;
       if (e.event !== 'tokens' || e.op !== 'extra' || !e.extra || source.controller !== player) continue;
       const f = e.tokenFilter;
       if (f?.subtypes && !f.subtypes.some((t) => made.subtypes.includes(t))) continue;
       if (f?.types && !f.types.some((t) => made.types.includes(t))) continue;
-      out.push({ token: e.extra.token, count: e.extra.thatMany ? n : 1 });
+      out.push({ token: e.extra.token, count: e.extra.thatMany ? n : 1, key: `${source.id}:${source.zcc}:${i}`, once: !e.extra.thatMany });
     }
   }
   return out;

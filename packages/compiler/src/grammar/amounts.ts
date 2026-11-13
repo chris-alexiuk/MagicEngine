@@ -830,10 +830,19 @@ export function bindX(effects: EffectNode[], expr: AmountExpr): EffectNode[] {
     if (o.ref && o.filter && typeof o.filter === 'object') return { ...o, filter: bindFilterX(o.filter as ObjectFilter) };
     return v;
   };
+  // The Destruction of Praxis: "…, where X is the number of differently named lands you control. If X is 6 or more, …" —
+  // the X a condition compares.
+  const inCondition = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(inCondition);
+    if (!v || typeof v !== 'object') return v;
+    if ((v as { kind?: string }).kind === 'x') return sub(v);
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, x === 'X' && (k === 'amount' || k === 'n') ? expr : inCondition(x)]));
+  };
   return effects.map((e) => {
     const out: EffectNode = { ...e };
     for (const [k, v] of Object.entries(e)) {
       if ((k === 'effects' || k === 'then' || k === 'else' || k === 'cant') && Array.isArray(v)) out[k] = bindX(v as EffectNode[], expr);
+      else if ((k === 'cond' || k === 'condition') && v && typeof v === 'object') out[k] = inCondition(v);
       // Liliana of the Dark Realms: a choice between "+X/+X" and "-X/-X" (choose_one's options).
       else if (k === 'options' && e.type === 'choose_one' && Array.isArray(v)) out[k] = (v as EffectNode[][]).map((o) => bindX(o, expr));
       else if (k === 'filter' && v && typeof v === 'object') out[k] = bindFilterX(v as ObjectFilter);

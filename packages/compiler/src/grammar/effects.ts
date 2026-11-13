@@ -2642,6 +2642,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (js.includes('"other":true')) out[k] = JSON.parse(js.replace(/"other":true/g, '"otherThan":{"ref":"chosen_object"}')) as EffectNode;
       }
     }
+    // Minsc & Boo: "… deals X damage to any target, where X is that creature's power. If the sacrificed creature was a
+    // Hamster, draw X cards." — X means the same in the sentences after the one that defines it (CR 107.3).
+    if (b.whereX && !b.xAllowed) return out.length ? bindX(out, b.whereX) : null;
     return out.length ? out : null;
   });
 }
@@ -3668,6 +3671,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
         const expr = inner && parseCount(what, b);
         if (inner && expr) bindTargetsX(b, from, expr);
         if (!onlyCount(inner)) return null;
+        if (inner && expr) b.whereX = expr;
         return inner && expr ? bindX(inner, expr) : null;
       }
       // Fraying Sanity: "enchanted player mills X cards, where X is the number of cards put into their graveyard …" — "their"
@@ -3682,6 +3686,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
       const inner = expr && parseSentence(where[1]!, b);
       if (inner && expr) bindTargetsX(b, from, expr);
       if (!onlyCount(inner)) return null;
+      if (inner && expr) b.whereX = expr;
       return inner && expr ? bindX(inner, expr) : null;
     });
   }
@@ -5750,7 +5755,7 @@ const VERBS: Record<string, VerbHandler> = {
           const two = one ? parseTokenPhrase(args.slice(m.index! + m[0].length), b) : null;
           if (!one || !two) return null;
           if (one.size || two.size) return null;
-          return [one, two].map((t): EffectNode => ({ type: 'create_token', amount: t.amount, token: t.face, who, ...(t.tapped ? { tapped: true } : {}) }));
+          return [one, two].map((t, i): EffectNode => ({ type: 'create_token', amount: t.amount, token: t.face, who, ...(t.tapped ? { tapped: true } : {}), ...(i ? { sameEvent: true } : {}) }));
         });
         if (r) {
           createdTokens(b);
@@ -5763,7 +5768,7 @@ const VERBS: Record<string, VerbHandler> = {
         const r = attempt(b, (b) => {
           const made = parts.map((p) => parseTokenPhrase(p, b));
           if (made.some((t) => !t || t.size)) return null;
-          return made.map((t): EffectNode => ({ type: 'create_token', amount: t!.amount, token: t!.face, who, ...(t!.tapped ? { tapped: true } : {}) }));
+          return made.map((t, i): EffectNode => ({ type: 'create_token', amount: t!.amount, token: t!.face, who, ...(t!.tapped ? { tapped: true } : {}), ...(i ? { sameEvent: true } : {}) }));
         });
         if (r) {
           createdTokens(b);

@@ -56,7 +56,7 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, topLifeOnly } from './permissions.js';
+import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, permittedFace, topLifeOnly } from './permissions.js';
 import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
@@ -346,14 +346,24 @@ function turnFaceUp(g: GameState, player: PlayerId, id: ObjectId, wantsAutoTap: 
   // CR 708.8: it's the same permanent, now with its own characteristics; nothing about entering happens.
   delete o.faceDown;
   // CR 702.37b: megamorph — a +1/+1 counter as it's turned face up.
-  if (face.keywords.some((k) => k.id === 'megamorph') && !counterBlocked(g, o, '+1/+1')) o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + 1;
+  // (CR 122.6: counters put on it — "whenever one or more +1/+1 counters are put on a creature you control" sees them.)
+  if (face.keywords.some((k) => k.id === 'megamorph') && !counterBlocked(g, o, '+1/+1')) {
+    const n = replaceQuantity(g, 'counters', 1, { player: o.controller, object: o, counter: '+1/+1' });
+    if (n > 0) {
+      o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + n;
+      events.push({ type: 'counters', object: id, counter: '+1/+1', delta: n, by: o.controller });
+    }
+  }
   // Hooded Hydra: "As this creature is turned face up, put five +1/+1 counters on it." (CR 708.8 — put on, CR 122.6)
   for (const a of face.abilities) {
     if (a.kind !== 'static' || a.effect.type !== 'as_turned_face_up') continue;
     const counter = String(a.effect.counter);
     if (counterBlocked(g, o, counter)) continue;
     const n = replaceQuantity(g, 'counters', Number(a.effect.amount ?? 1), { player: o.controller, object: o, counter });
-    if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
+    if (n > 0) {
+      o.counters[counter] = (o.counters[counter] ?? 0) + n;
+      events.push({ type: 'counters', object: id, counter, delta: n, by: o.controller });
+    }
   }
   events.push({ type: 'turned_face_up', object: id });
   // CR 116.3: a player who takes a special action receives priority afterward.
@@ -462,6 +472,20 @@ export function addCost(into: ManaCost, extra: ManaCost): void {
 
 /** Whether casting it means choosing one of a list of additional costs (CR 118.8). */
 export const hasCostChoice = (face: FaceDef) => face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'additional_cost_choice');
+
+/**
+ * CR 601.2f / 107.3a: a spell's total cost includes the value chosen for X, as generic mana that a cost reduction can
+ * take off too. The legal listing does the same, so what it offers is priced the way a cast is.
+ */
+export function foldX(face: FaceDef, cost: ManaCost, x: number): void {
+  if (!cost.x) return;
+  // Consume Spirit: "Spend only black mana on X." — that much mana of that color.
+  const xColor = face.abilities.find((a) => a.kind === 'static' && a.effect.type === 'x_color');
+  const c = xColor ? ((xColor as StaticAbility).effect.color as ManaColor) : undefined;
+  if (c) cost.specific[c] = (cost.specific[c] ?? 0) + cost.x * x;
+  else cost.generic += cost.x * x;
+  cost.x = 0;
+}
 
 /** A face's additional costs to cast (CR 601.2f), from its "As an additional cost…" lines. */
 export function additionalCosts(face: FaceDef): EffectNode[] {
@@ -594,6 +618,11 @@ export function flashbackCost(face: FaceDef): string | null {
 }
 
 /** CR 702.34a: its flashback cost, printed or given by an effect (Snapcaster Mage, Past in Flames, Lier). */
+/** CR 202.1b: a nonland card with no mana cost at all (not {0}) — its mana cost can't be paid (CR 118.6). */
+export function hasNoManaCost(face: FaceDef): boolean {
+  return !face.manaCost && !face.types.includes('Land');
+}
+
 export function flashbackCostOf(g: GameState, o: GameObject, face: FaceDef): string | null {
   const own = flashbackCost(face);
   if (own) return own;
@@ -714,6 +743,9 @@ function cast(
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
+  // CR 715.3d: a card on an adventure is cast from exile as the permanent, not as an Adventure again.
+  const onlyFace = !during && !alt && fromExile ? permittedFace(g, player, o) : undefined;
+  if (onlyFace !== undefined && faceIndex !== onlyFace) throw new RulesError(`${face.name} can’t be cast from exile — only ${def.faces[onlyFace]?.name ?? 'the other half'} can.`);
   // CR 712.11: double-faced cards are cast front face up. CR 709.3 / CR 715.3: split and adventure cards choose a half.
   if (faceIndex > 0 && !CASTABLE_ALT_FACES.has(def.layout) && !prepared && !alt?.transformed) throw new RulesError(`${face.name} can’t be cast.`);
   // CR 702.127a: an aftermath half is cast only from its owner's graveyard; the other half not from there.
@@ -774,6 +806,10 @@ function cast(
     if (!ok) throw new RulesError(`${face.name} can be cast at instant speed only if it targets ${flashIfTargets.length ? 'what its ability says' : 'that'}.`);
   }
 
+  // CR 202.1b / 118.6: a card with no mana cost has a cost that can't be paid — it's cast only for an alternative cost
+  // or without paying its mana cost (suspend, cascade), never for "nothing" (Ancestral Vision, Lotus Bloom).
+  const paysManaCost = !(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile) && !flashback && (alt ? Boolean(alt.withManaCost) : airbent === undefined);
+  if (paysManaCost && hasNoManaCost(face)) throw new RulesError(`${face.name} has no mana cost, so it can’t be cast this way.`);
   // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
   // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
   const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : (airbent ?? face.manaCost))));
@@ -808,14 +844,7 @@ function cast(
   for (const s of splices) addCost(cost, parseManaCost(s.cost));
   // CR 601.2f / 107.3a: the total cost includes the value chosen for X — generic mana a reduction can take off too
   // (Goblin Electromancer and a Fireball with X=3: {2}{R}).
-  if (cost.x) {
-    // Consume Spirit: "Spend only black mana on X." — that much mana of that color.
-    const xColor = castFace.abilities.find((a) => a.kind === 'static' && a.effect.type === 'x_color');
-    const c = xColor ? ((xColor as StaticAbility).effect.color as ManaColor) : undefined;
-    if (c) cost.specific[c] = (cost.specific[c] ?? 0) + cost.x * x;
-    else cost.generic += cost.x * x;
-    cost.x = 0;
-  }
+  foldX(castFace, cost, x);
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
   if (alt?.reduceBySacrificed) {
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;

@@ -63,11 +63,19 @@ for (const [plural, t] of [['Mice', 'Mouse'], ['Oxen', 'Ox'], ['Dwarves', 'Dwarf
   if (SUBTYPE_SET.has(t)) SUBTYPE_PLURALS.set(plural, t);
 }
 
+/** The creature types the pool being compiled added to the rules' own (see registerPoolSubtypes). */
+const registered = new Set<string>();
+
 /**
  * Creature types printed on cards newer than the Comprehensive Rules file (Klingon, Officer, Borg…): a card's own type
  * line is authoritative for its subtypes (CR 205.3), so the pool's creature type lines add them before anything is read.
  */
 export function registerPoolSubtypes(typeLines: Iterable<string>): string[] {
+  // One pool at a time: what an earlier compile in this process registered is forgotten first, so a pool compiles the
+  // same whatever was compiled before it.
+  for (const word of registered) SUBTYPE_SET.delete(word);
+  for (const [plural, word] of [...SUBTYPE_PLURALS]) if (registered.has(word)) SUBTYPE_PLURALS.delete(plural);
+  registered.clear();
   const added: string[] = [];
   const multiWord = [...SUBTYPE_SET].filter((t) => t.includes(' '));
   const typeWords = /^(?:Artifact|Battle|Creature|Enchantment|Instant|Kindred|Land|Planeswalker|Sorcery|Tribal|Legendary|Basic|Snow|World|Token|Ongoing|Elite|Host)$/;
@@ -79,6 +87,7 @@ export function registerPoolSubtypes(typeLines: Iterable<string>): string[] {
     for (const word of rest.split(/\s+/)) {
       if (!/^[A-Z][A-Za-z'’-]*$/.test(word) || typeWords.test(word) || SUBTYPE_SET.has(word) || SUBTYPE_PLURALS.has(word)) continue;
       SUBTYPE_SET.add(word);
+      registered.add(word);
       // The same regular plurals as the rules' own types; never one that already names another type.
       const plurals = [word, `${word}s`, ...(/(?:s|sh|ch|x|z|o)$/.test(word) ? [`${word}es`] : []), ...(/[^aeiou]y$/.test(word) ? [`${word.slice(0, -1)}ies`] : [])];
       for (const pl of plurals) if (!SUBTYPE_PLURALS.has(pl)) SUBTYPE_PLURALS.set(pl, word);

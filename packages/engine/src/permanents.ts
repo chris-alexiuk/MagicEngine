@@ -1,6 +1,6 @@
 import type { CardDef, FaceDef, QuantityReplacementNode, TargetSpec } from '@mtg/schema';
 import { chars, hasKeyword, hasType, matchesFilter, objectAbilities, protectedFromAttachment } from './characteristics.js';
-import { counterBlocked, replaceQuantity } from './quantities.js';
+import { counterBlocked, extraTokens, replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
 import { abilitySources, createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
@@ -183,6 +183,30 @@ function tokenSwap(g: GameState, controller: PlayerId, face: FaceDef | undefined
     }
   }
   return undefined;
+}
+
+/**
+ * CR 614.1a / 616.1: every way a player creates tokens goes through the same replacements. Returns how many are created
+ * when `player` would create `n` tokens like `made` (Doubling Season: twice that many) and creates the tokens "plus an
+ * additional …" replacements add (Peregrin Took; doubled too). `seen`: the once-an-event additions already made for the
+ * event this is part of — a caller creating several kinds of token at once passes the same list for each.
+ */
+export function tokensToCreate(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number, events: GameEvent[], seen: string[] = []): number {
+  const count = replaceQuantity(g, 'tokens', n, { player, made });
+  alsoCreated(g, player, made, count, events, seen);
+  return count;
+}
+
+/** The "plus an additional …" tokens for `count` tokens like `made` being created (see `tokensToCreate`). */
+export function alsoCreated(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, count: number, events: GameEvent[], seen: string[] = []): void {
+  for (const x of extraTokens(g, player, made, count)) {
+    if (x.once) {
+      if (seen.includes(x.key)) continue;
+      seen.push(x.key);
+    }
+    const more = replaceQuantity(g, 'tokens', x.count, { player, made: { types: x.token.types, subtypes: x.token.subtypes } });
+    for (let i = 0; i < more; i++) createToken(g, x.token, player, events, {});
+  }
 }
 
 /** CR 111.2: a token is created on the battlefield under the control of the player who created it. */

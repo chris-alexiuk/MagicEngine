@@ -419,6 +419,14 @@ function canChooseTargetsNow(g: GameState, controller: PlayerId, specs: TargetSp
   });
 }
 
+/** CR 601.2d: whether a fixed or announced amount can't be divided among these targets with at least 1 each (X too small). */
+export function cantDivide(effects: EffectNode[], targets: readonly (readonly unknown[])[], x: number): boolean {
+  const node = findDivided(effects);
+  if (!node || !(node.amount === 'X' || typeof node.amount === 'number')) return false;
+  const index = ((node.to ?? node.what) as { index?: number }).index ?? 0;
+  return (targets[index]?.length ?? 0) > (node.amount === 'X' ? x : node.amount);
+}
+
 /**
  * CR 601.2d: how divided damage is split among the chosen targets — the player's division, or an even
  * one by default (any remainder to the first targets). Each target gets at least 1.

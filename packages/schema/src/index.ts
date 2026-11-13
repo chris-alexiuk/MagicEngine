@@ -1219,7 +1219,8 @@ export interface AsEntersNode extends EffectNode {
   /** number: Talion's "choose a number between 1 and 10" (`options`; `chosen.number`). */
   /** tribute: CR 702.104a — an opponent the controller chooses may put `amount` +1/+1 counters on it (`tributePaid`). */
   /** counter_kind: Boot Nipper — "enters with your choice of a deathtouch counter or a lifelink counter on it" (`options`). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number' | 'tribute' | 'counter_kind';
+  /** enchant: CR 303.4f — an Aura put onto the battlefield without being cast; its controller chooses what it enchants (the engine queues this itself). */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number' | 'tribute' | 'counter_kind' | 'enchant';
   opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */

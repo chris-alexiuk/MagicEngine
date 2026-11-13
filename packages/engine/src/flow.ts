@@ -15,6 +15,7 @@ import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
 import { ascendOnResolve, checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
+import { shuffleInPlace } from './rng.js';
 import { addLore, sagaDone } from './sagas.js';
 import { collectTriggers, stackTriggers, triggerContext } from './triggers.js';
 import type { ChoiceAnswer, GameEvent, GameObject, GameState, ManaColor, PlayerId, RestrictedMana, Step, StackEntry } from './types.js';
@@ -278,6 +279,25 @@ function toGraveyardAfterResolving(g: GameState, o: GameObject, events: GameEven
       effects: [{ type: 'cast_free', what: { ref: 'self' } }],
       targets: [],
     });
+    return;
+  }
+  // CR 715.3d: an Adventure is exiled as it resolves, and for as long as it stays exiled the player who controlled it
+  // may cast it — but not as an Adventure. CR 720.3d: an Omen is shuffled into its owner's library instead.
+  // Neither applies to one that would be exiled anyway (flashback), or that left the stack some other way.
+  const half = g.cards[o.card]?.layout === 'adventure' && o.face > 0 && !o.copyOf && !toHand && !o.exileOnLeave ? faceOf(g, o) : undefined;
+  if (half?.subtypes.includes('Omen')) {
+    const owner = o.owner;
+    moveObject(g, o.id, 'library', events);
+    if (o.zone === 'library') {
+      shuffleInPlace(g, zoneList(g, 'library', owner));
+      events.push({ type: 'shuffled', player: owner });
+    }
+    return;
+  }
+  if (half?.subtypes.includes('Adventure')) {
+    const controller = o.controller;
+    moveObject(g, o.id, 'exile', events);
+    if (o.zone === 'exile') (g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: controller, mode: 'cast', lastTurn: Number.MAX_SAFE_INTEGER, face: 0 });
     return;
   }
   // CR 608.2n: as the final part of an instant or sorcery's resolution, it goes to its owner's graveyard.
@@ -1013,6 +1033,16 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
     if (!g.pending) givePriority(g, g.active);
   }
   g.passed = g.passed.filter((p) => p !== player);
+  // A choice of theirs raised in another player's cleanup step, with nobody holding priority (their commander's return,
+  // the legend rule): the game goes on as it would have once they answered (CR 514.3a).
+  if (theirChoice && !g.pending && g.priority === null && g.step === 'cleanup' && g.active !== player && !g.resolving) {
+    checkStateBasedActions(g, events);
+    if (!g.pending && !g.over) {
+      g.extraCleanup = true;
+      givePriority(g, g.active);
+    }
+    return;
+  }
   // Simplification until the full multiplayer turn rules land: if the active player leaves,
   // their turn ends and the next player's turn begins.
   if (g.active === player && g.started) {

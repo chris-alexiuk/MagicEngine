@@ -1,4 +1,5 @@
 import { isDungeon } from './dungeons.js';
+import { learnCreatureTypes } from './creature-types.js';
 import type { CardDef, EffectNode } from '@mtg/schema';
 import { newTurnLog } from './conditions.js';
 import { beginTurn } from './flow.js';
@@ -54,6 +55,8 @@ export function createGame(opts: NewGameOptions): { state: GameState; events: Ga
   if (new Set(ids).size !== ids.length) throw new RulesError('Player ids must be unique.');
 
   const config = defaultConfig(opts.format ?? 'constructed', opts.players.length, opts.seed);
+  // CR 205.3m: creature types printed on cards newer than the rules' list.
+  learnCreatureTypes(Object.values(opts.cards));
   const used = new Set(opts.players.flatMap((p) => p.deck));
   const cards: Record<string, CardDef> = {};
   for (const key of used) {
@@ -215,8 +218,9 @@ function promptOpening(g: GameState): void {
 
 /**
  * CR 103.5: the London mulligan. In turn order, each undecided player declares
- * keep or mulligan; then everyone mulliganing shuffles, draws a new hand and puts
- * cards on the bottom; repeat until nobody mulligans.
+ * keep or mulligan; then everyone mulliganing shuffles and draws a new hand; repeat
+ * until nobody mulligans. A player who keeps puts a card on the bottom for each
+ * mulligan they took (as they keep — see below).
  */
 export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: GameEvent[]): void {
   const o = g.opening;
@@ -225,7 +229,11 @@ export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnsw
   if (answer.kind === 'mulligan') {
     if (answer.keep) {
       g.players[player]!.keptHand = true;
-      events.push({ type: 'kept', player, bottomed: 0 });
+      // The cards a mulligan puts on the bottom (CR 103.5) are chosen now, on keeping: a player who mulligans again would
+      // only shuffle them back, so asking any sooner would be a choice that can't matter.
+      const count = bottomCount(g, player);
+      if (count > 0) o.bottoms.push({ player, count });
+      events.push({ type: 'kept', player, bottomed: count });
     } else {
       // CR 103.5: a player can't mulligan once their opening hand would be zero cards.
       const next = Math.max(0, g.players[player]!.mulligans + 1 - (g.config.freeMulligan ? 1 : 0));
@@ -244,8 +252,6 @@ export function answerOpening(g: GameState, player: PlayerId, answer: ChoiceAnsw
         for (let i = 0; i < g.config.startingHandSize; i++) drawCard(g, p, events);
         g.players[p]!.mulligans++;
         events.push({ type: 'mulligan', player: p, count: g.players[p]!.mulligans });
-        const count = bottomCount(g, p);
-        if (count > 0) o.bottoms.push({ player: p, count });
       }
     }
   } else if (answer.kind === 'bottom_cards') {

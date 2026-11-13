@@ -1113,6 +1113,7 @@ export function dealDamage(
 /** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
 function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean, amount = 0): { all: boolean; halves: number; less?: number; then?: PreventionFollowUp; batch?: string; once?: true } {
   let halves = 0;
+  let cap: number | undefined;
   let less = 0;
   // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
   // granted ability of the creature itself.
@@ -1159,9 +1160,10 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
         hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (host !== undefined && o.id === host) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
       }
       if (!hit) continue;
-      // Temple Altisaur: "prevent all but 1 of that damage".
+      // Temple Altisaur: "prevent all but 1 of that damage" — a cap on what's left once the others have applied; a second
+      // one finds nothing more to prevent (CR 615.1, 616.1).
       if (e.allBut !== undefined) {
-        less += Math.max(0, amount - e.allBut);
+        cap = Math.min(cap ?? Infinity, e.allBut);
         continue;
       }
       if (e.half) halves++;
@@ -1173,6 +1175,12 @@ function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipie
         return { all: true, halves, ...(e.then ? { then: { effects: e.then as EffectNode[], controller: holder.controller, source: { id: holder.id, zcc: holder.zcc }, about: 'recipient' as const } } : {}), ...batch };
       }
     }
+  }
+  if (cap !== undefined) {
+    let left = amount;
+    for (let i = 0; i < halves; i++) left = Math.floor(left / 2);
+    left = Math.max(0, left - less);
+    if (left > cap) less += left - cap;
   }
   return { all: false, halves, ...(less ? { less } : {}) };
 }

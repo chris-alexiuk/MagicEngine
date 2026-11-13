@@ -55,6 +55,8 @@ export class Binder {
   unsupported = false;
   /** X is announced for this ability (a spell or activated ability with X in its cost), so a target can be "with mana value X". */
   xAllowed = false;
+  /** "…, where X is that creature's power." — what the text defined X as; it means that in the ability's later sentences too (CR 107.3). */
+  whereX: AmountExpr | null = null;
   /** The ability mills cards, so "from among them" can mean the milled cards. */
   milled = false;
   /** Peer into the Abyss: "… half the number of cards in their library … Round up each time." — how "half" rounds. */
@@ -85,6 +87,7 @@ export class Binder {
     b.votes = this.votes;
     b.unsupported = this.unsupported;
     b.xAllowed = this.xAllowed;
+    b.whereX = this.whereX;
     b.milled = this.milled;
     b.halfDir = this.halfDir;
     b.difference = this.difference;
@@ -109,6 +112,7 @@ export class Binder {
     this.votes = other.votes;
     this.unsupported = other.unsupported;
     this.xAllowed = other.xAllowed;
+    this.whereX = other.whereX;
     this.milled = other.milled;
     this.halfDir = other.halfDir;
     this.difference = other.difference;

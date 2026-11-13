@@ -1,7 +1,8 @@
-import { SUBTYPES, type AsEntersNode, type Color } from '@mtg/schema';
+import type { AsEntersNode, Color } from '@mtg/schema';
+import { CREATURE_TYPES } from './creature-types.js';
 import { chars, hasType, matchesFilter } from './characteristics.js';
 import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
-import { sacrifice } from './permanents.js';
+import { attach, canAttach, canEnchantPlayer, sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
 import { copiable, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
@@ -42,6 +43,15 @@ function neverEntered(g: GameState, o: GameObject, events: GameEvent[]): void {
   const n = events.length;
   moveObject(g, o.id, 'graveyard', events);
   for (const e of events.slice(n)) if (e.type === 'moved' && e.object === o.id) e.from = from;
+}
+
+/** CR 303.4f: the Aura enters attached to the object or player chosen (to nothing: state-based actions take it, CR 704.5m). */
+function enchantAsEnters(g: GameState, o: GameObject, host: string | undefined, player: PlayerId | undefined, events: GameEvent[]): void {
+  if (host && g.objects[host]) attach(g, o, g.objects[host]!, events);
+  else if (player) {
+    o.attachedToPlayer = player;
+    events.push({ type: 'attached', object: o.id, to: player, player: true });
+  }
 }
 
 /** Asks for the next pending "as enters" choice. True if a choice is now pending. */
@@ -98,7 +108,7 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
         g.pending = { ...base, text: 'Choose a color.', options: COLORS.filter((c) => c !== node.except) };
         break;
       case 'creature_type':
-        g.pending = { ...base, text: 'Choose a creature type.', options: [...SUBTYPES.creature] };
+        g.pending = { ...base, text: 'Choose a creature type.', options: [...CREATURE_TYPES] };
         break;
       case 'player':
         // "As ~ enters, choose a player" / "… choose an opponent" (CR 800.4a: one still in the game).
@@ -165,6 +175,19 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
         if (!next.opponent && opponents.length === 1) next.opponent = opponents[0]!;
         if (!next.opponent) g.pending = { ...base, text: `Choose an opponent to decide ${nameOf(g, o)}'s tribute.`, options: opponents };
         else g.pending = { ...base, player: next.opponent, text: `Put ${node.amount ?? 1} +1/+1 counters on ${nameOf(g, o)} (tribute)? If you don't, its "tribute wasn't paid" ability applies.`, amount: node.amount ?? 1 };
+        break;
+      }
+      case 'enchant': {
+        // CR 303.4f: an Aura that wasn't cast — its controller chooses what it enchants, of what it could as it entered.
+        // An effect that says what it's attached to (Mantle of the Ancients) has attached it already.
+        const hosts = (next.hosts ?? []).filter((r) => g.objects[r.id]?.zcc === r.zcc && canAttach(g, o, g.objects[r.id]!)).map((r) => r.id);
+        const players = (next.players ?? []).filter((p) => canEnchantPlayer(g, o, p));
+        if (o.attachedTo || o.attachedToPlayer || !faceOf(g, o).subtypes.includes('Aura') || hosts.length + players.length <= 1) {
+          g.asEnters.shift();
+          if (!o.attachedTo && !o.attachedToPlayer) enchantAsEnters(g, o, hosts[0], players[0], events);
+          continue;
+        }
+        g.pending = { ...base, text: `Choose what ${nameOf(g, o)} enchants.`, ...(hosts.length ? { candidates: hosts } : { options: players }) };
         break;
       }
       case 'copy': {
@@ -271,6 +294,12 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
           if (n > 0) o.counters[w.counter] = (o.counters[w.counter] ?? 0) + n;
         }
       }
+      break;
+    }
+    case 'enchant': {
+      // CR 303.4f: it isn't targeted — hexproof and shroud don't matter, protection does (CR 702.16c).
+      if (p.candidates ? !answer.attach || !p.candidates.includes(answer.attach) : !answer.choice || !p.options?.includes(answer.choice)) throw new RulesError(`Choose what ${nameOf(g, o)} enchants.`);
+      enchantAsEnters(g, o, p.candidates ? answer.attach : undefined, p.candidates ? undefined : answer.choice, events);
       break;
     }
     case 'tribute': {
