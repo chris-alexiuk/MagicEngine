@@ -321,7 +321,7 @@
 }
 
 /* ----------------------------------------------------------------------- */
-/* A playmat: a commander's art out of focus over a wash of its colours,    */
+/* A playmat: a commander's art under a scrim, over a wash of its colours,  */
 /* with a stitched edge. It fills the box it's put in (which sets            */
 /* `position: relative; isolation: isolate` and a border radius).            */
 /* ----------------------------------------------------------------------- */
@@ -347,15 +347,16 @@
   object-fit: cover;
   object-position: 50% 28%;
 }
-/* A whole card scan: its art box is the band from 11% to 55% of its height, 8% in from each side. The scan is
-   sized so that band is as tall as the mat (a scan stretched to the mat's width would be enlarged several times
-   over), and centred; the mat's own colours run on to either side. */
+/* A whole card scan: its art box is the band from 11% to 55% of its height, 8% in from each side. The mat shows the
+   band from 15% to 51%, which is art on the other frames too (a full-art printing has its name lines above that and
+   its text box below). The scan is sized so that band is as tall as the mat (a scan stretched to the mat's width
+   would be enlarged several times over), and centred; the mat's own colours run on to either side. */
 .mat-art.from-scan {
   inset: auto;
   left: 50%;
   top: 50%;
   width: auto;
-  height: 232%;
+  height: 278%;
   object-fit: fill;
   transform: translate(-50%, -33%);
 }
@@ -377,7 +378,7 @@
   background:
     var(--grain),
     radial-gradient(ellipse 75% 85% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.42) 100%),
-    linear-gradient(90deg, color-mix(in srgb, var(--mat-a) 16%, var(--mat-base)) calc(50% - 70cqh), transparent calc(50% - 34cqh), transparent calc(50% + 34cqh), color-mix(in srgb, var(--mat-b) 16%, var(--mat-base)) calc(50% + 70cqh)),
+    linear-gradient(90deg, color-mix(in srgb, var(--mat-a) 16%, var(--mat-base)) calc(50% - 83cqh), transparent calc(50% - 42cqh), transparent calc(50% + 42cqh), color-mix(in srgb, var(--mat-b) 16%, var(--mat-base)) calc(50% + 83cqh)),
     linear-gradient(rgb(14 12 11 / var(--scrim, 0.64)), rgb(14 12 11 / var(--scrim, 0.64)));
 }
 .mat::after {
