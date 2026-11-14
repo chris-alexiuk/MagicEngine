@@ -1174,6 +1174,76 @@ button.pile:hover .pile-name {
   text-align: right;
   align-self: flex-end;
 }
+/* The hint's line with a control at its end: the hint is cut short rather than wrapped, so the bar keeps its height. */
+.actions-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.actions-head .actions-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  align-self: center;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Hold priority: a switch, not a button — it's a setting that stays as it's left. */
+.hold-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: -2px -4px -2px 0;
+  padding: 2px 4px 2px 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 16px;
+  cursor: pointer;
+}
+.hold-toggle:hover {
+  color: var(--ink);
+}
+.hold-toggle .switch {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.hold-toggle .switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.hold-toggle[aria-checked='true'] {
+  color: var(--act-strong);
+}
+.hold-toggle[aria-checked='true'] .switch {
+  background: var(--act);
+  box-shadow: none;
+}
+.hold-toggle[aria-checked='true'] .switch::after {
+  left: 14px;
+  background: var(--act-ink);
+}
+.hold-note {
+  margin: 10px 0 0;
+}
 .actions-buttons {
   display: flex;
   flex-wrap: wrap;

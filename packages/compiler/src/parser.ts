@@ -1,5 +1,5 @@
 import { parseEffectText } from './grammar/effects.js';
-import type { AbilityNode, CastOptionNode, ConditionNode, EffectNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
+import type { AbilityNode, AsEntersNode, CastOptionNode, ConditionNode, EffectNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
@@ -1008,6 +1008,11 @@ export class ParserRegistry {
       result.manualKeywords = result.manualKeywords.filter((l) => !/^Cleave\b/.test(l));
     }
     result.manualKeywords = result.manualKeywords.filter((l) => !lineKeywords.get(l)?.every(keywordSupported));
+    // A permanent that enters as a copy with part of its exception left for the players to do by hand (`copyByHand`):
+    // its line is unread as far as the card's grade goes, and is shown that way.
+    for (const a of result.abilities) {
+      if (a.kind === 'static' && a.effect.type === 'as_enters' && (a.effect as AsEntersNode).copyByHand && a.text && !result.unparsed.includes(a.text)) result.unparsed.push(a.text);
+    }
     return result;
   }
 

@@ -435,6 +435,40 @@ describe('copy effects (CR 707)', () => {
     });
   });
 
+  it('a keyword a copy is given carries the abilities it stands for (CR 707.9), like one printed on a card', () => {
+    // Flesh Duplicate: only when what it copies has no vanishing of its own.
+    const flesh = one("You may have this creature enter as a copy of any creature on the battlefield, except it has vanishing 3 if that creature doesn't have vanishing.", 'Creature — Shapeshifter Rebel') as unknown as { effect: { copyExcept: { keywords?: unknown; keywordsIfLacking: { id: string; n: number; abilities: { kind: string }[] }[] } } };
+    expect(flesh.effect.copyExcept.keywords).toBeUndefined();
+    expect(flesh.effect.copyExcept.keywordsIfLacking).toMatchObject([{ id: 'vanishing', n: 3, abilities: [{ kind: 'static', effect: { type: 'enters_with_counters', counter: 'time', amount: 3 } }, { kind: 'triggered' }, { kind: 'triggered', trigger: { type: 'last_counter_removed' } }] }]);
+    // Dack's Duplicate: dethrone is its trigger; haste is the engine's own.
+    expect(one('You may have this creature enter as a copy of any creature on the battlefield, except it has haste and dethrone.', 'Creature — Shapeshifter')).toMatchObject({
+      effect: { copyExcept: { keywords: [{ id: 'haste' }, { id: 'dethrone', abilities: [{ kind: 'triggered', trigger: { type: 'attacks' } }] }] } },
+    });
+    // A keyword the engine can't run at all leaves the line unread.
+    expect(parse('You may have this creature enter as a copy of any creature on the battlefield, except it has banding.', 'Creature — Shapeshifter').abilities.every((a) => a.kind !== 'static' || (a.effect as { copyExcept?: unknown }).copyExcept === undefined)).toBe(true);
+  });
+
+  it('an exception the grammar can’t read whole: it still enters as a copy, and the rest is left by hand (the line counts as unread)', () => {
+    // Evil Twin: the ability in quotes becomes a line of the copy's, resolved by hand.
+    const twin = parse('You may have this creature enter as a copy of any creature on the battlefield, except it has "{U}{B}, {T}: Destroy target creature with the same name as this creature."', 'Creature — Shapeshifter', 'Evil Twin');
+    expect(twin.abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'copy', filter: { types: ['Creature'] }, copyByHand: ['{U}{B}, {T}: Destroy target creature with the same name as this creature.'] } });
+    expect((twin.abilities[0] as { effect: { copyExcept?: unknown } }).effect.copyExcept).toBeUndefined();
+    expect(twin.unparsed).toHaveLength(1);
+    // Wall of Stolen Identity: what can be read is applied; the sentence after the exception is left by hand.
+    const wall = parse("You may have this creature enter as a copy of any creature on the battlefield, except it's a Wall in addition to its other types and has defender. When you do, tap the copied creature and it doesn't untap during its controller's untap step for as long as you control this creature.", 'Creature — Shapeshifter Wall', 'Wall of Stolen Identity');
+    expect(wall.abilities[0]).toMatchObject({ effect: { copyExcept: { addSubtypes: ['Wall'], keywords: [{ id: 'defender' }] }, copyByHand: ["When you do, tap the copied creature and it doesn't untap during its controller's untap step for as long as you control this creature."] } });
+    expect(wall.unparsed).toHaveLength(1);
+    // Vizier of Many Faces: an unread part that isn't a quoted ability might govern the others ("if this creature was
+    // embalmed, …"), so none of them is applied.
+    const vizier = parse("You may have this creature enter as a copy of any creature on the battlefield, except if this creature was embalmed, the token has no mana cost, it's white, and it's a Zombie in addition to its other types.", 'Creature — Human Cleric', 'Vizier of Many Faces');
+    expect((vizier.abilities[0] as { effect: { copyExcept?: unknown; copyByHand?: string[] } }).effect).toMatchObject({ copyByHand: ["Except if this creature was embalmed, the token has no mana cost, it's white, and it's a Zombie in addition to its other types."] });
+    expect((vizier.abilities[0] as { effect: { copyExcept?: unknown } }).effect.copyExcept).toBeUndefined();
+    // A clone read whole has nothing left by hand and no unread line.
+    const clone = parse("You may have this creature enter as a copy of any creature on the battlefield, except it isn't legendary.", 'Creature — Shapeshifter');
+    expect((clone.abilities[0] as { effect: { copyByHand?: unknown } }).effect.copyByHand).toBeUndefined();
+    expect(clone.unparsed).toEqual([]);
+  });
+
   it('token copies, and "the token" / "it" afterwards', () => {
     expect(one("{T}: Create a token that's a copy of target creature you control, except it isn't legendary. Sacrifice it at the beginning of the next end step.", 'Artifact')).toMatchObject({
       effects: [

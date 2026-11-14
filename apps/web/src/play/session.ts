@@ -53,7 +53,11 @@ export interface Stops {
    * it: a turn doesn't go by on its own, whatever its player holds.
    */
   skipIfNothing: boolean;
-  /** Keep priority after casting or activating (otherwise it passes, so opponents can respond). */
+  /**
+   * Hold priority: with their own spell or ability on top of the stack they are always asked, so they can respond to
+   * it themselves before anyone else does (CR 117.3c: a player who casts a spell or activates an ability has priority
+   * again afterwards). Otherwise priority is passed for them there, so that it resolves.
+   */
   hold: boolean;
 }
 
@@ -170,9 +174,10 @@ export function shouldAutoPass(g: GameState, p: PlayerId, stops: Stops, passUnti
     // One of the seat's stops: it's asked, whatever it could do there, unless it said to skip those.
     return stops.skipIfNothing && nothing();
   }
-  // Their own spell or ability on top: let the others respond to it.
-  if (top.controller === p && !stops.hold) return true;
-  // Someone else's (or their own, held): asked only when there's something they could do about it.
+  // Their own spell or ability on top: the others get to respond to it and it resolves — unless they're holding
+  // priority, and then they keep it until they pass it themselves, whatever they could or couldn't do with it.
+  if (top.controller === p) return !stops.hold;
+  // Someone else's: asked only when there's something they could do about it.
   return nothing();
 }
 
@@ -180,6 +185,17 @@ export interface Ctx {
   stops: Record<PlayerId, Stops>;
   passUntil: PassUntil;
   dummies: ReadonlySet<PlayerId>;
+  /**
+   * A seat holding priority just for what it is putting on the stack now (Shift+click): as if its stops said to hold,
+   * until it has been asked.
+   */
+  holding?: PlayerId | null;
+}
+
+/** A seat's stops for this pass over the game: its own, and holding priority if it asked to this once. */
+export function stopsFor(ctx: Ctx, p: PlayerId): Stops {
+  const s = ctx.stops[p] ?? DEFAULT_STOPS;
+  return ctx.holding === p && !s.hold ? { ...s, hold: true } : s;
 }
 
 /** Passes for seats that wouldn't stop here, and answers the dummy's choices, until someone has to decide. */
@@ -202,7 +218,7 @@ export function advance(g: GameState, ctx: Ctx, out: Applied = { state: g, steps
       const p = s.priority;
       // "End turn" lasts only for the turn it was asked in.
       const until = ctx.passUntil && ctx.passUntil.turn === s.turn ? ctx.passUntil : null;
-      if (!p || !shouldAutoPass(s, p, ctx.stops[p] ?? DEFAULT_STOPS, until, ctx.dummies.has(p))) break;
+      if (!p || !shouldAutoPass(s, p, stopsFor(ctx, p), until, ctx.dummies.has(p))) break;
       action = { type: 'pass', player: p };
     }
     const next = apply(s, action);
@@ -244,7 +260,7 @@ export function peekPass(g: GameState, me: PlayerId, ctx: Ctx): { kind: 'step'; 
       const p = s.priority;
       if (!p) return { kind: 'other' };
       const until = ctx.passUntil && ctx.passUntil.turn === s.turn ? ctx.passUntil : null;
-      if (!shouldAutoPass(s, p, ctx.stops[p] ?? DEFAULT_STOPS, until, ctx.dummies.has(p))) return p === me ? { kind: 'step', step: s.step } : { kind: 'other' };
+      if (!shouldAutoPass(s, p, stopsFor(ctx, p), until, ctx.dummies.has(p))) return p === me ? { kind: 'step', step: s.step } : { kind: 'other' };
       action = { type: 'pass', player: p };
     }
     const r = apply(s, action);

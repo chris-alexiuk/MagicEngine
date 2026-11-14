@@ -56,19 +56,69 @@ function withKeywords(text: string, out: CopyExcept, b: Binder): boolean {
   return true;
 }
 
-/** CR 707.9: "except it isn't legendary", "except it's 1/1 and it has flying". */
-export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
-  const out: CopyExcept = {};
-  // Saw in Half: "their base power is half that creature's power and their base toughness is half that creature's
-  // toughness, rounded up".
-  if (/^(?:its|their) (?:base )?power is half that creature's power and (?:its|their) (?:base )?toughness is half that creature's toughness, rounded up$/.test(text.trim())) return { halfStats: 'up' };
-  const t = text
+/** An exception with each of its parts given its subject ("it isn't legendary, is an artifact …, and has myriad"). */
+function withSubjects(text: string): string {
+  return text
     .trim()
     // Moritte of the Frost: "… and, if it's a creature, it enters with two additional +1/+1 counters on it and has haste".
     .replace(/ and, if it's an? (creature|artifact|planeswalker), it enters with (.+?) on it and has (.+)$/, " and it enters with $2 on it if it's a $1 and it has $3")
     // Auton Soldier: "it isn't legendary, is an artifact in addition to its other types, and has myriad" — the subject once.
     .replace(/,( and)? (?=(?:is|has|enters with|loses) )/g, ',$1 it ')
     .replace(/ and (?=(?:has|is an?|loses) )/g, ' and it ');
+}
+
+/** The exception as the card words it: its own sentence, and any sentences after it (not counting ones in quotes). */
+function exceptInWords(original: string): { head: string; tail: string } | null {
+  const at = original.indexOf(', except ');
+  if (at < 0) return null;
+  const rest = original.slice(at + ', except '.length);
+  let quoted = false;
+  for (let i = 0; i + 2 < rest.length; i++) {
+    if (rest[i] === '"') quoted = !quoted;
+    else if (!quoted && rest[i] === '.' && rest[i + 1] === ' ' && /[A-Z]/.test(rest[i + 2]!)) return { head: rest.slice(0, i), tail: rest.slice(i + 2) };
+  }
+  return { head: rest.replace(/\.$/, ''), tail: '' };
+}
+
+/**
+ * An exception read as far as it safely can be, for a permanent that enters as a copy: without this, one the grammar
+ * can't read whole would not copy at all, and a 0/0 that doesn't copy dies as it arrives. What isn't read is returned
+ * in the card's words (`original` is its line), to be left on the copy and resolved by hand:
+ * - sentences after the exception (Wall of Stolen Identity: "… and has defender. When you do, tap the copied creature …");
+ * - abilities in quotes the grammar can't read (Evil Twin). The other parts are then applied as usual.
+ * Any other unread part might govern the rest (Vizier of Many Faces: "if this creature was embalmed, the token has no
+ * mana cost, it's white, …"), so then none of it is applied and the whole exception is left by hand.
+ */
+export function parseCopyExceptLoosely(text: string, original: string, b: Binder): { except?: CopyExcept; byHand: string[] } {
+  const quotes = b.env.quotes ?? [];
+  const words = exceptInWords(original);
+  const head = text.split(/\. (?=[A-Z])/)[0] ?? '';
+  const tail = words?.tail ? [words.tail] : [];
+  const whole = words ? `Except ${words.head}${/[."]$/.test(words.head) ? '' : '.'}` : original;
+  const parts = exceptParts(withSubjects(head));
+  const read = parts.map((p) => parseCopyExcept(p, b));
+  const quoted = (p: string) => /^(?:it|he|she|they) (?:has|have) QUOTED_(\d+)$/.exec(p);
+  if (!parts.length || parts.some((p, i) => !read[i] && !quoted(p))) return { byHand: [whole, ...tail] };
+  const except: CopyExcept = {};
+  const lines: string[] = [];
+  parts.forEach((p, i) => {
+    const one = read[i];
+    if (!one) return void lines.push(quotes[Number(quoted(p)![1])] ?? '');
+    for (const [k, v] of Object.entries(one) as [keyof CopyExcept, unknown][]) {
+      const had = except[k];
+      (except as Record<string, unknown>)[k] = Array.isArray(had) && Array.isArray(v) ? [...had, ...v] : v;
+    }
+  });
+  return { ...(Object.keys(except).length ? { except } : {}), byHand: [...lines.filter(Boolean), ...tail] };
+}
+
+/** CR 707.9: "except it isn't legendary", "except it's 1/1 and it has flying". */
+export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
+  const out: CopyExcept = {};
+  // Saw in Half: "their base power is half that creature's power and their base toughness is half that creature's
+  // toughness, rounded up".
+  if (/^(?:its|their) (?:base )?power is half that creature's power and (?:its|their) (?:base )?toughness is half that creature's toughness, rounded up$/.test(text.trim())) return { halfStats: 'up' };
+  const t = withSubjects(text);
   const parts = exceptParts(t);
   if (!parts.length) return null;
   for (const part of parts) {
@@ -210,6 +260,15 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
       if (!kws?.length) return null;
       (out.keywords ??= []).push(...kws);
       out.keepThisAbility = true;
+      continue;
+    }
+    // Flesh Duplicate: "it has vanishing 3 if that creature doesn't have vanishing" — the keyword, unless what it
+    // copies has one of its own.
+    const hasUnless = /^it has (.+) if that (?:creature|permanent) doesn't have ([a-z]+)$/.exec(p);
+    if (hasUnless) {
+      const kws = parseKeywordList(hasUnless[1]!, b, true);
+      if (kws?.length !== 1 || kws[0]!.id !== hasUnless[2]) return null;
+      (out.keywordsIfLacking ??= []).push(kws[0]!);
       continue;
     }
     const has = /^it has (.+)$/.exec(p);

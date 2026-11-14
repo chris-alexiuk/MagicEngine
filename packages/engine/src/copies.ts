@@ -56,8 +56,17 @@ function applyExcept(face: FaceDef, x: CopyExcept): FaceDef {
     if (k.id === 'ability' && k.abilities) f.abilities.push(...k.abilities.map((a) => ({ ...a, text: a.text ?? k.text })));
     else f.keywords.push(k);
   }
+  // Flesh Duplicate: "it has vanishing 3 if that creature doesn't have vanishing" — here, going by what was copied
+  // (a permanent entering as a copy has settled this already, against the creature as it is: `settleExcept`).
+  for (const k of structuredClone(x.keywordsIfLacking ?? [])) if (!f.keywords.some((q) => q.id === k.id)) f.keywords.push(k);
   // "except it has this ability"
   if (x.abilities) for (const a of x.abilities) if (!f.abilities.some((b) => b.text === a.text)) f.abilities.push(structuredClone(a));
+  // What the copy effect says that the engine can't run (Evil Twin's quoted ability): lines on the copy that its
+  // controller resolves by hand, like any other unread line of a card.
+  if (x.byHand?.length) {
+    f.oracle = [f.oracle, ...x.byHand].filter(Boolean).join('\n');
+    f.unparsed = [...f.unparsed, ...x.byHand];
+  }
   // CR 202.3a: with no mana cost its mana value is 0.
   if (x.noManaCost) f.manaCost = '';
   f.typeLine = typeLine(f);
@@ -68,6 +77,17 @@ function hash(s: string): string {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
+}
+
+/**
+ * An exception that depends on the object copied, decided: "it has vanishing 3 if that creature doesn't have
+ * vanishing" becomes "it has vanishing 3", or nothing. `has` says whether that object has a keyword now.
+ */
+export function settleExcept(except: CopyExcept | undefined, has: (keyword: string) => boolean): CopyExcept | undefined {
+  if (!except?.keywordsIfLacking) return except;
+  const { keywordsIfLacking, ...rest } = except;
+  const added = keywordsIfLacking.filter((k) => !has(k.id));
+  return added.length ? { ...rest, keywords: [...(rest.keywords ?? []), ...added] } : rest;
 }
 
 /** The copiable values of `base` with this copy effect's exceptions (CR 707.9b). */

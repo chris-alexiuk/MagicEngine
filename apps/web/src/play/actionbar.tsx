@@ -8,11 +8,23 @@ import type { ArrowSpec } from './Arrows';
  */
 export const ActionBarSlot = createContext<HTMLElement | null>(null);
 
-export function Actions({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
+/** `aside`: a small control that sits on the hint's line, at its end (the "Hold priority" switch). */
+export function Actions({ children, hint, aside }: { children: ReactNode; hint?: ReactNode; aside?: ReactNode }) {
   const el = useContext(ActionBarSlot);
   const content = (
     <div className="actions">
-      {hint ? <p className="actions-hint">{hint}</p> : null}
+      {aside ? (
+        <div className="actions-head">
+          {hint ? (
+            <p className="actions-hint" title={typeof hint === 'string' ? hint : undefined}>
+              {hint}
+            </p>
+          ) : null}
+          {aside}
+        </div>
+      ) : hint ? (
+        <p className="actions-hint">{hint}</p>
+      ) : null}
       <div className="actions-buttons">{children}</div>
     </div>
   );

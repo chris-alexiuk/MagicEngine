@@ -1,10 +1,10 @@
 import type { AsEntersNode, Color } from '@mtg/schema';
 import { CREATURE_TYPES } from './creature-types.js';
-import { chars, hasType, matchesFilter } from './characteristics.js';
+import { chars, hasKeyword, hasType, matchesFilter } from './characteristics.js';
 import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
 import { attach, canAttach, canEnchantPlayer, sacrifice } from './permanents.js';
 import { RulesError, type ChoiceAnswer, type GameEvent, type GameObject, type GameState, type PlayerId } from './types.js';
-import { copiable, withExceptions } from './copies.js';
+import { copiable, settleExcept, withExceptions } from './copies.js';
 import { onEnterBattlefield } from './registry.js';
 import { discardCard, faceOf, livePlayers, moveObject, nameOf, zoneList } from './zones.js';
 
@@ -199,7 +199,9 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
           g.asEnters.shift();
           continue;
         }
-        g.pending = { ...base, text: `Choose what ${nameOf(g, o)} enters as a copy of, or nothing.`, candidates };
+        // (A clone the grammar read only in part says what is left for its controller to do.)
+        const byHand = node.copyByHand?.length ? ` The engine can't run this part of it, which is yours to do by hand: ${node.copyByHand.join(' ')}` : '';
+        g.pending = { ...base, text: `Choose what ${nameOf(g, o)} enters as a copy of, or nothing.${byHand}`, candidates };
         break;
       }
     }
@@ -269,9 +271,14 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
         const original = g.objects[answer.copy]!;
         // CR 707.2: the copiable values of the original, with this effect's exceptions (CR 707.9).
         // Sakashima of a Thousand Faces: "except it has Sakashima's other abilities" — its own, but this one.
-        const except = next.node.copyExcept?.keepOtherAbilities
+        const own = next.node.copyExcept?.keepOtherAbilities
           ? (({ keepOtherAbilities: _k, ...rest }) => ({ ...rest, abilities: [...(rest.abilities ?? []), ...faceOf(g, o).abilities.filter((a) => !(a.kind === 'static' && a.effect.type === 'as_enters'))] }))(next.node.copyExcept)
           : next.node.copyExcept;
+        // Flesh Duplicate: "… except it has vanishing 3 if that creature doesn't have vanishing" — that creature as it
+        // is now, with whatever it has been given (a card in a graveyard: what's printed on it).
+        const settled = settleExcept(own, (k) => (original.zone === 'battlefield' ? hasKeyword(g, original, k) : faceOf(g, original).keywords.some((q) => q.id === k)));
+        // What couldn't be read of how the copy differs goes onto it as lines to resolve by hand.
+        const except = next.node.copyByHand?.length ? { ...settled, byHand: next.node.copyByHand } : settled;
         o.copyOf = withExceptions(g, copiable(original), except);
         events.push({ type: 'became_copy', object: o.id, of: original.id });
         // Vesuva: "You may have this land enter tapped as a copy of any land on the battlefield."

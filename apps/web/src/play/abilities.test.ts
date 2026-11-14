@@ -1,81 +1,23 @@
-import { readFileSync } from 'node:fs';
-import { compileCards, type ScryfallCard } from '@mtg/compiler';
-import type { CardDef } from '@mtg/schema';
-import { apply, legalActions, type Action, type GameState } from '@mtg/engine';
+import { legalActions, type Action, type GameState } from '@mtg/engine';
 import { describe, expect, it } from 'vitest';
 import { abilityCounts, abilityRows } from './abilities';
 import { clickOutcome } from './click';
-import { dummyAnswer } from './dummy';
 import { actionLabel, manaPreview } from './labels';
 import { asYou, narrate } from './log';
 import { spendText } from './mana-text';
-import { dummySeat, newGame, type GameSetup } from './session';
+import { card, compiled, scene as sceneOf, soloSetup } from './testkit';
 
 // What the table shows for a permanent's abilities and for mana: every ability of a card with several (usable or
 // not), what a mana ability really adds, and the mana in the log.
-const fixture = JSON.parse(readFileSync(new URL('../../../../packages/compiler/test/fixtures/scryfall-sample.json', import.meta.url), 'utf8')) as ScryfallCard[];
-let n = 0;
-const card = (name: string, type_line: string, mana_cost: string, oracle_text: string, pt?: [string, string]): ScryfallCard =>
-  ({ object: 'card', id: `x${++n}`, oracle_id: `ox${n}`, name, layout: 'normal', lang: 'en', set: 'tst', set_type: 'expansion', rarity: 'rare', games: ['paper'], digital: false, keywords: [], mana_cost, type_line, oracle_text, colors: [], color_identity: [], cmc: 2, legalities: { commander: 'legal' }, ...(pt ? { power: pt[0], toughness: pt[1] } : {}) }) as ScryfallCard;
-const EXTRA = [
+const cards = compiled([
   // (The sample set's Kinnan has an older wording of its first line.)
   card('Kinnan, Bonder Prodigy', 'Legendary Creature — Human Druid', '{G}{U}', 'Whenever you tap a nonland permanent for mana, add one mana of any type that permanent produced.\n{5}{G}{U}: Look at the top five cards of your library. You may put a non-Human creature card from among them onto the battlefield. Put the rest on the bottom of your library in a random order.', ['2', '2']),
   card('Shang-Chi, Master of Kung Fu', 'Legendary Creature — Human Warrior Hero', '{1}{G}', 'You may activate abilities of creatures you control as though those creatures had haste.\n{T}: Add two mana of any one color. Spend this mana only to activate abilities of creature sources.', ['2', '2']),
   card('Devoted Druid', 'Creature — Elf Druid', '{1}{G}', '{T}: Add {G}.\nPut a -1/-1 counter on this creature: Untap this creature.', ['0', '2']),
   card('Basalt Monolith', 'Artifact', '{3}', "This artifact doesn't untap during your untap step.\n{T}: Add {C}{C}{C}.\n{3}: Untap this artifact."),
-];
-const cards: Record<string, CardDef> = Object.fromEntries(compileCards([...fixture.filter((c) => c.name !== 'Kinnan, Bonder Prodigy'), ...EXTRA]).db.cards.map((c) => [c.name, c]));
-
-const MAIN = ['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves'];
-const setup: GameSetup = {
-  seed: 5,
-  firstPlayer: 'p1',
-  mode: 'solo',
-  seats: [{ id: 'p1', name: 'You', deckName: 'Kinnan', commanders: ['Kinnan, Bonder Prodigy'], cards: [...MAIN, ...Array.from({ length: 100 - MAIN.length }, (_, i) => (i % 2 ? 'Forest' : 'Island'))] }, dummySeat('p2', 'Island')],
-};
-
-/** A solo game with these cards put onto the battlefield and into hand, at the player's main phase of that turn. */
-function scene(battlefield: string[], hand: string[] = [], myTurn = 2): { g: GameState; id: (name: string) => string; run: (a: Action) => ReturnType<typeof apply> & { ok: true } } {
-  let g = newGame(setup, cards).state;
-  const run = (a: Action) => {
-    const r = apply(g, a);
-    if (!r.ok) throw new Error(`${JSON.stringify(a)}: ${r.error}`);
-    g = r.state;
-    return r;
-  };
-  const taken = new Set<string>();
-  const until = (turn: number) => {
-    for (let i = 0; i < 3000; i++) {
-      if (!g.pending && g.active === 'p1' && g.step === 'main1' && g.priority === 'p1' && g.players.p1!.turnsBegun === turn && !g.stack.length) return;
-      const p = g.pending;
-      if (p?.player === 'p2') run({ type: 'choose', player: 'p2', answer: dummyAnswer(g)!.answer });
-      else if (p?.kind === 'mulligan') run({ type: 'choose', player: 'p1', answer: { kind: 'mulligan', keep: true } });
-      else if (p?.kind === 'declare_attackers') run({ type: 'choose', player: 'p1', answer: { kind: 'declare_attackers', attacks: [] } });
-      else if (p?.kind === 'discard_to_hand_size') run({ type: 'choose', player: 'p1', answer: { kind: 'discard_to_hand_size', objects: g.zones.hand.p1!.filter((x) => !taken.has(x)).slice(0, p.count) } });
-      else if (p) throw new Error(`unexpected ${p.kind}`);
-      else run({ type: 'pass', player: g.priority! });
-    }
-    throw new Error('never got there');
-  };
-  until(1);
-  const move = (name: string, to: 'battlefield' | 'hand') => {
-    const o = Object.values(g.objects).find((x) => x.owner === 'p1' && x.card === name && ['command', 'library'].includes(x.zone) && !taken.has(x.id));
-    if (!o) throw new Error(`no ${name}`);
-    taken.add(o.id);
-    run({ type: 'manual', player: 'p1', op: { kind: 'move', object: o.id, to } });
-  };
-  for (const name of battlefield) move(name, 'battlefield');
-  for (const name of hand) move(name, 'hand');
-  until(myTurn);
-  const id = (name: string) => Object.values(g.objects).find((x) => x.card === name && x.zone === 'battlefield')!.id;
-  return {
-    get g() {
-      return g;
-    },
-    id,
-    run: run as never,
-  };
-}
+]);
+const setup = soloSetup(['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves']);
+const scene = (battlefield: string[], hand: string[] = [], myTurn = 2) => sceneOf(setup, cards, battlefield, hand, myTurn);
 const of = (g: GameState, id: string) => legalActions(g, 'p1').filter((a) => 'object' in a && a.object === id);
 const rows = (g: GameState, id: string) => abilityRows(g, 'p1', id, of(g, id)).map((r) => `${r.text} => ${r.actions.length ? `${r.actions.length} way${r.actions.length > 1 ? 's' : ''}` : r.why}`);
 

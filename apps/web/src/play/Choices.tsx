@@ -362,6 +362,7 @@ export function ObjectPicker({
   max,
   ordered,
   label,
+  noneLabel,
   title,
   setPick,
   onDone,
@@ -374,6 +375,8 @@ export function ObjectPicker({
   max: number;
   ordered?: boolean;
   label: string;
+  /** What the button says with nothing chosen, where that reads better than "<label> none". */
+  noneLabel?: string;
   title: React.ReactNode;
   setPick: SetPick;
   onDone: (ids: string[]) => void;
@@ -393,7 +396,8 @@ export function ObjectPicker({
   const most = Math.min(max, candidates.length);
   // Nothing chosen where nothing has to be: the button says so, and isn't the main one (Space mustn't skip the choice).
   const none = min === 0 && chosen.length === 0;
-  const button = !candidates.length ? 'Continue' : none ? `${label} none` : chosen.length === 1 ? `${label} ${publicName(chosen[0]!, view as unknown as GameState)}` : `${label} ${chosen.length}`;
+  // (With nothing chosen yet where something has to be, just the verb: "Keep this one", not "Keep this one 0".)
+  const button = !candidates.length ? 'Continue' : none ? (noneLabel ?? `${label} none`) : chosen.length === 1 ? `${label} ${publicName(chosen[0]!, view as unknown as GameState)}` : chosen.length ? `${label} ${chosen.length}` : label;
   return (
     <div className="flow-step">
       <p className="flow-title">{title}</p>
@@ -1283,7 +1287,7 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
     case 'reveal':
     case 'discard_or_leave':
     case 'copy': {
-      const verb = p.choice === 'copy' ? 'Enter as a copy' : p.choice === 'reveal' ? 'Reveal' : 'Discard';
+      const verb = p.choice === 'copy' ? 'Enter as a copy of' : p.choice === 'reveal' ? 'Reveal' : 'Discard';
       return (
         <ObjectPicker
           key={`ae-${p.choice}`}
@@ -1292,6 +1296,7 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
           min={0}
           max={1}
           label={verb}
+          {...(p.choice === 'copy' ? { noneLabel: 'Copy nothing' } : {})}
           title={head}
           setPick={setPick}
           onDone={([id]) => answer(p.choice === 'copy' ? { kind: 'as_enters', copy: id ?? null } : { kind: 'as_enters', reveal: id ?? null })}

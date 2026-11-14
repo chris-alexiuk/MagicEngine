@@ -1142,6 +1142,11 @@ export interface CopyExcept {
   halfStats?: 'up';
   /** "it has haste" / "it has flying" */
   keywords?: KeywordInstance[];
+  /**
+   * Flesh Duplicate: "it has vanishing 3 if that creature doesn't have vanishing" — each of these only when the object
+   * copied has no keyword of that kind.
+   */
+  keywordsIfLacking?: KeywordInstance[];
   /** CR 707.9d: "it has no mana cost" */
   noManaCost?: true;
   /** "except it has this ability" — the ability doing the copying (the engine fills in `abilities`). */
@@ -1162,6 +1167,8 @@ export interface CopyExcept {
   setTypes?: string[];
   /** Jace, Mirror Mage: "its starting loyalty is 1". */
   loyalty?: number;
+  /** Lines the copy has that the engine can't run (see `AsEntersNode.copyByHand`): shown on it, resolved by hand. */
+  byHand?: string[];
 }
 
 export interface ContinuousEffectNode extends EffectNode {
@@ -1251,6 +1258,13 @@ export interface AsEntersNode extends EffectNode {
   elseHaste?: true;
   /** For copy: how the copy differs from the original (CR 707.9). */
   copyExcept?: CopyExcept;
+  /**
+   * For copy: what the grammar couldn't read of how the copy differs, in the card's words (Evil Twin's quoted ability;
+   * Wall of Stolen Identity's "When you do, tap the copied creature …"). The permanent still enters as a copy — a 0/0
+   * that didn't would just die — and these lines are on the copy for its controller to resolve by hand; the card's own
+   * line counts as unread.
+   */
+  copyByHand?: string[];
   amount?: number;
   /** For reveal: the kind of card in hand. */
   filter?: ObjectFilter;
@@ -1696,8 +1710,9 @@ export function manualModes(face: FaceDef): string[] {
     if (!v || typeof v !== 'object') return;
     if (Array.isArray(v)) return v.forEach(walk);
     for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-      const token = k === 'token' && x && typeof x === 'object' ? (x as { name?: string; unparsed?: string[] }) : null;
-      if (token) for (const u of token.unparsed ?? []) tokens.push(`${token.name ?? 'Token'}: ${u}`);
+      // (A keyword on it that the engine can't run counts too: Errand of Duty's Knight "with banding".)
+      const token = k === 'token' && x && typeof x === 'object' ? (x as { name?: string; unparsed?: string[]; manualKeywords?: string[] }) : null;
+      if (token) for (const u of [...(token.unparsed ?? []), ...(token.manualKeywords ?? [])]) tokens.push(`${token.name ?? 'Token'}: ${u}`);
       else walk(x);
     }
   };

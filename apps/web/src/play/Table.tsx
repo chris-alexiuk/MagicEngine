@@ -94,6 +94,9 @@ function useHandWidth(): number {
   return w;
 }
 
+/** Whether an action puts a spell or an ability on the stack (where holding priority means something). */
+const goesOnStack = (a: Action): boolean => a.type === 'cast' || a.type === 'activate' || a.type === 'activate_manual';
+
 /** What kind of decision a choice is, for its heading (cards shown with nothing to choose among them are a look). */
 const choiceTitle = (p: PendingChoice): string => (p.kind === 'choose_objects' && !p.candidates.length ? 'Look' : (CHOICE_TITLE[p.kind] ?? p.kind));
 
@@ -114,6 +117,10 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const [stops, setStop] = useStops(g.order, mode);
   const [holder, setHolder] = useState<PlayerId | null>(null);
   const [passUntil, setPassUntil] = useState<PassUntil>(null);
+  // Holding priority for one spell or ability (Shift+click, or the box ticked while its targets are chosen): the seat
+  // that keeps priority until it has been asked, and whether the one being chosen for now was begun that way.
+  const [holdOnce, setHoldOnce] = useState<PlayerId | null>(null);
+  const [flowHold, setFlowHold] = useState(false);
   const [menu, setMenu] = useState<{ id: string; rect: DOMRect; full: boolean } | null>(null);
   const [flow, setFlow] = useState<Choosing | null>(null);
   const [pick, setPickState] = useState<Pick | null>(null);
@@ -129,7 +136,25 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const setPick = useCallback((p: Pick | null) => setPickState(p), []);
   const tableRef = useRef<HTMLDivElement>(null);
   const handW = useHandWidth();
-  const ctx: Ctx = { stops, passUntil, dummies };
+  const ctx: Ctx = { stops, passUntil, dummies, holding: holdOnce };
+  // Shift held as a card, or an entry of its menu, is clicked: it's cast or activated and priority is kept, this once.
+  const shift = useRef(false);
+  useEffect(() => {
+    const note = (e: Event) => {
+      shift.current = Boolean((e as MouseEvent | KeyboardEvent).shiftKey);
+    };
+    const clear = () => {
+      shift.current = false;
+    };
+    // (Capture, at the window: before the click reaches the card.)
+    const kinds = ['keydown', 'keyup', 'pointerdown', 'pointerup', 'mousedown', 'click'];
+    for (const k of kinds) window.addEventListener(k, note, true);
+    window.addEventListener('blur', clear);
+    return () => {
+      for (const k of kinds) window.removeEventListener(k, note, true);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
   // What each seat is dressed in: its commanders' colours, and its first commander's art for the playmat.
   const looks = useMemo(() => {
     const out: Record<PlayerId, SeatLook> = {};
@@ -174,7 +199,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const top = g.stack[g.stack.length - 1];
 
   // ---- acting -------------------------------------------------------------
-  const commit = (r: ReturnType<typeof step>, extraMark = true, until: PassUntil = passUntil): boolean => {
+  const commit = (r: ReturnType<typeof step>, extraMark = true, until: PassUntil = passUntil, held: PlayerId | null = holdOnce): boolean => {
     if (!r.ok) return false;
     const lines = r.applied.steps.flatMap((s) => narrate(s.before, s.after, s.events, nextLogId));
     const actions = [...live.actions, ...r.applied.steps.map((s) => s.action)];
@@ -189,25 +214,36 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     setPlanArrows([]);
     setHover(null);
     setPassUntil(until && !passUntilDone(r.applied.state, until) ? until : null);
+    setFlowHold(false);
+    // Holding priority this once is over when that seat has been asked with it (a choice it has to make first isn't that).
+    setHoldOnce(held && r.applied.state.pending?.player === held ? held : null);
     return true;
   };
-  const act = (action: Action, fromList = true): boolean => {
-    const r = step(g, action, ctx);
+  /** `hold`: keep priority after this spell or ability goes on the stack, whatever the seat's stops say. */
+  const act = (action: Action, fromList = true, hold = false): boolean => {
+    const held = hold && viewer ? viewer : holdOnce;
+    const r = step(g, action, held === holdOnce ? ctx : { ...ctx, holding: held });
     if (!r.ok) {
       // An action the engine listed (or a pending choice's answer) shouldn't be refused: that's an engine bug.
       console.error('MagicEngine: the engine refused an action.', JSON.stringify(action), r.error);
       setError({ text: r.error, bug: fromList });
       return false;
     }
-    return commit(r);
+    return commit(r, true, passUntil, held);
   };
   const answer = (a: ChoiceAnswer) => viewer && act({ type: 'choose', player: viewer, answer: a });
   const choose = (a: Action) => {
     setError(null);
     setMenu(null);
-    if (needsChoices(g, a)) setFlow(a as Choosing);
-    else act(a);
+    const hold = shift.current && goesOnStack(a);
+    if (needsChoices(g, a)) {
+      setFlow(a as Choosing);
+      setFlowHold(hold);
+    } else act(a, true, hold);
   };
+  // The switch beside the pass button: this seat's own setting, kept with its stops.
+  const holding = Boolean(viewer && (stops[viewer] ?? DEFAULT_STOPS).hold);
+  const toggleHold = () => viewer && setStop(viewer, { ...(stops[viewer] ?? DEFAULT_STOPS), hold: !holding });
   const pass = () => viewer && act({ type: 'pass', player: viewer });
   /** Passes priority, and keeps passing for this seat until the turn ends or (with a step) that step is reached. */
   const passUntilThen = (until: NonNullable<PassUntil>) => {
@@ -239,6 +275,8 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     setMenu(null);
     setPickState(null);
     setPassUntil(null);
+    setHoldOnce(null);
+    setFlowHold(false);
     setError(null);
   };
 
@@ -246,6 +284,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   useEffect(() => {
     if (curtained) {
       setFlow(null);
+      setFlowHold(false);
       setMenu(null);
       setPickState(null);
     }
@@ -357,8 +396,8 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const passGoesToEnd = !top && peek?.kind === 'step' && peek.step === 'end';
 
   // ---- keys: Space/Enter primary, Esc cancel, F2 pass, F6 pass to end of turn, Z undo -----
-  const keyState = useRef({ pass, endTurn, toStep, undo, myPriority, flow, menu, step: g.step });
-  keyState.current = { pass, endTurn, toStep, undo, myPriority, flow, menu, step: g.step };
+  const keyState = useRef({ pass, endTurn, toStep, undo, toggleHold, myPriority, flow, menu, step: g.step });
+  keyState.current = { pass, endTurn, toStep, undo, toggleHold, myPriority, flow, menu, step: g.step };
   useEffect(() => {
     // A button clicked with the mouse doesn't keep the keyboard: Space after "Attack with all" is the main button, not
     // that one again. (A button reached with Tab keeps it — `detail` is 0 for a keyboard click.)
@@ -376,6 +415,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
         if (k.menu) setMenu(null);
         else if (k.flow) {
           setFlow(null);
+          setFlowHold(false);
           setPickState(null);
         } else setViewing(null);
         return;
@@ -399,6 +439,9 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
       } else if ((e.key === 'z' || e.key === 'Z') && !e.altKey) {
         e.preventDefault();
         k.undo();
+      } else if ((e.key === 'h' || e.key === 'H') && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        k.toggleHold();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -476,7 +519,22 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
             </div>
 
             {myPriority && !flow && (
-              <Actions hint={top ? `${top.kind === 'spell' ? publicName(top.object, g) : `${top.sourceName}’s ability`} is on the stack` : null}>
+              <Actions
+                hint={top ? `${top.kind === 'spell' ? publicName(top.object, g) : `${top.sourceName}’s ability`} is on the stack` : null}
+                aside={
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={holding}
+                    className="hold-toggle"
+                    onClick={toggleHold}
+                    title="Keep priority when your own spell or ability goes on the stack, so you can respond to it yourself before it resolves (H). Shift+click a card to hold priority for that one only."
+                  >
+                    Hold priority
+                    <span className="switch" aria-hidden="true" />
+                  </button>
+                }
+              >
                 <button type="button" className="primary pass" onClick={pass} title="Space or F2">
                   {passLabel}
                 </button>
@@ -508,18 +566,30 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                     {choicePanel}
                   </>
                 ) : flow ? (
-                  <ActionFlow
-                    key={JSON.stringify(flow)}
-                    g={g}
-                    view={view}
-                    action={flow}
-                    setPick={setPick}
-                    onCommit={(a) => act(a, false)}
-                    onCancel={() => {
-                      setFlow(null);
-                      setPickState(null);
-                    }}
-                  />
+                  <>
+                    <ActionFlow
+                      key={JSON.stringify(flow)}
+                      g={g}
+                      view={view}
+                      action={flow}
+                      setPick={setPick}
+                      onCommit={(a) => act(a, false, flowHold || shift.current)}
+                      onCancel={() => {
+                        setFlow(null);
+                        setFlowHold(false);
+                        setPickState(null);
+                      }}
+                    />
+                    {/* Responding to your own spell starts here: it stays on the stack with priority still yours. */}
+                    {holding ? (
+                      <p className="hint hold-note">Holding priority: you keep it after this goes on the stack.</p>
+                    ) : (
+                      <label className="check small hold-note" title="Keep priority after this goes on the stack, so you can respond to it yourself before it resolves. (Shift+click a card does the same.)">
+                        <input type="checkbox" checked={flowHold} onChange={(e) => setFlowHold(e.target.checked)} />
+                        Hold priority after this
+                      </label>
+                    )}
+                  </>
                 ) : null}
               </aside>
             )}
@@ -1076,9 +1146,9 @@ function StopsEditor({ stops, onChange, name, mode, onClose }: { stops: Stops; o
       </label>
       <label className="check small">
         <input type="checkbox" checked={stops.hold} onChange={(e) => onChange({ ...stops, hold: e.target.checked })} />
-        Hold priority after I cast or activate
+        Hold priority: ask me while my own spell or ability is on the stack
       </label>
-      <p className="hint keys">Keys: Space or Enter for the main button. F2 pass, F4 to the end step, F6 end the turn, Z undo, Esc cancel.</p>
+      <p className="hint keys">Keys: Space or Enter for the main button. F2 pass, F4 to the end step, F6 end the turn, H hold priority, Z undo, Esc cancel. Shift+click a card to cast it and hold priority once.</p>
       <button type="button" className="ghost tiny" onClick={onClose}>
         Done
       </button>

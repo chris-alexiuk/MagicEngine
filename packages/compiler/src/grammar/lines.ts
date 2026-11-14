@@ -41,7 +41,7 @@ import { attempt, Binder, type GrammarEnv } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
-import { parseCopyCandidates, parseCopyExcept } from './copies.js';
+import { parseCopyCandidates, parseCopyExcept, parseCopyExceptLoosely } from './copies.js';
 import { parseCastBan, parseEffectText, parseManaSpend, splitSentences } from './effects.js';
 import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
@@ -4684,10 +4684,20 @@ export const entersAsCopyRule: GrammarRule = {
     if (!env || !m) return null;
     const b = new Binder(env);
     const filter = parseCopyCandidates(m.what!, b);
-    const except = m.except ? parseCopyExcept(m.except, b) : undefined;
-    if (!filter || except === null) return null;
+    let except = m.except ? parseCopyExcept(m.except, b) : undefined;
+    if (!filter) return null;
+    // An exception the grammar can't read whole: the permanent still enters as a copy (Evil Twin, a 0/0, would die
+    // otherwise), with what could be read of it; the rest is on the copy in the card's words, for its controller to
+    // resolve by hand — and the line counts as unread (see `copyByHand`).
+    let byHand: string[] | undefined;
+    if (except === null && enter) {
+      const loose = parseCopyExceptLoosely(m.except!, original, b);
+      except = loose.except;
+      byHand = loose.byHand;
+    }
+    if (except === null) return null;
     const until = become ? { copyUntil: 'eot' as const } : {};
-    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}), ...(m.tapped ? { copyTapped: true } : {}), ...until };
+    const node: AsEntersNode = { type: 'as_enters', choice: 'copy', filter, ...(except ? { copyExcept: except } : {}), ...(byHand?.length ? { copyByHand: byHand } : {}), ...(m.tapped ? { copyTapped: true } : {}), ...until };
     const ability: StaticAbility = { kind: 'static', text: original, effect: node };
     return ability;
   },

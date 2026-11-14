@@ -449,6 +449,15 @@ export function parseKeywordList(text: string, b: Binder, printed = false, grant
       if (!exp || exp.id !== kw.id || !keywordSupported(exp) || !(exp.abilities ?? []).every(usable)) return null;
       kw = exp;
     }
+    // Printed on a copy or a token ('except it has vanishing 3', 'a Vehicle artifact with crew 3', "haste and
+    // dethrone"): the abilities a card with that keyword printed on it has — a bare keyword the engine knows only by
+    // its definition would do nothing. One it can't run at all leaves the line unread.
+    if (printed && !grant && !isQuoted(item) && !keywordSupported(kw)) {
+      const r = b.env.parseAbilities?.(capitalise(item), '\u0001', 'Creature');
+      const exp = r && !r.unparsed.length && !r.manualKeywords.length && r.keywords.length === 1 && !r.abilities.length ? r.keywords[0]! : null;
+      if (!exp || exp.id !== kw.id || !keywordSupported(exp)) return null;
+      kw = exp;
+    }
     out.push(kw);
   }
   return out.length ? out : null;
