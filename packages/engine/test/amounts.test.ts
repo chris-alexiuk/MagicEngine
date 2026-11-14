@@ -128,6 +128,12 @@ describe('CR 614.1a: replacements that change an amount', () => {
     card('Raise the Alarm Lite', 'Instant', 'Create two 1/1 white Soldier creature tokens.'),
     card('Growth Lite', 'Instant', 'Put two +1/+1 counters on target creature.'),
     card('Shock Lite', 'Instant', 'Shock Lite deals 2 damage to any target.'),
+    ench('Vorinclex Lite', 'If you would put one or more counters on a permanent or player, put twice that many of each of those kinds of counters on that permanent or player instead.\nIf an opponent would put one or more counters on a permanent or player, they put half that many of each of those kinds of counters on that permanent or player instead, rounded down.'),
+    ench('Torbran Lite', 'If a red source you control would deal damage to an opponent or a permanent an opponent controls, it deals that much damage plus 2 instead.'),
+    card('Red Shock', 'Instant', 'Red Shock deals 2 damage to any target.'),
+    ench('Bruvac Lite', 'If an opponent would mill one or more cards, they mill twice that many cards instead.'),
+    ench('Water Crystal Lite', 'If an opponent would mill one or more cards, they mill that many cards plus four instead.'),
+    card('Glimpse Lite', 'Sorcery', 'Target player mills three cards.'),
   ];
   const base = () => {
     const g = toStep(start({ extra: EXTRA }), 'main1');
@@ -166,6 +172,36 @@ describe('CR 614.1a: replacements that change an amount', () => {
     give(g, 'bob', 'Furnace of Rath Lite', 'battlefield');
     g = castIt(g, 'Shock Lite', { targets: [[{ kind: 'player', player: 'bob' }]] });
     expect(g.players.bob!.life).toBe(16);
+  });
+
+  // CR 616.1: the affected player (or the affected object's controller) chooses the order. Nobody is asked: it is the
+  // order that leaves them best off.
+  it('counters you gain, halved by an opponent and with one more of your own: halved first, then the one more', () => {
+    let g = base();
+    give(g, 'bob', 'Vorinclex Lite', 'battlefield');
+    give(g, 'alice', 'Hardened Scales Lite', 'battlefield');
+    const bears = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    // Two: half is one, plus one is two. (Plus one first would leave one: three, halved.)
+    g = castIt(g, 'Growth Lite', { targets: [[obj(bears)]] });
+    expect(g.objects[bears]!.counters['+1/+1']).toBe(2);
+  });
+
+  it('damage dealt to you, doubled and with 2 more: doubled first — 6, not 8', () => {
+    let g = base();
+    give(g, 'alice', 'Furnace of Rath Lite', 'battlefield');
+    give(g, 'alice', 'Torbran Lite', 'battlefield');
+    g.cards['Red Shock'] = { ...g.cards['Red Shock']!, faces: [{ ...g.cards['Red Shock']!.faces[0]!, colors: ['R'] }] };
+    g = castIt(g, 'Red Shock', { targets: [[{ kind: 'player', player: 'bob' }]] });
+    expect(g.players.bob!.life).toBe(14);
+  });
+
+  it('cards you mill, doubled and with four more: doubled first — 10, not 14', () => {
+    let g = base();
+    give(g, 'alice', 'Bruvac Lite', 'battlefield');
+    give(g, 'alice', 'Water Crystal Lite', 'battlefield');
+    const before = g.zones.library.bob!.length;
+    g = castIt(g, 'Glimpse Lite', { targets: [[{ kind: 'player', player: 'bob' }]] });
+    expect(before - g.zones.library.bob!.length).toBe(10);
   });
 });
 

@@ -1,8 +1,7 @@
-import type { AmountExpr, ConditionNode, EffectNode, ObjectFilter, StaticAbility, TriggerNode } from '@mtg/schema';
-import { chars, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
+import type { EffectNode, TriggerNode } from '@mtg/schema';
+import { replaced, type Also, type Enter } from './instead.js';
+import { ENTER_RULES, untappedIfItCan } from './instead-enters.js';
 import { replaceQuantity } from './quantities.js';
-import { amountOf } from './resolve.js';
-import { abilitySources } from './zones.js';
 import type {
   ChoiceAnswer,
   GameEvent,
@@ -58,8 +57,19 @@ export interface EffectContext {
 export type EffectResult = boolean | { ask: PendingChoice } | { expand: EffectNode[] };
 export type EffectHandler = (node: EffectNode, ctx: EffectContext) => EffectResult;
 
-/** A static ability that modifies how its permanent enters the battlefield (CR 614.12). */
-export type EnterReplacement = (node: EffectNode, o: GameObject, g: GameState, events?: GameEvent[]) => void;
+/** What a replacement effect makes of how a permanent enters: tapped or not, counters it enters with, and what else is done as it does. */
+export interface EnterChange {
+  tapped?: boolean;
+  counters?: Record<string, number>;
+  also?: Also[];
+}
+
+/**
+ * A static ability that modifies how its permanent enters the battlefield (CR 614.12): what it makes of that, or null
+ * if it doesn't apply. It changes nothing itself — the entering is put together from all the effects on it
+ * (instead-enters.ts), and then takes place.
+ */
+export type EnterReplacement = (node: EffectNode, o: GameObject, g: GameState) => EnterChange | null;
 
 /** Everything a trigger matcher may look at for one event (CR 603.2). */
 export interface TriggerCheck {
@@ -173,71 +183,28 @@ export function onEnterBattlefield(g: GameState, o: GameObject, events: GameEven
   }
 }
 
+/** The handler registered for a static ability that says how its permanent enters, if there is one. */
+export function enterReplacementFor(type: string): EnterReplacement | undefined {
+  return found('enterReplacements', type, enterReplacements.get(type));
+}
+
+/**
+ * CR 614.12: how the permanent enters, as the replacement effects on that leave it — tapped or not, with which
+ * counters, and what else they do as it enters (a choice to ask for, a type it has from now on).
+ */
 function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]): void {
   // CR 708.3: a permanent that enters face down has no abilities as it enters.
   if (o.faceDown) return;
-  const at = o.copyOf ?? o;
-  const def = g.cards[at.card];
-  const face = def?.faces[at.face] ?? def?.faces[0];
-  const abilities = face ? [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])] : [];
-  for (const ability of abilities) {
-    if (ability.kind !== 'static') continue;
-    const type = (ability as StaticAbility).effect.type;
-    const replacement = found('enterReplacements', type, enterReplacements.get(type));
-    if (replacement) replacement((ability as StaticAbility).effect, o, g, events);
+  const asked: Enter = { kind: 'enter', object: o, tapped: o.tapped, counters: {}, also: [] };
+  // (Which effects apply doesn't hang on what the others make of it: they are found once.)
+  const found = Object.values(ENTER_RULES).flatMap((rule) => rule(g, asked));
+  const enter = found.length ? (replaced(g, asked, { found: () => found }, { prefer: untappedIfItCan }) ?? asked) : asked;
+  for (const more of enter.also) if (more.early) more.run(g, o, events);
+  o.tapped = enter.tapped;
+  // CR 122.6: counters it enters with are put on it — all of a kind at once, so counter replacements apply to the lot.
+  for (const [counter, base] of Object.entries(enter.counters)) {
+    const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter });
+    if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
   }
-  // CR 614.12: a keyword another permanent gives it ("Nontoken creatures you control have riot") applies as it enters.
-  const printed = new Set(face?.keywords.map((k) => k.id) ?? []);
-  for (const k of chars(g, o).keywords) {
-    if (printed.has(k.id)) continue;
-    for (const a of k.abilities ?? []) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'as_enters') continue;
-      found('enterReplacements', 'as_enters', enterReplacements.get('as_enters'))?.((a as StaticAbility).effect, o, g);
-    }
-  }
-  // CR 614.1d: "Creatures your opponents control enter tapped." — another permanent's replacement effect.
-  for (const id of abilitySources(g)) {
-    if (id === o.id) continue;
-    const src = g.objects[id];
-    if (!src || src.zone !== 'battlefield') continue;
-    for (const a of objectAbilities(g, src)) {
-      if (a.kind !== 'static') continue;
-      const effect = (a as StaticAbility).effect;
-      if (effect.type !== 'enter_tapped_others' && effect.type !== 'enter_counters_others') continue;
-      if (!staticConditionHolds(g, effect as { condition?: ConditionNode }, src)) continue;
-      const filter = (effect.filter ?? {}) as ObjectFilter;
-      if (!matchesFilter(g, o, filter, { controller: src.controller, source: src, anyZone: true })) continue;
-      if (effect.type === 'enter_tapped_others') o.tapped = true;
-      else {
-        // Metallic Mimic: "Each other creature you control of the chosen type enters with an additional +1/+1 counter on
-        // it." — counters it enters with are put on it (CR 122.6), so counter replacements apply.
-        const counter = String(effect.counter);
-        // Giada: "for each Angel you already control" — not counting the one entering; Arwen: "equal to Arwen's toughness".
-        let base = Number(effect.amount ?? 1);
-        if (effect.amount && typeof effect.amount === 'object') {
-          const a = effect.amount as AmountExpr;
-          const counted = effect.notEntering && a.kind === 'count' ? { ...a, filter: { ...a.filter, notObject: o.id } } : a;
-          base = Math.max(0, amountOf({ g, controller: src.controller, source: src, events: [], targets: [], x: 0, memo: {} }, counted));
-        }
-        const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter });
-        if (n > 0) o.counters[counter] = (o.counters[counter] ?? 0) + n;
-        // Master Biomancer: "and as a Mutant in addition to its other types" — for as long as it's this object (CR 614.1c).
-        const asSubtypes = effect.asSubtypes as string[] | undefined;
-        if (asSubtypes?.length) {
-          g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: src.id, zcc: src.zcc }, controller: src.controller, objects: [{ id: o.id, zcc: o.zcc }], types: [], subtypes: asSubtypes, retainTypes: true, until: 'game' });
-        }
-      }
-    }
-  }
-  // Spelunking: "Lands you control enter untapped." — even one that would enter tapped: its controller orders the
-  // replacement effects (CR 616.1), so this one applies last.
-  for (const id of abilitySources(g)) {
-    const src = g.objects[id];
-    if (!src || src.zone !== 'battlefield' || src.controller !== o.controller) continue;
-    for (const a of objectAbilities(g, src)) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'enter_untapped_others') continue;
-      const effect = (a as StaticAbility).effect;
-      if (staticConditionHolds(g, effect as { condition?: ConditionNode }, src) && matchesFilter(g, o, (effect.filter ?? {}) as ObjectFilter, { controller: src.controller, source: src, anyZone: true })) o.tapped = false;
-    }
-  }
+  for (const more of enter.also) if (!more.early) more.run(g, o, events);
 }

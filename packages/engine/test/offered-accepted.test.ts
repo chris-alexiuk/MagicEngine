@@ -305,3 +305,32 @@ describe('CR 107.3b: no X with a cost that has none', () => {
     expect(illegal(g, { type: 'cast', player: 'alice', object: bears, x: 5 })).toBe('There is no X to choose when Grizzly Bears is cast this way.');
   });
 });
+
+// "You may cast this spell as though it had flash if it targets a permanent you control": whether it can be cast at
+// this moment hangs on the target. The list tried the first target there was — an opponent's permanent, as it happened
+// — found the cast refused, and offered nothing; the engine took the cast with a target of the caster's own.
+describe('a spell that can be cast now only with a certain target is offered with one', () => {
+  const photo = makeCard({ name: 'Test Photography', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "You may cast this spell as though it had flash if it targets a permanent you control.\nCreate a token that's a copy of target permanent." });
+
+  it("on an opponent's turn: listed with the caster's own permanent, though an opponent's comes first", () => {
+    let g = toStep(start({ extra: [photo] }), 'main1', 'bob');
+    for (let i = 0; i < 14; i++) give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    const mine = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    const spell = give(g, 'alice', 'Test Photography', 'hand');
+    g = act(g, { type: 'pass', player: 'bob' });
+    const offered = listed(g, spell);
+    expect(offered).toHaveLength(1);
+    expect((offered[0] as Extract<Action, { type: 'cast' }>).targets).toEqual([[{ kind: 'object', object: mine }]]);
+    g = passRound(act(g, offered[0]!));
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'alice')).toHaveLength(1);
+  });
+
+  it("with nothing of the caster's own to target it isn't offered then, and isn't taken", () => {
+    let g = toStep(start({ extra: [photo] }), 'main1', 'bob');
+    const theirs = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    const spell = give(g, 'alice', 'Test Photography', 'hand');
+    g = act(g, { type: 'pass', player: 'bob' });
+    expect(listed(g, spell)).toEqual([]);
+    expect(illegal(g, { type: 'cast', player: 'alice', object: spell, targets: [[{ kind: 'object', object: theirs }]] })).toMatch(/can be cast at instant speed only if it targets/);
+  });
+});

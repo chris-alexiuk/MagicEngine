@@ -718,8 +718,13 @@ export type PendingChoice =
   | { kind: 'surveil'; player: PlayerId; objects: ObjectId[] }
   | { kind: 'discard'; player: PlayerId; count: number }
   | { kind: 'may'; player: PlayerId; text: string; sourceName: string }
-  /** A choice among named options as something resolves ("Choose a creature type."). */
-  | { kind: 'choose_option'; player: PlayerId; options: string[]; text: string; sourceName: string }
+  /**
+   * A choice among named options as something resolves ("Choose a creature type.").
+   * `resume`: the choice is which of several replacement effects applies first (CR 616.1) — the action that came to
+   * need it was stopped, and with the answer it is applied again from the start (instead.ts). `keys`: the effect each
+   * option stands for. `answers`: the earlier answers of the same action. `pending`: the choice that action answered.
+   */
+  | { kind: 'choose_option'; player: PlayerId; options: string[]; text: string; sourceName: string; resume?: { action: Action; keys: string[]; answers: string[]; pending?: PendingChoice } }
   /** CR 608.2g: cast this card now without paying its mana cost? (cascade, discover, rebound, "you may cast it …") */
   | { kind: 'cast_free'; player: PlayerId; object: ObjectId; sourceName: string; text: string }
   /** CR 707.10c: the copy's controller may choose new targets for it (or keep the current ones). */

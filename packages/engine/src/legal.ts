@@ -2,7 +2,7 @@ import { activationProhibited } from './cast-bans.js';
 import { auraTargetSpec } from './permanents.js';
 import type { ActivatedAbility, AddManaEffect, EffectNode, FaceDef, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { isPermanentCard, manaAbilities, withCharsCache, withStableChars } from './characteristics.js';
+import { isPermanentCard, manaAbilities, matchesFilter, withCharsCache, withStableChars } from './characteristics.js';
 import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, branchNow, MANA_COLORS, manaOption, parseManaCost } from './mana.js';
 import { amountOf } from './resolve.js';
@@ -279,14 +279,16 @@ function completeCast(g: GameState, a: CastArgs, way: CastWay): { choice: Choice
 
 /**
  * Where what a spell costs depends on what it targets — strive's "{1}{W} more for each target beyond the first", "costs
- * {2} less if it targets a permanent with mana value 1", a permanent that taxes spells aimed at it — other targets to try
- * when the default ones can't be paid for: fewer of them (as many as can be), then another single one.
+ * {2} less if it targets a permanent with mana value 1", a permanent that taxes spells aimed at it — or whether it can
+ * be cast at this moment does ("as though it had flash if it targets a permanent you control") — other targets to try
+ * when the default ones aren't taken: fewer of them (as many as can be), then another single one.
  */
 function cheaperTargets(g: GameState, a: CastArgs, way: CastWay, choice: Choice): Target[][][] {
   const targets = choice.targets;
   const face = way.castFace;
   if (!targets?.length) return [];
-  const depends = face.abilities.some((x) => x.kind === 'static' && (x.effect.type === 'per_target_cost' || (x.effect.type === 'cost_modifier' && Boolean((x.effect as { ifTargets?: unknown }).ifTargets)))) || targetCostModifiersInPlay(g);
+  // (Or whether it can be cast now at all does: "You may cast this spell as though it had flash if it targets a permanent you control.")
+  const depends = way.needFlashTarget || face.abilities.some((x) => x.kind === 'static' && (x.effect.type === 'per_target_cost' || (x.effect.type === 'cost_modifier' && Boolean((x.effect as { ifTargets?: unknown }).ifTargets)))) || targetCostModifiersInPlay(g);
   if (!depends) return [];
   let prompts;
   try {
@@ -304,7 +306,12 @@ function cheaperTargets(g: GameState, a: CastArgs, way: CastWay, choice: Choice)
     if (!pr) return;
     const least = pr.upTo ? (pr.min ?? 0) : pr.count;
     for (let k = list.length - 1; k >= least; k--) out.push(targets.map((l, j) => (j === i ? l.slice(0, k) : l)));
-    if (list.length === 1) for (const t of pr.candidates.filter((c) => !same(c, list[0]!)).slice(0, 12)) out.push(targets.map((l, j) => (j === i ? [t] : l)));
+    if (list.length !== 1) return;
+    const others = pr.candidates.filter((c) => !same(c, list[0]!));
+    // (The targets that let it be cast now first: there may be many others before them.)
+    const fits = (t: Target) => t.kind === 'object' && Boolean(g.objects[t.object]) && way.flashIfTargets.some((f) => matchesFilter(g, g.objects[t.object]!, f, { controller: a.player, source: way.o }));
+    const ordered = way.needFlashTarget ? [...others.filter(fits), ...others.filter((c) => !fits(c))] : others;
+    for (const t of ordered.slice(0, 12)) out.push(targets.map((l, j) => (j === i ? [t] : l)));
   });
   return out;
 }

@@ -26,6 +26,13 @@ export interface PlayerView extends Omit<GameState, 'objects' | 'zones' | 'cards
   pending: PendingChoice | { kind: PendingChoice['kind']; player: PlayerId; hidden: true } | null;
 }
 
+/** A pending choice as its player sees it: without what the engine keeps for itself to carry on with the answer. */
+function shown(p: PendingChoice): PendingChoice {
+  if (p.kind !== 'choose_option' || !p.resume) return p;
+  const { resume: _resume, ...rest } = p;
+  return rest;
+}
+
 export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   const visible = new Set<ObjectId>();
   const hand: Record<PlayerId, ObjectId[] | number> = {};
@@ -88,7 +95,7 @@ export function viewFor(g: GameState, viewer: PlayerId): PlayerView {
   const pending: PlayerView['pending'] = !g.pending
     ? null
     : g.pending.player === viewer
-      ? structuredClone(g.pending)
+      ? structuredClone(shown(g.pending))
       : { kind: g.pending.kind, player: g.pending.player, hidden: true };
 
   const { objects: _o, zones: _z, cards: _c, pending: _p, rng: _r, opening: _op, ...rest } = g;

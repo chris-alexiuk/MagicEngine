@@ -2,6 +2,7 @@ import { activationProhibited, castProhibition, loyaltyProhibited } from './cast
 import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
+import { OrderNeeded, deciding } from './instead.js';
 import { STEPS } from './types.js';
 import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
@@ -47,6 +48,7 @@ import {
   type ManaMix,
   type ManualOp,
   type ObjectId,
+  type PendingChoice,
   type PlayerId,
   type Target,
   type TargetRef,
@@ -66,19 +68,63 @@ import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, z
  * and leaving the original state untouched.
  */
 export function apply(state: GameState, action: Action): ApplyResult {
+  // CR 616.1: the answer to "which of these replacement effects applies first?" — the action that came to need it is
+  // applied again from the start, this answer added to the ones it had.
+  const p = state.pending;
+  if (p?.kind === 'choose_option' && p.resume && action.type === 'choose') {
+    if (action.player !== p.player) return { ok: false, error: 'You have no choice to make.' };
+    const at = action.answer.kind === 'choose_option' ? p.options.indexOf(action.answer.choice) : -1;
+    if (at < 0) return { ok: false, error: 'That is not one of the options.' };
+    const { pending: _asked, ...rest } = state;
+    const asIt: GameState = { ...rest, pending: p.resume.pending ?? null };
+    const again = attempt(asIt, p.resume.action, [...p.resume.answers, p.resume.keys[at]!]);
+    // The action can't be taken any more (the player whose it was has left the game since): the question is void, and
+    // the game goes on from where it is. An answer isn't refused for what became of somebody else's action.
+    return again.ok ? again : { ok: true, state: asIt, events: [] };
+  }
+  return attempt(state, action, []);
+}
+
+/** Applies an action. `answers`: what it was told, the times it stopped to ask which replacement effect applies first. */
+function attempt(state: GameState, action: Action, answers: string[]): ApplyResult {
   // Card definitions never change during a game (new tokens only add entries), so they're
   // shared between states rather than copied each action.
   const { cards, ...rest } = state;
   const g: GameState = { ...structuredClone(rest), cards: { ...cards } };
   const events: GameEvent[] = [];
   try {
-    handle(g, action, events);
-    settle(g, events);
+    deciding(answers, () => {
+      handle(g, action, events);
+      settle(g, events);
+    });
     return { ok: true, state: g, events };
   } catch (err) {
     if (err instanceof RulesError) return { ok: false, error: err.message };
+    // A player has to say which replacement effect applies first: the game as it was, with that question.
+    if (err instanceof OrderNeeded) {
+      const labels = uniqueLabels(err.options.map((o) => o.label));
+      const pending: PendingChoice = {
+        kind: 'choose_option',
+        player: err.player,
+        options: labels,
+        text: err.text,
+        sourceName: err.sourceName,
+        resume: { action, keys: err.options.map((o) => o.key), answers, ...(state.pending ? { pending: state.pending } : {}) },
+      };
+      return { ok: true, state: { ...state, pending }, events: [] };
+    }
     throw err;
   }
+}
+
+/** Two options that read the same are told apart by a number: an answer names its option. */
+function uniqueLabels(labels: string[]): string[] {
+  const seen = new Map<string, number>();
+  return labels.map((label) => {
+    const n = (seen.get(label) ?? 0) + 1;
+    seen.set(label, n);
+    return n > 1 || labels.filter((l) => l === label).length > 1 ? `${label} (${n})` : label;
+  });
 }
 
 function handle(g: GameState, a: Action, events: GameEvent[]): void {

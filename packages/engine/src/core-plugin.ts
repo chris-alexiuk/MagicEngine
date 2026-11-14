@@ -6377,33 +6377,34 @@ export const corePlugin: MechanicPlugin = {
         const i = g.zones.battlefield.indexOf(o.id);
         if (i >= 0) g.zones.battlefield.splice(i, 1);
         try {
-          if (evalCondition(node.unless as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+          if (evalCondition(node.unless as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return null;
         } finally {
           if (i >= 0) g.zones.battlefield.splice(i, 0, o.id);
         }
       }
-      o.tapped = true;
+      return { tapped: true };
     },
     // CR 614.12: "As ~ enters, …" — the choice is asked for before anyone gets priority.
-    as_enters(node, o, g) {
+    as_enters(node, o) {
       // A permanent that already entered as a copy doesn't choose again from the copied ability.
-      if ((node as AsEntersNode).choice === 'copy' && o.copyOf) return;
-      queueAsEnters(g, o, node as AsEntersNode);
+      if ((node as AsEntersNode).choice === 'copy' && o.copyOf) return null;
+      return { also: [{ key: '', run: (g, it) => queueAsEnters(g, it, node as AsEntersNode) }] };
     },
-    // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
     // "If it's neither day nor night, it becomes day as ~ enters."
-    enters_day(_node, _o, g) {
-      if (!g.dayNight) g.dayNight = 'day';
+    enters_day() {
+      return { also: [{ key: '', run: (g) => void (g.dayNight ??= 'day') }] };
     },
     // CR 722.3a: "This creature enters prepared."
-    enters_prepared(_node, o, g) {
-      becomePrepared(g, o, []);
+    enters_prepared() {
+      return { also: [{ key: '', run: (g, it) => becomePrepared(g, it, []) }] };
     },
-    enters_with_counters(node, o, g, events) {
+    // CR 614.1c: "[This permanent] enters with N counters" — it's given them as it enters (CR 122.6).
+    enters_with_counters(node, o, g) {
       // "If an opponent was dealt damage this turn, …" (bloodthirst), "If ~ was kicked, …".
-      if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return;
+      if (node.condition && !evalCondition(node.condition as ConditionNode, { g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} })) return null;
+      const counter = String(node.counter);
       // "This land enters tapped with two charge counters on it."
-      if (node.tapped) o.tapped = true;
+      const tapped = node.tapped ? { tapped: true } : {};
       // CR 107.3m: X is the X paid for the spell that became this permanent.
       // Banquet Guests: "with twice X +1/+1 counters".
       const xAmount = node.amount && typeof node.amount === 'object' && (node.amount as { kind?: string }).kind === 'x' ? (node.amount as { times?: number }) : undefined;
@@ -6411,32 +6412,39 @@ export const corePlugin: MechanicPlugin = {
       const doubled = typeof node.doubledIfXAtLeast === 'number' && (o.x ?? 0) >= node.doubledIfXAtLeast ? 2 : 1;
       const per = node.amount === 'X' ? (o.x ?? 0) * doubled : xAmount ? (o.x ?? 0) * (xAmount.times ?? 1) : typeof node.amount === 'number' ? node.amount : 0;
       // Converge: "… for each color of mana spent to cast it"
-      if (node.perColor) {
-        const n = replaceQuantity(g, 'counters', per * (o.cast?.colors ?? 0), { player: o.controller, object: o, counter: String(node.counter) });
-        if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;
-        return;
-      }
+      if (node.perColor) return { ...tapped, counters: { [counter]: per * (o.cast?.colors ?? 0) } };
       // CR 702.33c: "… a +1/+1 counter on it for each time it was kicked"; Diregraf Colossus: "… for each Zombie card in
       // your graveyard" (counted as it enters, CR 614.1c).
       // It isn't on the battlefield yet as this is worked out (CR 614.1c), so it doesn't count itself.
       const perEach = node.perEach as AmountExpr | undefined;
       const counted = perEach?.kind === 'count' ? { ...perEach, filter: { ...perEach.filter, other: true } } : perEach;
       const each = counted ? Math.max(0, amountOf({ g, controller: o.controller, source: o, events: [], targets: [], x: 0, memo: {} }, counted as Amount)) : 1;
-      // Thief of Blood: "remove all counters from all permanents" — those it counted.
-      if (node.removeAllCounters) {
-        for (const id of g.zones.battlefield) {
-          const p = g.objects[id]!;
-          for (const [k, n] of Object.entries(p.counters)) {
-            if (!n) continue;
-            delete p.counters[k];
-            events?.push({ type: 'counters', object: p.id, counter: k, delta: -n });
-          }
-        }
-      }
       const base = (node.perKick ? per * (o.cast?.kicks ?? (o.cast?.kicked ? 1 : 0)) : per) * each;
-      // Counters it enters with are put on it too (CR 122.6), so counter replacements apply.
-      const n = replaceQuantity(g, 'counters', base, { player: o.controller, object: o, counter: String(node.counter) });
-      if (n > 0) o.counters[String(node.counter)] = (o.counters[String(node.counter)] ?? 0) + n;
+      return {
+        ...tapped,
+        counters: { [counter]: base },
+        // Thief of Blood: "remove all counters from all permanents" — those it counted, before it gets its own.
+        ...(node.removeAllCounters
+          ? {
+              also: [
+                {
+                  key: '',
+                  early: true as const,
+                  run: (game, _it, events) => {
+                    for (const id of game.zones.battlefield) {
+                      const p = game.objects[id]!;
+                      for (const [k, n] of Object.entries(p.counters)) {
+                        if (!n) continue;
+                        delete p.counters[k];
+                        events.push({ type: 'counters', object: p.id, counter: k, delta: -n });
+                      }
+                    }
+                  },
+                },
+              ],
+            }
+          : {}),
+      };
     },
   },
 };

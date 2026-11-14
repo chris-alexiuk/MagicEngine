@@ -1,14 +1,15 @@
 import { isRoom, roomFace } from './rooms.js';
 import { faceDownFace } from './face-down.js';
-import type { CardDef, CastOptionNode, ExileInsteadNode, FaceDef, ObjectFilter } from '@mtg/schema';
+import type { CardDef, CastOptionNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
+import { replaced, type Move } from './instead.js';
+import { MADNESS, MOVE_RULES, moveChooser, moveQuestion } from './instead-moves.js';
 import { onEnterBattlefield } from './registry.js';
-import { abilitiesOf, chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
+import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
 import { addLore } from './sagas.js';
-import { shuffleInPlace } from './rng.js';
-import { applyLifeGain, counterBlocked, replaceQuantity } from './quantities.js';
+import { counterBlocked, replaceQuantity } from './quantities.js';
 import { playerRule } from './player-rules.js';
-import { canAttach, canEnchantPlayer, createToken, tokensToCreate } from './permanents.js';
+import { canAttach, canEnchantPlayer } from './permanents.js';
 
 export function obj(g: GameState, id: ObjectId): GameObject {
   const o = g.objects[id];
@@ -195,50 +196,46 @@ function removeFromCurrentZone(g: GameState, o: GameObject): void {
 }
 
 /**
- * Moves an object to another zone.
+ * Moves an object to another zone: whether it can, what the replacement effects on it make of the move, then the move.
  * CR 400.7: it becomes a new object — zone-specific state is reset and its zone-change count increases.
  * CR 400.3: cards always go to their owner's library, hand or graveyard.
+ * Returns the move as it took place (where to, and what a replacement effect added) — nothing if it stayed where it was.
  */
 export function moveObject(
   g: GameState,
   id: ObjectId,
   to: ZoneName,
   events: GameEvent[],
-  /** `attached`: the effect says what an Aura it puts onto the battlefield is attached to, and attaches it (CR 303.4f doesn't ask). */
-  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean; attached?: boolean } = {},
-): void {
+  /**
+   * `attached`: the effect says what an Aura it puts onto the battlefield is attached to, and attaches it (CR 303.4f
+   * doesn't ask). `discard`: it is being discarded (CR 701.9a; madness replaces that).
+   */
+  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean; attached?: boolean; discard?: true } = {},
+): Move | undefined {
   const o = obj(g, id);
   const from = o.zone;
+  // 1. Whether it can move at all.
   // CR 111.8: a token that has left the battlefield can't move to another zone or come back — it stays where it is
   // (and ceases to exist the next time state-based actions are checked). "Exile it, then return it" loses a token.
-  if (o.token && from !== 'battlefield' && from !== 'stack') return;
+  if (o.token && from !== 'battlefield' && from !== 'stack') return undefined;
   // CR 303.4f: an Aura put onto the battlefield without being cast — its controller chooses what it enchants as it
   // enters (asked right after, before anyone can act). CR 303.4g: with nothing it could enchant, it stays where it is.
   const auraHosts = to === 'battlefield' && from !== 'stack' && from !== 'battlefield' && !opts.faceDown && !opts.attached ? hostsForEnteringAura(g, o, opts.controller ?? o.controller, opts.face ?? 0) : undefined;
-  if (auraHosts && !auraHosts.hosts.length && !auraHosts.players.length) return;
+  if (auraHosts && !auraHosts.hosts.length && !auraHosts.players.length) return undefined;
   // CR 712.21: a melded permanent leaving the battlefield — one permanent leaves, and both its cards go to the new zone.
   const meld = from === 'battlefield' ? o.melded : undefined;
   // Grafdigger's Cage: "Creature cards in graveyards and libraries can't enter the battlefield." — it stays where it is.
-  if (to === 'battlefield' && (from === 'graveyard' || from === 'library') && enteringBanned(g, o, from)) return;
-  // Containment Priest: "If a nontoken creature would enter and it wasn't cast, exile it instead." (CR 614.1a)
-  if (to === 'battlefield' && from !== 'battlefield' && from !== 'stack' && !o.token && enteringExiled(g, o)) to = 'exile';
-  // CR 614.1a: "exile it instead" replaces the move — flashback (CR 702.34a), "if it would die this turn",
-  // and "if ~ would be put into a graveyard from anywhere".
-  if (from === 'stack' && (o.exileOnLeave === true || (o.exileOnLeave === 'graveyard' && to === 'graveyard'))) to = 'exile';
-  if (from === 'battlefield' && o.exileWhenLeaves) to = 'exile';
-  if (to === 'graveyard' && from === 'battlefield' && o.exileIfDiesTurn === g.turn) to = 'exile';
-  if (to === 'graveyard' && from === 'battlefield' && g.exileDyingTurn === g.turn && chars(g, o).types.includes('Creature')) to = 'exile';
-  if (to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_exile')) to = 'exile';
-  const instead = to === 'graveyard' ? exiledInstead(g, o, from) : null;
-  if (instead) to = 'exile';
-  // Nissa's Chosen: "put it on the bottom of its owner's library instead".
-  if (instead?.node.libraryBottom || instead?.node.libraryTop) {
-    to = 'library';
-    opts = { ...opts, position: instead.node.libraryTop ? 'top' : 'bottom' };
+  if (to === 'battlefield' && (from === 'graveyard' || from === 'library') && enteringBanned(g, o, from)) return undefined;
+  // 2. What the replacement effects on it make of the move (CR 614.1a, 616.1): where it goes instead, and what goes
+  //    with that. Each is a rule in instead-moves.ts; none is known here.
+  const asked: Move = { kind: 'move', object: o, from, to, ...(opts.position !== undefined ? { position: opts.position } : {}), ...(opts.discard ? { discard: true } : {}), also: [] };
+  const move = replaced(g, asked, MOVE_RULES, { by: moveChooser(asked), about: () => moveQuestion(g, asked) }) ?? asked;
+  to = move.to;
+  if (move.position !== opts.position) {
+    const { position: _was, ...rest } = opts;
+    opts = { ...rest, ...(move.position !== undefined ? { position: move.position } : {}) };
   }
-  // "If ~ would be put into a graveyard from anywhere, reveal ~ and shuffle it into its owner's library instead."
-  const shuffleInstead = to === 'graveyard' && hasStaticTag(g, o, 'graveyard_to_library');
-  if (shuffleInstead) to = 'library';
+  // 3. The move.
   delete o.exileOnLeave;
   // CR 400.7: a new object.
   delete o.becameAura;
@@ -312,8 +309,6 @@ export function moveObject(
   o.damage = 0;
   o.counters = {};
   delete o.counterStamps;
-  // Dauthi Voidwalker: "instead exile it with a void counter on it".
-  if (instead?.node.withCounter) o.counters[instead.node.withCounter] = 1;
   o.sick = to === 'battlefield';
   // CR 613.7d: an object receives a timestamp as it enters a zone.
   o.timestamp = ++g.clock;
@@ -388,17 +383,8 @@ export function moveObject(
   else delete o.cast;
   o.controller = to === 'battlefield' || to === 'stack' ? (opts.controller ?? o.controller) : o.owner;
   o.face = opts.face ?? (to === 'battlefield' || to === 'stack' ? o.face : 0);
-  if (instead && o.zone === 'exile') {
-    // The Darkness Crystal: "… instead exile it and you gain 2 life." — exiled with it (CR 607.2a).
-    o.exiledBy = { id: instead.source.id, zcc: battlefieldZcc(g, instead.source) };
-    if (instead.node.gainLife) applyLifeGain(g, instead.source.controller, instead.node.gainLife, events);
-    // Kalitas, Traitor of Ghet: "… and create a 2/2 black Zombie creature token" — its controller's.
-    if (instead.node.createToken) {
-      const made = instead.node.createToken;
-      const count = tokensToCreate(g, instead.source.controller, { types: made.types, subtypes: made.subtypes }, 1, events);
-      for (let i = 0; i < count; i++) createToken(g, made, instead.source.controller, events);
-    }
-  }
+  // What a replacement effect added to the move: "… with a void counter on it", "… and you gain 2 life".
+  for (const more of move.also) if (!more.late) more.run(g, o, events);
 
   // CR 400.7j: other parts of the effect that moved it to a public zone can still find it.
   if (g.resolving && to !== 'library' && to !== 'hand') (g.resolving.found ??= {})[id] = o.zcc;
@@ -471,11 +457,8 @@ export function moveObject(
   }
   // CR 714.3a: a Saga enters with a lore counter on it.
   if (to === 'battlefield') addLore(g, o, events, true);
-  if (shuffleInstead) {
-    events.push({ type: 'revealed', player: o.owner, objects: [o.id] });
-    shuffleInPlace(g, zoneList(g, 'library', o.owner));
-    events.push({ type: 'shuffled', player: o.owner });
-  }
+  for (const more of move.also) if (more.late) more.run(g, o, events);
+  return move;
 }
 
 /**
@@ -616,9 +599,8 @@ export function createObject(g: GameState, card: string, owner: PlayerId, zone: 
  */
 export function discardCard(g: GameState, id: ObjectId, events: GameEvent[]): void {
   const o = obj(g, id);
-  const face = faceOf(g, o);
-  const madness = face.keywords.some((k) => k.id === 'madness' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
-  moveObject(g, id, madness ? 'exile' : 'graveyard', events);
+  const move = moveObject(g, id, 'graveyard', events, { discard: true });
+  const madness = Boolean(move?.also.some((a) => a.key === MADNESS));
   events.push({ type: 'discarded', object: id, player: o.owner, ...(madness && o.zone === 'exile' ? { madness: true as const } : {}) });
 }
 
@@ -723,29 +705,6 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
   events.push({ type: 'drew', player, object: top, nth: drawn[player], ...(first ? { firstInDrawStep: true as const } : {}) });
 }
 
-/** Whether the object's printed abilities (or its keywords') include a static ability with this tag. */
-/** CR 614.1a: another permanent's "… would die / be put into a graveyard, exile it instead". */
-function exiledInstead(g: GameState, o: GameObject, from: ZoneName): { node: ExileInsteadNode; source: GameObject } | null {
-  // Can't Stay Away: it gains "If this creature would die, exile it instead." — a granted ability of its own.
-  if (from === 'battlefield' && o.zone === 'battlefield' && chars(g, o).keywords.some((k) => k.id === 'ability')) {
-    for (const a of abilitiesOf(g, o)) {
-      if (a.kind === 'static' && a.effect.type === 'exile_instead' && (a.effect as ExileInsteadNode).dies && (a.effect as ExileInsteadNode).filter?.isSource) return { node: a.effect as ExileInsteadNode, source: o };
-    }
-  }
-  for (const id of abilitySources(g)) {
-    const source = g.objects[id]!;
-    for (const a of objectAbilities(g, source)) {
-      if (a.kind !== 'static' || a.effect.type !== 'exile_instead') continue;
-      const e = a.effect as ExileInsteadNode;
-      if (e.dies && from !== 'battlefield') continue;
-      if (e.owner === 'you' ? o.owner !== source.controller : e.owner === 'opponents' ? o.owner === source.controller : false) continue;
-      if (e.filter && !matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true })) continue;
-      return { node: e, source };
-    }
-  }
-  return null;
-}
-
 /** Grafdigger's Cage, Soulless Jailer, Kunoros: cards like this in these zones can't enter the battlefield. */
 export function enteringBanned(g: GameState, o: GameObject, from: ZoneName): boolean {
   return abilitySources(g).some((id) => {
@@ -756,23 +715,6 @@ export function enteringBanned(g: GameState, o: GameObject, from: ZoneName): boo
       return (!e.fromZones || e.fromZones.includes(from)) && (!e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true }));
     });
   });
-}
-
-/** Containment Priest: a card like this entering without having been cast is exiled instead. */
-function enteringExiled(g: GameState, o: GameObject): boolean {
-  return abilitySources(g).some((id) => {
-    const source = g.objects[id]!;
-    return objectAbilities(g, source).some((a) => {
-      if (a.kind !== 'static' || a.effect.type !== 'enter_exile_uncast') return false;
-      const e = a.effect as unknown as { filter?: ObjectFilter };
-      return !e.filter || matchesFilter(g, o, e.filter, { controller: source.controller, source, anyZone: true });
-    });
-  });
-}
-
-function hasStaticTag(g: GameState, o: GameObject, tag: string): boolean {
-  const face = faceOf(g, o);
-  return [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])].some((a) => a.kind === 'static' && a.effect.type === tag);
 }
 
 export function setTapped(g: GameState, id: ObjectId, tapped: boolean, events: GameEvent[]): void {

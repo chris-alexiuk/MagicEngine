@@ -8,6 +8,7 @@ import { anyColorChoices, branchNow, type ManaCost, manaOnly, manaOption, parseM
 import { bonusManaChoices, manaBonusAsks, manaTriggered, runManaAbility } from './payment.js';
 import { playerRule } from './player-rules.js';
 import { cantLoseLife } from './quantities.js';
+import { lookingAhead } from './instead.js';
 import { RulesError } from './types.js';
 import { anyColorCost, asThoughAnyColor, canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
 import type { GameEvent, GameObject, GameState, ManaColor, ObjectId, PlayerId } from './types.js';
@@ -200,7 +201,8 @@ export function planManaOnly(g: GameState, player: PlayerId, cost: ManaCost, x: 
   // With mana being added as permanents are tapped, the quick plan would tap more than it needs: one at a time instead.
   const extra = anyManaTriggers(g);
   if (quick ? !(extra && quick.length > 1) : !(skipped.any || extra)) return quick;
-  return planByTrying(g, player, cost, x, exclude, purpose, extra) ?? quick;
+  // (On a copy, to see what comes of it: nobody is asked anything there.)
+  return lookingAhead(() => planByTrying(g, player, cost, x, exclude, purpose, extra)) ?? quick;
 }
 
 /** The quick plan: only abilities that are just "{T}: Add …", counted from their text. */

@@ -64,6 +64,16 @@ git fetch origin reports && git show FETCH_HEAD:cards.json.gz > /tmp/pool.json.g
 8. `pnpm typecheck && pnpm test && pnpm rules:trace` (not `pnpm -s typecheck`: `-s` hides the
    compiler's errors — go by the exit code), add a line to `docs/ARCHITECTURE.md`, commit.
 
+**A replacement effect on a card changing zones is a rule in `packages/engine/src/instead-moves.ts`**, never a
+line in `moveObject`: a function that finds the effects of its sort applying to the move as it stands and returns
+what each makes of it (`elsewhere(move, zone, position, also)`; `also` for what goes with it — a counter, life,
+a token — each with a `key` that tells its outcome from another's). Which of several goes first is not the
+rule's business: `instead.ts` asks the affected player when it matters. Test it alone and with Rest in Peace
+(`test/instead.test.ts`). Likewise an effect on how a permanent enters: another permanent's is a rule in
+`instead-enters.ts`; a card's own is a handler in the plugin's `enterReplacements` table that returns what it
+makes of the entering (`{ tapped, counters, also }`) and changes nothing itself. An effect that changes an
+amount is a `replace_quantity` static with its `op`; `quantities.ts` orders them.
+
 **A rule about when or how something may be cast or activated goes in the reading** (`castWay`,
 `castCost`, `activationWay`, `manaAbilityWay`…), never in `legal.ts`: the list only enumerates what a
 player could try and asks the reading. For a change to the list itself,

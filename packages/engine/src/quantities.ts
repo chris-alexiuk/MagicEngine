@@ -1,14 +1,16 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { hasRule, matchesFilter, objectAbilities } from './characteristics.js';
+import { replaced, type Amount, type Replacement } from './instead.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 import { playerRule } from './player-rules.js';
 
 /**
- * Replacement effects that change an amount (CR 614.1a): life gained, tokens created, counters
- * put on something, damage dealt. CR 616.1: with several, the affected player (or the affected
- * object's controller) chooses the order — here, the order that's best for them: increases add
- * before they double for what they gain; doubling comes first for damage they're dealt.
+ * Replacement effects that change an amount (CR 614.1a): life gained, tokens created, counters put on something,
+ * damage dealt. Each that applies is put to the amount by instead.ts, once (CR 614.5). CR 616.1: with several, the
+ * affected player (or the affected object's controller) chooses the order — nobody is asked; it is taken to be the
+ * order that leaves them best off: the most life, tokens or counters they gain (one more, then twice that many), the
+ * least damage, life lost, cards milled or counters that do harm (twice that much, then one more).
  */
 export interface QuantitySubject {
   /** Who gains the life, gets the tokens, or puts the counters. */
@@ -28,25 +30,40 @@ export interface QuantitySubject {
   made?: { types: string[]; subtypes: string[] };
 }
 
+/** Counters nobody wants more of on what is theirs. */
+const HARMFUL = /^-|^(?:poison|rad|stun)$/;
+
+/** Whether the one affected is better off with less of it (CR 616.1: theirs is the choice of order). */
+function lessIsBetter(event: QuantityReplacementNode['event'], subject: QuantitySubject): boolean {
+  if (event === 'damage' || event === 'lose_life' || event === 'mill') return true;
+  return event === 'counters' && HARMFUL.test(subject.counter ?? '');
+}
+
+/** What one effect makes of an amount. */
+function changedBy(e: QuantityReplacementNode, n: number): number {
+  // Vorinclex: "half that many …, rounded down".
+  return e.op === 'plus' ? n + (e.n ?? 0) : e.op === 'double' ? n * 2 : e.op === 'triple' ? n * 3 : e.op === 'half' ? Math.floor(n / 2) : n;
+}
+
 export function replaceQuantity(g: GameState, event: QuantityReplacementNode['event'], n: number, subject: QuantitySubject): number {
   // Melira, Sylvok Outcast: "Creatures you control can't have -1/-1 counters put on them." (CR 122.1) — none are put.
   if (event === 'counters' && n > 0 && subject.object && subject.counter && counterBlocked(g, subject.object, subject.counter)) return 0;
   if (n <= 0) return n;
-  const mods: QuantityReplacementNode[] = [];
+  // The effects that apply. (Whether one does doesn't hang on the amount: they are found once.)
+  const found: Replacement<Amount>[] = [];
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
-    for (const a of objectAbilities(g, source)) {
+    for (const [i, a] of objectAbilities(g, source).entries()) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
       const e = (a as StaticAbility).effect as QuantityReplacementNode;
-      if (e.event !== event || e.op === 'extra' || !applies(g, e, source, subject)) continue;
-      mods.push(e);
+      if (e.event !== event || e.op === 'extra' || e.op === 'swap' || !applies(g, e, source, subject)) continue;
+      found.push({ key: `${id}:${source.zcc}:${i}`, label: a.text, apply: (h) => ({ ...h, n: changedBy(e, h.n) }) });
     }
   }
-  if (!mods.length) return n;
-  const plus = mods.filter((m) => m.op === 'plus').reduce((x, m) => x + (m.n ?? 0), 0);
-  const factor = mods.reduce((x, m) => x * (m.op === 'double' ? 2 : m.op === 'triple' ? 3 : m.op === 'half' ? 0.5 : 1), 1);
-  // Vorinclex: "half that many …, rounded down".
-  return Math.floor(event === 'damage' ? n * factor + plus : (n + plus) * factor);
+  if (!found.length) return n;
+  const sign = lessIsBetter(event, subject) ? -1 : 1;
+  const end = replaced<Amount>(g, { kind: 'amount', n }, { replace_quantity: (_g, h) => (h.n > 0 ? found : []) }, { prefer: (a, b) => sign * ((a?.n ?? 0) - (b?.n ?? 0)) });
+  return end?.n ?? 0;
 }
 
 /**
