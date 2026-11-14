@@ -2,10 +2,12 @@
  * Robustness check: random bots play many games with random decks drawn from the
  * real card pool, and every action is checked.
  *
- *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top] [--focus REGEX] [--probe N] [--report-unlisted]
+ *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top] [--focus REGEX] [--probe N] [--report-unlisted] [--jobs N]
  *
  * --top lists the sources of the most triggers and tokens (to spot runaway loops).
  * --focus fills about half of each deck with cards whose text matches REGEX (to exercise a new mechanic).
+ * --jobs N plays the games in N processes side by side, each with its share of them and a seed of its own, and adds
+ *   their counts up at the end. (The games aren't the ones one process would play with the same seed.)
  *
  * Failures reported:
  *   - crash:     the engine threw something other than a rules error
@@ -16,7 +18,9 @@
  * run: the weekly and per-push games in CI turn up old gaps by chance, which is a list of things to fix, not an alarm
  * about the commit; the gate run before a commit (tools/dev/fuzz-all.sh) does fail on them.
  */
+import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef, Color } from '@mtg/schema';
@@ -32,6 +36,57 @@ const opt = (name: string, d: string) => {
 const dbPath = args[0];
 if (!dbPath) throw new Error('usage: fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players N]');
 const GAMES = Number(opt('--games', '40'));
+
+/** What one process counted, on its last line of output, for the process that started it to add up. */
+interface Tally {
+  games: number;
+  turns: number;
+  actions: number;
+  ms: number;
+  crash: number;
+  rejected: number;
+  invariant: number;
+  unlisted: number;
+  probed: number;
+}
+const TALLY = '##fuzz ';
+
+// --jobs N: the same run in N processes. Each prints what it found as it always does; the totals follow.
+const JOBS = Math.min(Number(opt('--jobs', '1')), GAMES);
+if (JOBS > 1) {
+  const self = fileURLToPath(import.meta.url);
+  const own = ['--jobs', '--games', '--seed'];
+  const pass = args.filter((a, i) => !own.includes(a) && !own.includes(args[i - 1] ?? ''));
+  const base = Number(opt('--seed', '1'));
+  const started = Date.now();
+  const runs = await Promise.all(
+    Array.from({ length: JOBS }, (_, k) => {
+      const games = Math.floor(GAMES / JOBS) + (k < GAMES % JOBS ? 1 : 0);
+      return new Promise<{ code: number; out: string }>((resolve) => {
+        const child = spawn(process.execPath, [...process.execArgv, self, ...pass, '--games', String(games), '--seed', String(base * 64 + k), '--tally'], { stdio: ['ignore', 'pipe', 'inherit'] });
+        let out = '';
+        child.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')));
+        child.on('exit', (code) => resolve({ code: code ?? 1, out }));
+      });
+    }),
+  );
+  const total: Tally = { games: 0, turns: 0, actions: 0, ms: 0, crash: 0, rejected: 0, invariant: 0, unlisted: 0, probed: 0 };
+  let died = 0;
+  runs.forEach((r, k) => {
+    const lines = r.out.split('\n');
+    const tally = lines.find((l) => l.startsWith(TALLY));
+    console.log(`--- job ${k + 1} of ${JOBS}`);
+    console.log(lines.filter((l) => !l.startsWith(TALLY)).join('\n').trimEnd());
+    if (!tally) return void died++;
+    const t = JSON.parse(tally.slice(TALLY.length)) as Tally;
+    for (const key of Object.keys(total) as (keyof Tally)[]) total[key] += t[key];
+  });
+  console.log(`--- all ${JOBS} jobs`);
+  console.log(`${total.games} games, ${total.turns} turns, ${total.actions} actions in ${((Date.now() - started) / 1000).toFixed(1)} s (${(total.ms / Math.max(1, total.actions)).toFixed(2)} ms/action in each job)`);
+  for (const k of ['crash', 'rejected', 'invariant', 'unlisted'] as const) console.log(`  ${k}: ${total[k]}${k === 'unlisted' ? ` (looked for in ${total.probed} states)` : ''}`);
+  if (died) console.log(`  crash: ${died} job(s) ended without a count — NO SUMMARY`);
+  process.exit(died || runs.some((r) => r.code !== 0) ? 1 : 0);
+}
 let lastSizes = '';
 const SEED = Number(opt('--seed', '1'));
 const PLAYERS = opt('--players', 'mixed');
@@ -346,5 +401,9 @@ for (const k of ['crash', 'rejected', 'invariant', 'unlisted'] as const) {
   for (const f of list) grouped.set(f.detail.slice(0, 160), [...(grouped.get(f.detail.slice(0, 160)) ?? []), f]);
   const groups = [...grouped].sort((a, b) => b[1].length - a[1].length);
   for (const [detail, fs] of groups.slice(0, k === 'unlisted' ? 30 : 12)) console.log(`    ×${fs.length} ${detail}\n        e.g. game ${fs[0]!.game}: ${fs[0]!.action ?? ''}`);
+}
+if (args.includes('--tally')) {
+  const tally: Tally = { games: GAMES, turns, actions, ms, crash: byKind('crash').length, rejected: byKind('rejected').length, invariant: byKind('invariant').length, unlisted: byKind('unlisted').length, probed };
+  console.log(TALLY + JSON.stringify(tally));
 }
 process.exit(failures.some((f) => f.kind !== 'unlisted' || !REPORT_UNLISTED) ? 1 : 0);

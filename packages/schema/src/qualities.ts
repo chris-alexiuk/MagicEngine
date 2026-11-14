@@ -77,18 +77,19 @@ const TYPE_PLURALS: Record<string, string> = {
 };
 const SUPERTYPES: Record<string, string> = { legendary: 'Legendary', snow: 'Snow', basic: 'Basic' };
 
-let SUBTYPE_FORMS: Map<string, string> | null = null;
-/** "goblins", "elves", "arcane", "kavu" → the subtype. */
-function subtypeWord(word: string): string | null {
-  if (!SUBTYPE_FORMS) {
-    SUBTYPE_FORMS = new Map();
-    for (const list of Object.values(SUBTYPES)) {
-      for (const t of list) {
-        const l = t.toLowerCase();
-        for (const form of [l, `${l}s`, `${l}es`, l.replace(/y$/, 'ies'), l.replace(/f$/, 'ves')]) if (!SUBTYPE_FORMS.has(form)) SUBTYPE_FORMS.set(form, t);
-      }
+/** Each subtype in the forms a quality may give it: "goblins", "elves", "arcane", "kavu". (Made as the module loads: one list, the same whoever asks first.) */
+const SUBTYPE_FORMS: Map<string, string> = (() => {
+  const forms = new Map<string, string>();
+  for (const list of Object.values(SUBTYPES)) {
+    for (const t of list) {
+      const l = t.toLowerCase();
+      for (const form of [l, `${l}s`, `${l}es`, l.replace(/y$/, 'ies'), l.replace(/f$/, 'ves')]) if (!forms.has(form)) forms.set(form, t);
     }
   }
+  return forms;
+})();
+/** "goblins", "elves", "arcane", "kavu" → the subtype. */
+function subtypeWord(word: string): string | null {
   return SUBTYPE_FORMS.get(word) ?? null;
 }
 

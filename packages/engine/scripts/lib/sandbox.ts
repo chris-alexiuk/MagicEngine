@@ -26,6 +26,7 @@ import {
   choicePrompts,
   createGame,
   defaultChoiceAtX,
+  forgetCards,
   whyNotActivated,
   learnCreatureTypes,
   legalActions,
@@ -38,6 +39,7 @@ import {
   type PlayerId,
   type Target,
 } from '../../src/index.js';
+import { CREATURE_TYPES } from '../../src/creature-types.js';
 import { createToken } from '../../src/permanents.js';
 import { createObject } from '../../src/zones.js';
 import { checkInvariants, createBot } from './bot.js';
@@ -826,6 +828,16 @@ let tracing = false;
 
 const firstLine = (err: unknown): string => String((err as Error).message ?? err).split('\n')[0]!;
 
+/**
+ * Before the first card: the creature types of the whole pool, as a table with every card loaded knows them — so that
+ * a card is played the same whether the cards before it were played or not. Returns them: a pool with another creature
+ * type in it is another world for every card ("is every creature type").
+ */
+export function prepare(pool: CardDef[]): string[] {
+  learnCreatureTypes(pool);
+  return [...CREATURE_TYPES].sort();
+}
+
 /** Plays a card every way the engine offers, and reports. */
 export function checkCard(card: CardDef, boards: Board[], opts: CheckOptions = {}): CardReport {
   const t0 = performance.now();
@@ -835,6 +847,8 @@ export function checkCard(card: CardDef, boards: Board[], opts: CheckOptions = {
   const runs: Run[] = [];
   const limit = opts.maxRuns ?? 10;
   tracing = Boolean(opts.trace);
+  // What one card's play taught the engine about card definitions is no part of the next one's.
+  forgetCards();
   learnCreatureTypes([card]);
   const main = boards[0]!;
   const unread = card.faces.some((f) => f.unparsed.length > 0 || (f.manualKeywords?.length ?? 0) > 0);

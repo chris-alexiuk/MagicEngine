@@ -8,3 +8,5 @@ apps/web/public/cards.json.gz
 apps/web/public/cards.meta.json
 apps/web/public/coverage.md
 apps/web/public/coverage.json
+# The engine's code with a flag in every block: written by the card checks to see what each card's play runs through.
+packages/engine/.impact/

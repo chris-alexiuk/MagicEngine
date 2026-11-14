@@ -5,6 +5,12 @@ name: Reference data
 #   - the full compiled card DB from Scryfall, played card by card in the sandbox and published with
 #     its coverage report and the sandbox's results to the `reports` branch (and as a build artifact)
 # Runs weekly, on demand, and whenever the parsers, the engine or the rules source change.
+#
+# A push does only what the change calls for: the card DB is compiled again only if Scryfall's data or the compiler
+# changed, and a card is played again only if its definition changed or its last play ran through code that did
+# (packages/engine/scripts/lib/impact.ts). The weekly run and a run started by hand play every card, and hold the
+# last run to it: a card that would have kept its result and plays differently fails the run. So does a push whose
+# commit message has a line "Checks: full".
 on:
   push:
     branches: [main]
@@ -72,36 +78,45 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: The last run's card DB and checks, to go by and to compare with
+        run: |
+          mkdir -p /tmp/last
+          if git fetch --depth 1 origin reports; then
+            for f in cards.json.gz cards.meta.json coverage.json coverage.md checks.json.gz; do
+              git show "FETCH_HEAD:$f" > "/tmp/last/$f" || rm -f "/tmp/last/$f"
+            done
+          fi
       - name: Download and compile every card
+        # The last run's card DB as it is, if Scryfall's data and the compiler are what they were for it.
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: |
           set -o pipefail
-          pnpm cards:build 2>&1 | tee /tmp/cards-build.log
+          pnpm cards:build --reuse /tmp/last 2>&1 | tee /tmp/cards-build.log
       - name: Coverage summary
         run: cat apps/web/public/coverage.md >> "$GITHUB_STEP_SUMMARY"
       - name: Compiler/engine contract on every card
-        # Fails if the compiler emitted a node tag the engine has no handler for.
+        # Fails if the compiler emitted a node tag the engine has no handler for. (The DB as compiled just now, or by
+        # this same compiler: its text isn't read again.)
         run: |
           set -o pipefail
-          pnpm cards:reparse 2>&1 | tee /tmp/reparse.log
-      - name: The last run's card DB and checks, to compare with
-        run: |
-          mkdir -p /tmp/last
-          if git fetch --depth 1 origin reports; then
-            git show FETCH_HEAD:cards.json.gz > /tmp/last/cards.json.gz || rm -f /tmp/last/cards.json.gz
-            git show FETCH_HEAD:checks.json.gz > /tmp/last/checks.json.gz || rm -f /tmp/last/checks.json.gz
-          fi
-      - name: Play every card once in the sandbox, and correct the grades by it
+          pnpm cards:reparse --as-is 2>&1 | tee /tmp/reparse.log
+      - name: Play the cards in the sandbox, and correct the grades by it
         # A card with a certain problem isn't fully automatic, however much of it was read. Fails (after everything is
         # published, below) if a card left the pool, if a card got a certain problem it didn't have, or if more cards
         # stopped being fully automatic than the commit message's "Regrades: N" line allows. The failure is an alarm,
         # raised once: what this run publishes is what the next run compares with.
+        #
+        # On a push, the cards the change can have touched; the rest keep the last run's result. Every card on the
+        # weekly run, on one started by hand, and for a commit that says "Checks: full" — and then a card that would
+        # have kept its result and plays differently fails the run too.
         run: |
           set -o pipefail
           allowed="$(git log -1 --format=%B | sed -n 's/^Regrades: *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+          full=""
+          if [ "$GITHUB_EVENT_NAME" != push ] || git log -1 --format=%B | grep -qiE '^Checks: *full'; then full="--full"; fi
           status=0
-          pnpm cards:check --jobs "$(nproc)" --commit "$GITHUB_SHA" --out /tmp/checks.json.gz \
+          pnpm cards:check --jobs "$(nproc)" $full --commit "$GITHUB_SHA" --out /tmp/checks.json.gz \
             --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz \
             --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades "${allowed:-0}" 2>&1 | tee /tmp/checks.log || status=$?
           echo "$status" > /tmp/checks.status
@@ -111,9 +126,14 @@ jobs:
         # Fails on a crash, a listed move the engine refuses, or a broken invariant. A move the engine would take and
         # never listed is reported (here and in fuzz.log) without failing: these games find such gaps by chance, old
         # ones as a rule, and the gate before each commit (tools/dev/fuzz-all.sh) is where they fail.
+        #
+        # One process per core. A push looks for unlisted moves in fewer states; the weekly run plays twice the games
+        # and looks as often as the gate does.
         run: |
           set -o pipefail
-          pnpm fuzz --games 60 --seed "$GITHUB_RUN_NUMBER" --report-unlisted 2>&1 | tee /tmp/fuzz.log
+          games=60; probe=120
+          if [ "$GITHUB_EVENT_NAME" != push ]; then games=120; probe=40; fi
+          pnpm fuzz --as-is --jobs "$(nproc)" --games "$games" --probe "$probe" --seed "$GITHUB_RUN_NUMBER" --report-unlisted 2>&1 | tee /tmp/fuzz.log
           if grep -q "unlisted: [1-9]" /tmp/fuzz.log; then
             echo "::warning::The fuzz games found moves the engine takes but never lists (fuzz.log on the reports branch)."
             { echo; echo "### Moves the engine takes but never lists"; echo; echo '```'; sed -n '/unlisted: /,$p' /tmp/fuzz.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

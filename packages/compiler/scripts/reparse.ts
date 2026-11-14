@@ -1,10 +1,12 @@
 /**
  * Measures the grammar against a compiled card DB without re-downloading Scryfall data:
  *
- *   tsx scripts/reparse.ts <cards.json.gz> [--out coverage.md] [--grep <regex>] [--limit N] [--save next.json.gz]
+ *   tsx scripts/reparse.ts <cards.json.gz> [--out coverage.md] [--grep <regex>] [--limit N] [--save next.json.gz] [--as-is]
  *
  * Prints coverage totals. --grep lists unparsed lines matching a pattern (for grammar work);
  * --save writes the reparsed DB (gzipped if the name ends in .gz) for further analysis.
+ * --as-is: the DB was compiled by this checkout's compiler already; it is checked as it is (the contract below), not
+ * compiled again.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -23,10 +25,11 @@ const raw = readFileSync(input);
 const db = JSON.parse((input.endsWith('.gz') ? gunzipSync(raw) : raw).toString('utf8')) as CardDB;
 const before = buildCoverage(db, 0).totals;
 const t0 = Date.now();
-const next = reparseDB(db);
+const asIs = args.includes('--as-is');
+const next = asIs ? db : reparseDB(db);
 const report = buildCoverage(next, 200);
 const pct = (n: number) => `${((100 * n) / next.cards.length).toFixed(1)}%`;
-console.log(`reparsed ${next.cards.length} cards in ${Date.now() - t0} ms`);
+console.log(asIs ? `${next.cards.length} cards, as compiled` : `reparsed ${next.cards.length} cards in ${Date.now() - t0} ms`);
 for (const k of ['full', 'partial', 'manual'] as const) {
   console.log(`  ${k.padEnd(8)} ${String(report.totals[k]).padStart(6)} ${pct(report.totals[k]).padStart(6)}  (was ${before[k]})`);
 }

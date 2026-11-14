@@ -2,16 +2,20 @@
  * Builds the compiled card DB.
  *
  *   tsx src/cli.ts --input path/to/oracle-cards.json [--printings path/to/default-cards.json] --out dir
- *   tsx src/cli.ts --download [--cache .cache] --out dir
+ *   tsx src/cli.ts --download [--cache .cache] [--reuse dir] --out dir
  *
  * `--download` fetches Scryfall's Oracle Cards (one printing of each card: what gets compiled) and Default Cards
  * (every English printing: read only for the other names cards are printed under).
  *
+ * `--reuse dir`: a card DB built earlier (its cards.json.gz and cards.meta.json, and the coverage files if there). If
+ * it was built from the same two Scryfall files by the same compiler and schema source, it is copied to `out` and
+ * nothing is downloaded or compiled: the result would be the same DB.
+ *
  * Writes to `out`: cards.json.gz, cards.meta.json, coverage.json, coverage.md
  */
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFileSync, createWriteStream, existsSync } from 'node:fs';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -21,6 +25,7 @@ import { compileCards } from './compile.js';
 import { buildCoverage, coverageMarkdown } from './coverage.js';
 import type { AltNameTable } from './printings.js';
 import { readAltNames } from './printings-file.js';
+import { compilerHash, reusableDB } from './reuse.js';
 import type { ScryfallBulkItem, ScryfallCard } from './scryfall.js';
 
 // Scryfall asks API clients to send a descriptive User-Agent and an Accept header.
@@ -32,6 +37,8 @@ interface Args {
   printings?: string;
   download: boolean;
   cache: string;
+  /** A DB built earlier, to take as it is when nothing it was built from has changed. */
+  reuse?: string;
   out: string;
 }
 
@@ -44,6 +51,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--printings') args.printings = argv[++i];
     else if (a === '--download') args.download = true;
     else if (a === '--cache') args.cache = argv[++i] ?? args.cache;
+    else if (a === '--reuse') args.reuse = argv[++i];
     else if (a === '--out') args.out = argv[++i] ?? args.out;
   }
   if (!args.input && !args.download) throw new Error('pass --input <file> or --download');
@@ -55,13 +63,23 @@ function fromCwd(p: string): string {
   return resolve(process.env.INIT_CWD ?? process.cwd(), p);
 }
 
+type BulkType = 'oracle_cards' | 'default_cards';
+
+/** Scryfall's list of bulk files: what there is to download, and when each was last made. Asked for once. */
+let bulkList: Promise<{ items: ScryfallBulkItem[]; body: string }> | undefined;
+function bulkItems(): Promise<{ items: ScryfallBulkItem[]; body: string }> {
+  return (bulkList ??= (async () => {
+    const listRes = await fetch('https://api.scryfall.com/bulk-data', { headers: HEADERS });
+    const body = await listRes.text();
+    if (!listRes.ok) throw new Error(`bulk-data lookup failed: HTTP ${listRes.status}: ${body.slice(0, 300)}`);
+    return { items: (JSON.parse(body) as { data?: ScryfallBulkItem[] }).data ?? [], body };
+  })());
+}
+
 /** Downloads one of Scryfall's bulk files (by its documented type) into the cache, streamed to disk. */
-async function download(cacheDir: string, type: 'oracle_cards' | 'default_cards'): Promise<{ file: string; updatedAt: string }> {
-  const listRes = await fetch('https://api.scryfall.com/bulk-data', { headers: HEADERS });
-  const body = await listRes.text();
-  if (!listRes.ok) throw new Error(`bulk-data lookup failed: HTTP ${listRes.status}: ${body.slice(0, 300)}`);
-  const list = JSON.parse(body) as { data?: ScryfallBulkItem[] };
-  const item = list.data?.find((d) => d.type === type);
+async function download(cacheDir: string, type: BulkType): Promise<{ file: string; updatedAt: string }> {
+  const { items, body } = await bulkItems();
+  const item = items.find((d) => d.type === type);
   // Scryfall now publishes gzipped JSON Lines; older responses had a plain JSON array.
   const url = item?.jsonl_download_uri ?? item?.download_uri;
   if (!item || !url) throw new Error(`no ${type} download in the bulk-data list: ${body.slice(0, 600)}`);
@@ -120,10 +138,32 @@ async function main(): Promise<void> {
 
   let inputFile: string;
   let updatedAt: string | undefined;
+  let printingsUpdatedAt: string | undefined;
   let altNames: AltNameTable | undefined;
+  const compiler = compilerHash();
   if (args.download) {
+    if (args.reuse) {
+      const { items } = await bulkItems();
+      const oracle = items.find((d) => d.type === 'oracle_cards')?.updated_at;
+      const printings = items.find((d) => d.type === 'default_cards')?.updated_at;
+      const dir = fromCwd(args.reuse);
+      const meta = oracle ? await reusableDB(dir, { oracle, ...(printings ? { printings } : {}), compiler }) : null;
+      if (meta) {
+        await mkdir(outDir, { recursive: true });
+        for (const f of ['cards.json.gz', 'cards.meta.json', 'coverage.json', 'coverage.md']) if (existsSync(join(dir, f)) && resolve(dir, f) !== resolve(outDir, f)) await copyFile(join(dir, f), join(outDir, f));
+        console.log(`reused the card DB built ${meta.builtAt}: Scryfall's files (${oracle}) and the compiler are the ones it was built from\n  ${meta.cardCount} cards; wrote ${outDir}`);
+        // For a workflow: later steps can skip what only a new DB needs.
+        if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'reused=true\n');
+        return;
+      }
+      console.log('not reusing the last card DB: Scryfall\'s files or the compiler have changed since it was built (or there is none)');
+    }
     ({ file: inputFile, updatedAt } = await download(fromCwd(args.cache), 'oracle_cards'));
-    altNames = await altNamesFrom(async () => (await download(fromCwd(args.cache), 'default_cards')).file);
+    altNames = await altNamesFrom(async () => {
+      const printings = await download(fromCwd(args.cache), 'default_cards');
+      printingsUpdatedAt = printings.updatedAt;
+      return printings.file;
+    });
   } else {
     inputFile = fromCwd(args.input!);
     if (args.printings) altNames = await altNamesFrom(async () => fromCwd(args.printings!));
@@ -150,6 +190,9 @@ async function main(): Promise<void> {
     bytes: gz.length,
     sha256: createHash('sha256').update(gz).digest('hex'),
     coverage: report.totals,
+    // (Without the names from the printings file, the DB isn't the one a later build would make: no date, no reuse.)
+    ...(printingsUpdatedAt && altNames ? { printingsUpdatedAt } : {}),
+    compiler,
   };
 
   await mkdir(outDir, { recursive: true });

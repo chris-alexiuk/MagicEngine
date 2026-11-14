@@ -114,31 +114,41 @@ export function installedPlugins(): readonly string[] {
   return plugins;
 }
 
+/**
+ * A name looked up in one of the tables above and not found there: told to whoever is listening. The card checks are
+ * (scripts/lib/impact.ts) — a handler added under that name later changes what this lookup gives, so the cards whose
+ * play came by here are the ones to play again. Nobody listens in a game.
+ */
+function found<T>(table: 'effects' | 'triggers' | 'enterReplacements' | 'statics', type: string, value: T): T {
+  if (value === undefined || value === false) (globalThis as { __miss?: (key: string) => void }).__miss?.(`${table}:${type}`);
+  return value;
+}
+
 export function hasEffectHandler(type: string): boolean {
-  return effects.has(type);
+  return found('effects', type, effects.has(type));
 }
 
 export function hasTriggerMatcher(type: string): boolean {
-  return triggers.has(type);
+  return found('triggers', type, triggers.has(type));
 }
 
 export function hasStaticHandler(type: string): boolean {
-  return statics.has(type);
+  return found('statics', type, statics.has(type));
 }
 
 export function runEffect(node: EffectNode, ctx: EffectContext): EffectResult {
-  const handler = effects.get(node.type);
+  const handler = found('effects', node.type, effects.get(node.type));
   return handler ? handler(node, ctx) : false;
 }
 
 export function matchTrigger(trigger: TriggerNode, check: TriggerCheck): TriggerInfo[] {
-  const m = triggers.get(trigger.type);
+  const m = found('triggers', trigger.type, triggers.get(trigger.type));
   return m ? m(trigger, check) : [];
 }
 
 /** True when the engine can run every effect of an ability on its own. */
 export function canAutomate(ability: { effects: EffectNode[] }): boolean {
-  return ability.effects.every((e) => effects.has(e.type));
+  return ability.effects.every((e) => found('effects', e.type, effects.has(e.type)));
 }
 
 export function onEnterBattlefield(g: GameState, o: GameObject, events: GameEvent[]): void {
@@ -172,7 +182,8 @@ function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]
   const abilities = face ? [...face.abilities, ...face.keywords.flatMap((k) => k.abilities ?? [])] : [];
   for (const ability of abilities) {
     if (ability.kind !== 'static') continue;
-    const replacement = enterReplacements.get((ability as StaticAbility).effect.type);
+    const type = (ability as StaticAbility).effect.type;
+    const replacement = found('enterReplacements', type, enterReplacements.get(type));
     if (replacement) replacement((ability as StaticAbility).effect, o, g, events);
   }
   // CR 614.12: a keyword another permanent gives it ("Nontoken creatures you control have riot") applies as it enters.
@@ -181,7 +192,7 @@ function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]
     if (printed.has(k.id)) continue;
     for (const a of k.abilities ?? []) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'as_enters') continue;
-      enterReplacements.get('as_enters')?.((a as StaticAbility).effect, o, g);
+      found('enterReplacements', 'as_enters', enterReplacements.get('as_enters'))?.((a as StaticAbility).effect, o, g);
     }
   }
   // CR 614.1d: "Creatures your opponents control enter tapped." — another permanent's replacement effect.

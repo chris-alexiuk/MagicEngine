@@ -32,3 +32,4 @@ export { hasEffectHandler, hasStaticHandler, hasTriggerMatcher, installPlugin, i
 export type { EffectContext, EffectHandler, EffectResult, EnterReplacement, MechanicPlugin, TriggerCheck, TriggerMatcher } from './registry.js';
 export * from './types.js';
 export { learnCreatureTypes } from './creature-types.js';
+export { forgetCards } from './caches.js';

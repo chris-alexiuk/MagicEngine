@@ -1,4 +1,5 @@
 import { cardTypePlural, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
+import { remembered } from './caches.js';
 import { CREATURE_TYPES, isCreatureType } from './creature-types.js';
 import { isRingBearer } from './ring.js';
 import type {
@@ -250,6 +251,7 @@ export function abilitiesOf(g: GameState, o: GameObject): AbilityNode[] {
 const removesAbilities = (e: { loseAbilities?: true; landTypes?: string[] }) => Boolean(e.loseAbilities || e.landTypes);
 /** Card definitions (by id) with an effect that removes abilities. */
 const LOSING_CARD = new Map<string, boolean>();
+remembered(() => LOSING_CARD.clear());
 const LOSING_GAME = new WeakMap<GameState, { n: number; v: boolean }>();
 /** Whether anything in this game can remove abilities (most games: nothing, so the check is skipped). */
 function mayLoseAbilities(g: GameState): boolean {
@@ -436,6 +438,7 @@ function ptParts(g: GameState, e: ContinuousEffectNode, source: GameObject): Pic
 
 /** Card definitions (by id) with a static ability that works from the graveyard (Wonder). */
 const YARD_STATIC = new Map<string, boolean>();
+remembered(() => YARD_STATIC.clear());
 function hasYardStatic(g: GameState, card: string): boolean {
   let v = YARD_STATIC.get(card);
   if (v === undefined) {

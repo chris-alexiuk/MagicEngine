@@ -47,6 +47,13 @@ export interface CardDBMeta {
   coverage: Record<Automation, number>;
   /** DB file name next to the meta file, when it isn't cards.json.gz (for hosts that serve only some extensions). */
   file?: string;
+  /**
+   * What else the DB was built from: the date of Scryfall's file of printings (the other names cards go by), and a hash
+   * of the compiler's and the schema's source. A build that finds all three unchanged takes the last DB as it is
+   * (compiler/src/cli.ts, --reuse).
+   */
+  printingsUpdatedAt?: string;
+  compiler?: string;
 }
 
 export interface CardDef {

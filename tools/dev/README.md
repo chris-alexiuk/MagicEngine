@@ -38,7 +38,13 @@ git fetch origin reports && git show FETCH_HEAD:cards.json.gz > /tmp/pool.json.g
    (cd packages/engine && npx tsx scripts/sandbox.ts /tmp/new.json.gz --jobs 2 \
       --out /tmp/new-checks.json.gz --baseline /tmp/checks.json.gz --report /tmp/changes.md)
    ```
-   About a quarter of an hour for the whole pool on two cores; `--top 3000` or `--card "Name" --trace` for less.
+   With a baseline that kept what each play ran through (any run of this script without `--plain` does), only
+   the cards your change can have touched are played: those whose definition changed, and those whose last play
+   ran through a block of code that isn't what it was. The output says how many and why. A change to something
+   every card runs (`matchesFilter`, the listing, `cast`) plays them all: about a quarter of an hour for the
+   whole pool on two cores. `--full` plays every card whatever the baseline says and reports any card that would
+   have kept its result and plays differently — that would be a bug in `scripts/lib/impact.ts`, which decides.
+   `--top 3000` or `--card "Name" --trace` for less.
    Read `/tmp/changes.md`: **played differently** should be the cards you meant to change and no others; **a
    certain problem that is new** is a bug; **no longer fully automatic** needs a `Regrades: N` line in the commit
    message, or CI fails. A card you made full should show its runs doing what its text says
@@ -70,8 +76,8 @@ amount or a condition already says it: those work for every kind of node at once
 ## Checking the grades
 
 A card is fully automatic when every line was read **and** the sandbox found no certain problem playing it
-(`packages/engine/scripts/lib/sandbox.ts`; the data workflow runs it on every card after each change and
-corrects the grades, `CardDef.issues`). The sandbox sees what is grossly wrong — a crash, an action offered and
+(`packages/engine/scripts/lib/sandbox.ts`; after each change the data workflow plays the cards the change can
+have touched — every card weekly — and corrects the grades, `CardDef.issues`). The sandbox sees what is grossly wrong — a crash, an action offered and
 refused, a card that can't be cast, a spell that does nothing — and, through its fingerprints, any change in
 how a card plays. It does not see a card that does something plausible and wrong; that still takes reading:
 
