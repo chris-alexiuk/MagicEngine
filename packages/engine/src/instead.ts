@@ -1,23 +1,25 @@
 /**
  * One path for "instead" (CR 614–616).
  *
- * Something about to happen — a card changing zones, an amount being gained or dealt, a permanent entering — is a
- * `Happening`. Before it happens, every replacement effect that applies to it is found: each kind of happening has its
- * rules (instead-moves.ts, instead-enters.ts, quantities.ts), and a rule gives one `Replacement` for each effect of
- * its sort that applies to the happening as it now stands. One
- * is applied at a time; each at most once to the same happening (CR 614.5); after each, the happening as it has become
- * is looked at afresh — an effect may apply now that didn't, or no longer apply (CR 616.1f, 616.2).
+ * Something about to happen — a card changing zones, a card being drawn, an amount being gained or dealt, a permanent
+ * entering — is a `Happening`. Before it happens, every replacement effect that applies to it is found: each kind of
+ * happening has its rules (instead-moves.ts, instead-draws.ts, instead-enters.ts, quantities.ts), and a rule gives one
+ * `Replacement` for each effect of its sort that applies to the happening as it now stands. One is applied at a time;
+ * each at most once to the same happening (CR 614.5); after each, the happening as it has become is looked at afresh —
+ * an effect may apply now that didn't, or no longer apply (CR 616.1f, 616.2).
  *
  * With several to choose from, the affected player — or the controller of the affected object, its owner if it has
- * none — chooses which applies first (CR 616.1): after the effects the rules put first (CR 616.1a–d, `first`). Where
- * every order comes to the same thing nobody is asked. Where it doesn't, the player is: the action that led here stops
- * (`OrderNeeded`), `apply` hands back the game as it was with the question pending, and with the answer the action is
- * applied again from the start, the answer known (actions.ts). Nothing is asked while the engine only looks ahead —
- * listing what is legal, planning which lands pay: there the first takes it. For amounts nobody is asked at all: the
- * order is the one that serves the affected player best (`Choice.prefer`).
+ * none — chooses which applies first (CR 616.1): after the effects the rules put first (CR 616.1a–d, `first`).
+ *   - For a card changing zones the player is asked, where the order matters. Where every order comes to the same
+ *     thing nobody is. The action that led here stops (`OrderNeeded`), `apply` hands back the game as it was with the
+ *     question pending, and with the answer the action is applied again from the start, the answer known
+ *     (actions.ts). Nothing is asked while the engine only looks ahead — listing what is legal, planning which lands
+ *     pay, a client's preview (`foresee`): there the first takes it.
+ *   - For amounts, draws and entering nobody is asked: the order is the one that serves the affected player best
+ *     (`Choice.prefer`).
  *
- * A replacement effect is one rule in a table. The function that performs the happening (zones.ts `moveObject`) knows
- * none of them by name.
+ * A replacement effect is one rule in a table. The functions that perform the happening (zones.ts `moveObject` and
+ * `drawCard`, registry.ts `onEnterBattlefield`, quantities.ts `replaceQuantity`) know none of them by name.
  */
 import type { GameEvent, GameObject, GameState, PlayerId, ZoneName } from './types.js';
 
