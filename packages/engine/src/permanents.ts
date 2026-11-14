@@ -3,7 +3,7 @@ import { chars, hasKeyword, hasType, matchesFilter, objectAbilities, protectedFr
 import { counterBlocked, extraTokens, replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
-import { abilitySources, createObject, faceOf, livePlayers, moveObject, nameOf, setTapped } from './zones.js';
+import { abilitySources, createObject, faceOf, livePlayers, moveObject, moveTogether, nameOf, setTapped } from './zones.js';
 import { playerProtectedFrom } from './player-rules.js';
 
 /**
@@ -32,6 +32,26 @@ export function removeShield(o: GameObject, events: GameEvent[]): boolean {
 }
 
 export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean } = {}): boolean {
+  if (!isDestroyed(g, o, events, opts)) return false;
+  moveObject(g, o.id, 'graveyard', events);
+  return true;
+}
+
+/**
+ * Destroys several permanents at once (CR 608.2c: "Destroy all creatures"; CR 704.3: state-based actions): those that
+ * are destroyed go to their graveyards together, so what would replace that for one is settled before any has left.
+ */
+export function destroyTogether(g: GameState, objects: GameObject[], events: GameEvent[], opts: { noRegen?: boolean } = {}, alongside: Iterable<ObjectId> = []): void {
+  const dying = objects.filter((o) => isDestroyed(g, o, events, opts));
+  // `alongside`: permanents put into their graveyards at the same time without being destroyed (CR 704.5f: toughness 0).
+  moveTogether(g, [...alongside, ...dying.map((o) => o.id)], 'graveyard', events);
+}
+
+/**
+ * Whether destroying this permanent puts it into its owner's graveyard — what happens instead where it doesn't (a
+ * shield counter removed, a regeneration shield used, its umbra armor destroyed) happens here.
+ */
+function isDestroyed(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean }): boolean {
   if (o.zone !== 'battlefield') return false;
   if (hasKeyword(g, o, 'indestructible')) return false;
   // CR 122.1c: "If a permanent with a shield counter on it would be … destroyed, instead remove a shield counter from it."
@@ -54,7 +74,6 @@ export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: 
     destroy(g, umbra, events);
     return false;
   }
-  moveObject(g, o.id, 'graveyard', events);
   return true;
 }
 

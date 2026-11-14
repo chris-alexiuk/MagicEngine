@@ -13,7 +13,7 @@
  */
 import './core-plugin.js';
 
-export { apply } from './actions.js';
+export { apply, foresee } from './actions.js';
 export { createGame, defaultConfig } from './setup.js';
 export type { NewGameOptions, PlayerSetup } from './setup.js';
 export { legalActions } from './legal.js';

@@ -1,4 +1,4 @@
-import { apply, choiceModes, choicePrompts, viewFor, type Action, type GameState, type PlayerId, type PlayerView } from '@mtg/engine';
+import { choiceModes, choicePrompts, foresee, viewFor, type Action, type GameState, type PlayerId, type PlayerView } from '@mtg/engine';
 
 /**
  * Which of the player's permanents autotap would tap to pay for this action — found by applying it to a copy of the
@@ -15,7 +15,7 @@ export function previewTaps(g: GameState, a: Action): string[] {
       const targets = prompts.map((pr) => pr.candidates.slice(0, pr.upTo ? (pr.min ?? 0) : pr.count));
       full = { ...a, ...(modes ? { modes } : {}), ...(prompts.length && !a.targets ? { targets } : {}) };
     }
-    const r = apply(g, full);
+    const r = foresee(g, full);
     if (!r.ok) return [];
     return g.zones.battlefield.filter((id) => {
       const o = g.objects[id]!;

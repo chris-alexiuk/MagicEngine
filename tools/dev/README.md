@@ -69,7 +69,7 @@ line in `moveObject`: a function that finds the effects of its sort applying to 
 what each makes of it (`elsewhere(move, zone, position, also)`; `also` for what goes with it — a counter, life,
 a token — each with a `key` that tells its outcome from another's). Which of several goes first is not the
 rule's business: `instead.ts` asks the affected player when it matters. Test it alone and with Rest in Peace
-(`test/instead.test.ts`). Likewise an effect on how a permanent enters: another permanent's is a rule in
+(`test/instead.test.ts`). A replacement of a draw is a rule in `instead-draws.ts`. Likewise an effect on how a permanent enters: another permanent's is a rule in
 `instead-enters.ts`; a card's own is a handler in the plugin's `enterReplacements` table that returns what it
 makes of the entering (`{ tapped, counters, also }`) and changes nothing itself. An effect that changes an
 amount is a `replace_quantity` static with its `op`; `quantities.ts` orders them.

@@ -1,4 +1,4 @@
-import { activatedAbilities, apply, manaAbilities, whyNotActivated, type Action, type GameState, type PlayerId } from '@mtg/engine';
+import { activatedAbilities, foresee, manaAbilities, whyNotActivated, type Action, type GameState, type PlayerId } from '@mtg/engine';
 import { hasXRange } from './probes';
 
 /**
@@ -76,7 +76,7 @@ function whyNot(g: GameState, player: PlayerId, id: string, index: number, mana:
       const said = whyNotActivated(g, player, id, index);
       return said ? { why: reason(said), detail: said } : { why: 'Nothing to choose for it right now', detail: 'There is nothing this ability could be activated with right now.' };
     }
-    const r = apply(g, { type: 'activate_mana', player, object: id, ability: index, autoTap: true });
+    const r = foresee(g, { type: 'activate_mana', player, object: id, ability: index, autoTap: true });
     // The engine would take the plain activation, yet didn't list it: it has no choice it could offer for it.
     // (A mana ability with no mana it could add: "any type that a land you control could produce", and no lands.)
     if (r.ok) return { why: 'Would add no mana right now', detail: 'Right now this ability would add no mana.' };

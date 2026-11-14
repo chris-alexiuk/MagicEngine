@@ -17,8 +17,11 @@ const cards = compiled([
   card('Basalt Monolith', 'Artifact', '{3}', "This artifact doesn't untap during your untap step.\n{T}: Add {C}{C}{C}.\n{3}: Untap this artifact."),
   card('Mox Amber', 'Legendary Artifact', '{0}', '{T}: Add one mana of any color among legendary creatures and planeswalkers you control.'),
   { ...card('Yisan, the Wanderer Bard', 'Legendary Creature — Human Rogue', '{2}{G}', '', ['2', '3']), colors: ['G'] },
+  card("Ashnod's Altar", 'Artifact', '{3}', 'Sacrifice a creature: Add {C}{C}.'),
+  card('Rest in Peace', 'Enchantment', '{1}{W}', 'If a card or token would be put into a graveyard from anywhere, exile it instead.'),
+  card('Darksteel Colossus', 'Artifact Creature — Golem', '{11}', "Trample, indestructible\nIf Darksteel Colossus would be put into a graveyard from anywhere, reveal Darksteel Colossus and shuffle it into its owner's library instead.", ['11', '11']),
 ]);
-const setup = soloSetup(['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves', 'Mox Amber', 'Yisan, the Wanderer Bard']);
+const setup = soloSetup(['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves', 'Mox Amber', 'Yisan, the Wanderer Bard', "Ashnod's Altar", 'Rest in Peace', 'Darksteel Colossus']);
 const scene = (battlefield: string[], hand: string[] = [], myTurn = 2) => sceneOf(setup, cards, battlefield, hand, myTurn);
 const of = (g: GameState, id: string) => legalActions(g, 'p1').filter((a) => 'object' in a && a.object === id);
 const rows = (g: GameState, id: string) => abilityRows(g, 'p1', id, of(g, id)).map((r) => `${r.text} => ${r.actions.length ? `${r.actions.length} way${r.actions.length > 1 ? 's' : ''}` : r.why}`);
@@ -112,6 +115,18 @@ describe('what a mana ability adds is shown in full', () => {
 });
 
 describe('what restricted mana is for, in a few words', () => {
+  it('a mana ability that will stop to ask which replacement effect applies still says what it adds', () => {
+    // Sacrificing the Colossus: its own "shuffle it into its owner's library instead", or Rest in Peace — a question
+    // for the player when it is done. The button is worked out with nothing asked.
+    const s = scene(["Ashnod's Altar", 'Rest in Peace', 'Darksteel Colossus']);
+    const altar = of(s.g, s.id("Ashnod's Altar"));
+    expect(altar).toHaveLength(1);
+    expect(manaPreview(s.g, altar[0] as Extract<Action, { type: 'activate_mana' }>)?.own).toEqual(['C', 'C']);
+    expect(actionLabel(s.g, altar[0]!)).toBe('Add {C}{C}');
+    const r = s.run(altar[0]!);
+    expect(r.state.pending).toMatchObject({ kind: 'choose_option', player: 'p1', text: expect.stringMatching(/^Darksteel Colossus would die/) });
+  });
+
   it('reads like the card', () => {
     expect(spendText({ abilities: { types: ['Creature'] } })).toBe('creature abilities');
     expect(spendText({ spells: { types: ['Creature'] } })).toBe('creature spells');

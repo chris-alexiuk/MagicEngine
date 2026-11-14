@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OrderNeeded, deciding, lookingAhead, replaced, type Move, type Replacement, type Rules } from '../src/instead.js';
 import { MOVE_RULES } from '../src/instead-moves.js';
-import { apply, viewFor, type GameEvent, type GameState, type PendingChoice, type PlayerId, type ZoneName } from '../src/index.js';
+import { apply, foresee, viewFor, type GameEvent, type GameState, type PendingChoice, type PlayerId, type ZoneName } from '../src/index.js';
 import { act, actWithEvents, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
 // One path for "instead" (CR 614–616): every replacement effect on a card changing zones is a rule in a table, the
@@ -116,6 +116,7 @@ const EXTRA = [
   card('Doom', 'Instant', 'Destroy target creature.'),
   card('Wrath', 'Sorcery', 'Destroy all creatures.'),
   card('Plague Wind', 'Sorcery', "Destroy all creatures you don't control."),
+  card('Inferno', 'Sorcery', 'Inferno deals 6 damage to each creature.'),
   card('Raise', 'Sorcery', 'Return target creature card from your graveyard to the battlefield.'),
   card('Think Twice', 'Instant', 'Draw a card.\nFlashback {0}'),
   card('Fiery Temper', 'Instant', 'Fiery Temper deals 3 damage to any target.\nMadness {R}', { mana_cost: '{1}{R}{R}' }),
@@ -209,6 +210,23 @@ describe('a card changing zones', () => {
     expect(seen && 'resume' in seen).toBe(false);
   });
 
+  it('foresee(): what an action would come to, for a preview — nothing is asked, the first effect takes it', () => {
+    let g = game();
+    give(g, 'alice', 'Rest in Peace', 'battlefield');
+    give(g, 'alice', 'Kalitas', 'battlefield');
+    const bear = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g = act(cast(g, 'alice', 'Doom', bear), { type: 'pass', player: 'alice' });
+    const seen = foresee(g, { type: 'pass', player: 'bob' });
+    if (!seen.ok) throw new Error(seen.error);
+    expect(seen.state.pending).toBeNull();
+    expect(seen.state.objects[bear]!.zone).toBe('exile');
+    expect(seen.events.some((e) => e.type === 'moved' && e.object === bear)).toBe(true);
+    // Done for real, the same action asks.
+    order(act(g, { type: 'pass', player: 'bob' }));
+    // And an action that is refused is refused there too.
+    expect(foresee(g, { type: 'pass', player: 'alice' })).toMatchObject({ ok: false });
+  });
+
   it('several creatures at once: one question for each player whose creatures die, not one for each creature', () => {
     let g = game();
     give(g, 'alice', 'Rest in Peace', 'battlefield');
@@ -220,6 +238,27 @@ describe('a card changing zones', () => {
     expect(g.pending).toBeNull();
     expect(bears.map((id) => zoneOf(g, id))).toEqual(['exile', 'exile', 'exile']);
     expect(tokens(g, 'alice')).toBe(3);
+  });
+
+  it('CR 608.2c: permanents destroyed at once leave at once — an effect whose permanent goes with them applies to them all', () => {
+    let g = game();
+    const kalitas = give(g, 'alice', 'Kalitas', 'battlefield');
+    const bears = [give(g, 'bob', 'Grizzly Bears', 'battlefield'), give(g, 'bob', 'Grizzly Bears', 'battlefield')];
+    g = passRound(cast(g, 'alice', 'Wrath'));
+    expect(g.pending).toBeNull();
+    expect(zoneOf(g, kalitas)).toBe('graveyard');
+    expect(bears.map((id) => zoneOf(g, id))).toEqual(['exile', 'exile']);
+    expect(tokens(g, 'alice')).toBe(2);
+  });
+
+  it('CR 704.3: so do creatures that die of their damage together', () => {
+    let g = game();
+    const kalitas = give(g, 'alice', 'Kalitas', 'battlefield');
+    const bear = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Inferno'));
+    expect(zoneOf(g, kalitas)).toBe('graveyard');
+    expect(zoneOf(g, bear)).toBe('exile');
+    expect(tokens(g, 'alice')).toBe(1);
   });
 
   it('Leyline of the Void and Dauthi Voidwalker: the owner chooses whether the card gets a void counter', () => {
@@ -452,5 +491,82 @@ describe('a permanent entering', () => {
     g = toStep(g, 'main1', 'bob');
     [g, elf] = play(g, 'bob', 'Plains Elf');
     expect(g.objects[elf]!.tapped).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A player drawing a card: the same path, the rules of instead-draws.ts
+// ---------------------------------------------------------------------------
+
+describe('a player drawing', () => {
+  const DRAWS = [
+    card('Notion Thief', 'Enchantment', 'If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card.'),
+    card('Thought Reflection', 'Enchantment', 'If you would draw a card, draw two cards instead.'),
+    card('Archive', 'Artifact', 'If you would draw a card except the first one you draw in each of your draw steps, draw two cards instead.'),
+    card('Laboratory Maniac', 'Enchantment', 'If you would draw a card while your library has no cards in it, you win the game instead.'),
+    card('Divination', 'Sorcery', 'Draw two cards.'),
+    card('Opt', 'Instant', 'Draw a card.'),
+  ];
+  const board = () => toStep(start({ extra: DRAWS, players: 3 }), 'main1');
+  const hand = (g: GameState, p: PlayerId) => g.zones.hand[p]!.length;
+
+  it('one effect: two cards instead of one; with two such effects, four', () => {
+    let g = board();
+    give(g, 'alice', 'Thought Reflection', 'battlefield');
+    const before = hand(g, 'alice');
+    g = passRound(cast(g, 'alice', 'Opt'));
+    expect(hand(g, 'alice')).toBe(before + 2);
+    give(g, 'alice', 'Thought Reflection', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Opt'));
+    expect(hand(g, 'alice')).toBe(before + 6);
+  });
+
+  it("CR 614.5: two players' Notion Thieves each replace a draw once — the draw comes back to the one who stole it first, and is drawn", () => {
+    // (Each took the draw from the other without end before: the engine never came back.)
+    let g = board();
+    give(g, 'bob', 'Notion Thief', 'battlefield');
+    give(g, 'carol', 'Notion Thief', 'battlefield');
+    const before = { alice: hand(g, 'alice'), bob: hand(g, 'bob'), carol: hand(g, 'carol') };
+    g = passRound(cast(g, 'alice', 'Opt'));
+    // Alice's draw is Bob's instead; Bob's is Carol's instead; Carol's is Bob's again — who has had his turn at it.
+    expect(hand(g, 'alice')).toBe(before.alice);
+    expect(hand(g, 'bob') + hand(g, 'carol')).toBe(before.bob + before.carol + 1);
+  });
+
+  it("the first card of a draw step, drawn twice over: the first of the two is still the first — the Thief takes the other", () => {
+    let g = toStep(start({ extra: DRAWS, players: 2 }), 'main1');
+    give(g, 'bob', 'Thought Reflection', 'battlefield');
+    give(g, 'alice', 'Notion Thief', 'battlefield');
+    const before = { alice: hand(g, 'alice'), bob: hand(g, 'bob') };
+    g = toStep(g, 'main1', 'bob');
+    expect(hand(g, 'bob')).toBe(before.bob + 1);
+    expect(hand(g, 'alice')).toBe(before.alice + 1);
+  });
+
+  it('"except the first one you draw in each of your draw steps": the draw step\'s card is one, a spell\'s card is two', () => {
+    let g = toStep(start({ extra: DRAWS, players: 2 }), 'main1');
+    give(g, 'bob', 'Archive', 'battlefield');
+    const before = hand(g, 'bob');
+    g = toStep(g, 'main1', 'bob');
+    expect(hand(g, 'bob')).toBe(before + 1);
+    g = passRound(cast(g, 'bob', 'Opt'));
+    expect(hand(g, 'bob')).toBe(before + 3);
+  });
+
+  it('CR 616.1: an empty library, a draw that would be doubled, and Laboratory Maniac — the player takes the win', () => {
+    let g = board();
+    give(g, 'alice', 'Thought Reflection', 'battlefield');
+    give(g, 'alice', 'Laboratory Maniac', 'battlefield');
+    g.zones.library.alice = [];
+    g = passRound(cast(g, 'alice', 'Opt'));
+    expect(g.winner).toBe('alice');
+  });
+
+  it('a library that runs out halfway through two cards: the second is the win', () => {
+    let g = board();
+    give(g, 'alice', 'Laboratory Maniac', 'battlefield');
+    g.zones.library.alice = g.zones.library.alice!.slice(0, 1);
+    g = passRound(cast(g, 'alice', 'Divination'));
+    expect(g.winner).toBe('alice');
   });
 });

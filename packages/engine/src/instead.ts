@@ -67,7 +67,18 @@ export interface Enter {
   also: Also[];
 }
 
-export type Happening = Move | Amount | Enter;
+/** CR 121.1: a player about to draw. One card as it starts; an effect may make it more, or another player's. */
+export interface Draw {
+  kind: 'draw';
+  player: PlayerId;
+  n: number;
+  /** It would be the first card that player draws in their draw step ("except the first one you draw in each of your draw steps"). */
+  first: boolean;
+  /** Laboratory Maniac: that player wins the game instead. */
+  wins?: true;
+}
+
+export type Happening = Move | Amount | Enter | Draw;
 
 /** One replacement effect, as it applies to one happening. */
 export interface Replacement<H extends Happening = Happening> {
@@ -138,6 +149,7 @@ function outcome(h: Happening | null): string {
   if (!h) return 'nothing';
   if (h.kind === 'amount') return String(h.n);
   if (h.kind === 'enter') return `${h.tapped}/${JSON.stringify(h.counters)}`;
+  if (h.kind === 'draw') return `${h.player}/${h.n}/${h.wins ?? ''}`;
   return `${h.to}/${h.position ?? ''}/${h.also
     .map((a) => a.key)
     .filter(Boolean)
@@ -179,9 +191,10 @@ export type Choice<H extends Happening> = { by: PlayerId; about: () => { text: s
 
 /**
  * A happening as the replacement effects that apply to it leave it (CR 614, 616.1) — null if nothing happens instead.
+ * `applied`: the effects that have had their turn at this happening already (it is part of one they applied to, CR
+ * 614.5); the ones that apply now are added.
  */
-export function replaced<H extends Happening>(g: GameState, h: H, rules: Rules<H>, choice: Choice<H>): H | null {
-  const applied = new Set<string>();
+export function replaced<H extends Happening>(g: GameState, h: H, rules: Rules<H>, choice: Choice<H>, applied: Set<string> = new Set()): H | null {
   let now: H | null = h;
   for (let guard = 0; now && guard < 64; guard++) {
     const options: Replacement<H>[] = candidates(g, now, rules, applied);

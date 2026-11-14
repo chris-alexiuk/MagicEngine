@@ -2,7 +2,8 @@ import { isRoom, roomFace } from './rooms.js';
 import { faceDownFace } from './face-down.js';
 import type { CardDef, CastOptionNode, FaceDef, ObjectFilter } from '@mtg/schema';
 import { RulesError, type GameEvent, type GameObject, type GameState, type ObjectId, type PlayerId, type ZoneName } from './types.js';
-import { replaced, type Move } from './instead.js';
+import { replaced, type Draw, type Move } from './instead.js';
+import { DRAW_RULES, drawerPrefers } from './instead-draws.js';
 import { MADNESS, MOVE_RULES, moveChooser, moveQuestion } from './instead-moves.js';
 import { onEnterBattlefield } from './registry.js';
 import { chars, isModified, matchesFilter, objectAbilities } from './characteristics.js';
@@ -195,6 +196,18 @@ function removeFromCurrentZone(g: GameState, o: GameObject): void {
   if (i >= 0) list.splice(i, 1);
 }
 
+type MoveOptions = { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean; attached?: boolean; discard?: true };
+
+/** A move that is settled — it can take place, and the replacement effects on it have had their say — and not yet made. */
+interface SettledMove {
+  o: GameObject;
+  from: ZoneName;
+  opts: MoveOptions;
+  move: Move;
+  auraHosts: ReturnType<typeof hostsForEnteringAura>;
+  meld: GameObject['melded'];
+}
+
 /**
  * Moves an object to another zone: whether it can, what the replacement effects on it make of the move, then the move.
  * CR 400.7: it becomes a new object — zone-specific state is reset and its zone-change count increases.
@@ -210,8 +223,25 @@ export function moveObject(
    * `attached`: the effect says what an Aura it puts onto the battlefield is attached to, and attaches it (CR 303.4f
    * doesn't ask). `discard`: it is being discarded (CR 701.9a; madness replaces that).
    */
-  opts: { position?: 'top' | 'bottom' | number; controller?: PlayerId; face?: number; x?: number; counters?: Record<string, number>; faceDown?: GameObject['faceDown']; tapped?: boolean; attached?: boolean; discard?: true } = {},
+  opts: MoveOptions = {},
 ): Move | undefined {
+  const settled = settleMove(g, id, to, opts);
+  return settled ? makeMove(g, settled, events) : undefined;
+}
+
+/**
+ * Moves several objects at once (CR 704.3: state-based actions; an effect that destroys them all): what the
+ * replacement effects make of each move is settled as the game stands before any of them moves — an effect whose
+ * permanent leaves with the others applies to them all the same (Kalitas dying with an opponent's creatures).
+ */
+export function moveTogether(g: GameState, ids: Iterable<ObjectId>, to: ZoneName, events: GameEvent[]): void {
+  const settled = [...ids].map((id) => settleMove(g, id, to, {}));
+  // (One that another's move has taken along already — a melded permanent's other card — is where it goes.)
+  for (const move of settled) if (move && move.o.zone === move.from) makeMove(g, move, events);
+}
+
+/** Parts 1 and 2 of a move: whether it can take place, and what the replacement effects on it make of it. Changes nothing. */
+function settleMove(g: GameState, id: ObjectId, to: ZoneName, opts: MoveOptions): SettledMove | undefined {
   const o = obj(g, id);
   const from = o.zone;
   // 1. Whether it can move at all.
@@ -230,12 +260,18 @@ export function moveObject(
   //    with that. Each is a rule in instead-moves.ts; none is known here.
   const asked: Move = { kind: 'move', object: o, from, to, ...(opts.position !== undefined ? { position: opts.position } : {}), ...(opts.discard ? { discard: true } : {}), also: [] };
   const move = replaced(g, asked, MOVE_RULES, { by: moveChooser(asked), about: () => moveQuestion(g, asked) }) ?? asked;
-  to = move.to;
   if (move.position !== opts.position) {
     const { position: _was, ...rest } = opts;
     opts = { ...rest, ...(move.position !== undefined ? { position: move.position } : {}) };
   }
-  // 3. The move.
+  return { o, from, opts, move, auraHosts, meld };
+}
+
+/** Part 3 of a move: the move itself, as settled. */
+function makeMove(g: GameState, settled: SettledMove, events: GameEvent[]): Move {
+  const { o, from, opts, move, auraHosts, meld } = settled;
+  const id = o.id;
+  const to = move.to;
   delete o.exileOnLeave;
   // CR 400.7: a new object.
   delete o.becameAura;
@@ -604,41 +640,6 @@ export function discardCard(g: GameState, id: ObjectId, events: GameEvent[]): vo
   events.push({ type: 'discarded', object: id, player: o.owner, ...(madness && o.zone === 'exile' ? { madness: true as const } : {}) });
 }
 
-/**
- * Teferi's Ageless Insight, Alhammarret's Archive: "If you would draw a card [except the first one you draw in each of your
- * draw steps], draw two cards instead." — how many such replacements apply to this draw (CR 614.1a, 614.5: each once).
- */
-function drawReplacements(g: GameState, player: PlayerId): number {
-  const firstInDrawStep = g.step === 'draw' && g.active === player && !(g.turnLog.drawStepDrew ?? []).includes(player);
-  let n = 0;
-  for (const id of abilitySources(g)) {
-    const source = g.objects[id]!;
-    if (source.controller !== player) continue;
-    for (const a of objectAbilities(g, source)) {
-      if (a.kind !== 'static' || a.effect.type !== 'draw_replacement' || a.effect.emptyWin || a.effect.steal) continue;
-      if (a.effect.exceptFirst && firstInDrawStep) continue;
-      // Phial of Galadriel: "… while you have no cards in hand".
-      if (a.effect.emptyHand && (g.zones.hand[player]?.length ?? 0) > 0) continue;
-      n++;
-    }
-  }
-  return n;
-}
-
-/**
- * Notion Thief: "If an opponent would draw a card except the first one they draw in each of their draw steps, instead that
- * player skips that draw and you draw a card." — who draws instead, if anyone (CR 614.1a).
- */
-function drawThief(g: GameState, player: PlayerId): PlayerId | null {
-  if (g.step === 'draw' && g.active === player && !(g.turnLog.drawStepDrew ?? []).includes(player)) return null;
-  for (const id of abilitySources(g)) {
-    const source = g.objects[id]!;
-    if (source.controller === player || g.players[source.controller]?.lost) continue;
-    if (objectAbilities(g, source).some((a) => a.kind === 'static' && a.effect.type === 'draw_replacement' && a.effect.steal)) return source.controller;
-  }
-  return null;
-}
-
 /** Narset, Parter of Veils: "Each opponent can't draw more than one card each turn." */
 function drawLimited(g: GameState, player: PlayerId): boolean {
   if (!(g.turnLog.drawn?.[player] ?? 0)) return false;
@@ -653,45 +654,39 @@ function drawLimited(g: GameState, player: PlayerId): boolean {
   });
 }
 
-function emptyDrawWins(g: GameState, player: PlayerId): boolean {
-  return abilitySources(g).some((id) => {
-    const source = g.objects[id]!;
-    return source.controller === player && objectAbilities(g, source).some((a) => a.kind === 'static' && a.effect.type === 'draw_replacement' && a.effect.emptyWin);
-  });
-}
-
-/** Draws one card. CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions. */
-export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], replaced = false): void {
+/**
+ * Draws one card: whether the player can, what the replacement effects on a draw make of it (instead-draws.ts) — two
+ * cards, another player's draw, the game won — then the draw.
+ * CR 704.5b / 104.3c: drawing from an empty library is recorded for state-based actions.
+ * `part`: this draw is part of one that effects have replaced already — the ones that applied (CR 614.5: they don't
+ * again), and whether it is still the first card the player draws in their draw step.
+ */
+export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], part?: { applied: Set<string>; first: boolean }): void {
   // CR 121.2: a draw that can't happen doesn't (Narset) — it isn't a draw from an empty library either.
   // Maralen of the Mornsong: "Players can't draw cards."
   if (drawLimited(g, player) || playerRule(g, player, 'cant_draw')) return;
-  // Notion Thief: that player skips the draw; its controller draws instead.
-  const thief = drawThief(g, player);
-  if (thief) {
-    drawCard(g, thief, events);
-    return;
-  }
-  if (g.step === 'draw' && g.active === player) {
-    const replacements = replaced ? 0 : drawReplacements(g, player);
+  const inDrawStep = g.step === 'draw' && g.active === player;
+  const first = part ? part.first : inDrawStep && !(g.turnLog.drawStepDrew ?? []).includes(player);
+  const applied = part?.applied ?? new Set<string>();
+  const asked: Draw = { kind: 'draw', player, n: 1, first };
+  const draw = replaced(g, asked, DRAW_RULES, { prefer: drawerPrefers(player) }, applied) ?? asked;
+  if (inDrawStep && draw.player === player) {
     const drew = (g.turnLog.drawStepDrew ??= []);
     if (!drew.includes(player)) drew.push(player);
-    if (replacements) {
-      for (let i = 0; i < 2 ** replacements; i++) drawCard(g, player, events, true);
-      return;
-    }
-  } else if (!replaced) {
-    const replacements = drawReplacements(g, player);
-    if (replacements) {
-      for (let i = 0; i < 2 ** replacements; i++) drawCard(g, player, events, true);
-      return;
-    }
+  }
+  if (draw.wins) {
+    g.players[draw.player]!.wonByEffect = true;
+    return;
+  }
+  // Replaced: each card of what it became is drawn in turn (CR 121.2), by whoever draws it now.
+  if (draw.player !== player || draw.n !== 1) {
+    for (let i = 0; i < draw.n; i++) drawCard(g, draw.player, events, { applied, first: first && draw.player === player && i === 0 });
+    return;
   }
   const library = zoneList(g, 'library', player);
   const top = library[0];
   if (!top) {
-    // Laboratory Maniac: "If you would draw a card while your library has no cards in it, you win the game instead."
-    if (emptyDrawWins(g, player)) g.players[player]!.wonByEffect = true;
-    else g.players[player]!.drewFromEmptyLibrary = true;
+    g.players[player]!.drewFromEmptyLibrary = true;
     return;
   }
   moveObject(g, top, 'hand', events);
@@ -699,10 +694,9 @@ export function drawCard(g: GameState, player: PlayerId, events: GameEvent[], re
   const drawn = (g.turnLog.drawn ??= {});
   drawn[player] = (drawn[player] ?? 0) + 1;
   ((g.turnLog.drawnIds ??= {})[player] ??= []).push(top);
-  const inDrawStep = g.step === 'draw' && g.active === player;
-  const first = inDrawStep && !g.turnLog.drawStepCards;
+  const firstCard = inDrawStep && !g.turnLog.drawStepCards;
   if (inDrawStep) g.turnLog.drawStepCards = (g.turnLog.drawStepCards ?? 0) + 1;
-  events.push({ type: 'drew', player, object: top, nth: drawn[player], ...(first ? { firstInDrawStep: true as const } : {}) });
+  events.push({ type: 'drew', player, object: top, nth: drawn[player], ...(firstCard ? { firstInDrawStep: true as const } : {}) });
 }
 
 /** Grafdigger's Cage, Soulless Jailer, Kunoros: cards like this in these zones can't enter the battlefield. */

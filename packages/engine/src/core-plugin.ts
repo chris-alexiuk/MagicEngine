@@ -15,7 +15,7 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { blight, blightCandidates, foodCandidates, payDuringResolution } from './payment.js';
-import { removeFromCombat, alsoCreated, attach, canAttach, createEmblem, createToken, createTokenCopy, destroy, tokensToCreate, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
+import { removeFromCombat, alsoCreated, attach, canAttach, createEmblem, createToken, createTokenCopy, destroyTogether, tokensToCreate, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -517,7 +517,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   destroy(node, ctx) {
-    for (const o of refObjects(ctx, ref(node, 'what'))) destroy(ctx.g, o, ctx.events, { noRegen: Boolean(node.noRegen) });
+    // CR 608.2c: "Destroy all creatures" — all at once.
+    destroyTogether(ctx.g, refObjects(ctx, ref(node, 'what')), ctx.events, { noRegen: Boolean(node.noRegen) });
     return true;
   },
 
@@ -3625,7 +3626,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     // Divine Reckoning, Mount Doom: "… destroy the rest" (all at once, CR 608.2c).
     if (node.destroy) {
       const keptAll = new Set(Object.values(memo.kept).flat());
-      for (const id of new Set(players.flatMap((p) => mine(p)))) if (!keptAll.has(id)) destroy(g, g.objects[id]!, ctx.events);
+      destroyTogether(
+        g,
+        [...new Set(players.flatMap((p) => mine(p)))].filter((id) => !keptAll.has(id)).map((id) => g.objects[id]!),
+        ctx.events,
+      );
       return true;
     }
     // Promise of Loyalty: "Each player puts a vow counter on a creature they control and sacrifices the rest."

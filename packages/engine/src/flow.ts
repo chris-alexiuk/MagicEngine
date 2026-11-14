@@ -5,7 +5,7 @@ import type { ConditionNode } from '@mtg/schema';
 import { chars, charsChanged, hasRule, hasType, isPermanentCard, hasKeyword, matchesFilter, printedAbilities, toughness, withStableChars } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
-import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
+import { canAttach, canEnchantPlayer, destroyTogether } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -911,8 +911,14 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
       if (at) events.push({ type: 'unattached', object: id, from: at.id, fromZcc: at.zcc });
       delete g.objects[id]!.attachedTo;
     }
-    for (const id of toGraveyard) moveObject(g, id, 'graveyard', events);
-    for (const id of toDestroy) if (!toGraveyard.has(id)) destroy(g, g.objects[id]!, events);
+    // CR 704.3: all at once — what goes to a graveyard for its toughness or loyalty, and what is destroyed.
+    destroyTogether(
+      g,
+      [...toDestroy].filter((id) => !toGraveyard.has(id)).map((id) => g.objects[id]!),
+      events,
+      {},
+      toGraveyard,
+    );
     for (const l of losers) playerLoses(g, l.player, l.reason, events);
     if (g.over) return true;
     if (legendGroup) {

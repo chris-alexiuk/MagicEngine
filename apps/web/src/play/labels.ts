@@ -1,5 +1,5 @@
 import type { ManaSpend } from '@mtg/schema';
-import { activatedAbilities, apply, manaAbilities, type Action, type GameState, type Target } from '@mtg/engine';
+import { activatedAbilities, foresee, manaAbilities, type Action, type GameState, type Target } from '@mtg/engine';
 import { publicName } from './log';
 import { manaSymbols, shortName } from './mana-text';
 
@@ -33,7 +33,8 @@ const ALT_NAMES: Record<string, string> = {
  */
 export function manaPreview(g: GameState, a: Extract<Action, { type: 'activate_mana' }>): { own: string[]; spend?: ManaSpend; extra: { from: string; mana: string[] }[] } | null {
   try {
-    const r = apply(g, a);
+    // (What it would come to, nothing asked on the way: a question about it comes when it is done for real.)
+    const r = foresee(g, a);
     if (!r.ok) return null;
     const own: string[] = [];
     let spend: ManaSpend | undefined;

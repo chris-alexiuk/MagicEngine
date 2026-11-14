@@ -2,7 +2,7 @@ import { activationProhibited, castProhibition, loyaltyProhibited } from './cast
 import { drawOrDredge } from './dredge.js';
 import { unlockHalf } from './rooms.js';
 import { untapStep } from './flow.js';
-import { OrderNeeded, deciding } from './instead.js';
+import { OrderNeeded, deciding, lookingAhead } from './instead.js';
 import { STEPS } from './types.js';
 import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
@@ -85,23 +85,37 @@ export function apply(state: GameState, action: Action): ApplyResult {
   return attempt(state, action, []);
 }
 
-/** Applies an action. `answers`: what it was told, the times it stopped to ask which replacement effect applies first. */
-function attempt(state: GameState, action: Action, answers: string[]): ApplyResult {
+/**
+ * What an action would come to, for a client that shows it before it is taken — what a mana ability would add, which
+ * lands a spell would tap. Applied like any action, but nothing is asked on the way: where a player would have to say
+ * which replacement effect applies first, the first is taken. The game goes on from `apply`, not from this.
+ */
+export function foresee(state: GameState, action: Action): ApplyResult {
+  return attempt(state, action, null);
+}
+
+/**
+ * Applies an action. `answers`: what it was told, the times it stopped to ask which replacement effect applies first —
+ * null: it doesn't ask.
+ */
+function attempt(state: GameState, action: Action, answers: string[] | null): ApplyResult {
   // Card definitions never change during a game (new tokens only add entries), so they're
   // shared between states rather than copied each action.
   const { cards, ...rest } = state;
   const g: GameState = { ...structuredClone(rest), cards: { ...cards } };
   const events: GameEvent[] = [];
+  const run = (): void => {
+    handle(g, action, events);
+    settle(g, events);
+  };
   try {
-    deciding(answers, () => {
-      handle(g, action, events);
-      settle(g, events);
-    });
+    if (answers) deciding(answers, run);
+    else lookingAhead(run);
     return { ok: true, state: g, events };
   } catch (err) {
     if (err instanceof RulesError) return { ok: false, error: err.message };
     // A player has to say which replacement effect applies first: the game as it was, with that question.
-    if (err instanceof OrderNeeded) {
+    if (err instanceof OrderNeeded && answers) {
       const labels = uniqueLabels(err.options.map((o) => o.label));
       const pending: PendingChoice = {
         kind: 'choose_option',

@@ -30,10 +30,10 @@ function printedStatic(g: GameState, o: GameObject, tag: string): { text: string
 const hasMadness = (g: GameState, o: GameObject): boolean => faceOf(g, o).keywords.some((k) => k.id === 'madness' && k.cost && /^(\{[^}]+\})+$/.test(k.cost));
 
 /** What a rule's effect is called when a player chooses between several: the card, and its words. */
-const says = (g: GameState, source: GameObject, text: string): string => `${nameOf(g, source)}: ${text.length > 140 ? `${text.slice(0, 137)}…` : text}`;
+export const says = (g: GameState, source: GameObject, text: string): string => `${nameOf(g, source)}: ${text.length > 260 ? `${text.slice(0, 257)}…` : text}`;
 
 /** Each static ability with this tag among everything whose abilities work now, with its place (for a key of its own). */
-function* statics(g: GameState, tag: string): Generator<{ source: GameObject; node: Record<string, unknown>; text: string; key: string }> {
+export function* statics(g: GameState, tag: string): Generator<{ source: GameObject; node: Record<string, unknown>; text: string; key: string }> {
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const [i, a] of objectAbilities(g, source).entries()) {
