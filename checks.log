@@ -1,0 +1,42 @@
+
+> magic-engine@ cards:check /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/engine sandbox -- ../../apps/web/public/cards.json.gz --jobs 4 --commit 811b49b513f27274ef13e93d5f7a29e4836ab0cf --out ../../apps/web/public/checks.json.gz --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades 0
+
+
+> @mtg/engine@0.1.0 sandbox /home/runner/work/MagicEngine/MagicEngine/packages/engine
+> tsx scripts/sandbox.ts -- ../../apps/web/public/cards.json.gz --jobs 4 --commit 811b49b513f27274ef13e93d5f7a29e4836ab0cf --out ../../apps/web/public/checks.json.gz --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades 0
+
+32966 cards in 656 s (77.9 ms each), 45392 runs
+  read in full:  26303 cards, 15 with a certain problem, 201 more to look at
+  read in part:   4027 cards, 4 with a certain problem, 472 more to look at
+  read not at all:   2636 cards, 1 with a certain problem, 979 more to look at
+
+Certain problems, cards read in full:
+      9  X can only be N, though up to N is offered: Choose N card(…) to discard to pay the cost.
+         Channeled Force, Firestorm, Sickening Dreams, Turbulent Dreams, Nostalgic Dreams
+      3  X can only be N, though up to N is offered: Choose N permanent(…) to sacrifice to pay the cost.
+         Immoral Bargain, Eliminate the Competition, Devastating Summons
+      2  can't be cast: Paying {S} isn’t supported yet. Use manual moves for this card.
+         Arcum's Astrolabe, Icehide Golem
+      1  offered, then refused: Choose N permanent(…) you control to exile.
+         Lunar Hatchling
+
+To look at, cards read in full:
+    204  resolved and changed nothing
+         Command Beacon, Dauthi Voidwalker, Pyroblast, Nesting Grounds, Basalt Monolith
+      4  enters and dies with -N toughness on this board
+         Death's Shadow, Enemy of Enlightenment, Dread Slag, Mogg Squad
+      3  enters and dies with N toughness on this board
+         Activated Sleeper, Force of Savagery, Cryptborn Horror
+
+Certain problems, other cards:
+      1  can't be cast: Paying {C/P}{C/P} isn’t supported yet. Use manual moves for this card.
+         Kozilek, Compleated
+      1  X can only be N, though up to N is offered: Talon of Pain doesn’t have enough charge counters.
+         Talon of Pain
+      1  can't be cast: Paying {S} isn’t supported yet. Use manual moves for this card.
+         Wowzer, the Aspirational
+      1  can't be cast: Paying {D} isn’t supported yet. Use manual moves for this card.
+         Boulder Jockey
+      1  X can only be N, though up to N is offered: Choose N card(…) to discard to pay the cost.
+         Insidious Dreams

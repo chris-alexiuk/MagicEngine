@@ -1,0 +1,18 @@
+
+> magic-engine@ cards:build /home/runner/work/MagicEngine/MagicEngine
+> pnpm --filter @mtg/compiler compile -- --download --out apps/web/public
+
+
+> @mtg/compiler@0.1.0 compile /home/runner/work/MagicEngine/MagicEngine/packages/compiler
+> tsx src/cli.ts -- --download --out apps/web/public
+
+downloading 25 MB from https://data.scryfall.io/oracle-cards/oracle-cards-20261114100208.jsonl.gz
+downloading 81 MB from https://data.scryfall.io/default-cards/default-cards-20261114100641.jsonl.gz
+alternate names: 785 on 707 cards (from 120134 printings)
+compiled 32966 cards + 1108 tokens in 47089 ms
+  json 45.25 MB → gz 7.61 MB
+  coverage: full 26303, partial 4027, manual 2636
+  cards with other printed names: 707
+  skipped: {"layout":3118,"digital_only":810,"un_set":1293,"no_oracle_id":0,"duplicate":0}
+  compiled from an Arena-only printing of a card played on paper: 5 (Raging Goblin; Knight's Pledge; Pyrogoyf; Sanctuary Cat; Spiritual Guardian)
+  wrote /home/runner/work/MagicEngine/MagicEngine/apps/web/public
