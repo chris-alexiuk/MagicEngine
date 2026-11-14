@@ -24,6 +24,24 @@ describe('compileCards', () => {
     expect(db.cards.map((c) => c.name)).toEqual([...db.cards.map((c) => c.name)].sort((a, b) => a.localeCompare(b)));
   });
 
+  it('a card played on paper is kept even when the printing in the file exists only on Arena', () => {
+    // Scryfall's file has one printing of each card. The day an Arena set reprinted Crucible of Worlds that printing
+    // became its entry, and the card vanished from the pool: the printing was digital, the card isn't.
+    const card = (name: string, games: string[], legalities: Record<string, string>): ScryfallCard =>
+      ({ object: 'card', id: `id-${name}`, oracle_id: `oracle-${name}`, name, layout: 'normal', set: 'tst', set_type: 'expansion', rarity: 'rare', games, digital: !games.includes('paper'), legalities, keywords: [], mana_cost: '{3}', type_line: 'Artifact', oracle_text: 'You may play lands from your graveyard.', colors: [], cmc: 3, color_identity: [] }) as unknown as ScryfallCard;
+    const r = compileCards([
+      card('Crucible of Worlds', ['arena'], { standard: 'not_legal', historic: 'legal', legacy: 'legal', vintage: 'legal', commander: 'legal' }),
+      // Banned or restricted is still a card that exists on paper.
+      card('Restricted Thing', ['arena'], { vintage: 'restricted', legacy: 'banned', commander: 'banned' }),
+      // Made for Arena: legal nowhere on paper.
+      card('Alchemy Thing', ['arena'], { alchemy: 'legal', historic: 'legal', legacy: 'not_legal', vintage: 'not_legal', commander: 'not_legal' }),
+      card('Paper Thing', ['paper', 'mtgo'], { vintage: 'legal', commander: 'legal' }),
+    ]);
+    expect(r.db.cards.map((c) => c.name)).toEqual(['Crucible of Worlds', 'Paper Thing', 'Restricted Thing']);
+    expect(r.skipped.digital_only).toBe(1);
+    expect(r.digitalPrintings).toEqual(['Crucible of Worlds', 'Restricted Thing']);
+  });
+
   it('keeps structural data', () => {
     const kinnan = byName('Kinnan, Bonder Prodigy');
     expect(kinnan).toMatchObject({ cmc: 2, colorIdentity: ['U', 'G'], gameChanger: true, rank: 1900, rarity: 'mythic' });

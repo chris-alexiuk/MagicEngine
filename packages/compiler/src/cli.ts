@@ -131,7 +131,7 @@ async function main(): Promise<void> {
 
   const raw = await readCards(inputFile);
   const started = Date.now();
-  const { db, skipped } = compileCards(raw, {
+  const { db, skipped, digitalPrintings } = compileCards(raw, {
     source: args.download
       ? { kind: 'scryfall-oracle-cards', ...(updatedAt ? { updatedAt } : {}) }
       : { kind: 'fixture' },
@@ -165,6 +165,7 @@ async function main(): Promise<void> {
       `  coverage: full ${report.totals.full}, partial ${report.totals.partial}, manual ${report.totals.manual}\n` +
       `  cards with other printed names: ${db.cards.filter((c) => c.aka?.length).length}\n` +
       `  skipped: ${JSON.stringify(skipped)}\n` +
+      `  compiled from an Arena-only printing of a card played on paper: ${digitalPrintings.length}${digitalPrintings.length ? ` (${digitalPrintings.slice(0, 40).join('; ')}${digitalPrintings.length > 40 ? '; …' : ''})` : ''}\n` +
       `  wrote ${outDir}`,
   );
 }

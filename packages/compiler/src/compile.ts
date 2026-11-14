@@ -30,6 +30,8 @@ export interface CompileOptions {
 export interface CompileResult {
   db: CardDB;
   skipped: Record<SkipReason, number>;
+  /** Cards compiled from a printing that exists only on Arena, because the card itself is played on paper (their names). */
+  digitalPrintings: string[];
 }
 
 export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): CompileResult {
@@ -37,6 +39,7 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
   const skipped: Record<SkipReason, number> = { layout: 0, digital_only: 0, un_set: 0, no_oracle_id: 0, duplicate: 0 };
   const cards = new Map<string, CardDef>();
   const tokens = new Map<string, CardDef>();
+  const digitalPrintings: string[] = [];
   registerPoolSubtypes(input.flatMap((c) => [c.type_line ?? '', ...(c.card_faces ?? []).map((f) => f.type_line ?? '')]));
 
   for (const card of input) {
@@ -56,6 +59,7 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
       continue;
     }
     target.set(id, compileCard(card, id, registry));
+    if (target === cards && onlyOnArena(card)) digitalPrintings.push(card.name);
   }
 
   linkMelds([...cards.values()]);
@@ -77,12 +81,21 @@ export function compileCards(input: ScryfallCard[], opts: CompileOptions = {}): 
       tokens: [...tokens.values()].sort(byName),
     },
     skipped,
+    digitalPrintings,
   };
 }
 
+/** This printing exists only on Arena (not on paper, not on Magic Online). */
+const onlyOnArena = (card: ScryfallCard): boolean => Boolean(card.games && !card.games.includes('paper') && !card.games.includes('mtgo'));
+/** Legal — or banned, or restricted — in a format played with printed cards: the card exists off Arena. */
+const playedOnPaper = (card: ScryfallCard): boolean => ['vintage', 'legacy', 'commander'].some((f) => ['legal', 'restricted', 'banned'].includes(card.legalities?.[f] ?? ''));
+
 function skipReason(card: ScryfallCard): SkipReason | null {
   if (card.object !== 'card' || SKIP_LAYOUTS.has(card.layout)) return 'layout';
-  if (card.games && !card.games.includes('paper') && !card.games.includes('mtgo')) return 'digital_only';
+  // Scryfall's Oracle Cards file has one printing of each card, and that can be an Arena-only printing of a card that is
+  // printed on paper too (Crucible of Worlds, from the day an Arena set reprinted it). Only a card that is itself
+  // Arena-only — legal nowhere on paper — is left out.
+  if (onlyOnArena(card) && !playedOnPaper(card)) return 'digital_only';
   if (card.set_type === 'funny' && !Object.values(card.legalities ?? {}).includes('legal')) return 'un_set';
   return null;
 }

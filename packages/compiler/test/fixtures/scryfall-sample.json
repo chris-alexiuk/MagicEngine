@@ -1577,11 +1577,13 @@
   "digital": true,
   "legalities": {
    "standard": "not_legal",
-   "pioneer": "legal",
-   "modern": "legal",
-   "legacy": "legal",
-   "vintage": "legal",
-   "commander": "legal",
+   "alchemy": "legal",
+   "historic": "legal",
+   "pioneer": "not_legal",
+   "modern": "not_legal",
+   "legacy": "not_legal",
+   "vintage": "not_legal",
+   "commander": "not_legal",
    "pauper": "not_legal"
   },
   "keywords": [],
