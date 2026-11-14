@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hasKeyword, legalActions, type GameState } from '../src/index.js';
-import { act, give, makeCard, start, toStep } from './helpers.js';
+import { act, give, illegal, makeCard, start, toStep } from './helpers.js';
 
 const card = (name: string, type_line: string, oracle_text: string, extra: Record<string, unknown> = {}) =>
   makeCard({ name, type_line, oracle_text, mana_cost: '{1}', ...extra });
@@ -68,7 +68,13 @@ describe('alternative ways to cast', () => {
     g = toStep(g, 'main1', 'bob');
     g = toStep(g, 'main1', 'alice');
     g.players.alice!.pool = { W: 0, U: 0, B: 0, R: 5, G: 0, C: 5 };
-    expect(legalActions(g, 'alice').some((a) => a.type === 'cast' && a.object === warper)).toBe(true);
+    // From exile it is cast for its mana cost. The warp cost is for "this card from your hand": it isn't offered there,
+    // and a cast naming it isn't taken.
+    expect(legalActions(g, 'alice').filter((a) => a.type === 'cast' && a.object === warper).map((a) => (a as { alt?: string }).alt)).toEqual([undefined]);
+    expect(illegal(g, { type: 'cast', player: 'alice', object: warper, alt: 'warp' })).toBe('That cost is for casting Warper from your hand.');
+    g = settle(act(g, { type: 'cast', player: 'alice', object: warper }));
+    expect(g.objects[warper]!.zone).toBe('battlefield');
+    expect(g.players.alice!.pool).toMatchObject({ R: 4, C: 1 });
   });
 
   it('CR 702.96b: overload — “target” becomes “each”', () => {

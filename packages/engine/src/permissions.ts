@@ -155,6 +155,20 @@ export function freePermission(g: GameState, player: PlayerId, o: GameObject): b
   return (g.mayPlay ?? []).some((p) => p.free && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));
 }
 
+/**
+ * Whether something lets this player cast the card from where it is for its own costs. A permission to cast it "without
+ * paying its mana cost", for life (Bolas's Citadel) or by paying something else instead (airbend's {2}) is the one
+ * alternative cost that spell can have (CR 118.9a): with only such a permission, the card's own evoke or overload
+ * cost isn't a way to cast it.
+ */
+export function castableForItsCosts(g: GameState, player: PlayerId, o: GameObject): boolean {
+  if (o.zone === 'library') return fromTop(g, player, o, 'spell') && !topLifeOnly(g, player, o);
+  if (o.zone === 'graveyard' && graveyardPermission(g, player, o)) return true;
+  if (o.zone === 'exile' && o.owner === player && !o.faceDown && castableFromExileItself(g, o)) return true;
+  if (o.zone === 'exile' && o.exiledBy && exiledWithPermission(g, player, o, 'spell')) return true;
+  return (g.mayPlay ?? []).some((p) => p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p) && !p.free && p.cost === undefined);
+}
+
 /** CR 609.4b: "… and you may spend mana as though it were mana of any color to cast that spell" — on this card's permission. */
 export function anyColorPermission(g: GameState, player: PlayerId, o: GameObject): false | 'color' | 'type' {
   const live = (g.mayPlay ?? []).filter((p) => p.anyColor && p.player === player && p.object.id === o.id && p.object.zcc === o.zcc && permissionLive(g, p));

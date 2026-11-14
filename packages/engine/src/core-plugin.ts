@@ -2226,7 +2226,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!o || o.zone !== 'hand') return true;
     const answer = answerOf(ctx, 'cast_free');
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} for its miracle cost?` } };
-    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { alt: 'miracle' });
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer, ctx.events, { alt: 'miracle' });
     return true;
   },
 
@@ -4060,7 +4060,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           const id = `o${g.nextId++}`;
           g.objects[id] = { id, card: card.card, owner: ctx.controller, controller: ctx.controller, zone: card.zone, zcc: 0, face: card.face, tapped: false, sick: false, damage: 0, counters: {}, timestamp: ++g.clock, spellCopy: true };
           zoneList(g, card.zone, ctx.controller).push(id);
-          castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, {});
+          castDuringResolution(g, ctx.controller, id, answer, ctx.events, {});
         }
         answer = null;
         memo.i = i + 1;
@@ -4075,7 +4075,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const id = `o${g.nextId++}`;
     g.objects[id] = { id, card: o.card, owner: ctx.controller, controller: ctx.controller, zone: o.zone, zcc: 0, face: o.face, tapped: false, sick: false, damage: 0, counters: {}, timestamp: ++g.clock, spellCopy: true };
     zoneList(g, o.zone, ctx.controller).push(id);
-    castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, {});
+    castDuringResolution(g, ctx.controller, id, answer, ctx.events, {});
     return true;
   },
 
@@ -4101,7 +4101,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         memo.i = i;
         return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, o)} without paying its mana cost?` } };
       }
-      if (answer.cast) castDuringResolution(g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, {});
+      if (answer.cast) castDuringResolution(g, ctx.controller, o.id, answer, ctx.events, {});
       answer = null;
       memo.i = i + 1;
     }
@@ -4384,7 +4384,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'cast_free');
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} without paying its mana cost?` } };
     // "If you don't, it remains exiled." A creature spell cast this way gains haste.
-    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { suspended: true });
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer, ctx.events, { suspended: true });
     return true;
   },
 
@@ -4394,7 +4394,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!o || o.zone !== 'exile') return true;
     const answer = answerOf(ctx, 'cast_free');
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)} for its madness cost?` } };
-    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { alt: 'madness' });
+    if (answer.cast) castDuringResolution(ctx.g, ctx.controller, o.id, answer, ctx.events, { alt: 'madness' });
     else moveObject(ctx.g, o.id, 'graveyard', ctx.events);
     return true;
   },
@@ -4448,7 +4448,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const answer = answerOf(ctx, 'cast_free');
     if (!answer) return { ask: { kind: 'cast_free', player: ctx.controller, object: o.id, sourceName: sourceName(ctx), text: `Cast ${nameOf(ctx.g, o)}, paying its costs?` } };
     if (!answer.cast) return otherwise;
-    castDuringResolution(ctx.g, ctx.controller, o.id, answer.targets, answer.modes, ctx.events, { pay: true });
+    castDuringResolution(ctx.g, ctx.controller, o.id, answer, ctx.events, { pay: true });
     // Conduit of Worlds: "If you do, you can't cast additional spells this turn."
     return node.then ? { expand: node.then as EffectNode[] } : true;
   },
@@ -4478,7 +4478,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         memo.i = i;
         return { ask: { kind: 'cast_free', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, g.objects[id]!)} without paying its mana cost (ripple)?` } };
       }
-      if (cast.cast) castDuringResolution(g, ctx.controller, id, cast.targets, cast.modes, ctx.events, {});
+      if (cast.cast) castDuringResolution(g, ctx.controller, id, cast, ctx.events, {});
       cast = null;
       memo.i = i + 1;
     }
@@ -5136,7 +5136,7 @@ function offerFreeCast(ctx: EffectContext, id: string): EffectResult | null {
     return { ask: { kind: 'cast_free', player: ctx.controller, object: id, sourceName: sourceName(ctx), text: `Cast ${nameOf(g, g.objects[id]!)} without paying its mana cost?` } };
   }
   ctx.memo.castFree = answer.cast;
-  if (answer.cast) castDuringResolution(g, ctx.controller, id, answer.targets, answer.modes, ctx.events, ctx.memo.exileOnLeave ? { exileOnLeave: true } : {});
+  if (answer.cast) castDuringResolution(g, ctx.controller, id, answer, ctx.events, ctx.memo.exileOnLeave ? { exileOnLeave: true } : {});
   return null;
 }
 

@@ -47,10 +47,21 @@ git fetch origin reports && git show FETCH_HEAD:cards.json.gz > /tmp/pool.json.g
 7. **Fuzz.** `pool.py focus POOL /tmp/new.json.gz /tmp/focus.txt` then
    `tools/dev/fuzz-all.sh /tmp/new.json.gz SEED /tmp/focus.txt` — the pool you just reparsed, played
    as it is. Three runs: two-player games, four-player Commander games, and three-player Commander
-   games with decks built from the focus cards. Zero crashes, refused moves and invariants; the
-   script exits non-zero otherwise, and says so if a run died without a summary.
+   games with decks built from the focus cards. Zero crashes, refused moves, invariants and
+   unlisted moves (something the engine accepts that it didn't list); the script exits non-zero
+   otherwise, and says so if a run died without a summary. An unlisted move is either a legal move
+   no table offers (fix the list's enumeration or its default choice) or an illegal one the engine
+   takes (fix the reading); `--probe 4` looks in every fourth state instead of every fortieth when
+   you want to sweep for them. CI's own games print unlisted moves in `fuzz.log` on the `reports`
+   branch without failing — they turn up old gaps by chance: read that log after a push and fix
+   what it lists in the next change.
 8. `pnpm typecheck && pnpm test && pnpm rules:trace` (not `pnpm -s typecheck`: `-s` hides the
    compiler's errors — go by the exit code), add a line to `docs/ARCHITECTURE.md`, commit.
+
+**A rule about when or how something may be cast or activated goes in the reading** (`castWay`,
+`castCost`, `activationWay`, `manaAbilityWay`…), never in `legal.ts`: the list only enumerates what a
+player could try and asks the reading. For a change to the list itself,
+`packages/engine/scripts/difflegal.ts` compares it with another checkout's over random games.
 
 A new parameter on a node (`reparse` says "parameters outside NODE_FIELDS") has to be declared in
 `packages/schema/src/node-fields.ts`. Before declaring one that a single card uses, ask whether a filter, an

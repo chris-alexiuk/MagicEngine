@@ -1,4 +1,4 @@
-import { activatedAbilities, apply, manaAbilities, type Action, type GameState, type PlayerId } from '@mtg/engine';
+import { activatedAbilities, apply, manaAbilities, whyNotActivated, type Action, type GameState, type PlayerId } from '@mtg/engine';
 import { hasXRange } from './probes';
 
 /**
@@ -46,6 +46,14 @@ const REASONS: [RegExp, string][] = [
   [/split second/, 'Split second'],
   [/Choose which mana/, 'Nothing it could add right now'],
   [/life to pay|life total can.t change/, 'Not enough life'],
+  [/to sacrifice to pay|can.t sacrifice/, 'Nothing to sacrifice'],
+  [/to discard to pay/, 'Not enough cards to discard'],
+  [/to exile\b|to collect as evidence|to craft with/, 'Nothing to exile for it'],
+  [/creature\(s\) you control to (?:un)?tap|creatures you control to crew|Crewing needs|another untapped creature/, 'Not enough creatures to tap'],
+  [/don.t have \d+ energy/, 'Not enough energy'],
+  [/doesn.t have enough [^ ]+ counters|counter\(s\) to remove/, 'Not enough counters'],
+  [/to return to your hand|creature you control to return/, 'Nothing to return'],
+  [/doesn.t have enough cards|library/, 'Not enough cards in your library'],
   [/target/i, 'No legal target'],
   [/can.t be activated now|can.t activate/, 'Can’t be activated now'],
 ];
@@ -55,15 +63,23 @@ function reason(error: string): string {
   return error.length > 64 ? `${error.slice(0, 61)}…` : error;
 }
 
-/** Why the engine won't take this ability now: what it says to the plain activation. */
+/**
+ * Why the engine won't take this ability now. For an activated ability, what the engine's own reading of it says
+ * (`whyNotActivated`: whether it may be activated, then whether its costs can be paid, then whether there is anything
+ * to choose for it); for a mana ability, what it says to the plain activation.
+ */
 function whyNot(g: GameState, player: PlayerId, id: string, index: number, mana: boolean): { why: string; detail: string } {
   if (g.over) return { why: 'The game is over', detail: 'The game is over.' };
   if (g.pending || g.priority !== player) return { why: 'Not your move', detail: g.pending ? 'A choice is being made.' : 'You don’t have priority.' };
   try {
-    const r = apply(g, mana ? { type: 'activate_mana', player, object: id, ability: index, autoTap: true } : { type: 'activate', player, object: id, ability: index, autoTap: true });
+    if (!mana) {
+      const said = whyNotActivated(g, player, id, index);
+      return said ? { why: reason(said), detail: said } : { why: 'Nothing to choose for it right now', detail: 'There is nothing this ability could be activated with right now.' };
+    }
+    const r = apply(g, { type: 'activate_mana', player, object: id, ability: index, autoTap: true });
     // The engine would take the plain activation, yet didn't list it: it has no choice it could offer for it.
     // (A mana ability with no mana it could add: "any type that a land you control could produce", and no lands.)
-    if (r.ok) return mana ? { why: 'Would add no mana right now', detail: 'Right now this ability would add no mana.' } : { why: 'Nothing to choose for it right now', detail: 'There is nothing this ability could be activated with right now.' };
+    if (r.ok) return { why: 'Would add no mana right now', detail: 'Right now this ability would add no mana.' };
     return { why: reason(r.error), detail: r.error };
   } catch {
     return { why: 'Can’t be activated now', detail: 'This ability can’t be activated right now.' };

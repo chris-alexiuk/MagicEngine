@@ -27,10 +27,11 @@ describe('staples (slices 120–121)', () => {
   it('Mox Amber: only colors among legendary creatures and planeswalkers you control', () => {
     const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
     const amber = give(g, 'alice', 'Amber', 'battlefield');
-    expect(legalActions(g, 'alice').some((a) => a.type === 'activate_mana' && a.object === amber)).toBe(false);
+    const choices = (h: GameState) => legalActions(h, 'alice').filter((a) => a.type === 'activate_mana' && a.object === amber).map((a) => (a as { choice?: unknown }).choice);
+    // CR 106.5: with no legend it can still be tapped, for no mana — one way, with no color to name.
+    expect(choices(g)).toEqual([undefined]);
     give(g, 'alice', 'Blue Legend', 'battlefield');
-    const choices = legalActions(g, 'alice').filter((a) => a.type === 'activate_mana' && a.object === amber).map((a) => (a as { choice?: unknown }).choice);
-    expect(choices).toEqual(['U']);
+    expect(choices(g)).toEqual(['U']);
   });
 
   it('Bloom Tender: one mana of each color among permanents you control', () => {

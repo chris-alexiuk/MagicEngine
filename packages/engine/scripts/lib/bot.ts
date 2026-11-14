@@ -15,6 +15,8 @@ import {
   blockDeclarationProblem,
   blockProblem,
   chars,
+  costPromptOpen,
+  costPrompts,
   flatten,
   hasKeyword,
   hasRule,
@@ -27,6 +29,7 @@ import {
   type PlayerId,
   type Target,
   type TargetPrompt,
+  withCostAnswers,
 } from '../../src/index.js';
 import { defaultCastChoice } from '../../src/legal.js';
 import { planAutoTap } from '../../src/autotap.js';
@@ -443,7 +446,44 @@ export function createBot(opts: BotOptions) {
     return null;
   }
 
-  return { answerFor, randomiseTargets, samplePrompts, pick, shuffle };
+  /**
+   * Re-picks what pays the costs of an action that came with the engine's defaults (CR 601.2h): another creature to
+   * sacrifice, other cards to discard, other creatures to crew with — whatever the cost's prompts allow. The
+   * constructive bot keeps the defaults.
+   */
+  function randomiseCosts(g: GameState, a: Action): Action {
+    if (C || (a.type !== 'cast' && a.type !== 'activate' && a.type !== 'activate_mana')) return a;
+    let prompts;
+    try {
+      prompts = costPrompts(g, a);
+    } catch {
+      return a;
+    }
+    if (!prompts.some(costPromptOpen)) return a;
+    // An object pays for one part only.
+    const taken = new Set<string>();
+    const answers = prompts.map((p) => {
+      // What only pays mana another way (convoke, delve…) mostly stays as it was worked out.
+      if (!costPromptOpen(p)) return p.candidates.slice(0, p.min);
+      if (p.optional && rnd() < 0.7) return p.chosen;
+      const from = shuffle(p.candidates.filter((id) => !taken.has(id)));
+      let picked: string[];
+      if (p.total) {
+        picked = [];
+        let sum = 0;
+        for (const id of from) {
+          if (sum >= p.total.need) break;
+          picked.push(id);
+          sum += p.total.each[id] ?? 0;
+        }
+      } else picked = from.slice(0, p.min === p.max ? p.min : p.min + Math.floor(rnd() * (Math.min(p.max, from.length) - p.min + 1)));
+      for (const id of picked) taken.add(id);
+      return picked;
+    });
+    return withCostAnswers(a, prompts, answers);
+  }
+
+  return { answerFor, randomiseTargets, randomiseCosts, samplePrompts, pick, shuffle };
 }
 
 // ---------------------------------------------------------------------------

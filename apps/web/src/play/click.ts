@@ -8,14 +8,23 @@ import type { Action } from '@mtg/engine';
  * opens — each ability is shown, usable now or not — so a click never picks for the player the one ability that happens
  * to be payable. A permanent whose abilities can't be used right now opens it too, to say why (unless all it does is
  * make mana: a tapped land stays quiet).
+ *
+ * `idle`: an action that would do nothing just now — a mana ability with no mana to add (CR 106.5: Mox Amber and no
+ * legend, Gaea's Cradle and no creatures). It is legal, so it is offered; a click alone never does it: the menu opens
+ * and says so.
  */
-export function clickOutcome(listed: readonly Action[], extra: readonly Action[], own: { abilities: number; nonMana: number } = { abilities: 0, nonMana: 0 }): { kind: 'act'; action: Action } | { kind: 'menu' } | { kind: 'none' } {
+export function clickOutcome(
+  listed: readonly Action[],
+  extra: readonly Action[],
+  own: { abilities: number; nonMana: number } = { abilities: 0, nonMana: 0 },
+  idle: (a: Action) => boolean = () => false,
+): { kind: 'act'; action: Action } | { kind: 'menu' } | { kind: 'none' } {
   const all = [...listed, ...extra];
   if (!all.length) return own.nonMana > 0 ? { kind: 'menu' } : { kind: 'none' };
   if (own.abilities > 1) return { kind: 'menu' };
   // A spell or ability with X always asks for the number (those come in `extra`, one for each X).
   const asksX = (a: Action) => (a.type === 'cast' || a.type === 'activate') && a.x !== undefined;
-  if (all.length === 1 && !(all[0]!.type === 'cast' && all[0]!.x !== undefined) && !extra.some(asksX)) return { kind: 'act', action: all[0]! };
+  if (all.length === 1 && !(all[0]!.type === 'cast' && all[0]!.x !== undefined) && !extra.some(asksX) && !idle(all[0]!)) return { kind: 'act', action: all[0]! };
   return { kind: 'menu' };
 }
 

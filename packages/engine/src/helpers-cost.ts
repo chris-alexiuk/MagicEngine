@@ -32,8 +32,11 @@ export function helperKeywords(g: GameState, player: PlayerId, spell: GameObject
  * Keywords that pay part of a spell's cost another way (CR 601.2g–h, after the total cost is set):
  * convoke taps creatures for colored or generic mana (CR 702.51a), improvise taps artifacts and
  * delve exiles cards from your graveyard for generic mana (CR 702.126a, 702.66a).
+ *
+ * This checks the chosen creatures, artifacts and cards and takes what they pay off `cost`; `payHelpers` taps and exiles
+ * them as the cost is paid.
  */
-export function payWithHelpers(g: GameState, player: PlayerId, spell: GameObject, keywords: string[], cost: ManaCost, choices: CostChoices, events: GameEvent[]): void {
+export function helpWith(g: GameState, player: PlayerId, spell: GameObject, keywords: string[], cost: ManaCost, choices: CostChoices): void {
   const tapped = new Set<ObjectId>();
   const take = (ids: ObjectId[] | undefined, kw: string, ok: (o: GameObject) => boolean, onEach: (o: GameObject) => void) => {
     if (!ids?.length) return;
@@ -62,6 +65,10 @@ export function payWithHelpers(g: GameState, player: PlayerId, spell: GameObject
     if (cost.generic <= 0) throw new RulesError('There’s no generic mana left for that card to pay.');
     cost.generic--;
   });
+}
+
+/** CR 601.2h: the creatures and artifacts that helped are tapped; the cards delved are exiled. */
+export function payHelpers(g: GameState, choices: CostChoices, events: GameEvent[]): void {
   for (const id of [...(choices.convoke ?? []), ...(choices.improvise ?? [])]) setTapped(g, id, true, events);
   for (const id of choices.delve ?? []) moveObject(g, id, 'exile', events);
 }

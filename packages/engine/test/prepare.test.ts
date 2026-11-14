@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { legalActions, power, toughness, type GameState } from '../src/index.js';
+import { apply, legalActions, power, toughness, type GameState } from '../src/index.js';
 import { act, give, makeCard, start, toStep } from './helpers.js';
 
 const prep = (name: string, spell: string, creatureText: string, spellText: string, spellType = 'Sorcery') =>
@@ -58,7 +58,10 @@ describe('CR 722: preparation cards', () => {
     expect(copy).toBeDefined();
     const casts = legalActions(g, 'alice').filter((a) => a.type === 'cast' && a.object === copy);
     expect(casts).toHaveLength(1);
-    g = act(g, { type: 'cast', player: 'alice', object: copy!, targets: [[{ kind: 'object', object: eater }]] });
+    // The copy is only its prepare spell: the cast names that face, as the listed one does.
+    expect(casts[0]).toMatchObject({ face: 1 });
+    expect(apply(g, { type: 'cast', player: 'alice', object: copy!, targets: [[{ kind: 'object', object: eater }]] })).toMatchObject({ ok: false });
+    g = act(g, { type: 'cast', player: 'alice', object: copy!, face: 1, targets: [[{ kind: 'object', object: eater }]] });
     expect(g.objects[eater]!.prepared).toBeUndefined();
     expect(g.objects[copy!]!.zone).toBe('stack');
     g = settle(g);

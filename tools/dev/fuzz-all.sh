@@ -1,6 +1,7 @@
 #!/bin/bash
 # The fuzz gate a slice must pass before it is committed: random games played only with moves the
-# engine lists as legal, checking for crashes, refused moves and broken invariants.
+# engine lists as legal, checking for crashes, refused moves and broken invariants — and, the other
+# way round, for moves the engine would take that it never listed.
 #
 #   tools/dev/fuzz-all.sh POOL SEED [FOCUS_FILE] [SNAPSHOT_DIR]
 #
@@ -29,7 +30,7 @@ cd "$SNAP/packages/engine" || exit 1
 run() {
   local out="$1"; shift
   npx tsx scripts/fuzz.ts "$POOL" --as-is "$@" > "$out.log" 2>&1
-  grep -E "games,|slowest|crash|rejected|invariant|×|e\.g\.|Error|X:|commander:" "$out.log" > "$out"
+  grep -E "games,|slowest|crash|rejected|invariant|unlisted|×|e\.g\.|Error|X:|commander:" "$out.log" > "$out"
   grep -q "games," "$out" || echo "NO SUMMARY — the run died; see $out.log" >> "$out"
 }
 
@@ -38,4 +39,4 @@ run "$SNAP/fuzz-4p.txt" --games 60 --seed "${SEED}2" --players 4 --format comman
 wait
 if [ -n "$FOCUS" ]; then run "$SNAP/fuzz-focus.txt" --games 80 --seed "${SEED}3" --players 3 --format commander --focus "$(cat "$FOCUS")"; fi
 cat "$SNAP"/fuzz-2p.txt "$SNAP"/fuzz-4p.txt "$SNAP"/fuzz-focus.txt 2>/dev/null
-! grep -qE "NO SUMMARY|crash: [1-9]|rejected: [1-9]|invariant: [1-9]" "$SNAP"/fuzz-*.txt
+! grep -qE "NO SUMMARY|crash: [1-9]|rejected: [1-9]|invariant: [1-9]|unlisted: [1-9]" "$SNAP"/fuzz-*.txt

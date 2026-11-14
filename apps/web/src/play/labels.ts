@@ -108,6 +108,8 @@ export function actionLabel(g: GameState, a: Action): string {
       const made = manaPreview(g, a);
       if (made?.own.length && made.own.length <= 12) return previewLabel(made);
       const bonus = a.bonus?.length ? ` (+${a.bonus.map((b) => (typeof b === 'string' ? `{${b}}` : String(b))).join('')})` : '';
+      // CR 106.5: it can be activated with nothing to add (Mox Amber and no legend); the button says that's what it does.
+      if (!made && !what) return `${ab?.text ?? 'Mana ability'} (no mana right now)`;
       return what ? `Add ${what}${bonus}` : `${ab?.text ?? 'Mana ability'}${bonus}`;
     }
     case 'activate_manual': {

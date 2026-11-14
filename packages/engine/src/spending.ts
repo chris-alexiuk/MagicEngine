@@ -64,6 +64,12 @@ export function anyColorCost(cost: ManaCost, how: 'color' | 'type' = 'color'): M
   return { ...cost, generic: cost.generic + colored + cost.hybrid.length, specific: how === 'color' && cost.specific.C ? { C: cost.specific.C } : {}, hybrid: [] };
 }
 
+/** Whether what the player could spend on this pays the cost: exactly when `payMana` would. */
+export function canPayMana(g: GameState, player: PlayerId, cost: ManaCost, x: number, purpose: ManaPurpose): boolean {
+  const anyColor = asThoughAnyColor(g, player, purpose);
+  return payFromPool(spendablePool(g, player, purpose), anyColor ? anyColorCost(cost, anyColor) : cost, x) !== null;
+}
+
 export function payMana(g: GameState, player: PlayerId, cost: ManaCost, x: number, purpose: ManaPurpose): ManaPool | null {
   const anyColor = asThoughAnyColor(g, player, purpose);
   if (anyColor) cost = anyColorCost(cost, anyColor);

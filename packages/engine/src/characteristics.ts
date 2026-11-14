@@ -1293,7 +1293,8 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
   const retyped = lost.retyped.has(o.id);
   // Ashaya: "Nontoken creatures you control are Forest lands in addition to their other types." — a land by an effect.
   const landNow = face.types.includes('Land') || (o.zone === 'battlefield' && anyAddsLandTypes(g) && chars(g, o).types.includes('Land'));
-  if (retyped || (!gone && landNow)) {
+  // (CR 113.6: on the battlefield only — a Forest card in a hand has no ability to tap it with.)
+  if (o.zone === 'battlefield' && (retyped || (!gone && landNow))) {
     // CR 305.6: a land has the mana ability of each basic land type it has — including ones an effect gave it
     // ("Each land is a Swamp in addition to its other land types").
     for (const sub of retyped || (o.zone === 'battlefield' && anyAddsLandTypes(g)) ? chars(g, o).subtypes : face.subtypes) {
@@ -1301,8 +1302,9 @@ export function manaAbilities(g: GameState, o: GameObject): ActivatedAbility[] {
       if (color) out.push(intrinsicManaAbility(color));
     }
   }
-  // Simian Spirit Guide's ability works from the hand (CR 605.1a); others on the battlefield.
-  const here = (a: ActivatedAbility) => (o.zone === 'hand' ? a.zone === 'hand' : !a.zone);
+  // CR 113.6: an ability works where its object is a permanent — or from the zone it says: Simian Spirit Guide's
+  // "Exile this card from your hand: Add {R}." from the hand, Jack-o'-Lantern's from the graveyard.
+  const here = (a: ActivatedAbility) => (a.zone ?? 'battlefield') === o.zone;
   if (!gone) for (const a of face.abilities) if (a.kind === 'activated' && a.mana && here(a) && gateOpen(g, o, a)) out.push(a);
   // Granted ones ("Creatures you control have "{T}: Add {G}."", CR 613.1f).
   if (o.zone === 'battlefield' && anyGrantedMana(g)) for (const a of keywordAbilities(chars(g, o).keywords)) if (a.kind === 'activated' && a.mana) out.push(a);

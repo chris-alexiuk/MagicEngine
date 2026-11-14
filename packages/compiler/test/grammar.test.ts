@@ -543,6 +543,9 @@ describe('costs chosen as a spell is cast (CR 118.9, CR 601.2f)', () => {
       { effect: { type: 'cast_option', id: 'evoke', kind: 'alternative', cost: { mana: '{2}{U}' } } },
       { kind: 'triggered', trigger: { type: 'enters' }, condition: { type: 'paid', cost: 'evoke' }, effects: [{ type: 'sacrifice', byController: true }] },
     ]);
+    // Evoke applies wherever the card is cast from; warp is for "this card from your hand" (CR 702.185a).
+    expect((evoke.abilities![0] as { effect: { zone?: string } }).effect.zone).toBeUndefined();
+    expect(parse('Warp {R}', 'Creature — Construct', 'Warper').keywords[0]!.abilities![0]).toMatchObject({ effect: { type: 'cast_option', id: 'warp', kind: 'alternative', cost: { mana: '{R}' }, zone: 'hand' } });
     const dash = parse('Dash {2}{R}', 'Creature — Goblin', 'Goblin').keywords[0]!;
     expect(dash.abilities).toMatchObject([
       { effect: { type: 'cast_option', id: 'dash' } },

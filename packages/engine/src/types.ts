@@ -794,7 +794,7 @@ export type ChoiceAnswer =
   | { kind: 'assign_combat_damage'; assignments: Record<ObjectId, DamageAssignment[]> }
   | { kind: 'trigger_targets'; modes?: number[]; targets: Target[][]; divide?: number[] }
   | { kind: 'copy_targets'; targets?: Target[][] }
-  | { kind: 'cast_free'; cast: boolean; targets?: Target[][]; modes?: number[] }
+  | { kind: 'cast_free'; cast: boolean; targets?: Target[][]; modes?: number[]; /** What pays its additional costs (CR 601.2f, 601.2h); left out, the engine's default. */ costs?: CostChoices }
   /** CR 701.22a: cards to keep on top (first = top) and to put on the bottom. */
   | { kind: 'scry'; top: ObjectId[]; bottom: ObjectId[] }
   /** CR 701.25a: cards to keep on top (first = top) and to put into the graveyard. */

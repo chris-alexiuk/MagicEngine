@@ -64,6 +64,12 @@ export function usedModes(g: GameState, source: { id: string; zcc: number } | nu
 }
 
 /** Remembers the modes chosen as the ability is activated or put on the stack (CR 700.2a–b); refuses one used already. */
+/** "Choose one that hasn't been chosen this turn": that none of these modes has been. */
+export function checkModes(g: GameState, source: { id: string; zcc: number } | null | undefined, ability: Program & { text: string }, modes: readonly number[] | undefined): void {
+  if (!ability.modes?.unchosen || !source || !modes?.length) return;
+  if (modes.some((m) => usedModes(g, source, ability).includes(m))) throw new RulesError('That mode has already been chosen.');
+}
+
 export function recordModes(g: GameState, source: { id: string; zcc: number } | null | undefined, ability: Program & { text: string }, modes: readonly number[] | undefined): void {
   if (!ability.modes?.unchosen || !source || !modes?.length) return;
   const used = usedModes(g, source, ability);

@@ -216,8 +216,9 @@ describe('a mana ability whose mana depends on a condition is tapped for the pla
   it('CR 106.7: "any type that a land you control could produce" counts what such a land would add now', () => {
     const g = table();
     const druid = give(g, 'alice', 'Incubation Druid', 'battlefield', { sick: false });
-    // No lands: nothing it could add.
-    expect(ways(g, druid)).toEqual([]);
+    // No lands: nothing it could add. It can still be tapped, for no mana (CR 106.5): one way, with no type to name.
+    expect(ways(g, druid)).toEqual(['-']);
+    expect(pool(act(g, of(g, druid).find((a) => a.type === 'activate_mana')!))).toEqual({});
     const caverns = give(g, 'alice', 'Gemstone Caverns', 'battlefield');
     expect(ways(g, druid)).toEqual(['C']);
     g.objects[caverns]!.counters.luck = 1;

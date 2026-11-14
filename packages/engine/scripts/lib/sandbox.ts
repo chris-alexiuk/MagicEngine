@@ -26,6 +26,7 @@ import {
   choicePrompts,
   createGame,
   defaultChoiceAtX,
+  whyNotActivated,
   learnCreatureTypes,
   legalActions,
   manaAbilities,
@@ -587,7 +588,8 @@ function xVariants(g: GameState, a: Action): Action[] {
     if (x <= least || x > xMax) continue;
     const choice = defaultChoiceAtX(g, a, x);
     if (!choice) continue;
-    const { targets: _targets, modes: _modes, ...bare } = rest;
+    // (Another X has its own targets and its own cards to discard or permanents to sacrifice.)
+    const { targets: _targets, modes: _modes, costs: _costs, ...bare } = rest;
     out.push({ ...bare, x, ...choice } as Action);
   }
   out.push(rest as Action);
@@ -970,8 +972,10 @@ export function checkCard(card: CardDef, boards: Board[], opts: CheckOptions = {
         const index = Number(label.split(' ')[1]);
         let why = '';
         try {
-          const r = apply(base, label.startsWith('mana') ? { type: 'activate_mana', player: ME, object: o.id, ability: index, autoTap: true } : { type: 'activate', player: ME, object: o.id, ability: index, autoTap: true });
-          why = r.ok ? 'the engine would take it, and never lists it' : r.error;
+          if (label.startsWith('mana')) {
+            const r = apply(base, { type: 'activate_mana', player: ME, object: o.id, ability: index, autoTap: true });
+            why = r.ok ? 'the engine would take it, and never lists it' : r.error;
+          } else why = whyNotActivated(base, ME, o.id, index) ?? 'the engine would take it, and never lists it';
         } catch (err) {
           why = `crash: ${firstLine(err)}`;
         }

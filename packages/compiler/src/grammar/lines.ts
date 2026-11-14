@@ -4875,7 +4875,9 @@ export const castOptionRule: GrammarRule = {
     if (byPaying) {
       const condition = byPaying[1] ? parseCondition(byPaying[1], b) : undefined;
       if (byPaying[1] && !condition) return null;
-      return make('alternative', byPaying[4]!, { ...(byPaying[3] === ' from your graveyard' ? { zone: 'graveyard' } : {}), ...(byPaying[2] ? { transformed: true } : {}), ...(condition ? { condition } : {}) });
+      // (Warp, CR 702.185a: "from your hand" — not from the exile it comes back from.)
+      const zone = byPaying[3] === ' from your graveyard' ? { zone: 'graveyard' as const } : byPaying[3] === ' from your hand' ? { zone: 'hand' as const } : {};
+      return make('alternative', byPaying[4]!, { ...zone, ...(byPaying[2] ? { transformed: true } : {}), ...(condition ? { condition } : {}) });
     }
     // CR 118.9: Patrician's Scorn: "If you've cast another white spell this turn, you may cast this spell without paying its
     // mana cost." — an alternative cost of nothing.

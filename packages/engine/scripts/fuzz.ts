@@ -2,7 +2,7 @@
  * Robustness check: random bots play many games with random decks drawn from the
  * real card pool, and every action is checked.
  *
- *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top] [--focus REGEX]
+ *   tsx scripts/fuzz.ts <cards.json.gz> [--games N] [--seed S] [--players 2|3|4] [--verbose] [--top] [--focus REGEX] [--probe N] [--report-unlisted]
  *
  * --top lists the sources of the most triggers and tokens (to spot runaway loops).
  * --focus fills about half of each deck with cards whose text matches REGEX (to exercise a new mechanic).
@@ -11,14 +11,18 @@
  *   - crash:     the engine threw something other than a rules error
  *   - rejected:  legalActions() offered an action that apply() then refused
  *   - invariant: the state broke a structural invariant after an action
- * Exit code 1 if anything failed.
+ *   - unlisted:  apply() accepts an action legalActions() didn't offer (looked for in one state in --probe N; default 40, 0 for never)
+ * Exit code 1 if anything failed. With --report-unlisted, unlisted actions are printed all the same but don't fail the
+ * run: the weekly and per-push games in CI turn up old gaps by chance, which is a list of things to fix, not an alarm
+ * about the commit; the gate run before a commit (tools/dev/fuzz-all.sh) does fail on them.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef, Color } from '@mtg/schema';
-import { apply, createGame, legalActions, type Action, type GameState } from '../src/index.js';
+import { apply, createGame, defaultChoiceAtX, legalActions, type Action, type GameState } from '../src/index.js';
 import { checkInvariants, createBot } from './lib/bot.js';
+import { unlistedActions } from './lib/unlisted.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const opt = (name: string, d: string) => {
@@ -34,6 +38,9 @@ const PLAYERS = opt('--players', 'mixed');
 const VERBOSE = args.includes('--verbose');
 const TOP = args.includes('--top');
 const FOCUS = args.includes('--focus') ? new RegExp(opt('--focus', '')) : null;
+/** One state in this many is searched for actions the engine would take and the list doesn't have (0: none). */
+const PROBE = Number(opt('--probe', '40'));
+const REPORT_UNLISTED = args.includes('--report-unlisted');
 /** `--format commander`: each deck gets a legendary creature of its colors as its commander (the command zone, the tax, CR 903.9). */
 const FORMAT = opt('--format', 'constructed') as 'commander' | 'constructed';
 /** `--as-is`: the pool was compiled by this checkout's compiler already (a reparse's `--save`), so it isn't compiled again. */
@@ -56,7 +63,19 @@ const rnd = () => {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
-const { answerFor, randomiseTargets, pick, shuffle } = createBot({ rnd });
+const bot = createBot({ rnd });
+const { answerFor, randomiseTargets, randomiseCosts, pick, shuffle } = bot;
+// The search for unlisted actions has its own dice, so that how often it runs doesn't change the games played.
+let s2 = (SEED ^ 0x9e3779b9) >>> 0;
+const probeBot = createBot({
+  rnd: () => {
+    s2 = (s2 + 0x6d2b79f5) >>> 0;
+    let t = s2;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Decks: two colors, basics plus random spells the engine can mostly run
@@ -116,12 +135,15 @@ function makeDeck(colors: Color[]): string[] {
 
 interface Failure {
   game: number;
-  kind: 'crash' | 'rejected' | 'invariant';
+  kind: 'crash' | 'rejected' | 'invariant' | 'unlisted';
   detail: string;
   action?: string;
 }
 
 let dumped = false;
+let dumpedUnlisted = false;
+let listings = 0;
+let probed = 0;
 let slowest = { ms: 0, game: -1, action: '' };
 const TRACE = process.env.FUZZ_TRACE ? { file: process.env.FUZZ_TRACE.split(':')[0]!, game: Number(process.env.FUZZ_TRACE.split(':')[1]) } : null;
 const failures: Failure[] = [];
@@ -163,6 +185,16 @@ for (let game = 0; game < GAMES; game++) {
     if (answer) action = { type: 'choose', player: answer.player, answer: answer.answer };
     else if (g.priority) {
       const options = legalActions(g, g.priority);
+      if (PROBE && ++listings % PROBE === 0) {
+        probed++;
+        for (const u of unlistedActions(g, g.priority, options, probeBot)) {
+          failures.push({ game, kind: 'unlisted', detail: `${u.key} of ${u.card} (${u.zone})`, action: JSON.stringify(u.action).slice(0, 300) });
+          if (process.env.FUZZ_DUMP_UNLISTED && !dumpedUnlisted) {
+            dumpedUnlisted = true;
+            writeFileSync(process.env.FUZZ_DUMP_UNLISTED, JSON.stringify({ state: g, action: u.action }));
+          }
+        }
+      }
       if (options.some((a) => a.type === 'cast' && g.objects[a.object]?.zone === 'command')) commanderCasts++;
       // Nor activate the same ability over and over in one turn ("{0}: … gets -1/-0 until end of turn").
       const active = options.filter((a) => a.type !== 'pass' && a.type !== 'activate_manual' && !(a.type === 'activate' && (used.get(`${g.turn}:${a.object}`) ?? 0) >= 6));
@@ -174,10 +206,16 @@ for (let game = 0; game < GAMES; game++) {
       let base = chosen;
       if ((base.type === 'cast' || base.type === 'activate') && base.xMax !== undefined && base.xMax > (base.x ?? 0) && rnd() < 0.7) {
         const least = base.x ?? 0;
-        base = { ...base, x: least + 1 + Math.floor(rnd() * Math.min(base.xMax - least, rnd() < 0.7 ? 3 : 40)) };
+        const x = least + 1 + Math.floor(rnd() * Math.min(base.xMax - least, rnd() < 0.7 ? 3 : 40));
+        // Another X has its own cards to discard or permanents to sacrifice ("discard X cards"): the engine's for that X.
+        const at = defaultChoiceAtX(g, base, x);
+        const { targets: _t, modes: _m, costs: _c, ...bare } = base;
+        base = at ? ({ ...bare, x, ...at } as Action) : { ...base, x };
         xCasts++;
       }
       action = rnd() < 0.5 || base !== chosen ? randomiseTargets(g, base) : base;
+      // What pays its costs is the player's choice too (CR 601.2h): sometimes not the default.
+      if (rnd() < 0.5) action = randomiseCosts(g, action);
       // Sometimes pay kicker too (the engine refuses if there's no kicker or no mana; then we fall back).
       // (Multikicker: sometimes more than once — CR 702.33c.)
       if (action.type === 'cast' && rnd() < 0.3) action = { ...action, kicked: rnd() < 0.4 ? true : rnd() < 0.5 ? pick([[0], [1], [0, 1]]) : 1 + Math.floor(rnd() * 3) };
@@ -301,11 +339,12 @@ console.log(`  triggers ${stats.triggered}, auto-resolved ${stats.resolvedAuto},
 console.log(`  X: ${xPlayed} casts and activations with X above 0 (of ${xCasts} tried)`);
 if (FORMAT === 'commander') console.log(`  commander: a cast from the command zone offered ${commanderCasts} times, ${commanderPrompts} command-zone choices`);
 const byKind = (k: Failure['kind']) => failures.filter((f) => f.kind === k);
-for (const k of ['crash', 'rejected', 'invariant'] as const) {
+for (const k of ['crash', 'rejected', 'invariant', 'unlisted'] as const) {
   const list = byKind(k);
-  console.log(`  ${k}: ${list.length}`);
+  console.log(`  ${k}: ${list.length}${k === 'unlisted' ? ` (looked for in ${probed} states)` : ''}`);
   const grouped = new Map<string, Failure[]>();
   for (const f of list) grouped.set(f.detail.slice(0, 160), [...(grouped.get(f.detail.slice(0, 160)) ?? []), f]);
-  for (const [detail, fs] of [...grouped].slice(0, 12)) console.log(`    ×${fs.length} ${detail}\n        e.g. game ${fs[0]!.game}: ${fs[0]!.action ?? ''}`);
+  const groups = [...grouped].sort((a, b) => b[1].length - a[1].length);
+  for (const [detail, fs] of groups.slice(0, k === 'unlisted' ? 30 : 12)) console.log(`    ×${fs.length} ${detail}\n        e.g. game ${fs[0]!.game}: ${fs[0]!.action ?? ''}`);
 }
-process.exit(failures.length ? 1 : 0);
+process.exit(failures.some((f) => f.kind !== 'unlisted' || !REPORT_UNLISTED) ? 1 : 0);

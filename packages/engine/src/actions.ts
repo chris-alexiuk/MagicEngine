@@ -5,7 +5,7 @@ import { untapStep } from './flow.js';
 import { STEPS } from './types.js';
 import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
-import { helperKeywords, payWithHelpers } from './helpers-cost.js';
+import { helperChoices, helperKeywords, helpWith, payHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
 import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility, StaticAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
@@ -24,12 +24,12 @@ import {
   settle,
 } from './flow.js';
 import { reduceCostBy, parseManaCost, type ManaCost } from './mana.js';
-import { lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
+import { canPayMana, lastSpentRestricted, OTHER_PURPOSE, payMana, type ManaPurpose } from './spending.js';
 const UNLOCK: ManaPurpose = { kind: 'unlock' };
 const FACE_UP: ManaPurpose = { kind: 'face_up' };
-import { abilityCostReductions, autoTap, checkOtherCosts, costLKI, lifeCost, payOtherCosts, runManaAbility, sacrificeCandidates, withRandomDiscards } from './payment.js';
-import { settlePhyrexian } from './autotap.js';
-import { appendProgram, activatedAbilities, flatten, recordModes, spellPrograms } from './program.js';
+import { abilityCostReductions, autoTap, checkOtherCosts, costAsks, costLKI, defaultCostChoices, lifeCost, payOtherCosts, runManaAbility, runPayment, sacrificeCandidates, withRandomDiscards } from './payment.js';
+import { planAutoTap, planManaOnly, settlePhyrexian } from './autotap.js';
+import { appendProgram, activatedAbilities, checkModes, flatten, recordModes, spellPrograms } from './program.js';
 import { answerOpening } from './setup.js';
 import { chooseTargets, divisionFor, targetingAs, withTargetKicks } from './targets.js';
 import { announceTargets, answerTriggerTargets } from './triggers.js';
@@ -56,7 +56,7 @@ import { preparedSource, unprepare } from './prepare.js';
 import { bestowedFace, fusedFace, manaValueOf } from './zones.js';
 import { answerAsEnters } from './as-enters.js';
 import { applyCostModifiers } from './costs.js';
-import { exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, permittedFace, topLifeOnly } from './permissions.js';
+import { castableForItsCosts, exileOnLeavePermission, freePermission, graveyardLandPermission, graveyardPermissionCosts, graveyardPermissionExiles, graveyardPermissionUsed, mayPlayFrom, permissionCost, permittedFace, topLifeOnly } from './permissions.js';
 import { counterBlocked, lifeLoss, replaceQuantity } from './quantities.js';
 import { drawCard, enteringBanned, faceOf, moveObject, nameOf, obj, setTapped, zoneList, discardCard } from './zones.js';
 
@@ -117,7 +117,7 @@ function handle(g: GameState, a: Action, events: GameEvent[]): void {
     case 'suspend':
       return exileToCastLater(g, a.player, a.object, a.type, a.autoTap ?? false, events);
     case 'cast':
-      return cast(g, a.player, a.object, a.face ?? 0, a.x ?? 0, a.autoTap ?? false, a.targets, a.modes, events, a.costs ?? {}, a.kicked ?? false, a.alt, a.extras ?? [], undefined, a.divide);
+      return cast(g, castArgsOf(a), events);
     case 'activate':
       return activate(g, a.player, a.object, a.ability, { x: a.x ?? 0, autoTap: a.autoTap ?? false, targets: a.targets, modes: a.modes, costs: a.costs ?? {}, divide: a.divide }, events);
     case 'activate_manual':
@@ -632,35 +632,58 @@ export function flashbackCostOf(g: GameState, o: GameObject, face: FaceDef): str
   return cost && /^(\{[^}]+\})+$/.test(cost) ? cost : null;
 }
 
-function cast(
-  g: GameState,
-  player: PlayerId,
-  id: ObjectId,
-  faceIndex: number,
-  x: number,
-  wantsAutoTap: boolean,
-  chosenTargets: Target[][] | undefined,
-  modes: number[] | undefined,
-  events: GameEvent[],
-  costChoices: CostChoices,
-  kickedArg: boolean | number | number[],
-  altId?: string,
-  extras: string[] = [],
+/** What a cast action says (CR 601.2): the card, and every choice made as it is cast. */
+export interface CastArgs {
+  player: PlayerId;
+  id: ObjectId;
+  faceIndex: number;
+  x: number;
+  wantsAutoTap: boolean;
+  chosenTargets: Target[][] | undefined;
+  modes: number[] | undefined;
+  costChoices: CostChoices;
+  kickedArg: boolean | number | number[];
+  altId?: string | undefined;
+  extras: string[];
   /** CR 608.2g: cast while an effect resolves ("you may cast it without paying its mana cost", madness). */
-  during?: { free?: boolean; suspended?: true; exileOnLeave?: true },
-  divide?: number[],
-): void {
+  during?: { free?: boolean; suspended?: true; exileOnLeave?: true } | undefined;
+  divide?: number[] | undefined;
+  /**
+   * For the legal-action list: nothing was chosen for the costs — take the default for each part that needs objects
+   * (`defaultCostChoices`), and convoke, improvise, delve or waterbend with as much as mana alone can't pay. What was
+   * taken is in the reading's `costChoices`.
+   */
+  autoCosts?: boolean;
+}
+
+/*
+ * Casting a spell is read in the order the rules ask for its choices, and only then done:
+ *
+ *   castWay      CR 601.2a–b  which card, which face, for which costs, from where — and whether that may be done now
+ *   castTargets  CR 601.2b–d  its modes and targets
+ *   castCost     CR 601.2f–h  what it costs in all, that the choices made for its costs are ones they accept, and
+ *                             how the mana will be paid
+ *   cast                      the three of them, then the payment and the move to the stack
+ *
+ * The first three only read the game. The legal-action list, the prompts a client shows and "why can't I cast this"
+ * are these same functions stopped before anything is paid, so they can't disagree with what casting does.
+ */
+
+/** CR 601.2a–b: which card is cast and how. Throws what the engine says when it can't be, now, this way. */
+export function castWay(g: GameState, a: CastArgs) {
+  const { player, id, kickedArg, altId, extras, during } = a;
+  let { faceIndex, x, modes } = a;
   // "Kicker {1}{U} and/or {B}": which of its two kicker costs (CR 702.33c).
   const which = Array.isArray(kickedArg) ? [...new Set(kickedArg)] : undefined;
   const kicks = which ? (which.length ? 1 : 0) : typeof kickedArg === 'number' ? Math.max(0, Math.floor(kickedArg)) : kickedArg ? 1 : 0;
   const kicked = kicks > 0;
-  let kickedWith: string[] | undefined;
   const o = obj(g, id);
   // CR 722.3c: a prepare spell's copy in exile is cast as its prepare spell, by the prepared permanent's controller.
   const prepared = o.prepareOf ? preparedSource(g, o, player) : undefined;
   if (o.prepareOf) {
     if (!prepared) throw new RulesError('That prepare spell can’t be cast now.');
-    faceIndex = 1;
+    // The copy is its prepare spell and nothing else: a cast naming another face isn't one of this object.
+    if (faceIndex !== 1) throw new RulesError('Only its prepare spell can be cast.');
   }
   const def = g.cards[o.card]!;
   const face = def.faces[faceIndex];
@@ -683,7 +706,7 @@ function cast(
     throw new RulesError(`${face.name} can’t be cast for that cost now.`);
   }
   // CR 702.37c / 702.168b: cast face down, it's a 2/2 creature spell with no text (CR 708.4).
-  const faceDown = alt && (FACE_DOWN_KEYWORDS as readonly string[]).includes(alt.id) ? (alt.id === 'disguise' ? 'disguise' : 'morph') : undefined;
+  const faceDown = alt && (FACE_DOWN_KEYWORDS as readonly string[]).includes(alt.id) ? (alt.id === 'disguise' ? ('disguise' as const) : ('morph' as const)) : undefined;
   // CR 702.146a (disturb): cast transformed — the back face is the spell (CR 712.11a).
   if (alt?.transformed) {
     if (def.faces.length < 2) throw new RulesError(`${face.name} has no back face.`);
@@ -744,6 +767,14 @@ function cast(
   if (!during && !fromCommandZone && !flashback && !escape && !fromExileAlt && !fromExile && !prepared && !aftermath && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError('You can only cast spells from your hand.');
   if (alt?.zone === 'exile' && !fromExileAlt && !(during && o.zone === 'exile')) throw new RulesError(`That cost is for casting ${face.name} from exile.`);
   if (alt?.zone === 'graveyard' && !escape) throw new RulesError(`That cost is for casting ${face.name} from your graveyard.`);
+  // CR 702.185a: warp — "You may cast this card from your hand by paying [cost]": not from the exile it comes back from.
+  if (alt?.zone === 'hand' && (o.zone !== 'hand' || o.owner !== player)) throw new RulesError(`That cost is for casting ${face.name} from your hand.`);
+  // CR 118.9a: only one alternative cost applies to a spell. Flashback is one — and so is what the only permission to
+  // cast a card from exile or a library asks instead of its mana cost: nothing, life (Bolas's Citadel), {2} (airbend).
+  if (alt && !during && !escape && !fromExileAlt) {
+    if (flashback) throw new RulesError(`${face.name} is cast with flashback: no other cost can replace its mana cost.`);
+    if ((o.zone === 'exile' || o.zone === 'library') && fromExile && !castableForItsCosts(g, player, o)) throw new RulesError(`${face.name} can be cast from there only the way the effect that lets you says.`);
+  }
   // CR 715.3d: a card on an adventure is cast from exile as the permanent, not as an Adventure again.
   const onlyFace = !during && !alt && fromExile ? permittedFace(g, player, o) : undefined;
   if (onlyFace !== undefined && faceIndex !== onlyFace) throw new RulesError(`${face.name} can’t be cast from exile — only ${def.faces[onlyFace]?.name ?? 'the other half'} can.`);
@@ -777,20 +808,29 @@ function cast(
     }
   }
 
-  // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
   // Conditions on the mode count are checked as the spell is cast (CR 601.2b).
   // A bonus that depends on a cost ("if this spell was cast using teamwork") looks at the costs being chosen now.
-  const holds = (c: ConditionNode) =>
+  const holds = (c: ConditionNode): boolean =>
     c.type === 'kicked'
       ? kicked || extras.includes('kicker')
       : c.type === 'cast_in_main_phase'
         ? g.active === player && (g.step === 'main1' || g.step === 'main2')
         : c.type === 'paid'
-        ? (extras.includes(String(c.cost)) || altId === c.cost || (c.cost === 'additional' && added.some((a) => !a.required))) !== Boolean(c.not)
-        : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
+          ? (extras.includes(String(c.cost)) || altId === c.cost || (c.cost === 'additional' && added.some((a) => !a.required))) !== Boolean(c.not)
+          : evalCondition(c, { g, controller: player, source: o, events: [], targets: [], x, memo: {} });
+  // CR 702.42a: entwine chooses every mode.
+  const allModes = added.some((a) => a.allModes);
+  return { which, kicks, kicked, o, prepared, def, face, faceIndex, alt, added, faceDown, fused, castFace, modes, fromCommandZone, graveyardKey, freeOnceKey, flashback, aftermath, lifeInstead, freeFromExile, airbent, x, permittedExile, flashIfTargets, needFlashTarget, holds, allModes };
+}
+
+/** CR 601.2b–d: the spell's modes and targets, as chosen. */
+export function castTargets(g: GameState, a: CastArgs, way: ReturnType<typeof castWay>) {
+  const { player, chosenTargets, costChoices } = a;
+  const { kicks, o, face, castFace, modes, x, flashIfTargets, needFlashTarget, holds, allModes } = way;
+  // CR 601.2b–c: modes, then targets. Without enough legal targets the spell can't be cast.
   // CR 702.47: cards spliced onto it add their rules text (and their splice costs, below).
   const splices = spliceCards(g, player, o, castFace, costChoices.splice);
-  let program = spellProgram(castFace, modes, holds, added.some((a) => a.allModes));
+  let program = spellProgram(castFace, modes, holds, allModes);
   for (const s of splices) {
     if (!program) throw new RulesError(`${face.name} is resolved by hand; nothing can be spliced onto it here.`);
     program = appendProgram(program, s.program);
@@ -807,19 +847,92 @@ function cast(
     if (!ok) throw new RulesError(`${face.name} can be cast at instant speed only if it targets ${flashIfTargets.length ? 'what its ability says' : 'that'}.`);
   }
 
+  return { splices, program, targets };
+}
+
+/**
+ * The mana a spell is cast for, before anything is added to it or taken off: its mana cost or the cost it is cast for
+ * instead, with the mana of the optional and additional costs announced (CR 601.2b).
+ */
+function announcedCost(a: CastArgs, way: ReturnType<typeof castWay>): ManaCost {
+  const { face, castFace, alt, added, flashback, lifeInstead, freeFromExile, airbent } = way;
+  // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
+  // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
+  const cost = parseManaCost(a.during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : (airbent ?? face.manaCost))));
+  for (const y of added) addCost(cost, parseManaCost(y.cost.mana ?? ''));
+  // CR 701.67a: "As an additional cost to cast this spell, waterbend {5}" — that much more (X: the value chosen).
+  for (const e of additionalMana(castFace)) addCost(cost, parseManaCost(e.mana));
+  return cost;
+}
+
+/**
+ * The parts of a spell's costs that aren't mana, as announced (CR 601.2b): its additional costs, those of the
+ * alternative and optional costs it is cast for, and what a permission to cast it adds — with X as chosen.
+ */
+export function castCostParts(g: GameState, way: ReturnType<typeof castWay>, x: number): EffectNode[] {
+  return printedCostParts(g, way).map((c) => (c.amount === 'X' ? { ...c, amount: x } : c));
+}
+
+/** Those parts as printed: "X" where one takes X of something ("discard X cards"). */
+function printedCostParts(g: GameState, way: ReturnType<typeof castWay>): EffectNode[] {
+  const { castFace, alt, added, graveyardKey } = way;
+  return [...additionalCosts(castFace), ...(alt?.cost.other ?? []), ...added.flatMap((y) => y.cost.other ?? []), ...graveyardPermissionCosts(g, graveyardKey)];
+}
+
+/** How much of each cost being paid may be waterbent, as printed (CR 701.67a): a number, or "X". */
+function printedWaterbends(way: ReturnType<typeof castWay>): (number | 'X' | undefined)[] {
+  const { castFace, alt, added } = way;
+  return [...additionalMana(castFace).map((e) => e.waterbend), ...added.map((y) => y.cost.waterbend), alt?.cost.waterbend];
+}
+
+/** CR 701.67a: how much of a spell's cost may be waterbent, as it is cast this way. */
+export function castWaterbend(way: ReturnType<typeof castWay>, x: number): number {
+  return printedWaterbends(way).reduce<number>((n, w) => n + (w === 'X' ? x : (w ?? 0)), 0);
+}
+
+/** Whether casting it this way asks for a value of X (CR 601.2b): in its mana, or in what an additional cost takes. */
+export function castAsksX(a: CastArgs, way: ReturnType<typeof castWay>): boolean {
+  return announcedCost(a, way).x > 0 || additionalCosts(way.castFace).some((c) => c.amount === 'X');
+}
+
+/**
+ * An optional cost that makes the spell cheaper — "you may sacrifice any number of nonland permanents. This spell costs
+ * {1} less to cast for each permanent sacrificed this way", March of Swirling Mist's blue cards exiled from the hand —
+ * takes nothing by default. Where the mana can't be found that way, the default is as few as it takes: otherwise the
+ * list would leave out a spell the player can cast. What the spell targets is the last thing given up for it.
+ */
+function withDiscounts(g: GameState, player: PlayerId, o: GameObject, castFace: FaceDef, cost: ManaCost, x: number, additional: Cost, choices: CostChoices, spare: ObjectId[]): CostChoices {
+  const per = (key: 'perSacrificed' | 'perExiled') => castFace.abilities.reduce((n, ab) => n + (ab.kind === 'static' && ab.effect.type === 'cost_modifier' && (ab.effect as CostModifierNode)[key] ? Number((ab.effect as CostModifierNode).amount) : 0), 0);
+  const kinds = ([['sacrifice', 'sacrifice', per('perSacrificed')], ['exile_cards', 'exile', per('perExiled')]] as const).filter(([, , each]) => each > 0);
+  if (!kinds.length) return choices;
+  const payable = (less: number) => Boolean(planManaOnly(g, player, { ...cost, specific: { ...cost.specific }, generic: Math.max(0, cost.generic - less) }, x, choices.crew ?? [], { kind: 'spell', object: o }));
+  if (payable(0)) return choices;
+  for (const [type, list, each] of kinds) {
+    const ask = costAsks(g, player, o, additional, choices).find((k) => k.list === list && k.part.type === type && k.part.amount === 'any');
+    if (!ask) continue;
+    const taken = choices[list] ?? [];
+    const free = ask.candidates.filter((id) => !taken.includes(id));
+    const order = [...free.filter((id) => !spare.includes(id)), ...free.filter((id) => spare.includes(id))];
+    for (let k = 1; k <= order.length; k++) if (payable(each * k)) return { ...choices, [list]: [...taken, ...order.slice(0, k)] };
+  }
+  return choices;
+}
+
+/** CR 601.2f–h: the total cost, the choices its parts were given, and how its mana will be paid. */
+export function castCost(g: GameState, a: CastArgs, way: ReturnType<typeof castWay>, chosen: ReturnType<typeof castTargets>) {
+  const { player, id, extras, during, wantsAutoTap } = a;
+  let { costChoices } = a;
+  const { which, kicks, kicked, o, face, alt, added, castFace, modes, fromCommandZone, graveyardKey, flashback, lifeInstead, freeFromExile, airbent } = way;
+  let { x } = way;
+  const { splices, targets } = chosen;
+  let kickedWith: string[] | undefined;
   // CR 202.1b / 118.6: a card with no mana cost has a cost that can't be paid — it's cast only for an alternative cost
   // or without paying its mana cost (suspend, cascade), never for "nothing" (Ancestral Vision, Lotus Bloom).
   const paysManaCost = !(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile) && !flashback && (alt ? Boolean(alt.withManaCost) : airbent === undefined);
   if (paysManaCost && hasNoManaCost(face)) throw new RulesError(`${face.name} has no mana cost, so it can’t be cast this way.`);
-  // CR 601.2f / CR 118.9: an alternative cost (flashback) replaces the mana cost.
-  // CR 118.9: "without paying its mana cost" is an alternative cost of nothing (CR 107.3b: X is 0).
-  const cost = parseManaCost(during?.free || alt?.id === 'plot' || lifeInstead || freeFromExile ? '' : (flashback ?? (alt ? (alt.withManaCost ? `${face.manaCost}${alt.cost.mana ?? ''}` : (alt.cost.mana ?? '')) : (airbent ?? face.manaCost))));
+  const cost = announcedCost(a, way);
   if (during?.free) x = 0;
-  for (const a of added) addCost(cost, parseManaCost(a.cost.mana ?? ''));
-  // CR 701.67a: "As an additional cost to cast this spell, waterbend {5}" — that much more (X: the value chosen).
-  const extraMana = additionalMana(castFace);
-  for (const e of extraMana) addCost(cost, parseManaCost(e.mana));
-  const bendable = [...extraMana.map((e) => e.waterbend), ...added.map((a) => a.cost.waterbend), alt?.cost.waterbend].reduce<number>((n, w) => n + (w === 'X' ? x : (w ?? 0)), 0);
+  const bendable = castWaterbend(way, x);
   // CR 903.8: {2} more for each previous cast from the command zone (commander tax).
   if (fromCommandZone) cost.generic += 2 * (g.commanderCasts[id] ?? 0);
   if (kicked) {
@@ -843,9 +956,24 @@ function cast(
   addPerTargetCost(castFace, targets, cost);
   addModeCosts(castFace, modes, cost);
   for (const s of splices) addCost(cost, parseManaCost(s.cost));
+  // CR 107.3b: X has a value only where a cost being paid has an X in it (the mana cost, a kicker of {X}{2}, "discard X
+  // cards"). Cast for a cost that has none — evoke, a flashback cost of {2}{R}, "without paying its mana cost" — a
+  // spell with {X} in its mana cost has X = 0.
+  if (a.x > 0 && !cost.x && !printedCostParts(g, way).some((c) => c.amount === 'X') && !printedWaterbends(way).includes('X')) throw new RulesError(`There is no X to choose when ${face.name} is cast this way.`);
   // CR 601.2f / 107.3a: the total cost includes the value chosen for X — generic mana a reduction can take off too
   // (Goblin Electromancer and a Fireball with X=3: {2}{R}).
   foldX(castFace, cost, x);
+  // For the legal-action list: what the costs' parts take, by default.
+  if (a.autoCosts) {
+    const parts = castCostParts(g, way, x);
+    const picked = defaultCostChoices(g, player, o, parts, targets.flat().flatMap((t) => (t.kind === 'object' ? [t.id] : [])));
+    if (!picked) {
+      // What the part that can't be paid says ("Choose 1 permanent(s) to sacrifice to pay the cost.").
+      checkOtherCosts(g, player, o, { other: parts }, {});
+      throw new RulesError(`${face.name}’s costs can’t be paid now.`);
+    }
+    costChoices = picked;
+  }
   // CR 702.119a: emerge — reduced by the sacrificed creature's mana value (generic mana only, CR 118.7).
   if (alt?.reduceBySacrificed) {
     const sac = costChoices.sacrifice?.[0] ? g.objects[costChoices.sacrifice[0]] : undefined;
@@ -860,7 +988,6 @@ function cast(
   applyCostModifiers(g, player, o, castFace, cost, targets);
   // CR 601.2g–h: convoke, improvise and delve pay part of it (the creatures tap, the cards are exiled, as it's paid).
   const helpers = helperKeywords(g, player, o, face);
-  const helping = costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length;
   if (cost.unsupported.length) {
     throw new RulesError(`Paying ${cost.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet. Use manual moves for this card.`);
   }
@@ -888,6 +1015,9 @@ function cast(
     costChoices = { ...costChoices, sacrifice: [...(costChoices.sacrifice ?? []).filter((id) => !all.includes(id)), ...all] };
     additional.other = additional.other!.map((c) => (c === sacAll ? { ...c, amount: all.length } : c));
   }
+  // For the legal-action list: none of them by default — or, where that leaves more mana to pay than there is, as few
+  // as bring the spell within reach (Rottenmouth Viper: "{1} less to cast for each permanent sacrificed this way").
+  if (a.autoCosts) costChoices = withDiscounts(g, player, o, castFace, cost, x, additional, costChoices, targets.flat().flatMap((t) => (t.kind === 'object' ? [t.id] : [])));
   // Torgaar, Plumb the Forbidden: "you may sacrifice any number of creatures" — as many as were chosen (CR 601.2b).
   const fixedSacrifices = (additional.other ?? []).filter((c) => c.type === 'sacrifice' && c.amount !== 'any').reduce((n, c) => n + Number(c.amount ?? 1), 0);
   const anySacrificed = (additional.other ?? []).some((c) => c.type === 'sacrifice' && c.amount === 'any') ? Math.max(0, (costChoices.sacrifice?.length ?? 0) - fixedSacrifices) : 0;
@@ -901,13 +1031,32 @@ function cast(
     if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perSacrificed) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anySacrificed);
     if (a.kind === 'static' && a.effect.type === 'cost_modifier' && (a.effect as CostModifierNode).perExiled) cost.generic = Math.max(0, cost.generic - Number((a.effect as CostModifierNode).amount) * anyExiled);
   }
-  costChoices = withRandomDiscards(g, player, o, additional, costChoices);
+  // (A discard at random is picked as the cost is paid; here, that there are cards for it.)
   checkOtherCosts(g, player, o, additional, costChoices);
   // CR 119.4: all the life it costs at once.
   const lifeTotal = (additional.other ?? []).filter((c) => c.type === 'pay_life').reduce((n, c) => n + lifeCost(g, player, o, c), 0);
   // CR 119.4: paying 0 life is always possible (Angel's Grace: below 0 life and still playing).
   if (lifeTotal > 0 && lifeTotal > g.players[player]!.life) throw new RulesError(`You don’t have ${lifeTotal} life to pay.`);
-  if (helping) payWithHelpers(g, player, o, helpers, cost, costChoices, events);
+  const purpose = { kind: 'spell' as const, object: o };
+  // For the legal-action list: where mana alone can't pay, as much waterbending as it takes — or what convoke,
+  // improvise and delve can cover.
+  if (a.autoCosts && !planManaOnly(g, player, cost, x, costChoices.crew ?? [], purpose)) {
+    if (bendable) {
+      const tappable = g.zones.battlefield.filter((t) => {
+        const p = g.objects[t]!;
+        return p.controller === player && !p.tapped && !(costChoices.crew ?? []).includes(t) && (hasType(g, p, 'Artifact') || hasType(g, p, 'Creature'));
+      });
+      for (let k = 1; k <= Math.min(bendable, cost.generic, tappable.length); k++) {
+        const pick = tappable.slice(0, k);
+        if (!planManaOnly(g, player, { ...cost, specific: { ...cost.specific }, generic: cost.generic - k }, x, [...(costChoices.crew ?? []), ...pick], purpose)) continue;
+        costChoices = { ...costChoices, waterbend: pick };
+        break;
+      }
+    } else if (helpers.length) costChoices = { ...costChoices, ...helperChoices(g, player, o, helpers, cost) };
+  }
+  // CR 601.2g–h: convoke, improvise and delve pay part of it.
+  const helping = Boolean(costChoices.convoke?.length || costChoices.delve?.length || costChoices.improvise?.length);
+  if (helping) helpWith(g, player, o, helpers, cost, costChoices);
   // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the waterbend cost's generic mana.
   const bent = costChoices.waterbend ?? [];
   if (bent.length) {
@@ -917,11 +1066,41 @@ function cast(
       const t = g.objects[b];
       if (!t || t.zone !== 'battlefield' || t.controller !== player || t.tapped || busy.includes(b) || !(hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'))) throw new RulesError('Waterbend by tapping untapped artifacts and creatures you control.');
     }
-    for (const b of bent) setTapped(g, b, true, events);
     cost.generic -= bent.length;
   }
-  // Creatures tapped for a cost (teamwork, conspire, harmonize) can't also tap for mana.
-  if (wantsAutoTap) autoTap(g, player, cost, x, events, [...(costChoices.crew ?? [])], { kind: 'spell', object: o });
+  // CR 601.2g: the mana abilities to activate for what the pool doesn't cover. What a cost taps (teamwork, conspire,
+  // harmonize, convoke, improvise, waterbend) can't also tap for mana.
+  const payment = wantsAutoTap ? planManaOnly(g, player, cost, x, [...(costChoices.crew ?? []), ...(costChoices.convoke ?? []), ...(costChoices.improvise ?? []), ...bent], purpose) : [];
+  if (!payment) throw new RulesError('You don’t have enough untapped mana sources.');
+  if (!wantsAutoTap && !canPayMana(g, player, cost, x, purpose)) throw new RulesError(`Not enough mana to cast ${face.name}.`);
+  // CR 702.174a: the gift's cost is choosing an opponent.
+  const opponents = livePlayers(g).filter((p) => p !== player);
+  const promised = [...(alt ? [alt.id] : []), ...extras].includes('gift');
+  const giftTo = promised ? (costChoices.giftTo ?? opponents[0]) : undefined;
+  if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
+  return { x, cost, bendable, helpers, helping, phyrexianLife, additional, costChoices, anySacrificed, anyExiled, kickedWith, bent, payment, giftTo };
+}
+
+/** A cast action as the readings take it. `during`: cast while an effect resolves (CR 608.2g), whatever the timing. */
+export function castArgsOf(a: Extract<Action, { type: 'cast' }>, during?: CastArgs['during']): CastArgs {
+  return { player: a.player, id: a.object, faceIndex: a.face ?? 0, x: a.x ?? 0, wantsAutoTap: a.autoTap ?? false, chosenTargets: a.targets, modes: a.modes, costChoices: a.costs ?? {}, kickedArg: a.kicked ?? false, altId: a.alt, extras: a.extras ?? [], during, divide: a.divide };
+}
+
+function cast(g: GameState, a: CastArgs, events: GameEvent[]): void {
+  const { player, id, extras, during, divide } = a;
+  const way = castWay(g, a);
+  const chosen = castTargets(g, a, way);
+  const costed = castCost(g, a, way, chosen);
+  const { kicks, kicked, o, prepared, face, faceIndex, alt, added, faceDown, fused, castFace, fromCommandZone, graveyardKey, freeOnceKey, flashback, aftermath, permittedExile } = way;
+  const { splices, program, targets } = chosen;
+  const { x, cost, phyrexianLife, additional, anySacrificed, kickedWith, bent, payment, giftTo, helping } = costed;
+  let { costChoices } = costed;
+  // CR 701.9b: cards discarded at random are picked now, as the cost is paid.
+  costChoices = withRandomDiscards(g, player, o, additional, costChoices);
+  // CR 601.2g–h: what convoke and improvise tap, what delve exiles, what waterbend taps; then the mana abilities.
+  if (helping) payHelpers(g, costChoices, events);
+  for (const b of bent) setTapped(g, b, true, events);
+  runPayment(g, player, payment, events);
 
   // CR 601.2h: pay the total cost; partial payments aren't allowed.
   const spent = payMana(g, player, cost, x, { kind: 'spell', object: o });
@@ -942,7 +1121,7 @@ function cast(
   const hasteUntil = hasteRider ? (hasteRider.haste!.eot ? g.turn : Number.MAX_SAFE_INTEGER) : undefined;
   // CR 702.44a / converge: the colors of mana spent to cast it.
   const colorsSpent = (['W', 'U', 'B', 'R', 'G'] as const).filter((m) => spent[m] > 0).length;
-  const lki = costLKI(g, additional, costChoices);
+  const lki = costLKI(g, player, o, additional, costChoices);
   payOtherCosts(g, player, o, additional, events, costChoices);
 
   if (fromCommandZone) g.commanderCasts[id] = (g.commanderCasts[id] ?? 0) + 1;
@@ -975,10 +1154,6 @@ function cast(
   const before = Object.values(g.turnLog.spellsCast).reduce((a, b) => a + b, 0);
   // Cinder Strike: "if this spell's additional cost was paid" — an optional additional cost, whichever it was.
   const paid = [...(alt ? [alt.id] : []), ...extras, ...(kicked ? ['kicker'] : []), ...(added.some((a) => !a.required) && !extras.includes('additional') ? ['additional'] : [])];
-  // CR 702.174a: the gift's cost is choosing an opponent.
-  const opponents = livePlayers(g).filter((p) => p !== player);
-  const giftTo = paid.includes('gift') ? (costChoices.giftTo ?? opponents[0]) : undefined;
-  if (giftTo && !opponents.includes(giftTo)) throw new RulesError('Promise the gift to an opponent.');
   // Silumgar's Scorn: "if you … controlled a Dragon as you cast this spell" — noted now, for cards that ask.
   const askedTypes = [...new Set([...JSON.stringify(g.cards[o.card]!.faces).matchAll(/"type":"controlled_at_cast","subtypes":\[([^\]]*)\]/g)].flatMap((m) => JSON.parse(`[${m[1]}]`) as string[]))];
   const controlledAtCast = askedTypes.filter((t) => g.zones.battlefield.some((id) => g.objects[id]!.controller === player && chars(g, g.objects[id]!).subtypes.includes(t)));
@@ -1164,8 +1339,8 @@ export function castDuringResolution(
   g: GameState,
   player: PlayerId,
   id: ObjectId,
-  targets: Target[][] | undefined,
-  modes: number[] | undefined,
+  /** The caster's answer: targets and modes, and what pays any additional costs (left out: the engine's default). */
+  choice: { targets?: Target[][] | undefined; modes?: number[] | undefined; costs?: CostChoices | undefined },
   events: GameEvent[],
   opts: { alt?: string; suspended?: true; exileOnLeave?: true; pay?: true } = {},
 ): void {
@@ -1174,7 +1349,26 @@ export function castDuringResolution(
   const choices = castOptions(g.cards[g.objects[id]!.card]!.faces[0]!).filter((x) => x.required);
   const pick = choices.find((x) => (x.cost.other ?? []).every((c) => c.type === 'pay_life')) ?? choices[0];
   // Chandra, Torch of Defiance: "You may cast that card." — paying its mana cost (CR 608.2g), tapping for mana as needed.
-  cast(g, player, id, 0, 0, Boolean(opts.alt) || Boolean(opts.pay) || Boolean(pick?.cost.mana), targets, modes, events, {}, false, opts.alt, pick ? [pick.id] : [], { free: !opts.alt && !opts.pay, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) });
+  // CR 601.2f: a spell cast without paying its mana cost still has its additional costs paid ("sacrifice a creature").
+  cast(
+    g,
+    {
+      player,
+      id,
+      faceIndex: 0,
+      x: 0,
+      wantsAutoTap: Boolean(opts.alt) || Boolean(opts.pay) || Boolean(pick?.cost.mana),
+      chosenTargets: choice.targets,
+      modes: choice.modes,
+      costChoices: choice.costs ?? {},
+      autoCosts: !choice.costs,
+      kickedArg: false,
+      altId: opts.alt,
+      extras: pick ? [pick.id] : [],
+      during: { free: !opts.alt && !opts.pay, ...(opts.suspended ? { suspended: true } : {}), ...(opts.exileOnLeave ? { exileOnLeave: true } : {}) },
+    },
+    events,
+  );
 }
 
 /** Whether a card could be cast right now for free: not a land (CR 305.9). */
@@ -1187,13 +1381,15 @@ export function castableCard(g: GameState, o: GameObject): boolean {
 // Compiled activated abilities (CR 602)
 // ---------------------------------------------------------------------------
 
-interface ActivationChoices {
+export interface ActivationChoices {
   x: number;
   autoTap: boolean;
   targets: Target[][] | undefined;
   modes: number[] | undefined;
   costs: CostChoices;
-  divide?: number[];
+  divide?: number[] | undefined;
+  /** For the legal-action list: nothing was chosen for the costs — take the defaults (as for a cast's `autoCosts`). */
+  autoCosts?: boolean;
 }
 
 /** Whether a permanent's mana abilities would use it up (a Treasure's "Sacrifice this token") — it can't also pay another cost. */
@@ -1229,7 +1425,20 @@ export function freeEquipAvailable(g: GameState, player: PlayerId, a: ActivatedA
   return Boolean(playerRule(g, player, 'first_equip_free_each_turn')) || (g.active === player && Boolean(playerRule(g, player, 'first_equip_free')));
 }
 
-function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
+/*
+ * Activating an ability is read in the order the rules ask for its choices (CR 602.2, following 601.2), and only then done:
+ *
+ *   activationWay      which ability, by whom, and whether it may be activated now
+ *   activationTargets  its modes and targets
+ *   activationCost     what it costs, that the choices made for its costs are ones they accept, how the mana is paid
+ *   activate           the three of them, then the payment and the ability on the stack
+ *
+ * The first three only read the game: the legal-action list and a client's prompts are these, stopped before anything
+ * is paid.
+ */
+
+/** CR 602.2a: which ability, and whether this player may activate it now. Throws what the engine says otherwise. */
+export function activationWay(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices) {
   const o = obj(g, id);
   // CR 602.2: only an object's controller (or owner, outside the battlefield) can activate its abilities.
   const yours = o.zone === 'battlefield' ? o.controller === player : (o.zone === 'hand' || o.zone === 'graveyard' || o.zone === 'command') && o.owner === player;
@@ -1279,20 +1488,42 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   if (cost.untap && !o.tapped) throw new RulesError(`${name} is already untapped.`);
   // CR 302.6: the untap symbol too.
   if (cost.untap && !canActivateTapAbilities(g, o)) throw new RulesError(`${name} hasn’t been under your control since your turn began.`);
-  choices = { ...choices, costs: withRandomDiscards(g, player, o, cost, choices.costs) };
-  checkOtherCosts(g, player, o, cost, choices.costs);
+  return { o, ability, name, cost };
+}
 
+/** CR 602.2b (following CR 601.2b–d): the ability's modes and targets, as chosen. */
+export function activationTargets(g: GameState, player: PlayerId, way: ReturnType<typeof activationWay>, choices: ActivationChoices) {
+  const { o, ability } = way;
   // CR 602.2b (following CR 601.2b–c): modes and targets.
   const program = flatten([ability], choices.modes);
   const targets = targetingAs(true, () => chooseTargets(g, player, program.specs, choices.targets, o, choices.x));
   const division = divisionFor(program.effects, targets, choices.x, choices.divide, (a) => amountOf({ g, controller: player, source: o, events: [], targets, x: choices.x, memo: {} }, a as Amount));
-  const source = { id, zcc: o.zcc };
+  const source = { id: o.id, zcc: o.zcc };
   // "Choose one that hasn't been chosen this turn —" (Kargan Intimidator).
-  recordModes(g, source, ability, choices.modes);
+  checkModes(g, source, ability, choices.modes);
+  return { program, targets, division, source };
+}
 
-  // CR 602.2b (following CR 601.2g–h): mana abilities, then the whole cost is paid.
+/** CR 602.2b (following CR 601.2f–h): the cost's parts as chosen, the mana left to pay and how it will be paid. */
+export function activationCost(g: GameState, player: PlayerId, way: ReturnType<typeof activationWay>, chosen: ReturnType<typeof activationTargets>, choices: ActivationChoices) {
+  const { o, ability, cost } = way;
+  const { targets } = chosen;
+  const id = o.id;
+  // For the legal-action list: what the cost's parts take, by default (with X as given: "Sacrifice X Squirrels");
+  // {0} for the first equip of the turn where that is allowed.
+  if (choices.autoCosts) {
+    const picked = defaultCostChoices(g, player, o, cost.other ?? [], targets.flat().flatMap((t) => (t.kind === 'object' ? [t.id] : [])));
+    if (!picked) {
+      // What the part that can't be paid says ("You don't have 3 energy.").
+      checkOtherCosts(g, player, o, cost, {});
+      throw new RulesError('That cost can’t be paid now.');
+    }
+    choices = { ...choices, costs: freeEquipAvailable(g, player, ability) ? { ...picked, freeEquip: true } : picked };
+  }
+  // CR 602.2b (following CR 601.2f–h): the non-mana costs, then the mana.
+  // (A discard at random is picked as the cost is paid; here, that there are cards for it.)
+  checkOtherCosts(g, player, o, cost, choices.costs);
   const mana = parseManaCost(choices.costs.freeEquip ? '' : (cost.mana ?? ''));
-  if (isEquipAbility(ability)) (g.turnLog.equipped ??= []).push(player);
   applyPowerUp(g, o, ability, mana, player, targets);
   if (!Number.isInteger(choices.x) || choices.x < 0) throw new RulesError('X must be a whole number, 0 or more.');
   if (mana.unsupported.length) throw new RulesError(`Paying ${mana.unsupported.map((s) => `{${s}}`).join('')} isn’t supported yet.`);
@@ -1301,6 +1532,19 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
   // its own "{2}, Sacrifice this creature" — unless its mana ability would use it up, like a Treasure's.)
   const leaving = [...(cost.other?.some((c) => c.type === 'sacrifice_self' || c.type === 'return_self' || c.type === 'exile_self_battlefield') ? [id] : []), ...(choices.costs.sacrifice ?? [])];
   const usesItself = [...(cost.tap ? [id] : []), ...leaving.filter((x) => manaUsesItUp(g, x)), ...(choices.costs.crew ?? [])];
+  // For the legal-action list: where mana alone can't pay, as much waterbending as it takes (CR 701.67a).
+  if (choices.autoCosts && cost.mana && !choices.costs.freeEquip && cost.waterbend && !planAutoTap(g, player, mana, choices.x, usesItself, { kind: 'ability', source: o })) {
+    const tappable = g.zones.battlefield.filter((x) => {
+      const t = g.objects[x]!;
+      return t.controller === player && !t.tapped && !usesItself.includes(x) && (hasType(g, t, 'Artifact') || hasType(g, t, 'Creature'));
+    });
+    for (let k = 1; k <= Math.min(cost.waterbend, mana.generic, tappable.length); k++) {
+      const pick = tappable.slice(0, k);
+      if (!planAutoTap(g, player, { ...mana, generic: mana.generic - k }, choices.x, [...usesItself, ...pick], { kind: 'ability', source: o })) continue;
+      choices = { ...choices, costs: { ...choices.costs, waterbend: pick } };
+      break;
+    }
+  }
   // CR 701.67a: waterbend — untapped artifacts and creatures tapped for some of the generic mana.
   const bent = choices.costs.waterbend ?? [];
   if (bent.length) {
@@ -1325,8 +1569,28 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     mana.specific[ability.xColor] = (mana.specific[ability.xColor] ?? 0) + mana.x * choices.x;
     mana.x = 0;
   }
-  if (cost.mana && !choices.costs.freeEquip && choices.autoTap) autoTap(g, player, mana, choices.x, events, usesItself, { kind: 'ability', source: o });
-  if (cost.mana && !choices.costs.freeEquip && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
+  // CR 602.2b (601.2g): the mana abilities to activate for what the pool doesn't cover.
+  const paysMana = Boolean(cost.mana) && !choices.costs.freeEquip;
+  const purpose = { kind: 'ability' as const, source: o };
+  const payment = paysMana && choices.autoTap ? planManaOnly(g, player, mana, choices.x, usesItself, purpose) : [];
+  if (!payment) throw new RulesError('You don’t have enough untapped mana sources.');
+  if (paysMana && !choices.autoTap && !canPayMana(g, player, mana, choices.x, purpose)) throw new RulesError('Not enough mana to activate that.');
+  return { mana, bent, phyrexianLife, payment, paysMana, costs: choices.costs };
+}
+
+function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, choices: ActivationChoices, events: GameEvent[]): void {
+  const way = activationWay(g, player, id, index, choices);
+  const chosen = activationTargets(g, player, way, choices);
+  const costed = activationCost(g, player, way, chosen, choices);
+  const { o, ability, name, cost } = way;
+  const { program, targets, division, source } = chosen;
+  const { mana, bent, phyrexianLife, payment, paysMana } = costed;
+  // CR 701.9b: cards discarded at random are picked now, as the cost is paid.
+  choices = { ...choices, costs: withRandomDiscards(g, player, o, cost, choices.costs) };
+  recordModes(g, source, ability, choices.modes);
+  if (isEquipAbility(ability)) (g.turnLog.equipped ??= []).push(player);
+  runPayment(g, player, payment, events);
+  if (paysMana && !payMana(g, player, mana, choices.x, { kind: 'ability', source: o })) throw new RulesError('Not enough mana to activate that.');
   if (phyrexianLife) {
     const ps = g.players[player]!;
     const lost = lifeLoss(g, player, phyrexianLife);
@@ -1354,7 +1618,7 @@ function activate(g: GameState, player: PlayerId, id: ObjectId, index: number, c
     const counts = (g.turnLog.abilityActivations ??= {});
     counts[key] = (counts[key] ?? 0) + 1;
   }
-  const lki = costLKI(g, cost, choices.costs, o);
+  const lki = costLKI(g, player, o, cost, choices.costs);
   payOtherCosts(g, player, o, cost, events, choices.costs);
 
   // CR 602.2: the ability goes on the stack.

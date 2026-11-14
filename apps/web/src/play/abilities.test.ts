@@ -15,8 +15,10 @@ const cards = compiled([
   card('Shang-Chi, Master of Kung Fu', 'Legendary Creature — Human Warrior Hero', '{1}{G}', 'You may activate abilities of creatures you control as though those creatures had haste.\n{T}: Add two mana of any one color. Spend this mana only to activate abilities of creature sources.', ['2', '2']),
   card('Devoted Druid', 'Creature — Elf Druid', '{1}{G}', '{T}: Add {G}.\nPut a -1/-1 counter on this creature: Untap this creature.', ['0', '2']),
   card('Basalt Monolith', 'Artifact', '{3}', "This artifact doesn't untap during your untap step.\n{T}: Add {C}{C}{C}.\n{3}: Untap this artifact."),
+  card('Mox Amber', 'Legendary Artifact', '{0}', '{T}: Add one mana of any color among legendary creatures and planeswalkers you control.'),
+  { ...card('Yisan, the Wanderer Bard', 'Legendary Creature — Human Rogue', '{2}{G}', '', ['2', '3']), colors: ['G'] },
 ]);
-const setup = soloSetup(['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves']);
+const setup = soloSetup(['Kinnan, Bonder Prodigy', 'Shang-Chi, Master of Kung Fu', 'Devoted Druid', 'Basalt Monolith', 'Grizzly Bears', 'Llanowar Elves', 'Mox Amber', 'Yisan, the Wanderer Bard']);
 const scene = (battlefield: string[], hand: string[] = [], myTurn = 2) => sceneOf(setup, cards, battlefield, hand, myTurn);
 const of = (g: GameState, id: string) => legalActions(g, 'p1').filter((a) => 'object' in a && a.object === id);
 const rows = (g: GameState, id: string) => abilityRows(g, 'p1', id, of(g, id)).map((r) => `${r.text} => ${r.actions.length ? `${r.actions.length} way${r.actions.length > 1 ? 's' : ''}` : r.why}`);
@@ -47,6 +49,23 @@ describe('a permanent’s menu lists every activated ability it has', () => {
     // Somebody else's permanent has no menu of abilities.
     expect(abilityRows(sick.g, 'p2', kinnan, [])).toEqual([]);
     expect(abilityCounts(sick.g, 'p2', kinnan)).toEqual({ abilities: 0, nonMana: 0 });
+  });
+
+  it('CR 106.5: a mana ability with nothing to add is offered, says so, and is never a single click', () => {
+    const idle = (g: GameState) => (a: Action) => a.type === 'activate_mana' && !manaPreview(g, a);
+    const none = scene(['Mox Amber', 'Grizzly Bears']);
+    const mox = none.id('Mox Amber');
+    expect(of(none.g, mox)).toHaveLength(1);
+    expect(actionLabel(none.g, of(none.g, mox)[0]!)).toBe('{T}: Add one mana of any color among legendary creatures and planeswalkers you control. (no mana right now)');
+    expect(clickOutcome(of(none.g, mox), [], abilityCounts(none.g, 'p1', mox), idle(none.g))).toEqual({ kind: 'menu' });
+    // With a legend of one color, it is the one thing to do, and the click does it.
+    const one = scene(['Mox Amber']);
+    // (Wherever the shuffle left it: the scene only fetches from the library.)
+    const yisan = Object.values(one.g.objects).find((x) => x.owner === 'p1' && x.card === 'Yisan, the Wanderer Bard')!;
+    if (yisan.zone !== 'battlefield') one.run({ type: 'manual', player: 'p1', op: { kind: 'move', object: yisan.id, to: 'battlefield' } });
+    const listed = of(one.g, one.id('Mox Amber'));
+    expect(listed.map((a) => actionLabel(one.g, a))).toEqual(['Add {G}']);
+    expect(clickOutcome(listed, [], abilityCounts(one.g, 'p1', one.id('Mox Amber')), idle(one.g))).toEqual({ kind: 'act', action: listed[0] });
   });
 
   it('a permanent with one ability still does it on a click; one with nothing to do does nothing', () => {

@@ -7,10 +7,13 @@ import {
   chars,
   choiceModes,
   choicePrompts,
+  costPromptOpen,
   mustAttack,
+  withCostAnswers,
   type Action,
   type AttackTarget,
   type ChoiceAnswer,
+  type CostPrompt,
   type DamageAssignment,
   type GameState,
   type ModeMenu,
@@ -26,7 +29,10 @@ import { RulesText } from '../components/bits';
 import { CardBackFace } from '../components/Card';
 import { Actions, PlanArrows } from './actionbar';
 import { TableCard } from './cards';
+import { needsChoices, openCostPrompts, targeting, type Choosing, type Targeting } from './flow';
 import { actionLabel, sameTarget, targetLabel } from './labels';
+
+export { needsChoices, type Choosing, type Targeting };
 import { publicName } from './log';
 import { liveCandidates, pickOf, promptRange, type Pick } from './pick';
 
@@ -264,32 +270,22 @@ export function TargetPicker({
 // A listed cast or activation: modes, then targets, then the action.
 // ---------------------------------------------------------------------------
 
-type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
-
-/** Whether a listed action needs the player to choose anything before it's applied. */
-export function needsChoices(g: GameState, a: Action): boolean {
-  if (a.type !== 'cast' && a.type !== 'activate') return false;
-  try {
-    return Boolean(choiceModes(g, a)) || choicePrompts(g, a).length > 0;
-  } catch {
-    return false;
-  }
-}
-
 export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g: GameState; view: PlayerView; action: Choosing; setPick: SetPick; onCommit: (a: Action) => void; onCancel: () => void }) {
   const menu = useMemo(() => {
     try {
-      return choiceModes(g, action);
+      return targeting(action) ? choiceModes(g, action) : null;
     } catch {
       return null;
     }
   }, [g, action]);
-  const [modes, setModes] = useState<number[] | null>(menu ? null : (action.modes ?? null));
+  const [modes, setModes] = useState<number[] | null>(menu ? null : ((targeting(action) ? action.modes : undefined) ?? null));
+  // The action with its modes and targets chosen: what is left is what pays for it.
+  const [paying, setPaying] = useState<Choosing | null>(null);
   // A mode set is choosable if every target it asks for has enough legal candidates.
   const feasible = useCallback(
     (m: number[]) => {
       try {
-        return choicePrompts(g, action, m).every((pr) => pr.candidates.length >= promptRange(pr)[0]);
+        return targeting(action) && choicePrompts(g, action, m).every((pr) => pr.candidates.length >= promptRange(pr)[0]);
       } catch {
         return false;
       }
@@ -297,6 +293,7 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
     [g, action],
   );
   const prompts = useMemo((): { list: TargetPrompt[] } | { error: string } | null => {
+    if (!targeting(action)) return { list: [] };
     if (menu && !modes) return null;
     try {
       return { list: choicePrompts(g, action, modes ?? action.modes) };
@@ -305,15 +302,21 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
     }
   }, [g, action, menu, modes]);
 
+  // CR 601.2h: with its modes and targets chosen, what pays its costs — or, with nothing to decide there, it is done.
   const finish = (targets?: Target[][]) => {
-    const out: Choosing = { ...action, ...(menu && modes ? { modes } : {}) };
-    if (targets) out.targets = targets;
-    else if (prompts && 'list' in prompts && !prompts.list.length) delete out.targets;
-    onCommit(out);
+    let out: Choosing = action;
+    if (targeting(action)) {
+      const chosen: Targeting = { ...action, ...(menu && modes ? { modes } : {}) };
+      if (targets) chosen.targets = targets;
+      else if (prompts && 'list' in prompts && !prompts.list.length) delete chosen.targets;
+      out = chosen;
+    }
+    if (openCostPrompts(g, out).length) setPaying(out);
+    else onCommit(out);
   };
 
   useEffect(() => {
-    if (prompts && 'list' in prompts && prompts.list.length === 0) finish();
+    if (!paying && prompts && 'list' in prompts && prompts.list.length === 0) finish();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prompts]);
 
@@ -323,11 +326,18 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
       {actionLabel(g, action)} · {publicName(action.object, g)}
     </p>
   );
+  if (paying)
+    return (
+      <div>
+        {head}
+        <CostPicker g={g} view={view} action={paying} setPick={setPick} onDone={onCommit} onCancel={onCancel} />
+      </div>
+    );
   if (menu && !modes)
     return (
       <div>
         {head}
-        <ModePicker menu={menu} initial={action.modes} onDone={setModes} onCancel={onCancel} feasible={feasible} />
+        <ModePicker menu={menu} initial={targeting(action) ? action.modes : undefined} onDone={setModes} onCancel={onCancel} feasible={feasible} />
       </div>
     );
   if (!prompts) return null;
@@ -341,13 +351,89 @@ export function ActionFlow({ g, view, action, setPick, onCommit, onCancel }: { g
         </button>
       </div>
     );
-  if (!prompts.list.length) return null;
+  if (!prompts.list.length || !targeting(action)) return null;
   const sameModes = JSON.stringify(modes ?? action.modes ?? null) === JSON.stringify(action.modes ?? null);
   return (
     <div>
       {head}
       <TargetPicker g={g} view={view} prompts={prompts.list} {...(sameModes && action.targets ? { defaults: action.targets } : {})} setPick={setPick} onDone={finish} onCancel={onCancel} doneLabel="Confirm" />
     </div>
+  );
+}
+
+const VERB_LABEL: Record<string, string> = { 'return to your hand': 'Return', "return to its owner's hand": 'Return', "put into its owner's graveyard": 'Choose' };
+
+/**
+ * What pays the costs of a spell or ability (CR 601.2h): one step for each part of the cost with something to decide —
+ * which creature is sacrificed, which cards are discarded or exiled, which creatures crew or convoke. The engine says
+ * what each part takes and from what (`costPrompts`); what the player picks goes back into the action.
+ *
+ * What only taps (crewing, convoke) starts with the engine's own pick, since changing it costs nothing. What is lost
+ * for good starts empty: nothing is sacrificed, discarded or exiled that the player didn't click.
+ */
+function CostPicker({ g, view, action, setPick, onDone, onCancel }: { g: GameState; view: PlayerView; action: Choosing; setPick: SetPick; onDone: (a: Action) => void; onCancel: () => void }) {
+  const prompts = useMemo(() => openCostPrompts(g, action), [g, action]);
+  const [answers, setAnswers] = useState<string[][]>([]);
+  // The next part with something to decide; parts with nothing to decide take what they must.
+  let at = answers.length;
+  const settled = [...answers];
+  while (at < prompts.length && !costPromptOpen(prompts[at]!)) settled[at++] = prompts[at - 1]!.candidates.slice(0, prompts[at - 1]!.min);
+  const p = prompts[at];
+  useEffect(() => {
+    if (!p) onDone(withCostAnswers(action, prompts, settled));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p]);
+  if (!p) return null;
+  // One object pays one part: what was picked for an earlier part isn't offered again.
+  const taken = new Set(settled.flat());
+  const candidates = p.candidates.filter((id) => !taken.has(id));
+  const keeps = p.optional || p.verb === 'tap' || p.verb === 'untap';
+  const total = p.total;
+  const label = VERB_LABEL[p.verb] ?? `${p.verb[0]!.toUpperCase()}${p.verb.slice(1)}`;
+  const parts = prompts.filter(costPromptOpen);
+  const last = !prompts.slice(at + 1).some(costPromptOpen);
+  // With the last part chosen the whole action is known: the engine says whether it takes it — a third creature
+  // convoking for a spell with {2} of generic mana, not enough mana left once the lands' owner is sacrificed — before
+  // anything is sent.
+  const whole = (ids: string[]): string | null => {
+    if (!last) return null;
+    const rest = prompts.slice(at + 1).map((q) => q.candidates.slice(0, q.min));
+    try {
+      const r = apply(g, withCostAnswers(action, prompts, [...settled.slice(0, at), ids, ...rest]));
+      return r.ok ? null : r.error;
+    } catch {
+      return null;
+    }
+  };
+  const short = (ids: string[]): string | null => {
+    if (!total) return null;
+    const sum = ids.reduce((n, id) => n + (total.each[id] ?? 0), 0);
+    return sum >= total.need ? null : `Total ${total.of} ${total.need} or greater: ${sum} so far.`;
+  };
+  return (
+    <ObjectPicker
+      key={at}
+      view={view}
+      candidates={candidates}
+      min={p.min}
+      max={Math.min(p.max, candidates.length)}
+      label={label}
+      {...(p.optional ? { noneLabel: 'Pay with mana' } : {})}
+      title={
+        <>
+          <RulesText text={p.text} />
+          {parts.length > 1 && <span className="hint"> (cost {parts.indexOf(p) + 1} of {parts.length})</span>}
+        </>
+      }
+      initial={keeps ? p.chosen.filter((id) => candidates.includes(id)) : []}
+      setPick={setPick}
+      onDone={(ids) => setAnswers([...settled.slice(0, at), ids])}
+      extraOk={(ids: string[]) => short(ids) ?? whole(ids)}
+    >
+      <button type="button" className="ghost" onClick={onCancel}>
+        Back
+      </button>
+    </ObjectPicker>
   );
 }
 
@@ -367,6 +453,7 @@ export function ObjectPicker({
   setPick,
   onDone,
   extraOk,
+  initial,
   children,
 }: {
   view: PlayerView;
@@ -381,9 +468,11 @@ export function ObjectPicker({
   setPick: SetPick;
   onDone: (ids: string[]) => void;
   extraOk?: (ids: string[]) => string | null;
+  /** What is chosen to begin with (a default the player may change). */
+  initial?: string[];
   children?: React.ReactNode;
 }) {
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<string[]>(initial ?? []);
   const toggle = (id: string) => setChosen((c) => (c.includes(id) ? c.filter((x) => x !== id) : max === 1 ? [id] : c.length < max ? [...c, id] : c));
   // Keyed on the candidates' contents: callers may pass a new array each render.
   const key = candidates.join('|');
@@ -414,7 +503,7 @@ export function ObjectPicker({
         ))}
       </div>
       {children}
-      <Confirm ok={!problem && chosen.length <= max} why={chosen.length ? problem : null} label={button} quiet={none && candidates.length > 0} onClick={() => onDone(chosen)} />
+      <Confirm ok={!problem && chosen.length <= max} why={chosen.length || (min === 0 && extraOk) ? problem : null} label={button} quiet={none && candidates.length > 0 && !problem} onClick={() => onDone(chosen)} />
     </div>
   );
 }
@@ -1170,8 +1259,8 @@ function CastFreePanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
       setPick={setPick}
       onCancel={() => setCasting(false)}
       onCommit={(a) => {
-        const c = a as Choosing;
-        answer({ kind: 'cast_free', cast: true, ...(c.targets ? { targets: c.targets } : {}), ...(c.modes ? { modes: c.modes } : {}) });
+        const c = a as Targeting;
+        answer({ kind: 'cast_free', cast: true, ...(c.targets ? { targets: c.targets } : {}), ...(c.modes ? { modes: c.modes } : {}), ...(c.costs ? { costs: c.costs } : {}) });
       }}
     />
   );

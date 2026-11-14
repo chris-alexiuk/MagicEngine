@@ -101,16 +101,23 @@ jobs:
           set -o pipefail
           allowed="$(git log -1 --format=%B | sed -n 's/^Regrades: *\([0-9][0-9]*\).*/\1/p' | head -n1)"
           status=0
-          pnpm cards:check --jobs "$(nproc)" --commit "$GITHUB_SHA" --out ../../apps/web/public/checks.json.gz \
+          pnpm cards:check --jobs "$(nproc)" --commit "$GITHUB_SHA" --out /tmp/checks.json.gz \
             --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz \
             --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades "${allowed:-0}" 2>&1 | tee /tmp/checks.log || status=$?
           echo "$status" > /tmp/checks.status
           [ -f /tmp/changes.md ] && cat /tmp/changes.md >> "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: Fuzz games with random decks from the full card pool
+        # Fails on a crash, a listed move the engine refuses, or a broken invariant. A move the engine would take and
+        # never listed is reported (here and in fuzz.log) without failing: these games find such gaps by chance, old
+        # ones as a rule, and the gate before each commit (tools/dev/fuzz-all.sh) is where they fail.
         run: |
           set -o pipefail
-          pnpm fuzz --games 60 --seed "$GITHUB_RUN_NUMBER" 2>&1 | tee /tmp/fuzz.log
+          pnpm fuzz --games 60 --seed "$GITHUB_RUN_NUMBER" --report-unlisted 2>&1 | tee /tmp/fuzz.log
+          if grep -q "unlisted: [1-9]" /tmp/fuzz.log; then
+            echo "::warning::The fuzz games found moves the engine takes but never lists (fuzz.log on the reports branch)."
+            { echo; echo "### Moves the engine takes but never lists"; echo; echo '```'; sed -n '/unlisted: /,$p' /tmp/fuzz.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: card-db
@@ -119,16 +126,17 @@ jobs:
             apps/web/public/cards.meta.json
             apps/web/public/coverage.json
             apps/web/public/coverage.md
-            apps/web/public/checks.json.gz
           retention-days: 30
       - name: Publish to the reports branch
         # Runs on failure too, so the build log is readable without access to the Actions UI.
         if: always()
         run: |
           mkdir -p /tmp/reports
-          for f in cards.json.gz cards.meta.json coverage.json coverage.md checks.json.gz; do
+          for f in cards.json.gz cards.meta.json coverage.json coverage.md; do
             [ -f "apps/web/public/$f" ] && cp "apps/web/public/$f" /tmp/reports/
           done
+          # (Beside the card DB on the branch, not in the app's own files: the app has no use for it.)
+          [ -f /tmp/checks.json.gz ] && cp /tmp/checks.json.gz /tmp/reports/checks.json.gz
           [ -f /tmp/changes.md ] && cp /tmp/changes.md /tmp/reports/changes.md
           [ -f /tmp/checks.log ] && cp /tmp/checks.log /tmp/reports/checks.log
           [ -f /tmp/cards-build.log ] && tail -c 200000 /tmp/cards-build.log > /tmp/reports/build.log

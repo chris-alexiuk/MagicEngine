@@ -1082,8 +1082,12 @@ export interface CastOptionNode extends EffectNode {
   id: string;
   kind: 'alternative' | 'additional';
   cost: Cost;
-  /** Escape: cast from your graveyard this way (CR 702.138a); foretell, plot, madness: from exile. */
-  zone?: 'graveyard' | 'exile';
+  /**
+   * Where the card has to be for this cost: escape, from your graveyard (CR 702.138a); foretell, plot, madness, from
+   * exile; warp, "from your hand" (CR 702.185a). Without one it applies wherever the card may be cast from (evoke on a
+   * card an effect lets you cast from exile).
+   */
+  zone?: 'graveyard' | 'exile' | 'hand';
   /** Spectacle: "if an opponent lost life this turn" (CR 702.137a). */
   condition?: ConditionNode;
   /** Entwine: all modes are chosen (CR 702.42a). */

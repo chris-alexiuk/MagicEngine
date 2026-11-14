@@ -32,9 +32,10 @@ export function extraCasts(g: GameState, player: PlayerId, id: string, listed: A
         out.push({ ...rest, x } as Action);
         continue;
       }
-      // Another X can need other targets ("destroy X target artifacts", "with mana value X"): the engine's default
-      // choice for that number — and only what it then accepts (there may not be that many to target).
-      const { targets: _t, modes: _m, ...bare } = rest;
+      // Another X can need other targets ("destroy X target artifacts", "with mana value X") and other things to pay
+      // with ("discard X cards"): the engine's default choice for that number — and only what it then accepts (there
+      // may not be that many to target).
+      const { targets: _t, modes: _m, costs: _c, ...bare } = rest;
       const choice = defaultChoiceAtX(g, a, x);
       const v = { ...bare, x, ...(choice ?? {}) } as Action;
       if (choice && ok(v)) out.push(v);

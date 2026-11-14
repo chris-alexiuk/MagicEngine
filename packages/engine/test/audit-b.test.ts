@@ -1602,7 +1602,7 @@ describe('audit B — batch 4', () => {
     const copy = g.zones.exile.find((id) => g.objects[id]!.prepareOf)!;
     emptyPool(g, 'alice');
     g.players.alice!.pool.G = 1;
-    g = settle(act(g, { type: 'cast', player: 'alice', object: copy, targets: obj(angel) }));
+    g = settle(act(g, { type: 'cast', player: 'alice', object: copy, face: 1, targets: obj(angel) }));
     expect(g.objects[angel]!.counters['+1/+1']).toBe(1);
     expect(g.players.alice!.life).toBe(21);
     expect(g.objects[angel]!.prepared).toBeFalsy();

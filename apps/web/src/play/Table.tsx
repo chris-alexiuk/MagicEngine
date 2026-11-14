@@ -13,7 +13,7 @@ import { clickOutcome, dragAction } from './click';
 import { cardClass, Command, Elsewhere, Hand, MySeat, OpponentSeat, Piles, Plate, Pool, type BoardHandlers } from './Board';
 import { lookOf as matLook, type SeatLook } from '../components/Mat';
 import { shownCard } from './cards';
-import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices } from './Choices';
+import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices, type Choosing, type Targeting } from './Choices';
 import { actionLabel, actionObject, manaPreview, previewLabel, targetLabel } from './labels';
 import { spendText } from './mana-text';
 import { asYou, lineFor, narrate, publicName, STEP_NAME, type LogLine } from './log';
@@ -24,7 +24,6 @@ import { extraCasts, hasXRange } from './probes';
 import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, defaultStops, dummiesOf, modeOf, newGame, passUntilDone, peekPass, replay, saveGame, step, TURN_STEPS, type Ctx, type GameSetup, type Mode, type PassUntil, type Stops } from './session';
 import { withPrinting } from '../skins';
 
-type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
 
 export interface Live {
   setup: GameSetup;
@@ -237,7 +236,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     setMenu(null);
     const hold = shift.current && goesOnStack(a);
     if (needsChoices(g, a)) {
-      setFlow(a as Choosing);
+      setFlow(a);
       setFlowHold(hold);
     } else act(a, true, hold);
   };
@@ -306,7 +305,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     if (pick || flow || pendingMine || !myPriority) return;
     const { listed, extra } = optionsFor(id);
     // A permanent with several abilities always shows them all, rather than doing the one that can be paid for now.
-    const out = clickOutcome(listed, extra, viewer ? abilityCounts(g, viewer, id) : undefined);
+    const out = clickOutcome(listed, extra, viewer ? abilityCounts(g, viewer, id) : undefined, (a) => a.type === 'activate_mana' && !manaPreview(g, a));
     if (out.kind === 'act') choose(out.action);
     else if (out.kind === 'menu') setMenu({ id, rect, full: false });
   };
@@ -581,7 +580,8 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                       }}
                     />
                     {/* Responding to your own spell starts here: it stays on the stack with priority still yours. */}
-                    {holding ? (
+                    {/* (A mana ability never goes on the stack: nothing to hold priority after.) */}
+                    {flow.type === 'activate_mana' ? null : holding ? (
                       <p className="hint hold-note">Holding priority: you keep it after this goes on the stack.</p>
                     ) : (
                       <label className="check small hold-note" title="Keep priority after this goes on the stack, so you can respond to it yourself before it resolves. (Shift+click a card does the same.)">
@@ -921,7 +921,7 @@ function CardMenu({ g, view, viewer, id, rect, actions, extra, onChoose, onView,
   }, [onClose]);
   useEffect(() => ref.current?.querySelector<HTMLButtonElement>('button')?.focus(), []);
   // One X picker for each spell face or ability that takes an X.
-  const xGroups = new Map<string, Choosing[]>();
+  const xGroups = new Map<string, Targeting[]>();
   for (const a of extra) {
     if ((a.type !== 'cast' && a.type !== 'activate') || a.x === undefined || (a.type === 'cast' && a.kicked)) continue;
     const key = a.type === 'cast' ? `cast:${a.face ?? 0}:${a.alt ?? ''}` : `activate:${a.ability}`;
@@ -994,7 +994,7 @@ function CardMenu({ g, view, viewer, id, rect, actions, extra, onChoose, onView,
   );
 }
 
-function XCast({ g, options, onChoose }: { g: GameState; options: Choosing[]; onChoose: (a: Action) => void }) {
+function XCast({ g, options, onChoose }: { g: GameState; options: Targeting[]; onChoose: (a: Action) => void }) {
   const values = options.map((a) => a.x ?? 0);
   const [x, setX] = useState(values[values.length - 1] ?? 0);
   const a = options.find((o) => o.x === x) ?? options[0]!;
