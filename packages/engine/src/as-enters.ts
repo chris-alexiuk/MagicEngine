@@ -54,6 +54,22 @@ function enchantAsEnters(g: GameState, o: GameObject, host: string | undefined, 
   }
 }
 
+/**
+ * Whether this permanent has no size (or loyalty) because the line of its text that gives it one wasn't read: nothing
+ * else made it survive, and what is printed isn't a number above zero ("*", "0", "1+*"; loyalty "X").
+ */
+export function sizeByHand(g: GameState, o: GameObject): 'size' | 'loyalty' | null {
+  if (o.zone !== 'battlefield' || o.faceDown || o.handPT) return null;
+  const face = faceOf(g, o);
+  if (!face.unparsed.length && !face.manualKeywords?.length) return null;
+  // A clone that was read and copied nothing has no size by its own text (Evil Twin, 0/0: only its exception is unread).
+  if (face.abilities.some((a) => a.kind === 'static' && a.effect.type === 'as_enters' && (a.effect as AsEntersNode).choice === 'copy')) return null;
+  const c = chars(g, o);
+  if (c.types.includes('Creature')) return c.toughness <= 0 && !(Number(face.toughness) > 0) ? 'size' : null;
+  if (c.types.includes('Planeswalker')) return (o.counters.loyalty ?? 0) <= 0 && !(Number(face.loyalty) > 0) ? 'loyalty' : null;
+  return null;
+}
+
 /** Asks for the next pending "as enters" choice. True if a choice is now pending. */
 export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean {
   while (g.asEnters?.length && !g.pending) {
@@ -190,6 +206,23 @@ export function promptAsEnters(g: GameState, events: GameEvent[] = []): boolean 
         g.pending = { ...base, text: `Choose what ${nameOf(g, o)} enchants.`, ...(hosts.length ? { candidates: hosts } : { options: players }) };
         break;
       }
+      case 'size':
+      case 'loyalty': {
+        // Not what its text gives it after all (it entered as a copy, with counters, a size of its own): nothing to ask.
+        if (sizeByHand(g, o) !== node.choice) {
+          delete o.unsized;
+          g.asEnters.shift();
+          continue;
+        }
+        const face = faceOf(g, o);
+        const lines = [...face.unparsed, ...(face.manualKeywords ?? [])];
+        const text =
+          node.choice === 'size'
+            ? `The engine can't read the line that gives ${nameOf(g, o)} its power and toughness. Set them as its text says, with any +1/+1 counters it enters with.`
+            : `The engine can't read the line that gives ${nameOf(g, o)} its loyalty. Set the loyalty it enters with.`;
+        g.pending = { ...base, text, lines };
+        break;
+      }
       case 'copy': {
         // CR 707.5: "You may have ~ enter as a copy of any creature on the battlefield."
         // Or "any creature card in a graveyard" (Body Double).
@@ -214,7 +247,28 @@ export function answerAsEnters(g: GameState, player: PlayerId, answer: Extract<C
   const next = g.asEnters?.[0];
   const o = g.objects[p.object]!;
   if (!next) throw new RulesError('Nothing is entering.');
+  const whole = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 9999;
   switch (p.choice) {
+    case 'size': {
+      // By hand, as its own text would have it: its power and toughness (CR 604.3, as a characteristic-defining ability
+      // sets them) and the +1/+1 counters it enters with (CR 122.6).
+      const size = answer.size;
+      if (!size || !whole(size.power) || !whole(size.toughness) || !whole(size.counters ?? 0)) throw new RulesError('Set its power and toughness (whole numbers).');
+      o.handPT = { power: size.power, toughness: size.toughness };
+      if (size.counters) {
+        o.counters['+1/+1'] = (o.counters['+1/+1'] ?? 0) + size.counters;
+        events.push({ type: 'counters', object: o.id, counter: '+1/+1', delta: size.counters, by: player });
+      }
+      delete o.unsized;
+      break;
+    }
+    case 'loyalty': {
+      if (!whole(answer.loyalty)) throw new RulesError('Set the loyalty it enters with (a whole number).');
+      o.counters.loyalty = answer.loyalty;
+      if (answer.loyalty) events.push({ type: 'counters', object: o.id, counter: 'loyalty', delta: answer.loyalty, by: player });
+      delete o.unsized;
+      break;
+    }
     case 'pay_life': {
       const amount = p.amount ?? 0;
       if (answer.pay) {

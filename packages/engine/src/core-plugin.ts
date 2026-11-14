@@ -1372,8 +1372,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   transform(node, ctx) {
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       const def = ctx.g.cards[o.card];
-      // CR 701.27c / CR 712.9: only double-faced permanents (not meld cards) transform.
-      if (o.zone !== 'battlefield' || !def || def.layout !== 'transform' || def.faces.length !== 2) continue;
+      // CR 701.27a, 701.27c: only permanents represented by double-faced cards transform — a modal one too, when an
+      // ability says so (King T'Challa's "{4}{W}{U}: Transform King T'Challa."); CR 712.4c: never a meld card.
+      if (o.zone !== 'battlefield' || !def || (def.layout !== 'transform' && def.layout !== 'modal_dfc') || def.faces.length !== 2) continue;
       // CR 702.145b/e: "This permanent can't transform except due to its daybound ability."
       if (dayNightCard(ctx.g, o)) continue;
       // Bound by Moonsilver: "can't transform".

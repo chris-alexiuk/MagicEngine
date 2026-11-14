@@ -1,4 +1,4 @@
-export { compileCards, compileCard, linkMelds, reparseDB } from './compile.js';
+export { automationOf, compileCards, compileCard, linkMelds, reparseDB } from './compile.js';
 export type { CompileOptions, CompileResult, SkipReason } from './compile.js';
 export { buildCoverage, coverageMarkdown, templateOf } from './coverage.js';
 export type { CoverageReport, TemplateStat } from './coverage.js';

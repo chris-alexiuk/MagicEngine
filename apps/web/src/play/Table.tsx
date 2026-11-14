@@ -3,7 +3,7 @@ import { annotateOracle } from '@mtg/schema';
 import { chars, legalActions, viewFor, withCharsCache, type Action, type Characteristics, type ChoiceAnswer, type GameState, type PendingChoice, type PlayerId, type PlayerView, type Step } from '@mtg/engine';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AUTOMATION_HINT, AUTOMATION_LABEL, AutomationMark } from '../components/bits';
+import { AUTOMATION_LABEL, AutomationMark, TestPlayIssues, automationHint } from '../components/bits';
 import { CardBackFace, CardView } from '../components/Card';
 import { RulesText } from '../components/mana';
 import { Actions, ActionBarSlot, PlanArrows } from './actionbar';
@@ -1065,8 +1065,9 @@ function CardViewer({ view, id, onClose }: { view: PlayerView; id: string; onClo
           <div className="viewer-text">
             <h2>{card.faces[shown!.face]?.name ?? card.name}</h2>
             <p className="viewer-auto">
-              <AutomationMark level={card.automation} size={13} /> {AUTOMATION_LABEL[card.automation]} — {AUTOMATION_HINT[card.automation]}
+              <AutomationMark level={card.automation} size={13} /> {AUTOMATION_LABEL[card.automation]} — {automationHint(card)}
             </p>
+            <TestPlayIssues card={card} />
             {annotateOracle(card.faces[shown!.face] ?? card.faces[0]!).map((l, i) => (
               <p key={i} className={`oracle-line line-${l.status}`}>
                 <RulesText text={l.text} />

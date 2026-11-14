@@ -320,6 +320,8 @@ export function moveObject(
   if (to === 'battlefield') o.arrived = o.timestamp;
   delete o.loyaltyActivatedTurn;
   delete o.loyaltyActivations;
+  delete o.unsized;
+  delete o.handPT;
   // CR 400.7: a new object hasn't been dealt damage this turn.
   delete o.damagedTurn;
   // Grafted Exoskeleton: an Equipment that leaves the battlefield becomes unattached as it does.

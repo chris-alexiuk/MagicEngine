@@ -8,3 +8,5 @@ apps/web/public/cards.json.gz
 apps/web/public/cards.meta.json
 apps/web/public/coverage.md
 apps/web/public/coverage.json
+# What the sandbox saw each card do (`pnpm cards:check`); CI publishes it beside the card DB.
+apps/web/public/checks.json.gz

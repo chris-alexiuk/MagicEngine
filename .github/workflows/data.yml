@@ -2,9 +2,9 @@ name: Reference data
 
 # Fetches the external data the engine is built against:
 #   - the Comprehensive Rules (URL in docs/rules/SOURCE.txt), parsed and committed to main
-#   - the full compiled card DB from Scryfall, published with its coverage report
-#     to the `reports` branch (and as a build artifact)
-# Runs weekly, on demand, and whenever the parsers or the rules source change.
+#   - the full compiled card DB from Scryfall, played card by card in the sandbox and published with
+#     its coverage report and the sandbox's results to the `reports` branch (and as a build artifact)
+# Runs weekly, on demand, and whenever the parsers, the engine or the rules source change.
 on:
   push:
     branches: [main]
@@ -14,6 +14,7 @@ on:
       - packages/compiler/src/**
       - packages/schema/src/**
       - packages/engine/src/**
+      - packages/engine/scripts/**
       - .github/workflows/data.yml
   schedule:
     - cron: '17 9 * * 1' # Mondays 09:17 UTC
@@ -84,6 +85,28 @@ jobs:
         run: |
           set -o pipefail
           pnpm cards:reparse 2>&1 | tee /tmp/reparse.log
+      - name: The last run's card DB and checks, to compare with
+        run: |
+          mkdir -p /tmp/last
+          if git fetch --depth 1 origin reports; then
+            git show FETCH_HEAD:cards.json.gz > /tmp/last/cards.json.gz || rm -f /tmp/last/cards.json.gz
+            git show FETCH_HEAD:checks.json.gz > /tmp/last/checks.json.gz || rm -f /tmp/last/checks.json.gz
+          fi
+      - name: Play every card once in the sandbox, and correct the grades by it
+        # A card with a certain problem isn't fully automatic, however much of it was read. Fails (after everything is
+        # published, below) if a card left the pool, if a card got a certain problem it didn't have, or if more cards
+        # stopped being fully automatic than the commit message's "Regrades: N" line allows. The failure is an alarm,
+        # raised once: what this run publishes is what the next run compares with.
+        run: |
+          set -o pipefail
+          allowed="$(git log -1 --format=%B | sed -n 's/^Regrades: *\([0-9][0-9]*\).*/\1/p' | head -n1)"
+          status=0
+          pnpm cards:check --jobs "$(nproc)" --commit "$GITHUB_SHA" --out ../../apps/web/public/checks.json.gz \
+            --baseline /tmp/last/checks.json.gz --previous-pool /tmp/last/cards.json.gz \
+            --report /tmp/changes.md --save ../../apps/web/public --strict --allow-regrades "${allowed:-0}" 2>&1 | tee /tmp/checks.log || status=$?
+          echo "$status" > /tmp/checks.status
+          [ -f /tmp/changes.md ] && cat /tmp/changes.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
       - name: Fuzz games with random decks from the full card pool
         run: |
           set -o pipefail
@@ -96,19 +119,25 @@ jobs:
             apps/web/public/cards.meta.json
             apps/web/public/coverage.json
             apps/web/public/coverage.md
+            apps/web/public/checks.json.gz
           retention-days: 30
       - name: Publish to the reports branch
         # Runs on failure too, so the build log is readable without access to the Actions UI.
         if: always()
         run: |
           mkdir -p /tmp/reports
-          for f in cards.json.gz cards.meta.json coverage.json coverage.md; do
+          for f in cards.json.gz cards.meta.json coverage.json coverage.md checks.json.gz; do
             [ -f "apps/web/public/$f" ] && cp "apps/web/public/$f" /tmp/reports/
           done
+          [ -f /tmp/changes.md ] && cp /tmp/changes.md /tmp/reports/changes.md
+          [ -f /tmp/checks.log ] && cp /tmp/checks.log /tmp/reports/checks.log
           [ -f /tmp/cards-build.log ] && tail -c 200000 /tmp/cards-build.log > /tmp/reports/build.log
           [ -f /tmp/reparse.log ] && cp /tmp/reparse.log /tmp/reports/reparse.log
           [ -f /tmp/fuzz.log ] && cp /tmp/fuzz.log /tmp/reports/fuzz.log
-          echo "${{ job.status }}" > /tmp/reports/status.txt
+          # The card checks give their verdict in the last step, after this one: say it here too.
+          status="${{ job.status }}"
+          [ "$(cat /tmp/checks.status 2>/dev/null || echo 0)" != 0 ] && status="failure (card checks: see changes.md and checks.log)"
+          echo "$status" > /tmp/reports/status.txt
           cd /tmp/reports
           git init -q -b reports
           git config user.name "github-actions[bot]"
@@ -116,3 +145,10 @@ jobs:
           git add .
           git commit -qm "Card DB and coverage for ${GITHUB_SHA::7}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" reports
+      - name: Card checks verdict
+        run: |
+          status="$(cat /tmp/checks.status 2>/dev/null || echo 1)"
+          if [ "$status" != 0 ]; then
+            echo "::error::The card checks failed: see the summary of this run (or changes.md and checks.log on the reports branch)."
+            exit 1
+          fi

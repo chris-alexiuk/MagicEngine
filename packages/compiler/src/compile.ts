@@ -183,7 +183,10 @@ export function reparseDB(db: CardDB, registry: ParserRegistry = defaultRegistry
       const subtypes = p.extraSubtypes ? [...new Set([...parseTypeLine(f.typeLine).subtypes, ...p.extraSubtypes])] : parseTypeLine(f.typeLine).subtypes;
       return { ...rest, subtypes, keywords: p.keywords, abilities: p.abilities, unparsed: p.unparsed, ...(p.manualKeywords.length ? { manualKeywords: p.manualKeywords } : {}) };
     });
-    return { ...card, faces, automation: automationOf(faces) };
+    // What the sandbox found (CardDef.issues) stands until the sandbox plays the card again — its run starts from the
+    // compiler's grade — so a pool reparsed here compares like for like with the pool it was made from.
+    const read = automationOf(faces);
+    return { ...card, faces, automation: card.issues?.length && read === 'full' ? 'partial' : read };
   };
   const cards = db.cards.map(reparse);
   const tokens = db.tokens.map(reparse);
@@ -236,7 +239,11 @@ export function linkMelds(cards: CardDef[]): void {
   }
 }
 
-function automationOf(faces: FaceDef[]): Automation {
+/**
+ * How much of a card the compiler read: every line (full), some (partial), none (manual). The grade a card is given
+ * before it is played in the sandbox, which can only lower it (CardDef.issues).
+ */
+export function automationOf(faces: FaceDef[]): Automation {
   const unparsed = faces.reduce((n, f) => n + f.unparsed.length + (f.manualKeywords?.length ?? 0) + manualModes(f).length, 0);
   if (unparsed === 0) return 'full';
   // Reminder-only lines describe rules the engine applies anyway (a shockland's

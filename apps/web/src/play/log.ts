@@ -306,6 +306,8 @@ function manualText(op: ManualOp, ...states: GameState[]): string {
       return `${op.tapped ? 'taps' : 'untaps'} ${publicName(op.object, ...states)}`;
     case 'counters':
       return `${op.delta >= 0 ? '+' : ''}${op.delta} ${op.counter} on ${publicName(op.object, ...states)}`;
+    case 'size':
+      return `sets ${publicName(op.object, ...states)} to ${op.power}/${op.toughness}`;
     case 'draw':
       return `draws ${plural(op.count, 'card')}`;
   }

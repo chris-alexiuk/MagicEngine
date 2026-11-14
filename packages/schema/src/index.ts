@@ -14,6 +14,7 @@ export const SCHEMA_VERSION = 2 as const;
 export { SUBTYPES } from './subtypes.js';
 export * from './qualities.js';
 export { isTokenFace, linkTokenArt, tokenArtFinder, tokenTextKey } from './token-art.js';
+export { NODE_FIELDS, nodeFields, undeclaredFields } from './node-fields.js';
 import { qualitiesRead } from './qualities.js';
 
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
@@ -65,6 +66,12 @@ export interface CardDef {
   set: string;
   rarity: string;
   automation: Automation;
+  /**
+   * What playing the card once in the sandbox found wrong for certain: it dies as it arrives, the engine offers it and
+   * then refuses it, it can't be cast at all. A card with any isn't fully automatic, however much of its text was read
+   * (engine/scripts/lib/sandbox.ts).
+   */
+  issues?: string[];
   /**
    * Other names this card is printed under in English — a Universes Beyond or Secret Lair printing's own name
    * ("Seymour Guado" is Kinnan, Bonder Prodigy; "Godzilla, King of the Monsters" is Zilortha, Strength Incarnate).
@@ -1085,8 +1092,6 @@ export interface CastOptionNode extends EffectNode {
   withManaCost?: true;
   /** Disturb (CR 702.146a): cast transformed — its back face is the spell. */
   transformed?: true;
-  /** CR 702.174a (gift): "As an additional cost to cast this spell, you may choose an opponent." */
-  chooseOpponent?: true;
   /** Overload (CR 702.96a): the spell as it reads with "target" changed to "each". */
   spell?: SpellAbility;
   /** Replicate, squad: "you may pay [cost] any number of times" (CR 702.56a, 702.157a). */
@@ -1250,7 +1255,12 @@ export interface AsEntersNode extends EffectNode {
   /** tribute: CR 702.104a — an opponent the controller chooses may put `amount` +1/+1 counters on it (`tributePaid`). */
   /** counter_kind: Boot Nipper — "enters with your choice of a deathtouch counter or a lifelink counter on it" (`options`). */
   /** enchant: CR 303.4f — an Aura put onto the battlefield without being cast; its controller chooses what it enchants (the engine queues this itself). */
-  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number' | 'tribute' | 'counter_kind' | 'enchant';
+  /**
+   * size / loyalty: queued by the engine itself, never by the compiler — a creature or planeswalker whose own text would
+   * give it its size or its loyalty in a line that wasn't read. Its controller sets them by hand as it enters; the
+   * rules would otherwise put it into the graveyard at once (CR 704.5f, 704.5i).
+   */
+  choice: 'pay_life' | 'reveal' | 'color' | 'creature_type' | 'copy' | 'counter' | 'devour' | 'read_ahead' | 'card_name' | 'card_type' | 'player' | 'discard_or_leave' | 'sacrifice_or_leave' | 'word' | 'land_type' | 'number' | 'tribute' | 'counter_kind' | 'enchant' | 'size' | 'loyalty';
   opponent?: true;
   options?: string[];
   /** Banner of Kinship: "… enters with a fellowship counter on it for each creature you control of the chosen type." */

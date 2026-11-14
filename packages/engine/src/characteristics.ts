@@ -565,7 +565,60 @@ function resolvedEffects(g: GameState): ActiveEffect[] {
  * effects that need them.
  */
 export function chars(g: GameState, o: GameObject): Characteristics {
-  return withCharsCache(() => layered(g, o));
+  // A lookup made while a condition or a count is being worked out leaves out the ability being worked on (see
+  // `checking`): it isn't the object's characteristics, and isn't kept or reused.
+  const kept = stable && stable.g === g && !checking.length && !counting.length && !SPELL_CONDITIONS.size ? stable.of : null;
+  const hit = kept?.get(o);
+  if (hit) {
+    if (SHADOW) shadow(g, o, hit);
+    return hit;
+  }
+  const c = withCharsCache(() => layered(g, o));
+  kept?.set(o, c);
+  return c;
+}
+
+/**
+ * Characteristics already worked out for a state nothing is changing: one result per object, shared by everyone who
+ * asks. Nobody may modify what chars() returns. (Per object, not per id: the listing asks about a card "as it would be
+ * cast face down" with a copy of the object that has the same id.)
+ */
+let stable: { g: GameState; of: Map<GameObject, Characteristics> } | null = null;
+
+/**
+ * Runs `fn`, which only reads `g`, with each object's characteristics worked out once. Listing the legal actions asks
+ * for the same permanents' characteristics hundreds of times; checking state-based actions, several times each.
+ * Code in here that does change the state says so with charsChanged().
+ */
+export function withStableChars<T>(g: GameState, fn: () => T): T {
+  if (stable?.g === g) return fn();
+  const outer = stable;
+  stable = { g, of: new Map() };
+  try {
+    return withCharsCache(fn);
+  } finally {
+    stable = outer;
+  }
+}
+
+/** The state was changed inside withStableChars(): what was worked out before no longer holds. */
+export function charsChanged(): void {
+  stable?.of.clear();
+}
+
+/** MTG_SHADOW_CHARS=1 (tests, fuzz): every shared result is worked out again and compared — a stale or modified one throws. */
+const SHADOW = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.MTG_SHADOW_CHARS === '1';
+const charsText = (c: Characteristics): string => JSON.stringify(c, (_k, v) => (v instanceof Set ? [...v].sort() : v));
+function shadow(g: GameState, o: GameObject, kept: Characteristics): void {
+  const outer = stable;
+  stable = null;
+  let now: Characteristics;
+  try {
+    now = withCharsCache(() => layered(g, o));
+  } finally {
+    stable = outer;
+  }
+  if (charsText(now) !== charsText(kept)) throw new Error(`shared characteristics of ${o.card} (${o.id}) are out of date:\n  kept ${charsText(kept)}\n  now  ${charsText(now)}`);
 }
 
 /**
@@ -751,6 +804,13 @@ function layered(g: GameState, o: GameObject): Characteristics {
       const [p, t] = e.set.pt(o);
       if (p !== null) c.power = p;
       if (t !== null) c.toughness = t;
+    }
+    // The size its controller set by hand stands in for what its own text would work out (a characteristic-defining
+    // ability, CR 604.3) — also where that ability was read but counts something an unread line sets up (Ixidron's
+    // face-down creatures, Living Lore's exiled card). Effects that set power and toughness come after it, as always.
+    if (layer === '7a' && o.handPT && o.zone === 'battlefield' && !o.copyOf) {
+      c.power = o.handPT.power;
+      c.toughness = o.handPT.toughness;
     }
   }
   c.basePower = c.power;

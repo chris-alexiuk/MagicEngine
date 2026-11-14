@@ -1904,6 +1904,9 @@ button.pile:hover .pile-name {
   font-size: 13px;
   color: var(--ink-2);
 }
+.viewer-text .test-issues {
+  margin: 0 0 10px;
+}
 .viewer-close {
   grid-column: 1 / -1;
   justify-self: end;
@@ -2187,4 +2190,21 @@ button.pile:hover .pile-name {
     top: 90px;
     width: auto;
   }
+}
+
+/* A size or a loyalty the player types in for a card the engine couldn't read. */
+.set-by-hand .oracle-line {
+  font-family: var(--rules);
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.by-hand-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.by-hand-field .mini-input {
+  width: 64px;
 }

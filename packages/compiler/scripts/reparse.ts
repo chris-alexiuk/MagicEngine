@@ -8,7 +8,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { CORE_NODES, faceAbilities, nodeTags, type CardDB } from '@mtg/schema';
+import { CORE_NODES, faceAbilities, nodeTags, undeclaredFields, type CardDB } from '@mtg/schema';
 import { buildCoverage, coverageMarkdown, reparseDB } from '../src/index.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -48,6 +48,12 @@ for (const c of [...next.cards, ...next.tokens]) {
 }
 if (strays.size) {
   console.error(`node tags outside CORE_NODES: ${[...strays].map(([t, n]) => `${t} ×${n}`).join(', ')}`);
+  process.exitCode = 1;
+}
+// And at the level of parameters: only the ones NODE_FIELDS declares (scripts/node-fields.ts says which cards use a new one).
+const undeclared = undeclaredFields([...next.cards, ...next.tokens]);
+if (undeclared.length) {
+  console.error(`parameters outside NODE_FIELDS (packages/schema/src/node-fields.ts): ${undeclared.join(', ')}`);
   process.exitCode = 1;
 }
 

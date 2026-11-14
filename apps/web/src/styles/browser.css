@@ -284,6 +284,19 @@
 .detail-status span {
   color: var(--ink-2);
 }
+/* What a test play of the card found wrong (shown on its page and in the table's card viewer). */
+.test-issues {
+  margin: -8px 0 16px;
+  padding: 0 0 0 12px;
+  list-style: none;
+  border-left: 3px solid var(--warn, #c98a2b);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.test-issues li + li {
+  margin-top: 4px;
+}
 .oracle {
   font-family: var(--rules);
   font-size: 18px;

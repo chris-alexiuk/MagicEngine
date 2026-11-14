@@ -2,7 +2,7 @@ import { activationProhibited, castProhibition, loyaltyProhibited } from './cast
 import { auraTargetSpec } from './permanents.js';
 import type { AddManaEffect, ConditionNode, EffectNode, FaceDef, ObjectFilter, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
-import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
+import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache, withStableChars } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
 import { anyColorChoices, branchNow, MANA_COLORS, manaOption, parseManaCost, shortfall } from './mana.js';
@@ -50,8 +50,8 @@ function manaMixes(colors: string[], n: number): string[] {
 const X_LISTING_CAP = 40;
 
 export function legalActions(g: GameState, player: PlayerId): Action[] {
-  // Read-only: characteristics can be shared across the whole listing.
-  return withCharsCache(() => {
+  // Read-only: each object's characteristics are worked out once for the whole listing.
+  return withStableChars(g, () => {
     const all = listLegalActions(g, player);
     return splitSecond(g) ? all.filter((a) => a.type !== 'cast' && a.type !== 'activate') : all;
   });

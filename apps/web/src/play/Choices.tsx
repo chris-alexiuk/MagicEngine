@@ -784,6 +784,9 @@ function ManualTools({ g, view, me, act, setPick }: { g: GameState; view: Player
               </button>
             </div>
           )}
+          {o.zone === 'battlefield' && chars(g, o).types.includes('Creature') && (
+            <SizeByHand key={o.id} power={o.handPT?.power ?? chars(g, o).basePower ?? 0} toughness={o.handPT?.toughness ?? chars(g, o).baseToughness ?? 0} onSet={(power, toughness) => manual({ kind: 'size', object: o.id, power, toughness })} />
+          )}
         </div>
       ) : (
         <p className="hint">No card selected.</p>
@@ -1284,6 +1287,9 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
     return <OptionsPanel title={p.sourceName} text={p.text} options={p.options} label={label} onChoose={(choice) => answer({ kind: 'as_enters', choice })} />;
   }
   switch (p.choice) {
+    case 'size':
+    case 'loyalty':
+      return <SetByHand key={`ae-${p.object}`} head={head} lines={p.lines ?? []} loyalty={p.choice === 'loyalty'} onSet={(a) => answer({ kind: 'as_enters', ...a })} />;
     case 'reveal':
     case 'discard_or_leave':
     case 'copy': {
@@ -1330,6 +1336,79 @@ function AsEntersPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pl
       );
     }
   }
+}
+
+const whole = (text: string): number => Math.max(0, Math.min(9999, Math.floor(Number(text) || 0)));
+
+/**
+ * A creature's size or a planeswalker's loyalty that the engine couldn't read from the card: the player reads the line
+ * and types the numbers.
+ */
+function SetByHand({ head, lines, loyalty, onSet }: { head: React.ReactNode; lines: string[]; loyalty: boolean; onSet: (a: { size: { power: number; toughness: number; counters: number } } | { loyalty: number }) => void }) {
+  const [power, setPower] = useState('');
+  const [toughness, setToughness] = useState('');
+  const [counters, setCounters] = useState('0');
+  const [points, setPoints] = useState('');
+  const ready = loyalty ? points !== '' : power !== '' && toughness !== '';
+  return (
+    <form
+      className="flow-step set-by-hand"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) onSet(loyalty ? { loyalty: whole(points) } : { size: { power: whole(power), toughness: whole(toughness), counters: whole(counters) } });
+      }}
+    >
+      {head}
+      {lines.map((l) => (
+        <p key={l} className="oracle-line line-manual">
+          <RulesText text={l} />
+        </p>
+      ))}
+      {loyalty ? (
+        <label className="by-hand-field">
+          Loyalty
+          <input className="mini-input" type="number" min={0} inputMode="numeric" value={points} onChange={(e) => setPoints(e.target.value)} autoFocus />
+        </label>
+      ) : (
+        <div className="chip-row">
+          <label className="by-hand-field">
+            Power
+            <input className="mini-input" type="number" min={0} inputMode="numeric" value={power} onChange={(e) => setPower(e.target.value)} autoFocus />
+          </label>
+          <label className="by-hand-field">
+            Toughness
+            <input className="mini-input" type="number" min={0} inputMode="numeric" value={toughness} onChange={(e) => setToughness(e.target.value)} />
+          </label>
+          <label className="by-hand-field">
+            +1/+1 counters
+            <input className="mini-input" type="number" min={0} inputMode="numeric" value={counters} onChange={(e) => setCounters(e.target.value)} />
+          </label>
+        </div>
+      )}
+      <p className="hint">{loyalty ? 'Change it later with counters, under “By hand”.' : 'Power and toughness are without the counters. Change them later under “By hand”.'}</p>
+      <Actions>
+        <button type="submit" className="primary" disabled={!ready}>
+          {loyalty ? 'Set loyalty' : 'Set size'}
+        </button>
+      </Actions>
+    </form>
+  );
+}
+
+/** By hand: the power and toughness of a creature whose own text the engine can't follow, as that text makes them now. */
+function SizeByHand({ power, toughness, onSet }: { power: number; toughness: number; onSet: (power: number, toughness: number) => void }) {
+  const [p, setP] = useState(String(power));
+  const [t, setT] = useState(String(toughness));
+  return (
+    <div className="chip-row">
+      <input className="mini-input" type="number" min={0} value={p} onChange={(e) => setP(e.target.value)} aria-label="Power" />
+      <span className="muted">/</span>
+      <input className="mini-input" type="number" min={0} value={t} onChange={(e) => setT(e.target.value)} aria-label="Toughness" />
+      <button type="button" className="chip-btn" onClick={() => onSet(whole(p), whole(t))}>
+        Set size
+      </button>
+    </div>
+  );
 }
 
 /** A choice this UI doesn't know yet: show what the engine asks and let the player answer in its own terms. */

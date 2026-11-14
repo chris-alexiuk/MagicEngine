@@ -672,7 +672,7 @@ export class ParserRegistry {
           result.unparsed.push(line);
           continue;
         }
-        result.abilities.push({ kind: 'static', text: line, effect: { type: 'cast_option', id: 'gift', kind: 'additional', cost: {}, chooseOpponent: true } });
+        result.abilities.push({ kind: 'static', text: line, effect: { type: 'cast_option', id: 'gift', kind: 'additional', cost: {} } });
         if (/\b(?:Instant|Sorcery)\b/.test(ctx.typeLine)) result.abilities.push({ kind: 'static', text: line, effect: { type: 'gift_spell', effects } });
         else {
           result.abilities.push({

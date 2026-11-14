@@ -19,6 +19,25 @@ export const AUTOMATION_HINT: Record<Automation, string> = {
   manual: 'You resolve this card’s rules text in play.',
 };
 
+/** What a card's grade means in play — with a problem a test play found, when that is why it isn't automatic. */
+export function automationHint(card: CardDef): string {
+  if (!card.issues?.length) return AUTOMATION_HINT[card.automation];
+  const unread = card.faces.some((f) => f.unparsed.length > 0 || (f.manualKeywords?.length ?? 0) > 0);
+  return unread ? AUTOMATION_HINT[card.automation] : 'The engine reads every line, but a test play of this card went wrong. Check what it does as you play it.';
+}
+
+/** What went wrong when the card was played once in the sandbox (CardDef.issues), if anything did. */
+export function TestPlayIssues({ card }: { card: CardDef }) {
+  if (!card.issues?.length) return null;
+  return (
+    <ul className="test-issues">
+      {card.issues.map((issue) => (
+        <li key={issue}>In a test play: {issue.replace(/\.$/, '')}.</li>
+      ))}
+    </ul>
+  );
+}
+
 export function AutomationMark({ level, size = 12 }: { level: Automation; size?: number }) {
   return (
     <svg className={`mark mark-${level}`} width={size} height={size} viewBox="0 0 12 12" aria-hidden="true">

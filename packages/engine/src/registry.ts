@@ -149,6 +149,18 @@ export function onEnterBattlefield(g: GameState, o: GameObject, events: GameEven
     const delta = n - (before[counter] ?? 0);
     if (delta > 0) events.push({ type: 'counters', object: o.id, counter, delta, by: o.controller });
   }
+  // A creature or planeswalker with a line the engine couldn't read: if that line is what gives it its size or loyalty,
+  // its controller is asked for it — after the card's own choices (as-enters.ts: it may enter as a copy of something).
+  if (!o.faceDown) {
+    const at = o.copyOf ?? o;
+    const face = g.cards[at.card]?.faces[at.face] ?? g.cards[at.card]?.faces[0];
+    const unread = Boolean(face && (face.unparsed.length || face.manualKeywords?.length));
+    const choice = !face || !unread ? null : face.types.includes('Creature') ? ('size' as const) : face.types.includes('Planeswalker') ? ('loyalty' as const) : null;
+    if (choice) {
+      o.unsized = true;
+      (g.asEnters ??= []).push({ object: o.id, zcc: o.zcc, node: { type: 'as_enters', choice } });
+    }
+  }
 }
 
 function applyEnterReplacements(g: GameState, o: GameObject, events: GameEvent[]): void {

@@ -4,12 +4,12 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planManaOnly, settlePhyrexian } from './autotap.js';
-import { canActivateTapAbilities, hasRule, hasType, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { canActivateTapAbilities, hasRule, hasType, isPermanentCard, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { anyColorChoices, parseManaCost, payFromPool, shortfall, type ManaCost } from './mana.js';
 import { OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
 import { RulesError, type CostChoices, type CostLKI, type GameEvent, type GameObject, type GameState, type ManaColor, type ManaMix, type ObjectId, type PlayerId } from './types.js';
-import { abilitySources, discardCard, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
+import { abilitySources, discardCard, faceOf, manaValueOf, moveObject, nameOf, obj, setTapped, zoneList } from './zones.js';
 import { cantLoseLife, lifeLoss, replaceQuantity } from './quantities.js';
 import { nextRandom } from './rng.js';
 
@@ -17,6 +17,17 @@ import { nextRandom } from './rng.js';
 
 /** Non-mana cost tags the engine can pay. */
 export const COST_TYPES: readonly string[] = ['exert_self', 'sacrifice_self', 'pay_life', 'discard_self', 'sacrifice', 'discard', 'exile_self', 'pay_energy', 'crew', 'exile_cards', 'remove_counters_self', 'station', 'return_unblocked', 'tap_creatures', 'craft', 'collect_evidence', 'return_permanents', 'reveal_from_hand', 'behold', 'blight', 'forage', 'exile_self_hand', 'discard_hand', 'exile_self_battlefield', 'put_counters_self', 'mill', 'return_self', 'remove_counters', 'process', 'exile_top'];
+
+/**
+ * CR 607.2a: the object a cost's exiled cards are "exiled with", as it will be when its abilities ask (CR 400.7: it is a
+ * new object after each zone change) — a permanent as it is; a permanent spell as the permanent it becomes (its costs
+ * are paid before it moves to the stack, then it enters: two zone changes on); an instant or sorcery as the spell on
+ * the stack (one).
+ */
+function linkedZcc(g: GameState, o: GameObject): number {
+  if (o.zone === 'battlefield') return o.zcc;
+  return o.zcc + (o.zone === 'stack' ? 0 : 1) + (isPermanentCard(faceOf(g, o)) ? 1 : 0);
+}
 
 /** Permanents a player could sacrifice for a "Sacrifice a creature" cost. */
 export function sacrificeCandidates(g: GameState, player: PlayerId, c: EffectNode, source: GameObject): ObjectId[] {
@@ -370,9 +381,12 @@ export function costLKI(g: GameState, cost: Cost, choices: CostChoices = {}, sou
   // Molten Hydra: "Remove all +1/+1 counters from this creature" — how many that was.
   const removeAll = (cost.other ?? []).find((c) => c.type === 'remove_counters_self' && c.amount === 'all');
   const countersRemoved = removeAll && source ? (source.counters[String(removeAll.counter)] ?? 0) : undefined;
-  if (!sacrificed.length && !discarded.length && !exiled.length && !tapped.length && !attackTarget && countersRemoved === undefined) return undefined;
+  // CR 400.7: in exile each is a new object, one zone change on from where it is now.
+  const exiledCards = (cost.other ?? []).some((c) => c.type === 'exile_cards') ? (choices.exile ?? []).flatMap((id) => (g.objects[id] ? [{ id, zcc: g.objects[id]!.zcc + 1 }] : [])) : [];
+  if (!sacrificed.length && !discarded.length && !exiled.length && !exiledCards.length && !tapped.length && !attackTarget && countersRemoved === undefined) return undefined;
   return {
     ...(countersRemoved !== undefined ? { countersRemoved } : {}),
+    ...(exiledCards.length ? { exiledCards } : {}),
     ...(sacrificed.length ? { sacrificed } : {}),
     ...(discarded.length ? { discarded } : {}),
     ...(exiled.length ? { exiled } : {}),
@@ -461,12 +475,13 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
       for (const id of choices.returned ?? []) moveObject(g, id, 'hand', events);
     } else if (c.type === 'exile_cards') {
       // CR 607.2a: what a cost exiles is "exiled with" its source — Fear of Abduction's "each card exiled with it" includes
-      // the creature exiled to cast it (the permanent the spell becomes).
+      // the creature exiled to cast it (the permanent the spell becomes); Corpse Explosion's "damage equal to the exiled
+      // card's power" is the creature card exiled from the graveyard to cast it; Necropolis's "where X is the exiled
+      // card's mana value", the one exiled to activate it.
       for (const id of choices.exile ?? []) {
         moveObject(g, id, 'exile', events);
         const x = g.objects[id];
-        // A spell's costs are paid before it moves to the stack (then onto the battlefield): two zone changes on.
-        if (x?.zone === 'exile' && c.from === 'battlefield') x.exiledBy = { id: o.id, zcc: o.zone === 'battlefield' ? o.zcc : o.zone === 'stack' ? o.zcc + 1 : o.zcc + 2 };
+        if (x?.zone === 'exile') x.exiledBy = { id: o.id, zcc: linkedZcc(g, o) };
       }
     } else if (c.type === 'process') {
       for (const id of choices.processed ?? []) moveObject(g, id, 'graveyard', events);
@@ -490,7 +505,7 @@ export function payOtherCosts(g: GameState, player: PlayerId, o: GameObject, cos
         for (const id of choices.reveal ?? []) {
           moveObject(g, id, 'exile', events);
           const x = g.objects[id];
-          if (x?.zone === 'exile') x.exiledBy = { id: o.id, zcc: o.zone === 'battlefield' ? o.zcc : o.zone === 'stack' ? o.zcc + 1 : o.zcc + 2 };
+          if (x?.zone === 'exile') x.exiledBy = { id: o.id, zcc: linkedZcc(g, o) };
         }
       }
     } else if (c.type === 'discard_self') {

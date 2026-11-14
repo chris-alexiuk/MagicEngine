@@ -187,7 +187,10 @@ export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
       return (src?.cast?.convoked ?? []).flatMap((r) => (g.objects[r.id]?.zcc === r.zcc && g.objects[r.id]!.zone === 'battlefield' ? [g.objects[r.id]!] : []));
     }
     case 'exiled_with': {
-      // CR 607.2a: cards in exile that this object's linked ability put there.
+      // CR 607.2a: the cards this very spell or ability's cost exiled ("the exiled card") …
+      const paid = ctx.resolution?.entry.costLKI?.exiledCards;
+      if (paid?.length) return paid.flatMap((r) => (g.objects[r.id]?.zcc === r.zcc && g.objects[r.id]!.zone === 'exile' ? [g.objects[r.id]!] : []));
+      // … or the cards in exile that this object's linked ability put there.
       const s = ctx.source;
       if (!s) return [];
       const zcc = battlefieldZcc(g, s);

@@ -1,7 +1,7 @@
 import type { CardDef, KeywordInstance } from '@mtg/schema';
 import { annotateOracle } from '@mtg/schema';
 import { useEffect, useState } from 'react';
-import { AUTOMATION_HINT, AUTOMATION_LABEL, AutomationMark, CardImage, ManaCost, RulesText } from './bits';
+import { AUTOMATION_LABEL, AutomationMark, CardImage, ManaCost, RulesText, TestPlayIssues, automationHint } from './bits';
 
 const FORMAT_NAMES: [string, string][] = [
   ['commander', 'Commander'],
@@ -70,9 +70,10 @@ export function CardDetail({ card, onClose }: { card: CardDef; onClose: () => vo
         <AutomationMark level={card.automation} size={14} />
         <div>
           <strong>{AUTOMATION_LABEL[card.automation]}</strong>
-          <span>{AUTOMATION_HINT[card.automation]}</span>
+          <span>{automationHint(card)}</span>
         </div>
       </div>
+      <TestPlayIssues card={card} />
 
       {lines.length > 0 && (
         <div className="oracle">

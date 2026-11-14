@@ -2,7 +2,7 @@ import { dredgeOptions } from './dredge.js';
 import { phasingStep } from './phasing.js';
 import { checkDungeonDone } from './dungeons.js';
 import type { ConditionNode } from '@mtg/schema';
-import { chars, hasRule, hasType, isPermanentCard, hasKeyword, matchesFilter, printedAbilities, toughness, withCharsCache } from './characteristics.js';
+import { chars, charsChanged, hasRule, hasType, isPermanentCard, hasKeyword, matchesFilter, printedAbilities, toughness, withStableChars } from './characteristics.js';
 import { needsSecondDamageStep, newCombat, promptAttackers, promptNextBlocker, startBlockers, startCombatDamage } from './combat.js';
 import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroy } from './permanents.js';
@@ -799,8 +799,9 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
     }
     // CR 704.5t: a venture marker on a dungeon's bottommost room, with that room's ability gone, completes it.
     for (const p of livePlayers(g)) if (checkDungeonDone(g, p, events)) changed = true;
-    // Checking doesn't change anything that characteristics depend on, so lookups share one cache.
-    withCharsCache(() => {
+    // Checking changes nothing that characteristics depend on (but for the counters that cancel out, which says so), so
+    // each permanent's are worked out once.
+    const legendGroup = withStableChars(g, () => {
       // CR 104.2b: an effect says a player wins (Laboratory Maniac) — everyone else loses.
       const winner = livePlayers(g).find((p) => g.players[p]!.wonByEffect);
       if (winner) {
@@ -848,9 +849,12 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
           const n = Math.min(plus, minus);
           o.counters['+1/+1'] = plus - n;
           o.counters['-1/-1'] = minus - n;
+          charsChanged();
           changed = true;
         }
-        if (hasType(g, o, 'Creature')) {
+        // A creature or planeswalker whose size the engine couldn't read, while its controller is asked for it.
+        if (o.unsized && !g.asEnters?.some((e) => e.object === id)) delete o.unsized;
+        if (hasType(g, o, 'Creature') && !o.unsized) {
           const t = toughness(g, o);
           // CR 704.5f: toughness 0 or less goes to the graveyard.
           if (t <= 0) toGraveyard.add(id);
@@ -861,7 +865,7 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
         }
         delete o.deathtouched;
         // CR 704.5i: a planeswalker with 0 loyalty goes to the graveyard.
-        if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0) toGraveyard.add(id);
+        if (hasType(g, o, 'Planeswalker') && (o.counters.loyalty ?? 0) <= 0 && !o.unsized) toGraveyard.add(id);
         // CR 714.4: a Saga that has finished its chapters is sacrificed.
         if (sagaDone(g, o)) toGraveyard.add(id);
         const face = faceOf(g, o);
@@ -883,10 +887,9 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
           if (!to || to.zcc !== o.attachedTo.zcc || !canAttach(g, o, to)) unattach.push(id);
         }
       }
+      // CR 704.5j: the legend rule — needs the controller's choice, handled one group at a time.
+      return findLegendRuleGroup(g, toGraveyard);
     });
-
-    // CR 704.5j: the legend rule — needs the controller's choice, handled one group at a time.
-    const legendGroup = findLegendRuleGroup(g, toGraveyard);
 
     if (!losers.length && !toGraveyard.size && !toDestroy.size && !unattach.length && !unbestow.size && !vanish.length && !changed && !legendGroup) {
       // CR 704.6d / CR 903.9a: a commander that went to a graveyard or exile — its owner chooses whether it goes to the

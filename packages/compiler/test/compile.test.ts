@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { CORE_NODES, faceAbilities, imageUrl, manualModes, nodeTags } from '@mtg/schema';
+import { CORE_NODES, NODE_FIELDS, faceAbilities, imageUrl, manualModes, nodeFields, nodeTags, undeclaredFields } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
-import { compileCards } from '../src/compile.js';
+import { automationOf, compileCards, reparseDB } from '../src/compile.js';
 import { buildCoverage, coverageMarkdown, templateOf } from '../src/coverage.js';
 import type { ScryfallCard } from '../src/scryfall.js';
 
@@ -113,6 +113,37 @@ describe('the compiler/engine contract', () => {
       expect([...seen[k]].filter((t) => !(CORE_NODES[k] as readonly string[]).includes(t))).toEqual([]);
     }
     expect(seen.effects.size).toBeGreaterThan(3);
+  });
+
+  it('puts only declared parameters on its nodes (schema NODE_FIELDS)', () => {
+    expect(undeclaredFields([...db.cards, ...db.tokens])).toEqual([]);
+    // (The walk does find the nodes: a mana ability's node and what it carries.)
+    const elves = db.cards.find((c) => c.name === 'Llanowar Elves')!;
+    expect([...nodeFields(elves).keys()]).toContain('add_mana');
+    expect(NODE_FIELDS.add_mana).toContain('options');
+  });
+
+  it('a parameter nobody declared is caught', () => {
+    const elves = structuredClone(db.cards.find((c) => c.name === 'Llanowar Elves')!);
+    const node = (elves.faces[0]!.abilities[0] as unknown as { effects: Record<string, unknown>[] }).effects[0]!;
+    node.onTuesdays = true;
+    expect(undeclaredFields([elves])).toEqual(['add_mana.onTuesdays']);
+  });
+});
+
+describe('grades', () => {
+  it("a reparse keeps what the sandbox found, and the grade it lowered: its finding stands until it plays the card again", () => {
+    const pool = structuredClone(db);
+    const elves = pool.cards.find((c) => c.name === 'Llanowar Elves')!;
+    expect(automationOf(elves.faces)).toBe('full');
+    elves.issues = ['is offered, and then refused'];
+    elves.automation = 'partial';
+    const again = reparseDB(pool).cards.find((c) => c.name === 'Llanowar Elves')!;
+    expect(again.issues).toEqual(['is offered, and then refused']);
+    expect(again.automation).toBe('partial');
+    // Every other card is graded by how much of it is read, as before.
+    const others = reparseDB(pool).cards.filter((c) => c.name !== 'Llanowar Elves');
+    expect(others.every((c) => c.automation === automationOf(c.faces))).toBe(true);
   });
 });
 

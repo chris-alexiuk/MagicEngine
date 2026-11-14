@@ -1498,6 +1498,14 @@ function manual(g: GameState, player: PlayerId, op: ManualOp, events: GameEvent[
       events.push({ type: 'counters', object: op.object, counter: op.counter, delta: op.delta });
       break;
     }
+    case 'size': {
+      const o = obj(g, op.object);
+      if (o.zone !== 'battlefield') throw new RulesError('Only a permanent on the battlefield has a size to set.');
+      if (![op.power, op.toughness].every((n) => Number.isInteger(n) && n >= 0 && n <= 9999)) throw new RulesError('Power and toughness are whole numbers.');
+      o.handPT = { power: op.power, toughness: op.toughness };
+      delete o.unsized;
+      break;
+    }
     case 'draw':
       for (let i = 0; i < op.count; i++) drawCard(g, player, events);
       break;

@@ -78,6 +78,8 @@ function candidates(g: GameState, p: PendingChoice): ChoiceAnswer[] {
       if (p.options?.length) return p.options.map((choice) => ({ kind: 'as_enters', choice }));
       if (p.choice === 'enchant') return (p.candidates ?? []).map((attach) => ({ kind: 'as_enters', attach }));
       if (p.choice === 'copy') return [{ kind: 'as_enters', copy: null }];
+      if (p.choice === 'size') return [{ kind: 'as_enters', size: { power: 1, toughness: 1 } }];
+      if (p.choice === 'loyalty') return [{ kind: 'as_enters', loyalty: 1 }];
       if (p.choice === 'reveal' || p.choice === 'discard_or_leave') return [{ kind: 'as_enters', reveal: null }];
       if (p.choice === 'devour') return [{ kind: 'as_enters', sacrifice: [] }];
       if (p.choice === 'sacrifice_or_leave') return [{ kind: 'as_enters', sacrifice: (p.candidates ?? []).slice(0, p.amount ?? 1) }];

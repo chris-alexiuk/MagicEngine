@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "demo": "tsx scripts/demo-game.ts",
-    "fuzz": "tsx scripts/fuzz.ts"
+    "fuzz": "tsx scripts/fuzz.ts",
+    "sandbox": "tsx scripts/sandbox.ts"
   },
   "dependencies": {
     "@mtg/schema": "workspace:*"

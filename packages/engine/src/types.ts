@@ -132,6 +132,11 @@ export interface CostLKI {
   discarded?: LKIStats[];
   /** Food Chain: "Exile a creature you control" — what was exiled, as it last existed on the battlefield. */
   exiled?: LKIStats[];
+  /**
+   * CR 607.2a: the cards this payment exiled, as the objects they are in exile — "the exiled card" in the same spell or
+   * ability's text (Necropolis activated twice: each time, the card that activation exiled).
+   */
+  exiledCards?: ObjectRef[];
   /** The creature tapped for a station ability. */
   tapped?: LKIStats[];
   /** What the creature returned for ninjutsu or sneak was attacking (CR 702.49c, 702.190b). */
@@ -263,6 +268,14 @@ export interface GameObject {
   exerted?: true;
   /** CR 702.104b: whether tribute was paid as it entered (absent: it had no tribute). */
   tributePaid?: boolean;
+  /**
+   * Its size or loyalty is in a line of its text the engine couldn't read, and its controller is being asked for it as it
+   * enters (the "size" and "loyalty" choices). Until they answer it isn't put into the graveyard for having none (CR
+   * 704.5f, 704.5i).
+   */
+  unsized?: true;
+  /** The power and toughness its controller gave it by hand, where its own text would set them (applied as that would be, layer 7a). */
+  handPT?: { power: number; toughness: number };
   /** Encore: "attacks that opponent this turn if able" (CR 702.141a). */
   attacksPlayer?: { player: PlayerId; turn: number };
   /** Activations this turn of abilities with a per-turn limit, by ability index. */
@@ -760,6 +773,8 @@ export type PendingChoice =
       amount?: number;
       candidates?: ObjectId[];
       options?: string[];
+      /** size, loyalty: the lines of the card the engine couldn't read, one of which says what to set. */
+      lines?: string[];
     };
 
 export type ChoiceAnswer =
@@ -793,13 +808,15 @@ export type ChoiceAnswer =
   | { kind: 'proliferate'; objects: ObjectId[]; players: PlayerId[] }
   | { kind: 'choose_objects'; objects: ObjectId[] }
   /** pay_life: pay or not; reveal: the card revealed, or none; color / creature_type: the one chosen. */
-  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null; sacrifice?: ObjectId[]; /** enchant: the object the Aura enters attached to (a player: `choice`). */ attach?: ObjectId };
+  | { kind: 'as_enters'; pay?: boolean; reveal?: ObjectId | null; choice?: string; copy?: ObjectId | null; sacrifice?: ObjectId[]; /** enchant: the object the Aura enters attached to (a player: `choice`). */ attach?: ObjectId; /** size: what its controller sets by hand, with any +1/+1 counters it enters with. */ size?: { power: number; toughness: number; counters?: number }; /** loyalty: the loyalty it enters with. */ loyalty?: number };
 
 export type ManualOp =
   | { kind: 'move'; object: ObjectId; to: ZoneName; position?: 'top' | 'bottom' }
   | { kind: 'life'; target: PlayerId; delta: number }
   | { kind: 'tap'; object: ObjectId; tapped: boolean }
   | { kind: 'counters'; object: ObjectId; counter: string; delta: number }
+  /** The power and toughness of a creature whose own text the engine can't read, as that text makes them now. */
+  | { kind: 'size'; object: ObjectId; power: number; toughness: number }
   | { kind: 'draw'; count: number };
 
 /** Choices made while paying costs that need them (CR 601.2h): what to sacrifice, what to discard. */
