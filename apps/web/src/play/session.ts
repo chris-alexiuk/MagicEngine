@@ -48,14 +48,29 @@ export interface Stops {
   mine: Step[];
   /** Steps of other players' turns where they stop with an empty stack. */
   theirs: Step[];
-  /** Pass anyway when the only things they could do are mana abilities (at a stop, or with something on the stack). */
+  /**
+   * At a stop, pass anyway when the only things they could do there are mana abilities. Off unless the seat asks for
+   * it: a turn doesn't go by on its own, whatever its player holds.
+   */
   skipIfNothing: boolean;
   /** Keep priority after casting or activating (otherwise it passes, so opponents can respond). */
   hold: boolean;
 }
 
-/** Like a digital client: your main phases, combat when you attack or are attacked, and anything you could answer. */
-export const DEFAULT_STOPS: Stops = { mine: ['main1', 'main2'], theirs: [], skipIfNothing: true, hold: false };
+/**
+ * Your main phases — whether or not there's anything you could do in them — combat when you attack or are attacked,
+ * and anything you could answer.
+ */
+export const DEFAULT_STOPS: Stops = { mine: ['main1', 'main2'], theirs: [], skipIfNothing: false, hold: false };
+
+/**
+ * A solo playtest goes through the dummy's turn as well: you're asked as it begins and at its end step (where "at the
+ * end of your turn, I…" happens), so that turn is never passed over unseen either.
+ */
+export const SOLO_STOPS: Stops = { ...DEFAULT_STOPS, theirs: ['upkeep', 'end'] };
+
+/** A seat's stops before its player changes them. */
+export const defaultStops = (m: Mode): Stops => (m === 'solo' ? SOLO_STOPS : DEFAULT_STOPS);
 
 export interface Applied {
   state: GameState;
@@ -149,10 +164,15 @@ export function shouldAutoPass(g: GameState, p: PlayerId, stops: Stops, passUnti
   }
   // Mana in the pool is something to do: the player made it for a reason, and passing would lose it.
   const floating = Object.values(g.players[p]?.pool ?? {}).some((n) => n > 0) || (g.players[p]?.restricted?.length ?? 0) > 0;
-  const nothing = () => stops.skipIfNothing && !floating && !legalActions(g, p).some(meaningful);
-  if (!top) return !(g.active === p ? stops.mine : stops.theirs).includes(g.step) || nothing();
+  const nothing = () => !floating && !legalActions(g, p).some(meaningful);
+  if (!top) {
+    if (!(g.active === p ? stops.mine : stops.theirs).includes(g.step)) return true;
+    // One of the seat's stops: it's asked, whatever it could do there, unless it said to skip those.
+    return stops.skipIfNothing && nothing();
+  }
   // Their own spell or ability on top: let the others respond to it.
   if (top.controller === p && !stops.hold) return true;
+  // Someone else's (or their own, held): asked only when there's something they could do about it.
   return nothing();
 }
 
@@ -208,17 +228,26 @@ export function step(g: GameState, action: Action, ctx: Ctx): { ok: true; applie
  * (the turn ends first), or "other" (someone else decides first).
  */
 export function peekPass(g: GameState, me: PlayerId, ctx: Ctx): { kind: 'step'; step: Step } | { kind: 'end' } | { kind: 'other' } {
-  let s = g;
-  for (let i = 0; i < 40; i++) {
-    const p = i === 0 ? me : s.priority;
-    if (i > 0) {
-      if (s.over || s.turn !== g.turn) return { kind: 'end' };
-      if (s.pending) return ctx.dummies.has(s.pending.player) ? { kind: 'other' } : s.pending.player === me ? { kind: 'step', step: s.step } : { kind: 'other' };
+  const first = apply(g, { type: 'pass', player: me });
+  if (!first.ok) return { kind: 'other' };
+  let s = first.state;
+  for (let i = 0; i < 60; i++) {
+    if (s.over || s.turn !== g.turn) return { kind: 'end' };
+    let action: Action;
+    if (s.pending) {
+      if (!ctx.dummies.has(s.pending.player)) return s.pending.player === me ? { kind: 'step', step: s.step } : { kind: 'other' };
+      // The dummy's choices are answered for it (its discard at cleanup): they don't stop anyone.
+      const a = dummyAnswer(s);
+      if (!a) return { kind: 'other' };
+      action = { type: 'choose', player: a.player, answer: a.answer };
+    } else {
+      const p = s.priority;
       if (!p) return { kind: 'other' };
       const until = ctx.passUntil && ctx.passUntil.turn === s.turn ? ctx.passUntil : null;
       if (!shouldAutoPass(s, p, ctx.stops[p] ?? DEFAULT_STOPS, until, ctx.dummies.has(p))) return p === me ? { kind: 'step', step: s.step } : { kind: 'other' };
+      action = { type: 'pass', player: p };
     }
-    const r = apply(s, { type: 'pass', player: p! });
+    const r = apply(s, action);
     if (!r.ok) return { kind: 'other' };
     s = r.state;
   }

@@ -42,7 +42,20 @@ function answerOf<K extends ChoiceAnswer['kind']>(ctx: EffectContext, kind: K): 
   return ctx.answer?.kind === kind ? (ctx.answer as Extract<ChoiceAnswer, { kind: K }>) : null;
 }
 
-/** Sludge Titan, Ojer Kaslem: "a creature card and/or a land card" — whether each chosen card can stand for a different kind. */
+/**
+ * Whether cards a player looked at in private would go back out of sight without ever having been shown to them, were
+ * nothing asked: they stay in the library (on top, shuffled in, or on the bottom with no order to choose). Cards
+ * headed for a graveyard or a hand are seen there; cards to be ordered for the bottom are seen as that's asked.
+ */
+function unseenOtherwise(node: EffectNode, looked: ObjectId[]): boolean {
+  if (!looked.length || node.rest === 'graveyard' || node.rest === 'hand') return false;
+  // "Reveal the top card of your library. If it's a creature card, …": shown to everyone, not looked at in private
+  // (what's then done with a card that isn't one is the effect's own business).
+  if (node.reveal && !node.optional && !node.upTo) return false;
+  if (node.rest === 'top' || node.rest === 'shuffle') return true;
+  return looked.length < 2 || node.order === 'random';
+}
+
 /** After a dig's chosen cards have gone: the rest of the cards looked at go where the text says. */
 function digRest(ctx: EffectContext, node: EffectNode, looked: ObjectId[], chosen: ObjectId[], library: ObjectId[], who: PlayerId, done: () => EffectResult): EffectResult {
   const g = ctx.g;
@@ -71,6 +84,7 @@ function totalMVLimit(ctx: EffectContext, a: unknown, candidates: ObjectId[]): {
   return { max: amountOf(ctx, a), of: Object.fromEntries(candidates.map((id) => [id, manaValueOf(ctx.g, ctx.g.objects[id]!)])) };
 }
 
+/** Sludge Titan, Ojer Kaslem: "a creature card and/or a land card" — whether each chosen card can stand for a different kind. */
 function eachAssignable(fits: (id: string, i: number) => boolean, kinds: number, ids: string[], used: boolean[] = []): boolean {
   return !ids.length || Array.from({ length: kinds }, (_, i) => i).some((i) => !used[i] && fits(ids[0]!, i) && eachAssignable(fits, kinds, ids.slice(1), Object.assign([...used], { [i]: true })));
 }
@@ -161,6 +175,9 @@ function addCounters(ctx: EffectContext, o: GameObject, counter: string, n: numb
   if (ctx.resolution) (ctx.resolution.countersPut ??= []).push({ id: o.id, zcc: o.zcc, counter });
 }
 
+/** What added some mana, for the `mana_added` event. */
+const madeBy = (ctx: EffectContext): { source?: string } => (ctx.source ? { source: ctx.source.id } : {});
+
 const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectResult> = {
   // CR 106.4: added mana goes into the player's mana pool.
   add_mana(node, ctx) {
@@ -173,7 +190,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (!colors.length) return true;
       const ps = ctx.g.players[ctx.controller]!;
       for (const c of colors) ps.pool[c]++;
-      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: colors });
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: colors, ...madeBy(ctx) });
       return true;
     }
     // Selvala: "Add X mana in any combination of colors" — a mana ability is told the mix ("GGU"); on the stack, each mana
@@ -201,7 +218,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (effect.spend || effect.keep) {
         for (const c of mix) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}) });
       } else for (const c of mix) ps.pool[c]++;
-      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: [...mix] });
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: [...mix], ...madeBy(ctx), ...(effect.spend ? { spend: effect.spend } : {}) });
       return true;
     }
     // Culling Ritual: "Add {B} or {G} for each …" — the controller chooses how many of each.
@@ -218,7 +235,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       if (i < 0) throw new RulesError('Choose one of the options.');
       const ps = ctx.g.players[ctx.controller]!;
       for (const c of mixes[i]!) ps.pool[c]++;
-      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: mixes[i]! });
+      ctx.events.push({ type: 'mana_added', player: ctx.controller, mana: mixes[i]!, ...madeBy(ctx) });
       return true;
     }
     // As a spell or a non-mana ability resolves, its controller chooses which mana (a mana ability is told up front).
@@ -266,7 +283,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const source = ctx.source && (onSpent || effect.spentHaste || JSON.stringify(effect.spend ?? {}).includes('"chosen')) ? { source: { id: ctx.source.id, zcc: ctx.source.zcc } } : {};
       for (const c of mana) (ps.restricted ??= []).push({ color: c, amount: 1, ...(effect.spend ? { spend: effect.spend } : {}), ...(effect.keep ? { keep: effect.keep } : {}), ...source, ...(onSpent ? { onSpent } : {}), ...(effect.spentHaste ? { haste: effect.spentHaste } : {}), ...(effect.spentCommanderCounters ? { commanderCounters: true as const } : {}) });
     } else for (const c of mana) ps.pool[c]++;
-    ctx.events.push({ type: 'mana_added', player: ctx.controller, mana });
+    ctx.events.push({ type: 'mana_added', player: ctx.controller, mana, ...madeBy(ctx), ...(effect.spend ? { spend: effect.spend } : {}) });
     return true;
   },
 
@@ -1601,12 +1618,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         if (each && !eachAssignable(fits, each.length, answer.objects)) throw new RulesError('Choose at most one card of each kind.');
         if (total && answer.objects.reduce((n, id) => n + total.of[id]!, 0) > total.max) throw new RulesError(`Their total mana value must be ${total.max} or less.`);
         memo.chosen = answer.objects;
-      } else if (min === max && (max === 0 || candidates.length === max) && !total) {
+      } else if (min === max && (max === 0 || candidates.length === max) && !total && !(max === 0 && unseenOtherwise(node, looked))) {
         memo.chosen = candidates.slice(0, max);
       } else {
         const kinds = each ? Object.fromEntries(candidates.map((id) => [id, each.flatMap((_, i) => (fits(id, i) ? [i] : []))])) : undefined;
         const keepTop = String(node.to) === 'top' && node.rest === 'bottom';
-        return { ask: { kind: 'choose_objects', player: chooser, candidates, min, max, text: keepTop ? `Choose the cards to leave on top (the rest go on the bottom).` : `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards${total ? ` with total mana value ${total.max} or less` : ''}.`, seen: looked, ...(total ? { totalMV: total } : {}), ...(kinds ? { kinds } : {}) } };
+        // Nothing among them to take. CR 701.20e: looking at cards shows them to that player — so they're shown, before
+        // they go back where nobody sees them ("Kinnan's ability resolves" and nothing else would be all there was).
+        const text = max === 0 ? `None of the top ${looked.length === 1 ? 'card' : `${looked.length} cards`} can be chosen.` : keepTop ? `Choose the cards to leave on top (the rest go on the bottom).` : `Choose ${min === max ? max : `up to ${max}`} of the top ${looked.length} cards${total ? ` with total mana value ${total.max} or less` : ''}.`;
+        return { ask: { kind: 'choose_objects', player: chooser, candidates, min, max, text, seen: looked, ...(total ? { totalMV: total } : {}), ...(kinds ? { kinds } : {}) } };
       }
       // The chosen cards go where the text says.
       const chosen = memo.chosen;

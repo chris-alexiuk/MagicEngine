@@ -1,5 +1,7 @@
-import { activatedAbilities, manaAbilities, type Action, type GameState, type Target } from '@mtg/engine';
+import type { ManaSpend } from '@mtg/schema';
+import { activatedAbilities, apply, manaAbilities, type Action, type GameState, type Target } from '@mtg/engine';
 import { publicName } from './log';
+import { manaSymbols, shortName } from './mana-text';
 
 const ALT_NAMES: Record<string, string> = {
   evoke: 'for its evoke cost',
@@ -23,6 +25,44 @@ const ALT_NAMES: Record<string, string> = {
   warp: 'with warp',
   alt: 'for its alternative cost',
 };
+
+/**
+ * What activating a mana ability would add right now — found by doing it on a copy of the game, so it is exactly what
+ * the engine does: the permanent's own mana (and what that can be spent on, if it's restricted), and what anything
+ * else adds on top of the tap (Kinnan's "one mana of any type that permanent produced").
+ */
+export function manaPreview(g: GameState, a: Extract<Action, { type: 'activate_mana' }>): { own: string[]; spend?: ManaSpend; extra: { from: string; mana: string[] }[] } | null {
+  try {
+    const r = apply(g, a);
+    if (!r.ok) return null;
+    const own: string[] = [];
+    let spend: ManaSpend | undefined;
+    const extra: { from: string; mana: string[] }[] = [];
+    for (const e of r.events) {
+      if (e.type !== 'mana_added' || e.player !== a.player) continue;
+      if (e.triggered) {
+        const from = e.source ? shortName(publicName(e.source, g)) : 'an effect';
+        const same = extra.find((x) => x.from === from);
+        if (same) same.mana.push(...e.mana);
+        else extra.push({ from, mana: [...e.mana] });
+      } else if (e.source === a.object) {
+        // (Mana from what was tapped to pay the ability's own cost isn't what the ability adds.)
+        own.push(...e.mana);
+        if (e.spend) spend = e.spend;
+      }
+    }
+    return own.length || extra.length ? { own, ...(spend ? { spend } : {}), extra } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "Add {G}{G}, and {G} from Kinnan": a mana ability's button, from what it would add. */
+export function previewLabel(made: NonNullable<ReturnType<typeof manaPreview>>): string {
+  const count = (mana: string[]) => (mana.length > 12 ? `${mana.length} mana` : manaSymbols(mana));
+  const more = made.extra.map((x) => `${count(x.mana)} from ${x.from}`).join(', ');
+  return `Add ${made.own.length ? count(made.own) : 'no mana'}${more ? `, and ${more}` : ''}`;
+}
 
 /** What a listed action does, in words, for its button. */
 export function actionLabel(g: GameState, a: Action): string {
@@ -63,6 +103,10 @@ export function actionLabel(g: GameState, a: Action): string {
       let what = '';
       if (typeof a.choice === 'string') what = a.choice.length === 1 ? `{${a.choice}}` : [...a.choice].map((c) => `{${c}}`).join('');
       else if (typeof a.choice === 'number' && effect?.options?.[a.choice]) what = effect.options[a.choice]!.map((c) => `{${c}}`).join('');
+      // What it really adds, where that can be worked out: all of it ("two mana of any one color" is two symbols), and
+      // whatever is added on top as the permanent is tapped.
+      const made = manaPreview(g, a);
+      if (made?.own.length && made.own.length <= 12) return previewLabel(made);
       const bonus = a.bonus?.length ? ` (+${a.bonus.map((b) => (typeof b === 'string' ? `{${b}}` : String(b))).join('')})` : '';
       return what ? `Add ${what}${bonus}` : `${ab?.text ?? 'Mana ability'}${bonus}`;
     }

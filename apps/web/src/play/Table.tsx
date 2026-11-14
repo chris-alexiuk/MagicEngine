@@ -8,18 +8,20 @@ import { CardBackFace, CardView } from '../components/Card';
 import { RulesText } from '../components/mana';
 import { Actions, ActionBarSlot, PlanArrows } from './actionbar';
 import { Arrows, type ArrowSpec } from './Arrows';
+import { abilityCounts, abilityRows } from './abilities';
 import { clickOutcome, dragAction } from './click';
 import { cardClass, Command, Elsewhere, Hand, MySeat, OpponentSeat, Piles, Plate, Pool, type BoardHandlers } from './Board';
 import { lookOf as matLook, type SeatLook } from '../components/Mat';
 import { shownCard } from './cards';
 import { ActionFlow, CHOICE_TITLE, ChoicePanel, needsChoices } from './Choices';
-import { actionLabel, actionObject, targetLabel } from './labels';
+import { actionLabel, actionObject, manaPreview, previewLabel, targetLabel } from './labels';
+import { spendText } from './mana-text';
 import { asYou, lineFor, narrate, publicName, STEP_NAME, type LogLine } from './log';
 import { useCardMotion } from './motion';
 import type { Pick } from './pick';
 import { openView, previewTaps } from './preview';
 import { extraCasts, hasXRange } from './probes';
-import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, dummiesOf, modeOf, newGame, passUntilDone, peekPass, replay, saveGame, step, TURN_STEPS, type Ctx, type GameSetup, type PassUntil, type Stops } from './session';
+import { advance, canUndoIn, clearSavedGame, decider, DEFAULT_STOPS, defaultStops, dummiesOf, modeOf, newGame, passUntilDone, peekPass, replay, saveGame, step, TURN_STEPS, type Ctx, type GameSetup, type Mode, type PassUntil, type Stops } from './session';
 import { withPrinting } from '../skins';
 
 type Choosing = Extract<Action, { type: 'cast' | 'activate' }>;
@@ -39,23 +41,30 @@ export interface Live {
 let logId = 0;
 export const nextLogId = () => ++logId;
 
-const STOPS_KEY = 'mtg-stops-v2';
+// Each seat's stops as its player last set them, kept apart for each kind of game (a solo playtest stops in the
+// dummy's turn; a table of people passing the device doesn't stop in each other's). A new key whenever what the
+// defaults mean changes, so nobody keeps the old ones without having chosen them.
+const STOPS_KEY = 'mtg-stops-v3';
 
-function useStops(seats: PlayerId[]) {
+function storedStops(): Record<string, Record<string, Partial<Stops>>> {
+  try {
+    const v = JSON.parse(localStorage.getItem(STOPS_KEY) ?? '{}') as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, Record<string, Partial<Stops>>>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function useStops(seats: PlayerId[], mode: Mode) {
   const [stops, setStops] = useState<Record<PlayerId, Stops>>(() => {
-    let stored: Record<string, Stops> = {};
-    try {
-      stored = JSON.parse(localStorage.getItem(STOPS_KEY) ?? '{}') as Record<string, Stops>;
-    } catch {
-      stored = {};
-    }
-    return Object.fromEntries(seats.map((p) => [p, { ...DEFAULT_STOPS, ...(stored[p] ?? {}) }]));
+    const stored = storedStops()[mode] ?? {};
+    return Object.fromEntries(seats.map((p) => [p, { ...defaultStops(mode), ...(stored[p] ?? {}) }]));
   });
   const update = (p: PlayerId, s: Stops) => {
     const next = { ...stops, [p]: s };
     setStops(next);
     try {
-      localStorage.setItem(STOPS_KEY, JSON.stringify(next));
+      localStorage.setItem(STOPS_KEY, JSON.stringify({ ...storedStops(), [mode]: next }));
     } catch {
       /* not remembered */
     }
@@ -85,11 +94,15 @@ function useHandWidth(): number {
   return w;
 }
 
+/** What kind of decision a choice is, for its heading (cards shown with nothing to choose among them are a look). */
+const choiceTitle = (p: PendingChoice): string => (p.kind === 'choose_objects' && !p.candidates.length ? 'Look' : (CHOICE_TITLE[p.kind] ?? p.kind));
+
 /** Overlays for choices about cards that aren't on the table (or need room to read). */
 const OVERLAY_KINDS = new Set<PendingChoice['kind']>(['mulligan', 'bottom_cards', 'opening_battlefield', 'scry', 'surveil', 'search', 'dredge', 'cast_free', 'commander_zone', 'assign_combat_damage']);
 function isOverlay(g: GameState, p: PendingChoice): boolean {
   if (OVERLAY_KINDS.has(p.kind)) return true;
-  if (p.kind === 'choose_objects') return p.candidates.some((id) => g.objects[id]?.zone !== 'battlefield' && g.objects[id]?.zone !== 'hand');
+  // (Cards shown with nothing to choose among them count too: the five Kinnan looked at.)
+  if (p.kind === 'choose_objects') return [...p.candidates, ...(p.seen ?? [])].some((id) => g.objects[id]?.zone !== 'battlefield' && g.objects[id]?.zone !== 'hand');
   return false;
 }
 
@@ -98,7 +111,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const mode = modeOf(live.setup);
   const dummies = useMemo(() => dummiesOf(live.setup), [live.setup]);
   const humans = g.order.filter((p) => !dummies.has(p));
-  const [stops, setStop] = useStops(g.order);
+  const [stops, setStop] = useStops(g.order, mode);
   const [holder, setHolder] = useState<PlayerId | null>(null);
   const [passUntil, setPassUntil] = useState<PassUntil>(null);
   const [menu, setMenu] = useState<{ id: string; rect: DOMRect; full: boolean } | null>(null);
@@ -108,6 +121,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   const [hover, setHover] = useState<{ id: string; rect: DOMRect; inHand: boolean } | null>(null);
   const [zone, setZone] = useState<{ player: PlayerId; zone: 'graveyard' | 'exile' } | null>(null);
   const [showStops, setShowStops] = useState(false);
+  const [conceding, setConceding] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
   const [planArrows, setPlanArrows] = useState<ArrowSpec[]>([]);
@@ -252,7 +266,8 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
     }
     if (pick || flow || pendingMine || !myPriority) return;
     const { listed, extra } = optionsFor(id);
-    const out = clickOutcome(listed, extra);
+    // A permanent with several abilities always shows them all, rather than doing the one that can be paid for now.
+    const out = clickOutcome(listed, extra, viewer ? abilityCounts(g, viewer, id) : undefined);
     if (out.kind === 'act') choose(out.action);
     else if (out.kind === 'menu') setMenu({ id, rect, full: false });
   };
@@ -317,7 +332,15 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
   useCardMotion(tableRef, g);
 
   // ---- the pass button --------------------------------------------------------
-  const peek = useMemo(() => (myPriority && !top && viewer ? peekPass(g, viewer, ctx) : null), [g, myPriority, top, viewer, stops, passUntil]); // eslint-disable-line react-hooks/exhaustive-deps
+  const peeked = useMemo(() => (myPriority && !top && viewer ? peekPass(g, viewer, ctx) : null), [g, myPriority, top, viewer, stops, passUntil]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Being asked to discard at cleanup is the turn ending, as far as the button's name goes.
+  const peek = peeked?.kind === 'step' && peeked.step === 'cleanup' ? ({ kind: 'end' } as const) : peeked;
+  // On someone else's turn, passing to its end is passing to the next turn: the viewer's own, when they're next.
+  const nextIsMine = (() => {
+    const alive = g.order.filter((p) => !g.players[p]?.lost);
+    const i = alive.indexOf(g.active);
+    return i >= 0 && alive[(i + 1) % alive.length] === viewer;
+  })();
   const passLabel = top
     ? `Resolve ${top.kind === 'spell' ? publicName(top.object, g).split(' // ')[0] : 'ability'}`
     : !peek || peek.kind === 'other'
@@ -325,8 +348,13 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
       : peek.kind === 'end'
         ? g.active === viewer
           ? 'End turn'
-          : 'Pass'
+          : nextIsMine
+            ? 'To your turn'
+            : 'Pass turn'
         : `To ${STEP_TO[peek.step] ?? STEP_NAME[peek.step].toLowerCase()}`;
+  // The two buttons beside it are left out where the main one already does the same.
+  const passEndsTurn = !top && peek?.kind === 'end';
+  const passGoesToEnd = !top && peek?.kind === 'step' && peek.step === 'end';
 
   // ---- keys: Space/Enter primary, Esc cancel, F2 pass, F6 pass to end of turn, Z undo -----
   const keyState = useRef({ pass, endTurn, toStep, undo, myPriority, flow, menu, step: g.step });
@@ -452,13 +480,13 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 <button type="button" className="primary pass" onClick={pass} title="Space or F2">
                   {passLabel}
                 </button>
-                {beforeEnd && (
+                {beforeEnd && !passGoesToEnd && (
                   <button type="button" className="secondary" title="Pass until this turn’s end step and stop there, unless something targets you first (F4)" onClick={() => toStep('end')}>
                     To end step
                   </button>
                 )}
-                {(passLabel !== 'End turn' || top) && (
-                  <button type="button" className="secondary" title="Pass until the turn ends, unless something targets you (F6)" onClick={endTurn}>
+                {!passEndsTurn && (
+                  <button type="button" className="secondary" title="Pass until this turn is over, unless something targets you (F6)" onClick={endTurn}>
                     {g.active === viewer ? 'End turn' : 'Pass turn'}
                   </button>
                 )}
@@ -475,7 +503,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 )}
                 {pendingMine && !overlayChoice ? (
                   <>
-                    <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
+                    <p className="prompt-kind">{choiceTitle(pendingMine)}</p>
                     <Resolving g={g} view={view} />
                     {choicePanel}
                   </>
@@ -497,11 +525,12 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
             )}
 
             <Arrows root={tableRef} arrows={arrows} version={`${live.actions.length}:${hover?.id ?? ''}:${handW}`} />
-            {hover && !curtained && !hover.inHand && <HoverPreview view={view} id={hover.id} rect={hover.rect} />}
+            {hover && !menu && !curtained && !hover.inHand && <HoverPreview view={view} id={hover.id} rect={hover.rect} />}
             {menu && (
               <CardMenu
                 g={g}
                 view={view}
+                viewer={viewer}
                 id={menu.id}
                 rect={menu.rect}
                 actions={byObject.get(menu.id) ?? []}
@@ -515,10 +544,10 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
               />
             )}
             {overlayChoice && choicePanel && (
-              <div className="overlay" role="dialog" aria-label={CHOICE_TITLE[pendingMine.kind] ?? 'Choice'}>
+              <div className="overlay" role="dialog" aria-label={choiceTitle(pendingMine)}>
                 <ActionBarSlot.Provider value={overlayBarEl}>
                   <div className={`overlay-panel kind-${pendingMine.kind}`}>
-                    <p className="prompt-kind">{CHOICE_TITLE[pendingMine.kind] ?? pendingMine.kind}</p>
+                    <p className="prompt-kind">{choiceTitle(pendingMine)}</p>
                     <Resolving g={g} view={view} />
                     {choicePanel}
                     <div className="overlay-actions" ref={setOverlayBarEl} />
@@ -545,7 +574,7 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                   <button type="button" className={`tool${showStops ? ' on' : ''}`} onClick={() => setShowStops(!showStops)} aria-expanded={showStops} disabled={!viewer && mode !== 'solo'}>
                     Stops
                   </button>
-                  {showStops && (viewer ?? humans[0]) && <StopsEditor stops={stops[(viewer ?? humans[0])!] ?? DEFAULT_STOPS} onChange={(s) => setStop((viewer ?? humans[0])!, s)} name={g.players[(viewer ?? humans[0])!]!.name} onClose={() => setShowStops(false)} />}
+                  {showStops && (viewer ?? humans[0]) && <StopsEditor stops={stops[(viewer ?? humans[0])!] ?? DEFAULT_STOPS} onChange={(s) => setStop((viewer ?? humans[0])!, s)} name={g.players[(viewer ?? humans[0])!]!.name} mode={mode} onClose={() => setShowStops(false)} />}
                 </span>
                 <button type="button" className={`tool${showLog ? ' on' : ''}`} onClick={() => setShowLog(!showLog)} aria-expanded={showLog}>
                   Log
@@ -553,16 +582,29 @@ export function Table({ live, setLive, onLeave, toolsEl }: { live: Live; setLive
                 <button type="button" className="tool" onClick={onLeave} title="The game is saved; resume it from Play">
                   Leave
                 </button>
-                {viewer && !g.over && (
-                  <button
-                    type="button"
-                    className="tool danger"
-                    onClick={() => {
-                      if (window.confirm(`Concede the game for ${g.players[viewer]!.name}?`)) act({ type: 'concede', player: viewer });
-                    }}
-                  >
+                {/* Asked on the page: some hosts (an embedded page) never show a browser dialog, and answer "no" for it. */}
+                {viewer && !g.over && !conceding && (
+                  <button type="button" className="tool danger" onClick={() => setConceding(true)}>
                     Concede
                   </button>
+                )}
+                {viewer && !g.over && conceding && (
+                  <span className="tool-confirm" role="group" aria-label={`Concede the game for ${g.players[viewer]!.name}?`}>
+                    <span className="tool-ask">{g.players[viewer]!.name === 'You' ? 'Concede the game?' : `Concede for ${g.players[viewer]!.name}?`}</span>
+                    <button
+                      type="button"
+                      className="tool danger"
+                      onClick={() => {
+                        setConceding(false);
+                        act({ type: 'concede', player: viewer });
+                      }}
+                    >
+                      Concede
+                    </button>
+                    <button type="button" className="tool" onClick={() => setConceding(false)}>
+                      Keep playing
+                    </button>
+                  </span>
                 )}
               </div>,
               toolsEl,
@@ -703,7 +745,7 @@ function TurnBar({
       )}
       <p className="ticker" aria-live="polite">
         {who && who !== viewer && !g.over ? <span className="waiting">Waiting for {name(who)}… </span> : null}
-        {last ? asYou(last.text) : ''}
+        {last ? <RulesText text={asYou(last.text)} /> : ''}
       </p>
       <StackZone g={g} view={view} pick={pick} onFocus={onFocus} onHover={onHover} />
     </div>
@@ -780,8 +822,11 @@ function StackZone({ g, view, pick, onFocus, onHover }: { g: GameState; view: Pl
 // Menus, previews, dialogs
 // ---------------------------------------------------------------------------
 
-/** A card's actions, in a small menu at the card. */
-function CardMenu({ g, view, id, rect, actions, extra, onChoose, onView, onClose }: { g: GameState; view: PlayerView; id: string; rect: DOMRect; actions: Action[]; extra: Action[]; onChoose: (a: Action) => void; onView: () => void; onClose: () => void }) {
+/**
+ * A card's actions, in a small menu at the card. For a permanent its player controls, every activated ability it has
+ * is there, in the order the card prints them: the ways each can be used now, or the ability greyed out with why not.
+ */
+function CardMenu({ g, view, viewer, id, rect, actions, extra, onChoose, onView, onClose }: { g: GameState; view: PlayerView; viewer: PlayerId | null; id: string; rect: DOMRect; actions: Action[]; extra: Action[]; onChoose: (a: Action) => void; onView: () => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number }>({ left: rect.left, top: rect.top });
   useLayoutEffect(() => {
@@ -791,7 +836,7 @@ function CardMenu({ g, view, id, rect, actions, extra, onChoose, onView, onClose
     const hgt = el.offsetHeight;
     const left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.left + rect.width / 2 - w / 2));
     const above = rect.top - hgt - 8;
-    const top = above > 8 ? above : Math.min(window.innerHeight - hgt - 8, rect.bottom + 8);
+    const top = above > 8 ? above : Math.max(8, Math.min(window.innerHeight - hgt - 8, rect.bottom + 8));
     setPos({ left, top });
   }, [rect]);
   useEffect(() => {
@@ -813,17 +858,65 @@ function CardMenu({ g, view, id, rect, actions, extra, onChoose, onView, onClose
     xGroups.set(key, [...(xGroups.get(key) ?? []), a]);
   }
   const kicks = extra.filter((a) => a.type === 'cast' && a.kicked);
+  // The permanent's abilities (none for a card in hand or one somebody else controls), and what each mana ability
+  // would add, worked out once for as long as the menu shows this state.
+  const rows = useMemo(() => (viewer ? abilityRows(g, viewer, id, actions) : []), [g, viewer, id, actions]);
+  const made = useMemo(() => new Map(rows.flatMap((r) => (r.mana ? r.actions : [])).map((a) => [a, a.type === 'activate_mana' ? manaPreview(g, a) : null])), [g, rows]);
+  const inRows = new Set(rows.flatMap((r) => r.actions));
+  const rowKeys = new Set(rows.filter((r) => !r.mana).map((r) => `activate:${r.index}`));
+  // Everything else it can do: cast it, play it, turn it face up, lines resolved by hand. (An X is asked for below.)
+  const others = [...actions.filter((a) => !inRows.has(a) && !hasXRange(a)), ...kicks];
+  const label = (a: Action) => {
+    const m = made.get(a);
+    return m ? previewLabel(m) : actionLabel(g, a);
+  };
   return (
     <div ref={ref} className="card-menu" role="menu" aria-label={publicName(id, view as unknown as GameState)} style={{ left: pos.left, top: pos.top }}>
       <p className="menu-title">{publicName(id, view as unknown as GameState)}</p>
-      {[...actions, ...kicks].map((a, i) => (
+      {others.map((a, i) => (
         <button key={i} type="button" role="menuitem" className={`menu-item${a.type === 'activate_mana' ? ' mana' : ''}`} onClick={() => onChoose(a)}>
           <RulesText text={actionLabel(g, a)} />
         </button>
       ))}
-      {[...xGroups].map(([key, xs]) => (
+      {[...xGroups].filter(([key]) => !rowKeys.has(key)).map(([key, xs]) => (
         <XCast key={key} g={g} options={xs} onChoose={onChoose} />
       ))}
+      {rows.map((row) => {
+        const xs = row.mana ? undefined : xGroups.get(`activate:${row.index}`);
+        if (!row.actions.length && !xs) {
+          return (
+            <p key={row.key} className="menu-item unavailable" title={row.detail}>
+              <span className="menu-ability">
+                <RulesText text={row.text} />
+              </span>
+              <span className="menu-why">{row.why}</span>
+            </p>
+          );
+        }
+        // A mana ability with a choice of mana: the ability once, then each thing it could add.
+        const several = row.mana && row.actions.length > 1;
+        return (
+          <div key={row.key} className="menu-group">
+            {several && (
+              <p className="menu-ability-text">
+                <RulesText text={row.text} />
+              </p>
+            )}
+            {row.actions.map((a, i) => {
+              const spend = made.get(a)?.spend;
+              return (
+                <button key={i} type="button" role="menuitem" className={`menu-item${row.mana ? ' mana' : ''}`} title={row.text} onClick={() => onChoose(a)}>
+                  <span>
+                    <RulesText text={label(a)} />
+                  </span>
+                  {spend && !several && <span className="menu-hint">only for {spendText(spend)}</span>}
+                </button>
+              );
+            })}
+            {xs && <XCast g={g} options={xs} onChoose={onChoose} />}
+          </div>
+        );
+      })}
       <button type="button" role="menuitem" className="menu-item quiet" onClick={onView}>
         View card
       </button>
@@ -937,26 +1030,29 @@ function GameOver({ g, onNew }: { g: GameState; onNew: () => void }) {
   );
 }
 
-function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChange: (s: Stops) => void; name: string; onClose: () => void }) {
+function StopsEditor({ stops, onChange, name, mode, onClose }: { stops: Stops; onChange: (s: Stops) => void; name: string; mode: Mode; onClose: () => void }) {
   const steps: Step[] = ['upkeep', 'draw', 'main1', 'beginning_of_combat', 'declare_attackers', 'declare_blockers', 'combat_damage', 'end_of_combat', 'main2', 'end'];
   const toggle = (list: Step[], s: Step) => (list.includes(s) ? list.filter((x) => x !== s) : [...list, s]);
   type Pick2 = { mine: Step[]; theirs: Step[] };
   const same = (a: Step[], b: Step[]) => a.length === b.length && b.every((x) => a.includes(x));
+  const usual = defaultStops(mode);
   return (
     <div className="stops-pop" role="dialog" aria-label="Stops">
       <p className="pop-title">{name === 'You' ? 'Where you stop' : `Where ${name} stops`}</p>
-      <p className="hint">With nothing on the stack, priority is passed for you everywhere else. Combat choices and anything you could answer always stop. To stop somewhere once, click that step in the turn bar.</p>
+      <p className="hint">
+        At these steps the game waits for you, whether or not you have anything to do there. Everywhere else, with nothing on the stack, priority is passed for you. Combat choices and anything you could answer always stop. To stop somewhere once, click that step in the turn bar.
+      </p>
       <div className="stops-presets" role="group" aria-label="Presets">
         {(
           [
-            ['Main phases', { mine: ['main1', 'main2'], theirs: [] }],
-            ['Every step of my turn', { mine: steps, theirs: [] }],
+            [mode === 'solo' ? 'Main phases, and the other turn' : 'Main phases', { mine: usual.mine, theirs: usual.theirs }],
+            ['Every step of my turn', { mine: steps, theirs: usual.theirs }],
             ['Every step of every turn', { mine: steps, theirs: steps }],
           ] as [string, Pick2][]
         ).map(([label, v]) => {
           const on = same(stops.mine, v.mine) && same(stops.theirs, v.theirs);
           return (
-            <button key={label} type="button" className={on ? 'chip-btn selected' : 'chip-btn'} aria-pressed={on} onClick={() => onChange({ ...stops, mine: v.mine, theirs: v.theirs, ...(v.mine.length > 2 ? { skipIfNothing: false } : {}) })}>
+            <button key={label} type="button" className={on ? 'chip-btn selected' : 'chip-btn'} aria-pressed={on} onClick={() => onChange({ ...stops, mine: [...v.mine], theirs: [...v.theirs], ...(v.mine.length > 2 ? { skipIfNothing: false } : {}) })}>
               {label}
             </button>
           );
@@ -964,10 +1060,10 @@ function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChang
       </div>
       {(['mine', 'theirs'] as const).map((k) => (
         <div key={k} className="stops-row">
-          <span className="stops-label">{k === 'mine' ? 'Your turn' : 'Their turns'}</span>
+          <span className="stops-label">{k === 'mine' ? 'Your turn' : mode === 'solo' ? 'The other turn' : 'Their turns'}</span>
           <span className="chip-row">
             {steps.map((s) => (
-              <button key={s} type="button" className={stops[k].includes(s) ? 'chip-btn selected' : 'chip-btn'} onClick={() => onChange({ ...stops, [k]: toggle(stops[k], s) })}>
+              <button key={s} type="button" className={stops[k].includes(s) ? 'chip-btn selected' : 'chip-btn'} aria-pressed={stops[k].includes(s)} onClick={() => onChange({ ...stops, [k]: toggle(stops[k], s) })}>
                 {STEP_NAME[s].replace(/ step$/, '')}
               </button>
             ))}
@@ -976,7 +1072,7 @@ function StopsEditor({ stops, onChange, name, onClose }: { stops: Stops; onChang
       ))}
       <label className="check small">
         <input type="checkbox" checked={stops.skipIfNothing} onChange={(e) => onChange({ ...stops, skipIfNothing: e.target.checked })} />
-        Skip a stop when all I could do is make mana
+        Skip a stop when there is nothing I could do there but make mana
       </label>
       <label className="check small">
         <input type="checkbox" checked={stops.hold} onChange={(e) => onChange({ ...stops, hold: e.target.checked })} />
@@ -1008,7 +1104,7 @@ function LogDrawer({ log, viewer, all, names, onClose }: { log: LogLine[]; viewe
       <ol className="log" ref={ref}>
         {shown.map((l) => (
           <li key={l.id} className={`log-${l.kind}${l.only ? ' private' : ''}`}>
-            {l.only && names ? `${names[l.only]}: ${l.text}` : asYou(l.text)}
+            <RulesText text={l.only && names ? `${names[l.only]}: ${l.text}` : asYou(l.text)} />
           </li>
         ))}
       </ol>
@@ -1020,7 +1116,7 @@ function Curtain({ g, who, log, onReady }: { g: GameState; who: PlayerId; log: L
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => ref.current?.focus(), [who]);
   const recent = log.filter((l) => !l.only).slice(-5);
-  const reason = g.pending ? (CHOICE_TITLE[g.pending.kind] ?? g.pending.kind) : 'Priority';
+  const reason = g.pending ? choiceTitle(g.pending) : 'Priority';
   return (
     <div className="curtain" role="dialog" aria-modal="true" aria-labelledby="curtain-title">
       <div className="curtain-inner">
@@ -1030,7 +1126,9 @@ function Curtain({ g, who, log, onReady }: { g: GameState; who: PlayerId; log: L
         {recent.length > 0 && (
           <ol className="curtain-log">
             {recent.map((l) => (
-              <li key={l.id}>{l.text}</li>
+              <li key={l.id}>
+                <RulesText text={l.text} />
+              </li>
             ))}
           </ol>
         )}

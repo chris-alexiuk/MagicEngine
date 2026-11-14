@@ -397,20 +397,13 @@ export function ObjectPicker({
   return (
     <div className="flow-step">
       <p className="flow-title">{title}</p>
-      <p className="hint">
-        {!candidates.length
-          ? 'None of these can be chosen.'
-          : min === max
-            ? `Choose ${min}`
-            : min === 0
-              ? most === 1
-                ? 'Choose one, or none'
-                : max >= candidates.length
-                  ? 'Choose any number'
-                  : `Choose up to ${most}`
-              : `Choose ${min}–${max}`}
-        {candidates.length ? `${ordered ? ' (in order: the first you pick comes first)' : ''}.${most > 1 ? ` ${chosen.length} chosen.` : ''}` : ''}
-      </p>
+      {/* With nothing to choose among (cards that were only looked at), the title has said it all. */}
+      {candidates.length > 0 && (
+        <p className="hint">
+          {min === max ? `Choose ${min}` : min === 0 ? (most === 1 ? 'Choose one, or none' : max >= candidates.length ? 'Choose any number' : `Choose up to ${most}`) : `Choose ${min}–${max}`}
+          {`${ordered ? ' (in order: the first you pick comes first)' : ''}.${most > 1 ? ` ${chosen.length} chosen.` : ''}`}
+        </p>
+      )}
       <div className="tile-row">
         {candidates.map((id) => (
           <ObjectTile key={id} view={view} id={id} selected={chosen.includes(id)} onClick={() => toggle(id)} {...(ordered && chosen.includes(id) ? { note: `#${chosen.indexOf(id) + 1}` } : {})} />

@@ -993,7 +993,12 @@ export type GameEvent =
   /** CR 701.44b: a permanent explored. */
   | { type: 'explored'; object: ObjectId; land: boolean }
   | { type: 'tapped'; object: ObjectId; tapped: boolean }
-  | { type: 'mana_added'; player: PlayerId; mana: ManaColor[] }
+  /**
+   * `source`: the object whose ability or effect added it (a permanent tapped for mana; Kinnan, for the mana it adds on
+   * top). `spend`: what it can be spent on, when that's restricted (CR 106.6). `triggered`: added by a "whenever …
+   * is tapped for mana" ability, on top of what the permanent made (CR 106.12a).
+   */
+  | { type: 'mana_added'; player: PlayerId; mana: ManaColor[]; source?: ObjectId; spend?: ManaSpend; triggered?: true }
   | { type: 'land_played'; player: PlayerId; object: ObjectId; from?: ZoneName }
   /** CR 701.23: a player searched a library (`owner`'s). */
   | { type: 'searched'; player: PlayerId; owner: PlayerId }

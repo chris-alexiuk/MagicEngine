@@ -118,7 +118,6 @@ export function DecksView({ cards, index, decks, setDecks, deckId, go }: { cards
         deck={deck}
         onChange={save}
         onDelete={() => {
-          if (!window.confirm(`Delete “${deck.name}”?`)) return;
           setDecks(decks.filter((d) => d.id !== deck.id));
           go('#/decks');
         }}
@@ -223,6 +222,8 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
   const [detail, setDetail] = useState<CardDef | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Asked on the page: a host that embeds it never shows a browser dialog (it answers "no" for it).
+  const [deleting, setDeleting] = useState(false);
   const [layout, setLayout] = useState<'stacks' | 'list'>(() => (localStorage.getItem('mtg-deck-layout') === 'list' ? 'list' : 'stacks'));
   const [menu, setMenu] = useState<{ name: string; rect: DOMRect; commander: boolean } | null>(null);
   const preview = usePreview();
@@ -333,9 +334,21 @@ function DeckEditor({ cards, index, deck, onChange, onDelete, onBack, onPlaytest
               <button type="button" className="secondary" onClick={() => setExporting(true)}>
                 Export
               </button>
-              <button type="button" className="ghost danger" onClick={onDelete}>
-                Delete
-              </button>
+              {deleting ? (
+                <span className="confirm-row" role="group" aria-label={`Delete ${deck.name}?`}>
+                  <span className="confirm-ask">Delete this deck?</span>
+                  <button type="button" className="ghost danger" onClick={onDelete}>
+                    Delete
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setDeleting(false)}>
+                    Keep it
+                  </button>
+                </span>
+              ) : (
+                <button type="button" className="ghost danger" onClick={() => setDeleting(true)}>
+                  Delete
+                </button>
+              )}
             </div>
           </div>
           <div className="banner-charts">
@@ -900,10 +913,24 @@ function ImportDialog({ index, onClose, actions }: { index: CardIndex; onClose: 
   );
 }
 
+/**
+ * Whether the app is shown inside another page's frame. A frame usually can't start a download or write to the
+ * clipboard, and neither failure is ever reported to the page — so what would do nothing there isn't offered.
+ */
+const framed = (() => {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+})();
+
 function ExportDialog({ deck, onClose }: { deck: Deck; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
   const text = deckToText(deck);
-  const [copied, setCopied] = useState(false);
+  // 'selected': the clipboard wasn't available, so the text is selected for the player to copy themselves.
+  const [copied, setCopied] = useState<'no' | 'yes' | 'selected'>('no');
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -916,6 +943,15 @@ function ExportDialog({ deck, onClose }: { deck: Deck; onClose: () => void }) {
     a.click();
     URL.revokeObjectURL(url);
   };
+  const select = () => {
+    area.current?.focus();
+    area.current?.select();
+    setCopied('selected');
+  };
+  const copy = () => {
+    if (!navigator.clipboard?.writeText) return select();
+    void navigator.clipboard.writeText(text).then(() => setCopied('yes'), select);
+  };
   return (
     <dialog ref={ref} className="sheet import-dialog" onClose={onClose} aria-labelledby="export-title">
       <div className="sheet-inner">
@@ -926,24 +962,20 @@ function ExportDialog({ deck, onClose }: { deck: Deck; onClose: () => void }) {
           </button>
         </header>
         <p className="hint">Plain text with sections. Moxfield, Archidekt and Arena all import it.</p>
-        <textarea className="paste" readOnly value={text} rows={14} aria-label="Deck as text" />
+        <textarea ref={area} className="paste" readOnly value={text} rows={14} aria-label="Deck as text" />
         <div className="btn-row">
-          <button
-            type="button"
-            className="primary"
-            onClick={() => {
-              void navigator.clipboard?.writeText(text).then(
-                () => setCopied(true),
-                () => setCopied(false),
-              );
-            }}
-          >
-            {copied ? 'Copied' : 'Copy'}
+          <button type="button" className="primary" onClick={copy}>
+            {copied === 'yes' ? 'Copied' : 'Copy'}
           </button>
-          <button type="button" className="secondary" onClick={download}>
-            Download .txt
-          </button>
+          {!framed && (
+            <button type="button" className="secondary" onClick={download}>
+              Download .txt
+            </button>
+          )}
         </div>
+        <p className="hint" role="status">
+          {copied === 'selected' ? 'The list is selected: press Ctrl+C (⌘C on a Mac) to copy it.' : ''}
+        </p>
       </div>
     </dialog>
   );

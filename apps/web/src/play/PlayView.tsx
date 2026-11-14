@@ -12,7 +12,7 @@ const SEAT_IDS = ['p1', 'p2', 'p3', 'p4'];
 const MODE_KEY = 'mtg-play-mode';
 
 const MODES: { id: Mode; title: string; text: string }[] = [
-  { id: 'solo', title: 'Solo playtest', text: 'Your deck against a practice dummy that never acts. Undo any decision.' },
+  { id: 'solo', title: 'Solo playtest', text: 'Your deck against a practice dummy that never acts. Its turn comes around too, so you can act in it. Undo any decision.' },
   { id: 'open', title: 'Open hands', text: 'You play every seat with every hand face up. The table turns to whoever decides.' },
   { id: 'hotseat', title: 'Pass the device', text: '2–4 players share the screen, and each sees only their own hand.' },
 ];

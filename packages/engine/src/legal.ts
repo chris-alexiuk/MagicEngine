@@ -5,7 +5,7 @@ import { planAutoTap } from './autotap.js';
 import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities, power, toughness, withCharsCache } from './characteristics.js';
 import { helperChoices, helperKeywords } from './helpers-cost.js';
 import { FACE_DOWN_KEYWORDS, faceDownFace } from './face-down.js';
-import { anyColorChoices, MANA_COLORS, manaOption, parseManaCost, shortfall } from './mana.js';
+import { anyColorChoices, branchNow, MANA_COLORS, manaOption, parseManaCost, shortfall } from './mana.js';
 import { amountOf } from './resolve.js';
 import { spendablePool } from './spending.js';
 import { addCost, additionalMana, addModeCosts, foldX, addPerTargetCost, applyPowerUp, additionalCosts, castRestrictionProblem, hasCostChoice, hasModeCosts, castOptions, castOptionsFor, exileActionCost, exileActionMana, splitSecond, exileActionTiming, faceUpCost, flashbackCost, flashbackCostOf, hasNoManaCost } from './actions.js';
@@ -380,11 +380,14 @@ function listLegalActions(g: GameState, player: PlayerId): Action[] {
       }
       const extra = { ...withCosts(costs), ...(tapForCost ? { autoTap: true } : {}) };
       const from = out.length;
-      // One entry per way to make the mana ("{R} or {G}", "one mana of any color"); with "If …, add … instead" (Urza's
-      // Tower, Incubation Druid), the ways the usual mana can be made.
+      // One entry per way to make the mana ("{R} or {G}", "one mana of any color"). With "If …, add … instead" it's the
+      // mana the ability would add now: Urza's Tower's one or three, Incubation Druid's type, and for Gemstone Caverns
+      // "{C}" without its luck counter and each color with it (listed as "{C}" alone, it couldn't be tapped at all).
       // Empowered Autogenerator: "Put a charge counter on this artifact. Add X mana …" — the mana, after what comes first.
       const first = ab.effects.find((e) => e.type === 'add_mana' || e.type === 'if') ?? ab.effects[0];
-      const effect = (first?.type === 'if' ? ((first.else as AddManaEffect[] | undefined)?.[0] ?? (first.effects as AddManaEffect[] | undefined)?.[0]) : first) as AddManaEffect | undefined;
+      const isMana = (e: EffectNode) => e.type === 'add_mana';
+      const half = first?.type === 'if' ? (branchNow(g, player, o, first) ?? [...((first.else as EffectNode[] | undefined) ?? []), ...((first.effects as EffectNode[] | undefined) ?? [])]) : null;
+      const effect = (half ? (half.find(isMana) ?? ab.effects.find(isMana)) : first) as AddManaEffect | undefined;
       if (effect?.combination) {
         // "X mana in any combination of colors": every mix while there are few; otherwise one of each color (any other
         // mix can still be named).

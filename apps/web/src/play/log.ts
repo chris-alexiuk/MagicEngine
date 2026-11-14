@@ -1,4 +1,5 @@
 import type { AttackTarget, DamageRecipient, GameEvent, GameObject, GameState, ManualOp, PlayerId, Step, TargetRef, ZoneName } from '@mtg/engine';
+import { manaSymbols, spendText } from './mana-text';
 
 /**
  * The game log, written from engine events. Hidden information stays hidden: a card moving between hidden zones
@@ -81,6 +82,10 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
   const discards = new Set(events.flatMap((e) => (e.type === 'discarded' ? [e.object] : [])));
   const milled = new Set(events.flatMap((e) => (e.type === 'milled' ? e.objects : [])));
   const opening = !after.started;
+  // Mana (CR 106.4): what a player taps a permanent for by hand is told, and so is anything added on top of a tap
+  // (Kinnan) or by a spell or ability. Taps made for the player while a cost is being paid aren't.
+  const paying = events.some((e) => e.type === 'cast' || e.type === 'ability_activated');
+  const tappedNow = new Set(events.flatMap((e) => (e.type === 'tapped' && e.tapped ? [e.object] : [])));
 
   // What a player did comes before what paying for it did ("You activate Goblin Cratermaker" before "Goblin Cratermaker dies").
   const did = events.findIndex((e) => e.type === 'cast' || e.type === 'ability_activated');
@@ -111,6 +116,16 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
       case 'land_played':
         push('play', `${who(e.player)} plays ${name(e.object)}.`);
         break;
+      case 'mana_added': {
+        if (!e.mana.length) break;
+        const from = e.source ? name(e.source) : null;
+        const only = e.spend ? ` (only for ${spendText(e.spend)})` : '';
+        if (e.triggered) push('info', `${from ?? 'An effect'} adds ${manaSymbols(e.mana)}${only}.`);
+        else if (e.source && tappedNow.has(e.source)) {
+          if (!paying) push('info', `${who(e.player)} taps ${from} for ${manaSymbols(e.mana)}${only}.`);
+        } else push('info', `${who(e.player)} adds ${manaSymbols(e.mana)}${only}${from ? ` with ${from}` : ''}.`);
+        break;
+      }
       case 'cast': {
         const entry = after.stack.find((s) => s.kind === 'spell' && s.object === e.object);
         const aimed = entry?.targets.flat().map(targetText) ?? [];

@@ -6,6 +6,7 @@ import { ringOf, SeatMat, type SeatLook } from '../components/Mat';
 import { shownCard } from './cards';
 import { fitCardWidth, fitRow, itemWidth, RATIO, type Item } from './fit';
 import { publicName } from './log';
+import { spendText } from './mana-text';
 import { isChosen, type Pick } from './pick';
 
 /**
@@ -287,20 +288,40 @@ function Lanes({ g, view, player, h, far, maxW }: { g: GameState; view: PlayerVi
 // The seat's edge: plate, piles, command zone, mana pool
 // ---------------------------------------------------------------------------
 
+/**
+ * The mana a player has floating. Mana that can only pay for some things (CR 106.6: Shang-Chi's "only to activate
+ * abilities of creature sources"), or that stays as steps end, is kept apart from the rest and says so: every mana is
+ * shown as its symbol, so three green from Shang-Chi and Kinnan read as three green.
+ */
 export function Pool({ g, player }: { g: GameState; player: PlayerId }) {
-  const pool = g.players[player]!.pool;
-  const entries = (Object.entries(pool) as [string, number][]).filter(([, n]) => n > 0);
-  const restricted = (g.players[player]!.restricted ?? []).reduce((n, r) => n + r.amount, 0);
-  if (!entries.length && !restricted) return null;
+  const ps = g.players[player]!;
+  const free = new Map<string, number>((Object.entries(ps.pool) as [string, number][]).filter(([, n]) => n > 0));
+  const tied = new Map<string, Map<string, number>>();
+  for (const r of ps.restricted ?? []) {
+    const text = r.spend ? `only for ${spendText(r.spend)}` : r.keep === 'end_of_turn' ? 'stays until end of turn' : r.keep === 'end_of_combat' ? 'stays until end of combat' : '';
+    // Mana with nothing to say about it (a rider for when it's spent) is ordinary mana to look at.
+    const group = text ? (tied.get(text) ?? tied.set(text, new Map()).get(text)!) : free;
+    group.set(r.color, (group.get(r.color) ?? 0) + r.amount);
+  }
+  if (!free.size && !tied.size) return null;
+  const symbols = (m: Map<string, number>) =>
+    [...m].map(([c, n]) => (
+      <span key={c} className="pool-item">
+        <ManaSymbol symbol={c} />
+        {n > 1 && <span className="pool-n">{n}</span>}
+      </span>
+    ));
+  const said = (m: Map<string, number>) => [...m].map(([c, n]) => `${n} {${c}}`).join(', ');
+  const label = [free.size ? said(free) : '', ...[...tied].map(([text, m]) => `${said(m)} ${text}`)].filter(Boolean).join('; ');
   return (
-    <span className="pool" title="Mana pool" aria-label="Mana pool">
-      {entries.map(([c, n]) => (
-        <span key={c} className="pool-item">
-          <ManaSymbol symbol={c} />
-          {n > 1 && <span className="pool-n">{n}</span>}
+    <span className="pool" role="group" aria-label={`Mana pool: ${label}`}>
+      {symbols(free)}
+      {[...tied].map(([text, m]) => (
+        <span key={text} className="pool-tied" title={`This mana is ${text}.`}>
+          {symbols(m)}
+          <span className="pool-for">{text}</span>
         </span>
       ))}
-      {restricted > 0 && <span className="pool-item pool-n">+{restricted}</span>}
     </span>
   );
 }

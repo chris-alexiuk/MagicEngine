@@ -5,7 +5,7 @@ import { legalActions, type Action, type GameState } from '@mtg/engine';
 import { describe, expect, it } from 'vitest';
 import { clickOutcome, dragAction } from './click';
 import { asYou } from './log';
-import { advance, DEFAULT_STOPS, dummiesOf, dummySeat, meaningful, newGame, replay, shouldAutoPass, step, type Ctx, type GameSetup } from './session';
+import { advance, DEFAULT_STOPS, defaultStops, dummiesOf, dummySeat, meaningful, newGame, peekPass, replay, shouldAutoPass, SOLO_STOPS, step, type Ctx, type GameSetup } from './session';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../../packages/compiler/test/fixtures/scryfall-sample.json', import.meta.url), 'utf8')) as ScryfallCard[];
 const cards: Record<string, CardDef> = Object.fromEntries(compileCards(fixture).db.cards.map((c) => [c.name, c]));
@@ -17,7 +17,7 @@ const solo: GameSetup = {
   mode: 'solo',
   seats: [{ id: 'p1', name: 'You', deckName: 'Kinnan', commanders: ['Kinnan, Bonder Prodigy'], cards: deck(['Kinnan, Bonder Prodigy', ...Array(30).fill('Grizzly Bears'), ...Array(10).fill('Llanowar Elves')]) }, dummySeat('p2', 'Island')],
 };
-const ctx = (setup: GameSetup): Ctx => ({ stops: { p1: DEFAULT_STOPS, p2: DEFAULT_STOPS }, passUntil: null, dummies: dummiesOf(setup) });
+const ctx = (setup: GameSetup): Ctx => ({ stops: { p1: defaultStops(setup.mode ?? 'hotseat'), p2: DEFAULT_STOPS }, passUntil: null, dummies: dummiesOf(setup) });
 
 /** A solo game after both opening hands are kept, with every action taken so far. */
 function soloStart(): { g: GameState; actions: Action[] } {
@@ -39,7 +39,7 @@ describe('solo playtest against the practice dummy', () => {
     let { g, actions } = soloStart();
     const c = ctx(solo);
     expect(g.priority).toBe('p1');
-    // You play a land each turn and pass; the dummy's turns go by on their own.
+    // You play a land each turn and pass; in the dummy's turns you're asked as they begin and at their end step.
     for (let i = 0; i < 400 && g.turn < 9 && !g.over; i++) {
       let a: Action;
       if (g.pending) {
@@ -82,22 +82,69 @@ describe('solo playtest against the practice dummy', () => {
   });
 });
 
-describe('auto-pass, like a digital client', () => {
-  it('stops at your main phase when you have something to do, and skips it when all you could do is make mana', () => {
-    let { g } = soloStart();
-    expect(g.step).toBe('main1');
-    // A land to play: a stop.
-    expect(shouldAutoPass(g, 'p1', DEFAULT_STOPS, null)).toBe(false);
-    const land = legalActions(g, 'p1').find((a) => a.type === 'play_land')!;
-    const r = step(g, land, { ...ctx(solo), stops: { p1: { ...DEFAULT_STOPS }, p2: DEFAULT_STOPS } });
+describe('a turn never goes by on its own', () => {
+  /** Applies p1's action with the solo stops, and says where that left the game. */
+  const go = (g: GameState, a: Action) => {
+    const r = step(g, a, ctx(solo));
     if (!r.ok) throw new Error(r.error);
-    g = r.applied.state;
-    // With one land and nothing castable for one mana, the rest of the turn was passed for you.
-    if (!legalActions(r.applied.steps[0]!.after, 'p1').some(meaningful)) expect(r.applied.state.turn > 1 || r.applied.state.step !== 'main1').toBe(true);
-    // Every stop is skipped once there's nothing but mana to make.
-    const s0 = r.applied.steps[0]!.after;
-    expect(shouldAutoPass(s0, 'p1', DEFAULT_STOPS, null)).toBe(!legalActions(s0, 'p1').some(meaningful));
-    expect(shouldAutoPass(s0, 'p1', { ...DEFAULT_STOPS, skipIfNothing: false }, null)).toBe(false);
+    return r.applied.state;
+  };
+  const at = (g: GameState) => `${g.active} ${g.step} ${g.priority}`;
+
+  it('you are asked at your main phases whether or not there is anything you could do there', () => {
+    let { g } = soloStart();
+    expect(at(g)).toBe('p1 main1 p1');
+    expect(shouldAutoPass(g, 'p1', SOLO_STOPS, null)).toBe(false);
+    g = go(g, legalActions(g, 'p1').find((a) => a.type === 'play_land')!);
+    // One land and nothing to cast with it: still your main phase, and still yours to end.
+    expect(legalActions(g, 'p1').some(meaningful)).toBe(false);
+    expect(at(g)).toBe('p1 main1 p1');
+    expect(shouldAutoPass(g, 'p1', SOLO_STOPS, null)).toBe(false);
+    // A seat can ask for such stops to be skipped; it isn't the default.
+    expect(DEFAULT_STOPS.skipIfNothing).toBe(false);
+    expect(shouldAutoPass(g, 'p1', { ...SOLO_STOPS, skipIfNothing: true }, null)).toBe(true);
+    // Passing goes to the second main phase (there is nothing to attack with), and stops there too.
+    expect(peekPass(g, 'p1', ctx(solo))).toEqual({ kind: 'step', step: 'main2' });
+    g = go(g, { type: 'pass', player: 'p1' });
+    expect(at(g)).toBe('p1 main2 p1');
+    expect(peekPass(g, 'p1', ctx(solo))).toEqual({ kind: 'end' });
+  });
+
+  it('a solo playtest goes through the dummy’s turn: you are asked as it begins and at its end step', () => {
+    let { g } = soloStart();
+    g = go(g, { type: 'pass', player: 'p1' });
+    g = go(g, { type: 'pass', player: 'p1' });
+    // Your turn is over. The dummy's has begun, and waits for you.
+    expect(at(g)).toBe('p2 upkeep p1');
+    expect(g.turn).toBe(2);
+    expect(peekPass(g, 'p1', ctx(solo))).toEqual({ kind: 'step', step: 'end' });
+    g = go(g, { type: 'pass', player: 'p1' });
+    expect(at(g)).toBe('p2 end p1');
+    expect(peekPass(g, 'p1', ctx(solo))).toEqual({ kind: 'end' });
+    g = go(g, { type: 'pass', player: 'p1' });
+    // Then your second turn, at its first main phase, a card drawn.
+    expect(at(g)).toBe('p1 main1 p1');
+    expect(g.turn).toBe(3);
+    expect(g.players.p1!.turnsBegun).toBe(2);
+  });
+
+  it('"end turn" from your main phase stops when the dummy’s turn begins, and "pass turn" there comes back to you', () => {
+    const { g } = soloStart();
+    const c = ctx(solo);
+    const ended = step(g, { type: 'pass', player: 'p1' }, { ...c, passUntil: { player: 'p1', turn: g.turn } });
+    if (!ended.ok) throw new Error(ended.error);
+    const theirs = ended.applied.state;
+    expect(at(theirs)).toBe('p2 upkeep p1');
+    const passed = step(theirs, { type: 'pass', player: 'p1' }, { ...c, passUntil: { player: 'p1', turn: theirs.turn } });
+    if (!passed.ok) throw new Error(passed.error);
+    expect(at(passed.applied.state)).toBe('p1 main1 p1');
+    expect(passed.applied.state.turn).toBe(3);
+  });
+
+  it('at a table of people, other players’ turns don’t stop you unless you ask', () => {
+    expect(defaultStops('hotseat').theirs).toEqual([]);
+    expect(defaultStops('open').theirs).toEqual([]);
+    expect(defaultStops('solo').theirs).toEqual(['upkeep', 'end']);
   });
 
   it('"pass until end of turn" lasts that turn only, and the dummy always passes', () => {

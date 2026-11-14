@@ -206,6 +206,16 @@
 .stat.warn strong {
   color: var(--warn);
 }
+/* "Delete this deck?" asked in place of the button. */
+.confirm-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.confirm-ask {
+  font-size: 13.5px;
+  color: var(--ink);
+}
 .banner-actions {
   display: flex;
   flex-wrap: wrap;

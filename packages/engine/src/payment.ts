@@ -640,12 +640,18 @@ export function bonusManaChoices(g: GameState, tapped: GameObject, types?: reado
   return [];
 }
 
+/** Whether tapping this permanent for mana triggers anything that adds mana (Kinnan, Mirari's Wake, Fertile Ground). */
+export function manaTriggered(g: GameState, tapped: GameObject): boolean {
+  return manaTriggersOf(g, tapped).some(({ a }) => a.effects.every((x) => x.type === 'add_mana'));
+}
+
 /** Whether a permanent being tapped for mana triggers anything that adds mana by a choice (see `bonusManaChoices`). */
 export function manaBonusAsks(g: GameState, tapped: GameObject): boolean {
   return manaTriggersOf(g, tapped).some(({ a }) => !a.trigger.producedColor && a.effects.some((x) => (x as AddManaEffect).produced || bonusChoice(x as AddManaEffect)));
 }
 
 function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], events: GameEvent[], bonus: readonly (number | ManaColor)[] = []): void {
+  const first = events.length;
   let asked = 0;
   for (const { src, a } of manaTriggersOf(g, tapped)) {
     // Forsaken Monument: "Whenever you tap a permanent for {C}" — only when that mana was made.
@@ -696,6 +702,11 @@ function tappedForMana(g: GameState, tapped: GameObject, produced: ManaColor[], 
       runEffect(run, { g, controller, events, targets: [], x: 0, memo: {} });
     }
   }
+  // What these added is on top of what the permanent made (the log says so).
+  for (let i = first; i < events.length; i++) {
+    const e = events[i]!;
+    if (e.type === 'mana_added') e.triggered = true;
+  }
 }
 
 /** CR 601.2g: activates mana abilities automatically to cover a cost beyond what's in the pool. */
@@ -703,7 +714,7 @@ export function autoTap(g: GameState, player: PlayerId, cost: ManaCost, x: numbe
   // The cost's Phyrexian symbols were settled already (settlePhyrexian): what's left is paid with mana, never unasked-for life.
   const plan = planManaOnly(g, player, cost, x, exclude, purpose);
   if (!plan) throw new RulesError('You don’t have enough untapped mana sources.');
-  for (const step of plan) runManaAbility(g, player, step.object, step.ability, step.choice, events);
+  for (const step of plan) runManaAbility(g, player, step.object, step.ability, step.choice, events, {}, step.bonus ?? []);
 }
 
 /** CR 107.14: removes energy counters from a player. */

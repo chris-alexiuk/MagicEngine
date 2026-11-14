@@ -1,21 +1,23 @@
 import { activationProhibited } from './cast-bans.js';
-import type { AddManaEffect } from '@mtg/schema';
+import type { ActivatedAbility, AddManaEffect, EffectNode } from '@mtg/schema';
 import { anyManaTriggers, canActivateTapAbilities, manaAbilities, manaMultipliers, isBasicLand, matchesFilter, objectAbilities } from './characteristics.js';
 import { abilitySources } from './zones.js';
 import type { ObjectFilter } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
-import { anyColorChoices, type ManaCost, manaOnly, manaOption, parseManaCost, shortfall } from './mana.js';
-import { runManaAbility } from './payment.js';
+import { anyColorChoices, branchNow, type ManaCost, manaOnly, manaOption, parseManaCost, shortfall } from './mana.js';
+import { bonusManaChoices, manaBonusAsks, manaTriggered, runManaAbility } from './payment.js';
 import { playerRule } from './player-rules.js';
 import { cantLoseLife } from './quantities.js';
 import { RulesError } from './types.js';
 import { anyColorCost, asThoughAnyColor, canSpend, OTHER_PURPOSE, spendablePool, type ManaPurpose } from './spending.js';
-import type { GameEvent, GameState, ManaColor, ObjectId, PlayerId } from './types.js';
+import type { GameEvent, GameObject, GameState, ManaColor, ObjectId, PlayerId } from './types.js';
 
 export interface PlannedActivation {
   object: ObjectId;
   ability: number;
   choice?: number | ManaColor;
+  /** The type of the mana a "tapped for mana" trigger adds on top, where there is a choice (Kinnan with a Signet). */
+  bonus?: (number | ManaColor)[];
 }
 
 interface Mode {
@@ -28,6 +30,16 @@ interface Mode {
 interface Source {
   object: ObjectId;
   modes: Mode[];
+}
+
+/**
+ * A mana ability's effects as they would run right now. "{T}: Add {C}. If you control an Urza's Mine and an Urza's
+ * Power-Plant, add {C}{C}{C} instead." (and Incubation Druid's "add three mana of that type instead") is one "if": as
+ * the ability resolves it becomes whichever of the two holds, so that is what a payment can count on.
+ */
+function effectsNow(g: GameState, player: PlayerId, o: GameObject, ab: ActivatedAbility): EffectNode[] {
+  const only = ab.effects.length === 1 ? ab.effects[0]! : null;
+  return (only && branchNow(g, player, o, only)) ?? ab.effects;
 }
 
 function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose, skipped?: { any: boolean }): Source[] {
@@ -45,13 +57,14 @@ function manaSources(g: GameState, player: PlayerId, exclude: readonly ObjectId[
       // Only simple "{T}: Add …" abilities are planned for here; the rest are tried one at a time when these fall short
       // (planByTrying).
       // CR 602.5d: "Activate only as a sorcery" can't be activated while a spell or ability is being paid for.
-      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || ab.effects.length !== 1 || ab.oncePerTurn || ab.timing === 'sorcery') {
+      const now = effectsNow(g, player, o, ab);
+      if (!ab.cost.tap || ab.cost.mana || ab.cost.untap || ab.cost.other || now.length !== 1 || ab.oncePerTurn || ab.timing === 'sorcery') {
         if (skipped) skipped.any = true;
         return;
       }
       // CR 602.5b: "Activate only if you control a Swamp."
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
-      const effect = ab.effects[0] as AddManaEffect;
+      const effect = now[0] as AddManaEffect;
       if (effect.type !== 'add_mana' || effect.times !== undefined || effect.eachColor) {
         if (skipped) skipped.any = true;
         return;
@@ -261,9 +274,14 @@ interface Try {
   mana?: string;
   /** It costs more than a tap (a Treasure is sacrificed, a pain land deals damage): used after the ones that don't. */
   dear: boolean;
+  /**
+   * Its own mana can't be spent on this (CR 106.6), but tapping it for mana adds mana that can: Kinnan's "one mana of
+   * any type that permanent produced" has no restriction of its own. Tried last, and kept only if it helped.
+   */
+  onlyForBonus?: true;
 }
 
-function tries(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose, done: ReadonlySet<string>): Try[] {
+function tries(g: GameState, player: PlayerId, exclude: readonly ObjectId[], purpose: ManaPurpose, done: ReadonlySet<string>, extra = false): Try[] {
   const out: Try[] = [];
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
@@ -275,14 +293,16 @@ function tries(g: GameState, player: PlayerId, exclude: readonly ObjectId[], pur
       if (!other.every((c) => c.type === 'sacrifice_self') || !(ab.cost.tap || other.length)) return;
       if (ab.cost.tap && (o.tapped || !canActivateTapAbilities(g, o))) return;
       if (ab.activateIf && !evalCondition(ab.activateIf, { g, controller: player, source: o, events: [], targets: [], x: 0, memo: {} })) return;
-      const add = ab.effects.find((e) => e.type === 'add_mana') as AddManaEffect | undefined;
+      const now = effectsNow(g, player, o, ab);
+      const add = now.find((e) => e.type === 'add_mana') as AddManaEffect | undefined;
       if (!add || add.combination) return;
-      if (add.spend && !canSpend(g, player, add.spend, purpose, o)) return;
+      const unspendable = Boolean(add.spend && !canSpend(g, player, add.spend, purpose, o));
+      if (unspendable && !(extra && ab.cost.tap && manaTriggered(g, o))) return;
       const options = (add.options ?? []).map((opt) => manaOption(opt, o));
       const choices: (number | ManaColor | undefined)[] = add.anyColor ? anyColorChoices(g, player, add.identity, add, o) : options.length > 1 ? options.flatMap((m, i) => (m ? [i] : [])) : [undefined];
       if (!choices.length || (!add.anyColor && options.length === 1 && !options[0])) return;
       const colors = (choice: number | ManaColor | undefined): ManaColor[] => (typeof choice === 'string' ? [choice] : (options[choice ?? 0] ?? []));
-      out.push({ object: id, ability, choices, colors, ...(ab.cost.mana ? { mana: ab.cost.mana } : {}), dear: other.length > 0 || ab.effects.length > 1 });
+      out.push({ object: id, ability, choices, colors, ...(ab.cost.mana ? { mana: ab.cost.mana } : {}), dear: other.length > 0 || now.length > 1, ...(unspendable ? { onlyForBonus: true as const } : {}) });
     });
   }
   return out;
@@ -298,13 +318,13 @@ function planByTrying(g: GameState, player: PlayerId, cost: ManaCost, x: number,
   // The colors this cost has a use for at all (what a choice is worth beyond the color needed right now).
   const useful = new Set<string>([...Object.keys(cost.specific).filter((c) => (cost.specific[c as ManaColor] ?? 0) > 0), ...cost.hybrid.flat(), ...cost.phyrexian.flat()]);
   const { cards, ...rest } = g;
-  const sim: GameState = { ...structuredClone(rest), cards };
+  let sim: GameState = { ...structuredClone(rest), cards };
   const events: GameEvent[] = [];
   const plan: PlannedActivation[] = [];
   const done = new Set<string>();
   const run = (step: PlannedActivation): boolean => {
     try {
-      runManaAbility(sim, player, step.object, step.ability, step.choice, events);
+      runManaAbility(sim, player, step.object, step.ability, step.choice, events, {}, step.bonus ?? []);
       plan.push(step);
       return true;
     } catch (err) {
@@ -322,22 +342,47 @@ function planByTrying(g: GameState, player: PlayerId, cost: ManaCost, x: number,
     // The next one to try: one that makes a color still needed, then the ones that cost only a tap, then no mana to pay.
     const wanted = new Set(need.specific);
     let best: { t: Try; choice: number | ManaColor | undefined; score: number } | null = null;
-    for (const t of tries(sim, player, exclude, purpose, done)) {
+    for (const t of tries(sim, player, exclude, purpose, done, extra)) {
       for (const choice of t.choices) {
         const made = t.colors(choice);
-        const score = (made.some((c) => wanted.has(c)) ? 100 : 0) + (t.dear ? 0 : 20) + (t.mana ? 0 : 10) + made.filter((c) => useful.has(c)).length;
+        const score = (made.some((c) => wanted.has(c)) ? 100 : 0) + (t.dear ? 0 : 20) + (t.mana ? 0 : 10) + made.filter((c) => useful.has(c)).length - (t.onlyForBonus ? 1000 : 0);
         if (!best || score > best.score) best = { t, choice, score };
       }
     }
     if (!best) return null;
     const { t, choice } = best;
     done.add(`${t.object}:${t.ability}`);
+    // A source tapped only for what its tapping adds: undone again if that didn't bring the cost any closer.
+    const undo = t.onlyForBonus ? { state: structuredClone({ ...sim, cards: undefined }), events: events.length, plan: plan.length, missing: need.specific.length + need.generic } : null;
     if (t.mana) {
       // What it costs comes from the pool, or from the plain sources (never from itself).
       const pay = planQuick(sim, player, parseManaCost(t.mana), 0, [...exclude, t.object], { kind: 'ability', source: sim.objects[t.object]! });
       if (!pay || !pay.every(run)) continue;
     }
-    run({ object: t.object, ability: t.ability, ...(choice !== undefined ? { choice } : {}) });
+    // Mana added on top as it's tapped ("one mana of any type that permanent produced", "one mana of any color"): of
+    // the type this cost still needs once the permanent's own mana is counted.
+    let bonus: ManaColor[] | undefined;
+    const tapped = sim.objects[t.object]!;
+    if (extra && manaBonusAsks(sim, tapped)) {
+      const made = t.colors(choice);
+      const still = [...need.specific];
+      for (const c of made) {
+        const i = still.indexOf(c);
+        if (i >= 0) still.splice(i, 1);
+      }
+      const options = bonusManaChoices(sim, tapped, made).filter((c): c is ManaColor => typeof c === 'string');
+      const pick = options.find((c) => still.includes(c)) ?? (still.length ? undefined : options.find((c) => useful.has(c)));
+      if (pick) bonus = [pick];
+    }
+    run({ object: t.object, ability: t.ability, ...(choice !== undefined ? { choice } : {}), ...(bonus ? { bonus } : {}) });
+    if (undo) {
+      const now = shortfall(spendablePool(sim, player, purpose), cost, x);
+      if (!now || now.specific.length + now.generic >= undo.missing) {
+        sim = { ...undo.state, cards } as GameState;
+        events.length = undo.events;
+        plan.length = undo.plan;
+      }
+    }
   }
   return null;
 }

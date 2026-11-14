@@ -543,7 +543,9 @@ select.text-input {
   position: fixed;
   z-index: 60;
   min-width: 200px;
-  max-width: 300px;
+  max-width: 340px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -583,6 +585,45 @@ select.text-input {
   border-top: 1px solid var(--line-soft);
   border-radius: 0 0 7px 7px;
   margin-top: 2px;
+}
+/* A permanent's abilities, one group each. A mana ability with a choice names itself once, above what it could add. */
+.menu-group {
+  display: grid;
+  gap: 2px;
+}
+.menu-ability-text {
+  margin: 5px 10px 1px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.menu-hint {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+/* An ability that can't be used right now is listed all the same, with why not. */
+.menu-item.unavailable {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+  cursor: default;
+}
+.menu-item.unavailable:hover {
+  background: none;
+  box-shadow: none;
+}
+.menu-item.unavailable .menu-ability {
+  color: var(--ink-3);
+}
+.menu-item.unavailable .menu-ability .ms,
+.menu-item.unavailable .menu-ability img {
+  opacity: 0.55;
+}
+.menu-why {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn);
 }
 .x-cast {
   display: flex;
