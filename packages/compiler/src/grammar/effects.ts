@@ -943,6 +943,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     let prevIf: (EffectNode & { effects: EffectNode[] }) | null = null;
     // Where in `out` the sentence being read starts: what the sentence before it added lies between `mark` and there.
     let mark = 0;
+    // Whether one sentence has been left to the player (`byHand`): at most one is.
+    let handed = false;
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
       const before = out.slice(mark);
@@ -2613,7 +2615,16 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         i++;
       }
       const effects = parseSentence(s, b);
-      if (!effects) return null;
+      if (!effects) {
+        // One sentence nothing reads, among sentences that read: the player does it by hand where it comes.
+        const words = byHand && !handed && sentences.length > 1 && leftToPlayer(sentences, i, b.env.typeLine) ? asPrinted(sentences[i]!, b.env.printed) : null;
+        if (!words) return null;
+        handed = true;
+        out.push({ type: 'manual', text: words });
+        previous = [];
+        lastSentence = [];
+        continue;
+      }
       out.push(...effects);
       previous = effects;
       lastSentence = effects;
@@ -2646,6 +2657,8 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       if (whatAll?.ref === 'all' && whatAll.filter?.zone && whatAll.filter.zone !== 'battlefield') b.it = { ref: 'moved_onto' };
     }
     if (anyColorAt.size) return null;
+    // (A text whose only sentence that reads is none: all of it is by hand, as an unread line.)
+    if (handed && out.every((e) => e.type === 'manual')) return null;
     // Deadly Vanity: "Choose a creature or planeswalker, then destroy all other creatures and planeswalkers." — "other"
     // after the choice is other than the chosen one.
     const chose = out.findIndex((e) => e.type === 'choose_object');
@@ -3069,6 +3082,71 @@ export function readingModifiers<T>(on: boolean, fn: () => T): T {
 
 /** Whether the shared modifier readers are on (the static rules have one too: lines.ts `conditionalStaticRule`). */
 export const modifiersOn = (): boolean => modifiers;
+
+/**
+ * Whether one sentence that nothing reads may be left to the player. The last reading of a line (parser.ts
+ * `parseBlock`): the sentences that read are carried out by the engine, and it stops at that one for the player to do
+ * by hand (a `manual` step). Only a sentence the player can carry out by hand — see `leftToPlayer`.
+ */
+let byHand = false;
+
+/** Runs `fn` with one unread sentence left to the player, or not (and puts back what it was). */
+export function readingByHand<T>(on: boolean, fn: () => T): T {
+  const was = byHand;
+  byHand = on;
+  try {
+    return fn();
+  } finally {
+    byHand = was;
+  }
+}
+
+/** Whether this is the last reading of a line, where what nothing reads may be left to the player. */
+export const byHandOn = (): boolean => byHand;
+
+/**
+ * Words by which a sentence leans on another: it refers to something another sentence set up or did ("it", "that
+ * creature", "the token", "this way", "if you do", X), or changes what another says ("instead", "repeat").
+ */
+const LEANS =
+  /\b(?:it|its|it's|he|him|his|she|her|hers|they|them|their|theirs|that|those|these|instead|otherwise|rest|same|chosen|X|did|does|doing|so|then|other|others|another|also|both|either|neither|each of|one of|rather|repeat|if you do|if you don't|when you do)\b|\bthis (?!turn\b|combat\b|game\b|phase\b|step\b)|\bthe (?!battlefield\b|top\b|bottom\b|command zone\b|game\b|number\b|beginning\b|end\b|monarch\b|stack\b|next\b|total\b|greatest\b|highest\b|least\b|initiative\b)/i;
+
+/**
+ * An instruction a player can carry out with the moves the table has by hand (engine ManualOp: move a card from zone
+ * to zone, change a life total, tap or untap, add or remove counters, draw) — and not one that changes how something
+ * else is done ("The token has …", "This cost is reduced by …") or that only the engine could honour ("You may play
+ * those cards this turn", "take an extra turn").
+ */
+const DONE_BY_HAND =
+  /^(?:Then )?(?:If [^,]+, )?(?:(?:You|Each (?:other )?(?:player|opponent)|That player|(?:Its|Their) (?:controller|owner)s?|They)(?: who [^,]+?)? )?(?:may )?(?:draws?|discards?|mills?|exiles?|returns?|puts?|shuffles?|sacrifices?|destroys?|taps?|untaps?|removes?|reveals?|gains? [^.]*\blife\b|loses? [^.]*\blife\b)(?: |$)/i;
+
+/**
+ * Whether sentence `i` of these can be left to the player with the others carried out by the engine. It has to be an
+ * instruction the player can carry out by hand (`DONE_BY_HAND`), with no target (targets are chosen as the spell is
+ * cast, CR 601.2c, which the engine can only do for text it read), no quoted ability, and nothing that replaces what
+ * another sentence does. It may refer back — the player sees what the engine did — but no later sentence may refer to
+ * anything (`LEANS`): the engine reads those as if this one weren't there. And it is done now: not "at the beginning
+ * of the next end step" or "when … leaves the battlefield", nor for a while ("until …").
+ */
+function leftToPlayer(sentences: string[], i: number, typeLine: string): boolean {
+  const s = sentences[i]!;
+  if (!DONE_BY_HAND.test(s) || /\b(?:target|instead|rather than|would|copy|copies|cast|play|until|for as long as|when|whenever|at the beginning of|at end of)\b/i.test(s) || /QUOTED_\d+/.test(s)) return false;
+  // (A spell can't be moved off the stack by hand: "Exile ~." is the engine's to do.)
+  if (s.includes('~') && /\b(?:Instant|Sorcery)\b/.test(typeLine)) return false;
+  return sentences.slice(i + 1).every((later) => !LEANS.test(later));
+}
+
+/**
+ * A sentence as the card prints it: the grammar reads a line with the card's own name as "~" and some wordings put
+ * into others, and what a player is asked to do by hand is the printed words. Null if they can't be found in the line.
+ */
+function asPrinted(s: string, printed: string | undefined): string | null {
+  if (!printed) return null;
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const body = s.replace(/^Then /, '').split('~').map(esc).join("[^.,;:()]{1,60}?");
+  const m = new RegExp(`(?:^|[.!—] |\\n|• )((?:Then )?${body})(?=\\.(?: |$|\\n|"))`, 'i').exec(printed.replace(/ ?\([^()]*\)/g, ''));
+  return m ? `${m[1]![0]!.toUpperCase()}${m[1]!.slice(1)}.` : null;
+}
 
 /**
  * One sentence of effect text. What modifies an effect is read here once, for whatever the effect is: a sentence that

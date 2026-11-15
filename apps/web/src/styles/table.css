@@ -30,6 +30,8 @@
   -webkit-user-select: none;
   display: grid;
   grid-template-rows: minmax(0, 0.8fr) auto minmax(0, 1fr) var(--dock-h);
+  /* One column no wider than the table: a long line in the turn bar is cut short there, and doesn't widen the rows. */
+  grid-template-columns: minmax(0, 1fr);
   background:
     var(--grain),
     radial-gradient(ellipse 85% 70% at 50% 46%, color-mix(in srgb, var(--felt) 88%, #fff) 0%, var(--felt) 45%, var(--felt-edge) 100%);
@@ -1352,6 +1354,13 @@ button.pile:hover .pile-name {
   border-radius: 0 8px 8px 0;
   font-family: var(--rules);
   font-size: 15px;
+}
+/* Under one sentence done by hand: what the engine does around it. */
+.flow-note {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  max-width: 52ch;
 }
 .step-count {
   color: var(--ink-3);

@@ -44,8 +44,12 @@ export function flatten(programs: Program[], modes: number[] | undefined, holds?
       if (p.modes.budget !== undefined && chosen.reduce((n, m) => n + (p.modes!.options[m]!.weight ?? 1), 0) > p.modes.budget) {
         throw new RulesError(`Choose up to ${p.modes.budget} {P} worth of modes.`);
       }
-      for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, p.modes.options[m]!.effects);
-      if (chosen.some((m) => p.modes!.options[m]!.manual)) manual = true;
+      // A mode the compiler couldn't read is done by hand where it comes, the others as written (CR 700.2) — unless
+      // it has targets of its own, which the engine can't ask for: then the whole of it is resolved by hand.
+      const byHand = (m: number) => Boolean(p.modes!.options[m]!.manual);
+      const step = (m: number): EffectNode[] => [{ type: 'manual', text: p.modes!.options[m]!.text }];
+      for (const m of [...chosen].sort((a, b) => a - b)) add(p.modes.options[m]!.targets, byHand(m) ? step(m) : p.modes.options[m]!.effects);
+      if (chosen.some((m) => byHand(m) && /\btarget\b/i.test(p.modes!.options[m]!.text))) manual = true;
     }
     // CR 601.2c: chosen as it's cast — kicked, or the gift promised — so its targets are those of what it will do.
     if (p.variant && holds?.(p.variant.condition)) add(p.variant.targets, p.variant.effects);

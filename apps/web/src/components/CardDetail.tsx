@@ -1,7 +1,8 @@
 import type { CardDef, KeywordInstance } from '@mtg/schema';
 import { annotateOracle } from '@mtg/schema';
 import { useEffect, useState } from 'react';
-import { AUTOMATION_LABEL, AutomationMark, CardImage, ManaCost, RulesText, TestPlayIssues, automationHint } from './bits';
+import { AUTOMATION_LABEL, AutomationMark, CardImage, ManaCost, TestPlayIssues, automationHint } from './bits';
+import { OracleLine } from './mana';
 
 const FORMAT_NAMES: [string, string][] = [
   ['commander', 'Commander'],
@@ -32,6 +33,7 @@ export function CardDetail({ card, onClose }: { card: CardDef; onClose: () => vo
   const stat = face.power !== undefined ? `${face.power}/${face.toughness}` : face.loyalty ?? face.defense;
   const statLabel = face.power !== undefined ? 'Power/toughness' : face.loyalty ? 'Loyalty' : 'Defense';
   const hasManual = lines.some((l) => l.status === 'manual');
+  const hasPartly = lines.some((l) => l.status === 'partly');
 
   return (
     <article className="detail" aria-labelledby="detail-name">
@@ -78,14 +80,17 @@ export function CardDetail({ card, onClose }: { card: CardDef; onClose: () => vo
       {lines.length > 0 && (
         <div className="oracle">
           {lines.map((l, i) => (
-            <p key={i} className={`oracle-line line-${l.status}`}>
-              <RulesText text={l.text} />
-            </p>
+            <OracleLine key={i} line={l} />
           ))}
-          {hasManual && (
+          {(hasManual || hasPartly) && (
             <p className="oracle-legend">
               <span className="legend-swatch line-auto" /> Engine runs it
-              <span className="legend-swatch line-manual" /> You resolve it
+              {hasManual && (
+                <>
+                  <span className="legend-swatch line-manual" /> You resolve it
+                </>
+              )}
+              {hasPartly && <span className="by-hand legend-by-hand">You do this sentence</span>}
             </p>
           )}
         </div>

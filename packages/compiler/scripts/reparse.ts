@@ -10,7 +10,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { CORE_NODES, faceAbilities, nodeFields, nodeTags, oneCardParameters, undeclaredFields, type CardDB } from '@mtg/schema';
+import { byHand, CORE_NODES, faceAbilities, nodeFields, nodeTags, oneCardParameters, undeclaredFields, type CardDB } from '@mtg/schema';
 import { buildCoverage, coverageMarkdown, reparseDB } from '../src/index.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -33,9 +33,13 @@ console.log(asIs ? `${next.cards.length} cards, as compiled` : `reparsed ${next.
 for (const k of ['full', 'partial', 'manual'] as const) {
   console.log(`  ${k.padEnd(8)} ${String(report.totals[k]).padStart(6)} ${pct(report.totals[k]).padStart(6)}  (was ${before[k]})`);
 }
-const lines = next.cards.flatMap((c) => c.faces.flatMap((f) => [...f.keywords.map(() => 1), ...f.abilities.map(() => 1)])).length;
+// (A triggered ability the engine only knows the trigger of is an unread line: counted there, not as compiled.)
+const byHandTriggers = next.cards.flatMap((c) => c.faces.flatMap((f) => f.abilities.filter((a) => a.kind === 'triggered' && a.manual && a.trigger.type !== 'room'))).length;
+const lines = next.cards.flatMap((c) => c.faces.flatMap((f) => [...f.keywords.map(() => 1), ...f.abilities.map(() => 1)])).length - byHandTriggers;
 const unparsed = next.cards.flatMap((c) => c.faces.flatMap((f) => f.unparsed)).length;
 console.log(`  lines: ${lines} compiled, ${unparsed} unparsed`);
+const sentences = next.cards.flatMap((c) => c.faces.flatMap((f) => byHand(f.abilities))).length;
+console.log(`  by hand: ${sentences} compiled lines with one sentence left to the player; ${byHandTriggers} unread lines whose trigger the engine knows`);
 
 // The compiler/engine contract: only node tags the engine core handles (schema CORE_NODES).
 const strays = new Map<string, number>();

@@ -272,7 +272,11 @@ function choose(g: GameState, player: PlayerId, answer: ChoiceAnswer, events: Ga
       return;
     }
     case 'manual_resolution':
-      completeManualResolution(g, events);
+      // One sentence of something the engine is resolving: it carries on. A whole spell or ability by hand: it's done.
+      if (g.resolving) {
+        g.pending = null;
+        continueResolution(g, events, answer);
+      } else completeManualResolution(g, events);
       return;
     case 'declare_attackers':
       g.pending = null;

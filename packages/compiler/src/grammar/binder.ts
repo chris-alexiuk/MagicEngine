@@ -15,6 +15,8 @@ export interface GrammarEnv {
   parseAbilities?: (text: string, name: string, typeLine: string) => import('../parser.js').ParseResult;
   /** The reminder text printed with the line being parsed (see ParseContext.reminder). */
   reminder?: { text: string; after: string }[];
+  /** The line being parsed as the card prints it — for what is shown to a player to do by hand. */
+  printed?: string;
 }
 
 /**

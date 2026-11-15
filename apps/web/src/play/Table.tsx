@@ -5,7 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { AUTOMATION_LABEL, AutomationMark, TestPlayIssues, automationHint } from '../components/bits';
 import { CardBackFace, CardView } from '../components/Card';
-import { RulesText } from '../components/mana';
+import { OracleLine, RulesText } from '../components/mana';
 import { Actions, ActionBarSlot, PlanArrows } from './actionbar';
 import { Arrows, type ArrowSpec } from './Arrows';
 import { abilityCounts, abilityRows } from './abilities';
@@ -1028,7 +1028,8 @@ function HoverPreview({ view, id, rect }: { view: PlayerView; id: string; rect: 
   const left = rect.right + 16 + w < window.innerWidth - 8 ? rect.right + 16 : Math.max(8, rect.left - 16 - w);
   const top = Math.max(54, Math.min(rect.top + rect.height / 2 - hgt / 2, window.innerHeight - hgt - 8));
   const face = shown.card.faces[shown.face] ?? shown.card.faces[0]!;
-  const lines = annotateOracle(face).filter((l) => l.status === 'manual');
+  // What its controller does by hand: whole lines, and single sentences of lines the engine otherwise runs.
+  const lines = annotateOracle(face).flatMap((l) => (l.status === 'manual' ? [{ text: l.text }] : (l.byHand ?? []).map((text) => ({ text }))));
   return (
     <div className="hover-preview" aria-hidden="true" style={{ left, top, width: w }}>
       <span className="preview-card">
@@ -1069,9 +1070,7 @@ function CardViewer({ view, id, onClose }: { view: PlayerView; id: string; onClo
             </p>
             <TestPlayIssues card={card} />
             {annotateOracle(card.faces[shown!.face] ?? card.faces[0]!).map((l, i) => (
-              <p key={i} className={`oracle-line line-${l.status}`}>
-                <RulesText text={l.text} />
-              </p>
+              <OracleLine key={i} line={l} />
             ))}
           </div>
         )}

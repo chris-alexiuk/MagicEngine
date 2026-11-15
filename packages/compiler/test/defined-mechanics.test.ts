@@ -18,6 +18,11 @@ const read = (oracle_text: string, type_line?: string, name?: string) => {
   return { grade: c.automation, unread: [...c.faces[0]!.unparsed, ...(c.faces[0]!.manualKeywords ?? [])], keywords: c.faces[0]!.keywords, abilities: c.faces[0]!.abilities };
 };
 const ASSIMILATE = "(Put it onto the battlefield under your control with a +1/+1 counter. It's a Borg artifact creature and loses all other creature types.)";
+/**
+ * What of a line's effect was compiled. (A triggered line that isn't read still has its trigger known to the engine,
+ * with all it does left to the player — by-hand.test.ts; that is no reading of what it does.)
+ */
+const compiled = (oracle_text: string) => read(oracle_text).abilities.filter((a) => !(a.kind === 'triggered' && a.manual && a.effects.length === 0));
 
 describe('a keyword action the rules define (CR 701)', () => {
   it('recruit is its definition, wherever a card says it', () => {
@@ -161,24 +166,24 @@ describe('what the reminder text is never asked', () => {
   });
 
   it('a keyword action the rules define (abandon, CR 701.33)', () => {
-    expect(read('When this creature enters, abandon target creature. (Put it onto the battlefield under your control.)').abilities).toEqual([]);
+    expect(compiled('When this creature enters, abandon target creature. (Put it onto the battlefield under your control.)')).toEqual([]);
   });
 
   it('a verb the grammar reads: the rest of that clause is what doesn\'t read', () => {
-    expect(read('When this creature enters, exile the Borg assimilated with this creature. (Put it onto the battlefield under your control.)').abilities).toEqual([]);
+    expect(compiled('When this creature enters, exile the Borg assimilated with this creature. (Put it onto the battlefield under your control.)')).toEqual([]);
   });
 
   it('a short reminder defines only the clause it directly follows', () => {
-    expect(read('When this creature enters, assimilate target creature card from a graveyard, then you gain 1 life. (Put it onto the battlefield under your control.)').abilities).toEqual([]);
+    expect(compiled('When this creature enters, assimilate target creature card from a graveyard, then you gain 1 life. (Put it onto the battlefield under your control.)')).toEqual([]);
     expect(read('When this creature enters, you gain 1 life, then assimilate target creature card from a graveyard. (Put it onto the battlefield under your control.)').grade).toBe('full');
   });
 
   it('a reminder that is no instruction defines nothing', () => {
-    expect(read("When this creature enters, flurb target creature. (It can't be blocked this turn.)").abilities).toEqual([]);
+    expect(compiled("When this creature enters, flurb target creature. (It can't be blocked this turn.)")).toEqual([]);
   });
 
   it('a reminder that names another word', () => {
-    expect(read('When this creature enters, flurb target creature card from a graveyard. (To assimilate a card, put it onto the battlefield under your control.)').abilities).toEqual([]);
+    expect(compiled('When this creature enters, flurb target creature card from a graveyard. (To assimilate a card, put it onto the battlefield under your control.)')).toEqual([]);
   });
 
   it('an unknown keyword whose reminder doesn\'t read stays a line for the players', () => {

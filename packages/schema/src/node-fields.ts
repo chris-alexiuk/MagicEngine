@@ -232,6 +232,7 @@ export const NODE_FIELDS: Readonly<Record<string, readonly string[]>> = {
   mana_multiplier: ['basicLand', 'factor'],
   mana_spent: ['filter'],
   mana_trigger_this_turn: ['ability'],
+  manual: ['text'],
   manifest: ['amount', 'cloak', 'dread', 'who'],
   max_speed: [],
   may: ['doOnce', 'effects', 'who'],

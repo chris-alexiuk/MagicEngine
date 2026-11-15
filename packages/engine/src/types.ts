@@ -715,7 +715,7 @@ export type PendingChoice =
   | { kind: 'legend_rule'; player: PlayerId; name: string; objects: ObjectId[] }
   /** CR 903.9a / 903.9b: a commander that went to a graveyard, exile, a hand or a library — its owner may put it into the command zone. */
   | { kind: 'commander_zone'; player: PlayerId; object: ObjectId; zone: ZoneName }
-  | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string }
+  | { kind: 'manual_resolution'; player: PlayerId; text: string; sourceName: string; /** One sentence of a spell or ability the engine is carrying out: it did what came before and does the rest after. */ step?: true }
   /** `exertable`: attackers that may be exerted as they attack (CR 701.43d). */
   /** `enlisters`: attackers that may enlist, and `enlistable` the creatures they could tap (CR 702.154a). */
   | { kind: 'declare_attackers'; player: PlayerId; attackers: ObjectId[]; targets: AttackTarget[]; exertable?: ObjectId[]; enlisters?: ObjectId[]; enlistable?: ObjectId[] }

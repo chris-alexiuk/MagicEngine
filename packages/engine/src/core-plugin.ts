@@ -4718,6 +4718,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     return true;
   },
 
+  // One sentence the compiler couldn't read, among effects it could: the engine has carried out what came before; its
+  // controller does this by hand (with the manual moves, as for a whole spell resolved by hand), and the rest follows.
+  manual(node, ctx) {
+    if (answerOf(ctx, 'manual_resolution')) return true;
+    return { ask: { kind: 'manual_resolution', player: ctx.controller, text: String(node.text).replace(/~/g, sourceName(ctx)), sourceName: sourceName(ctx), step: true } };
+  },
+
   players_do(node, ctx) {
     const players = refPlayers(ctx, ref(node, 'players'));
     return { expand: players.flatMap((p) => (node.effects as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
@@ -5441,7 +5448,9 @@ function lookAtTop(ctx: EffectContext, n: number, kind: 'scry' | 'surveil', reor
 
 function describeEffects(list: EffectNode[]): string {
   // "… or pays 3 life" (CR 119.4).
-  return list.map((e) => (e.type === 'lose_life' && e.paid && typeof e.amount === 'number' ? `pay ${e.amount} life` : e.type.replace(/_/g, ' '))).join(', ');
+  // (A sentence left to the player is told in its own words.)
+  const one = (e: EffectNode) => (e.type === 'lose_life' && e.paid && typeof e.amount === 'number' ? `pay ${e.amount} life` : e.type === 'manual' ? `by hand: “${String(e.text)}”` : e.type.replace(/_/g, ' '));
+  return list.map(one).join(', ');
 }
 
 function describeSearch(node: EffectNode, count: number): string {

@@ -1,4 +1,4 @@
-import { parseEffectText, readingModifiers } from './grammar/effects.js';
+import { parseEffectText, readingByHand, readingModifiers } from './grammar/effects.js';
 import type { AbilityNode, AsEntersNode, CastOptionNode, ConditionNode, EffectNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
@@ -790,6 +790,13 @@ export class ParserRegistry {
         result.keywords.push(previewed);
         continue;
       }
+      // What nothing read: once more, with the part the grammar can't read left to the player — one sentence of it,
+      // or all a triggered ability does (then the line is still an unread one, and the engine only knows when it
+      // triggers).
+      if (!node) {
+        node = this.parseBlock(block, env, undefined, true);
+        if (node?.kind === 'triggered' && node.manual) result.unparsed.push(...block);
+      }
       if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
@@ -1008,7 +1015,7 @@ export class ParserRegistry {
   }
 
   /** One ability's lines (a modal block has several) through the grammar rules. */
-  private parseBlock(block: string[], env: ParseContext, original = block.join('\n')): AbilityNode | null {
+  private parseBlock(block: string[], env: ParseContext, original = block.join('\n'), byHand = false): AbilityNode | null {
     // Quoted abilities are set aside as QUOTED_n, so sentence and list splitting don't look inside
     // them and the card's name inside them isn't taken for "~" (see grammar/quoted.ts).
     const quotes: string[] = [];
@@ -1067,7 +1074,7 @@ export class ParserRegistry {
       // as the trigger resolves, whether or not it returns (2008-10-01 ruling).
       .map((l) => l.replace(/^(When (?:this creature|~) dies, return it to the battlefield under its owner's control at the beginning of the next end step) and you skip your next draw step\.$/, '$1. You skip your next draw step.'))
       .join('\n');
-    const ctx = quotes.length ? { ...env, quotes } : env;
+    const ctx = { ...env, ...(quotes.length ? { quotes } : {}), printed: original };
     const read = (): AbilityNode | null => {
       for (const rule of this.rules) {
         const node = rule.parse(normalised, original, ctx);
@@ -1077,7 +1084,11 @@ export class ParserRegistry {
     };
     // As written first, by the readers that each know their own cards' wordings; a line none of them reads is read
     // again with the shared readers of what modifies an effect or a static ability (how long, "if", "unless").
-    return readingModifiers(false, read) ?? readingModifiers(true, read);
+    // `byHand`: the last reading of a line nothing else read — with one sentence the player can carry out left to
+    // them (a `manual` step), or the whole effect of a triggered ability whose trigger reads.
+    // (Each reading sets both switches: a line read inside another — a quoted ability — starts over as written.)
+    if (byHand) return readingModifiers(true, () => readingByHand(true, read));
+    return readingByHand(false, () => readingModifiers(false, read) ?? readingModifiers(true, read));
   }
 
   /**

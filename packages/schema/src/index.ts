@@ -1644,7 +1644,7 @@ export const CORE_NODES = {
     'put_from_milled', 'grant_play', 'grant_graveyard_cast', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'incubate', 'reveal_top_card', 'spell_enter_counters', 'choose_number', 'skip_next', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
-    'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does', 'get_designation',
+    'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does', 'get_designation', 'manual',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose', 'fateseal', 'extirpate', 'meld',
     'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
@@ -1735,7 +1735,8 @@ export function keywordSupported(kw: KeywordInstance): boolean {
  *   - a mode of a modal ability that wasn't compiled ("• text");
  *   - a token it makes with text that wasn't compiled (CR 111.4), or a keyword the engine can't run;
  *   - a keyword it gives something, or that a copy it makes has, that the engine can't run — whichever part of the
- *     grammar built it: a bare `{ id: 'banding' }` would sit in the card's data and do nothing.
+ *     grammar built it: a bare `{ id: 'banding' }` would sit in the card's data and do nothing;
+ *   - one sentence of an ability the engine otherwise carries out, left to the player (`byHand`).
  */
 export function manualModes(face: FaceDef): string[] {
   const modes = face.abilities.flatMap((a) => (a.kind === 'static' ? [] : (a.modes?.options ?? []).filter((m) => m.manual).map((m) => `• ${m.text}`)));
@@ -1760,7 +1761,24 @@ export function manualModes(face: FaceDef): string[] {
   };
   walk(face.abilities);
   walk(face.keywords);
-  return [...modes, ...tokens, ...idle];
+  return [...modes, ...tokens, ...idle, ...byHand(face.abilities)];
+}
+
+/**
+ * The sentences in these abilities that the engine leaves to the player: each a `manual` step among the effects of an
+ * ability it otherwise carries out — it does the rest, stops there, and asks for that sentence to be done by hand.
+ */
+export function byHand(abilities: unknown): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (!v || typeof v !== 'object') return;
+    if (Array.isArray(v)) return v.forEach(walk);
+    const node = v as { type?: unknown; text?: unknown };
+    if (node.type === 'manual' && typeof node.text === 'string') out.push(node.text);
+    Object.values(v).forEach(walk);
+  };
+  walk(abilities);
+  return out;
 }
 
 /** A face's abilities, including those its keywords stand for. */
@@ -1845,19 +1863,24 @@ export function stripReminder(line: string): string {
   return line.replace(/\s*\([^()]*\)/g, '').trim();
 }
 
-/** How the engine treats one printed oracle line. */
-export type LineStatus = 'auto' | 'manual' | 'reminder';
+/** How the engine treats one printed oracle line ('partly': it runs the line but for one sentence, done by hand). */
+export type LineStatus = 'auto' | 'manual' | 'partly' | 'reminder';
 
-/** Pairs each printed oracle line with whether the engine runs it or a player resolves it. */
-export function annotateOracle(face: FaceDef): { text: string; status: LineStatus }[] {
+/**
+ * Pairs each printed oracle line with whether the engine runs it or a player resolves it — and, for a line it runs
+ * but for one sentence, that sentence (`byHand`).
+ */
+export function annotateOracle(face: FaceDef): { text: string; status: LineStatus; byHand?: string[] }[] {
   const unparsed = new Set([...face.unparsed, ...(face.manualKeywords ?? [])]);
+  const partly = new Map(face.abilities.map((a) => [stripReminder(a.text), byHand(a)] as const).filter(([, sentences]) => sentences.length));
   return face.oracle
     .split('\n')
     .filter((line) => line.trim() !== '')
     .map((text) => {
       const core = stripReminder(text);
-      const status: LineStatus = core === '' ? 'reminder' : unparsed.has(core) ? 'manual' : 'auto';
-      return { text, status };
+      const sentences = partly.get(core);
+      const status: LineStatus = core === '' ? 'reminder' : unparsed.has(core) ? 'manual' : sentences ? 'partly' : 'auto';
+      return { text, status, ...(status === 'partly' ? { byHand: sentences! } : {}) };
     });
 }
 

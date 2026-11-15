@@ -249,7 +249,9 @@ export function automationOf(faces: FaceDef[]): Automation {
   // Reminder-only lines describe rules the engine applies anyway (a shockland's
   // intrinsic mana ability from its land types, saga lore counters), so they count as handled.
   const reminderOnly = (f: FaceDef) => f.oracle.split('\n').filter((l) => l.trim() && !stripReminder(l)).length;
-  const parsed = faces.reduce((n, f) => n + f.keywords.filter(keywordSupported).length + f.abilities.length + reminderOnly(f), 0);
+  // (A triggered ability the engine only knows the trigger of isn't a line it read: the line is among the unread.)
+  const read = (f: FaceDef) => f.abilities.filter((a) => !(a.kind === 'triggered' && a.manual)).length;
+  const parsed = faces.reduce((n, f) => n + f.keywords.filter(keywordSupported).length + read(f) + reminderOnly(f), 0);
   return parsed > 0 ? 'partial' : 'manual';
 }
 

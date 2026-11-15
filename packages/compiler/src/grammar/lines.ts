@@ -44,7 +44,7 @@ import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept, parseCopyExceptLoosely } from './copies.js';
-import { modifiersOn, parseCastBan, parseEffectText, parseManaSpend, readingModifiers, splitSentences } from './effects.js';
+import { byHandOn, modifiersOn, parseCastBan, parseEffectText, parseManaSpend, readingModifiers, splitSentences } from './effects.js';
 import { keywordIds, parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 import { DESIGNATION_RULE } from '../designations.js';
@@ -2429,11 +2429,18 @@ export const triggeredRule: GrammarRule = {
     );
     if (!env || !m) return null;
     const body = m[2]!;
+    // The last reading of a line (parser.ts): the trigger alone, where it can only end in one place — see below.
+    const triggers: TriggeredAbility[] = [];
     // Try each ", " as the boundary between the trigger condition and the effect.
     for (const comma of body.matchAll(/, /g)) {
       const r = attempt(new Binder(env), (b) => {
         const trig = parseTrigger(m[1]!, body.slice(0, comma.index), b);
         if (!trig) return null;
+        // (As for one that reads: not from the hand or the command zone; from the graveyard if the trigger says so. And
+        // not where what follows goes on with the trigger — "Whenever ~ attacks, blocks, or …" — which then is more than
+        // was read.)
+        const goesOn = /^(?:or|and) |^(?:attacks|blocks|dies|enters|leaves|becomes|is|deals|taps|untaps|transforms|explores|mutates|crews|saddles|fights|connives|casts|plays|draws|discards|gains|loses|sacrifices|activates|cycles|exiles|creates|puts|returns)\b/.test(body.slice(comma.index! + 2));
+        if (byHandOn() && !goesOn && b.selfZone !== 'hand' && b.selfZone !== 'command') triggers.push({ kind: 'triggered', text: original, trigger: trig.trigger, effects: [], manual: true, ...(b.selfZone === 'graveyard' ? { zone: 'graveyard' as const } : {}) });
         b.it = trig.it;
         b.player = trig.player;
         // God-Eternal Bontu: "When ~ dies or is put into exile from the battlefield, you may put her into her owner's library"
@@ -2571,6 +2578,18 @@ export const triggeredRule: GrammarRule = {
         if (!ownEnters && !ownCast && !ownCycle && !xSpellCast && hasFreeX([node.effects, node.modes, node.condition])) return null;
         return node;
       }
+    }
+    // A trigger that reads with an effect nothing reads: the engine puts the ability on the stack when it triggers, and
+    // its controller resolves it by hand (`manual`; the line stays among the unread ones). Only where the trigger can
+    // end in one place: "Whenever you cast an instant, sorcery, or Wizard spell, …" could end after "instant".
+    const [only] = triggers;
+    // (One whose unread text has the card itself in or from another zone may work from there — "…, if this card is in your
+    // graveyard, …", "…, return this card from your graveyard …": where it works is in what's unread, so it isn't read.)
+    const elsewhere = /~ (?:is )?(?:from|in) (?:your|a|its owner's|their) (?:graveyard|hand|library)\b|\bcommand zone\b/i;
+    if (only && triggers.length === 1 && !elsewhere.test(body)) {
+      if (/ This ability triggers only once each turn\.$/.test(body)) only.oncePerTurn = true;
+      if (only.trigger.type === 'cast' && only.trigger.self && !only.zone) only.zone = 'stack';
+      return only;
     }
     return null;
   },

@@ -315,6 +315,18 @@
 .oracle-line.line-manual {
   border-left: 3px dashed var(--warn);
 }
+/* Run by the engine but for one sentence, which is the player's to do. */
+.oracle-line.line-partly {
+  border-left-color: #6f8aa0;
+}
+.by-hand {
+  text-decoration: underline dashed var(--warn);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+.legend-by-hand {
+  margin-left: 8px;
+}
 .line-reminder {
   font-style: italic;
   color: var(--ink-2);

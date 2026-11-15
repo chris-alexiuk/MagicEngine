@@ -72,6 +72,44 @@ export function RulesText({ text }: { text: string }) {
   );
 }
 
+/**
+ * One printed line of a card as the engine treats it (schema `annotateOracle`): run by the engine, resolved by hand,
+ * reminder text — or run but for one sentence, which is marked as the player's to do.
+ */
+export function OracleLine({ line }: { line: { text: string; status: string; byHand?: string[] } }) {
+  const marked = (line.byHand ?? []).filter((s) => line.text.includes(s));
+  if (!marked.length) {
+    return (
+      <p className={`oracle-line line-${line.status}`}>
+        <RulesText text={line.text} />
+      </p>
+    );
+  }
+  // The line cut at each sentence left to the player, in the order they are printed.
+  const cuts = marked.map((s) => ({ s, at: line.text.indexOf(s) })).sort((a, b) => a.at - b.at);
+  const parts: { text: string; hand: boolean }[] = [];
+  let from = 0;
+  for (const { s, at } of cuts) {
+    if (at < from) continue;
+    parts.push({ text: line.text.slice(from, at), hand: false }, { text: s, hand: true });
+    from = at + s.length;
+  }
+  parts.push({ text: line.text.slice(from), hand: false });
+  return (
+    <p className={`oracle-line line-${line.status}`}>
+      {parts.map((p, i) =>
+        p.hand ? (
+          <span key={i} className="by-hand" title="You do this sentence by hand">
+            <RulesText text={p.text} />
+          </span>
+        ) : (
+          <RulesText key={i} text={p.text} />
+        ),
+      )}
+    </p>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Card type and keyword icons (for compact card faces and the deck columns)
 // ---------------------------------------------------------------------------

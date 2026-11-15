@@ -1026,11 +1026,12 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
       return (
         <div className="flow-step">
           <p className="flow-title">
-            Resolve by hand: <strong>{p.sourceName}</strong>
+            {p.step ? 'One sentence by hand' : 'Resolve by hand'}: <strong>{p.sourceName}</strong>
           </p>
           <blockquote className="manual-text">
             <RulesText text={p.text} />
           </blockquote>
+          {p.step && <p className="flow-note">The rest of it is carried out for you: what comes before this is done, and what comes after follows when you're done.</p>}
           <ManualTools g={g} view={view} me={me} act={act} setPick={setPick} />
           <Confirm ok label="Done" onClick={() => answer({ kind: 'manual_resolution', done: true })} />
         </div>
