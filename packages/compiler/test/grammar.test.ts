@@ -1015,7 +1015,7 @@ describe('trigger batch 2 (slice 40)', () => {
       ['Whenever a creature attacks you, draw a card.', 'Enchantment', { type: 'attacks', defender: 'you_only' }],
       ["At the beginning of combat on each opponent's turn, draw a card.", 'Enchantment', { type: 'phase', step: 'beginning_of_combat', whose: 'opponent' }],
       ['Whenever this creature deals damage to a creature, draw a card.', 'Creature — Human', { type: 'deals_damage', to: 'creature' }],
-      ['Whenever you gain life for the first time each turn, draw a card.', 'Enchantment', { type: 'gain_life', first: true }],
+      ['Whenever you gain life for the first time each turn, draw a card.', 'Enchantment', { type: 'gain_life', firstEachTurn: true }],
       ['When this creature becomes monstrous, draw a card.', 'Creature — Human', { type: 'becomes_monstrous' }],
       ['When this creature exploits a creature, draw a card.', 'Creature — Human', { type: 'sacrificed', exploit: true }],
       ['Whenever you cast a spell that targets a creature you control, draw a card.', 'Enchantment', { type: 'cast', targets: { types: ['Creature'], controller: 'you' } }],
@@ -2383,7 +2383,7 @@ describe('slice 189', () => {
     expect(parse('Whenever ~ attacks while you control a creature with power 4 or greater, ~ gets +2/+2 until end of turn.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'attacks', while: { type: 'count', filter: { power: { op: 'ge', n: 4 } } } } });
     expect(parse('Whenever ~ attacks while you have the most life or are tied for most life, you draw a card and you lose 1 life.', 'Creature').abilities[0]).toMatchObject({ trigger: { while: { type: 'life', most: true } } });
     expect(parse("At the beginning of your upkeep, you lose 2 life if you don't control an Ogre.", 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'count', filter: { subtypes: ['Ogre'] }, max: 0 } }] });
-    expect(parse('Whenever a source you control deals noncombat damage to an opponent, you draw that many cards.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'deals_damage', subject: { filter: { controller: 'you' } }, to: 'opponent', noncombat: true }, effects: [{ type: 'draw', amount: { kind: 'event' } }] });
+    expect(parse('Whenever a source you control deals noncombat damage to an opponent, you draw that many cards.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'deals_damage', subject: { filter: { controller: 'you' } }, to: 'opponent', combat: false }, effects: [{ type: 'draw', amount: { kind: 'event' } }] });
     expect(parse('Mill five cards, then return a creature card milled this way to your hand.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'mill' }, { type: 'put_from_milled', filter: { types: ['Creature'] }, to: 'hand' }] });
   });
   it('reads flash for more and casting from exile', () => {
@@ -2582,7 +2582,7 @@ describe('slice 199 (more)', () => {
     expect(parse("Counter target spell. If that spell is countered this way, put it on top of its owner's library instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'library_top' }] });
     expect(parse("Counter target spell. If that spell is countered this way, put it into its owner's hand instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'hand' }] });
     expect(parse('Commander creatures you own have "Whenever this creature attacks a player, if no opponent has more life than that player, you create two Treasure tokens."', 'Enchantment').abilities[0]).toMatchObject({ effect: { affected: { filter: { commander: true, owner: 'you' } }, keywords: [{ id: 'ability', abilities: [{ trigger: { type: 'attacks', defender: 'player' }, condition: { type: 'life', mostAmongOpponents: true } }] }] } });
-    expect(parse('Whenever an opponent loses life for the first time during each of their turns, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'lose_life', first: true, while: { type: 'your_turn', value: true, who: { ref: 'trigger_player' } } } });
+    expect(parse('Whenever an opponent loses life for the first time during each of their turns, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'lose_life', firstEachTurn: true, while: { type: 'your_turn', value: true, who: { ref: 'trigger_player' } } } });
     expect(parse('Whenever you discard one or more cards, this creature deals that much damage to each opponent.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'discard', batch: true }, effects: [{ type: 'deal_damage', amount: { kind: 'event' } }] });
     expect(parse("This creature can't attack a player it has already attacked this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack_same_player'] } });
   });
@@ -2777,5 +2777,33 @@ describe('when it applies is a condition: no flag for "during your turn" or "whi
   it('granted retrace and an activation cost "during your turn"', () => {
     expect(effect('During your turn, nonland permanent cards in your graveyard have retrace.', 'Legendary Creature — Treefolk')).toMatchObject({ type: 'grant_retrace', condition: yours });
     expect((one('{2}, {T}: Draw a card. This ability costs {1} less to activate during your turn.', 'Artifact') as { costReduction?: unknown }).costReduction).toEqual({ amount: 1, condition: yours });
+  });
+});
+
+describe('one name for one idea: "for the first time each turn", "one or more", "noncombat damage"', () => {
+  const trigger = (text: string, typeLine = 'Creature — Faerie') => (one(text, typeLine) as { trigger: Record<string, unknown> }).trigger;
+
+  it('"for the first time each turn" is firstEachTurn on every trigger that says it', () => {
+    expect(trigger('Whenever you gain life for the first time each turn, draw a card.')).toMatchObject({ type: 'gain_life', firstEachTurn: true });
+    expect(trigger('Whenever you lose life for the first time each turn, draw a card.')).toMatchObject({ type: 'lose_life', firstEachTurn: true });
+    expect(trigger('Whenever this creature attacks for the first time each turn, untap it.')).toMatchObject({ type: 'attacks', firstEachTurn: true });
+    expect(trigger('Whenever you surveil for the first time each turn, draw a card.')).toMatchObject({ type: 'scry', firstEachTurn: true });
+    expect(trigger('Whenever this creature becomes the target of a spell or ability for the first time each turn, draw a card.')).toMatchObject({ type: 'becomes_target', firstEachTurn: true });
+  });
+
+  it('"one or more" is batch; "noncombat damage" is combat: false, as for any damage', () => {
+    expect(trigger('Whenever one or more opponents are dealt noncombat damage, draw a card.')).toEqual({ type: 'player_dealt_damage', who: 'opponent', batch: true, combat: false });
+    expect(trigger('Whenever an opponent is dealt combat damage, draw a card.')).toEqual({ type: 'player_dealt_damage', who: 'opponent', combat: true });
+    expect(trigger('Whenever an opponent is dealt damage, draw a card.')).toEqual({ type: 'player_dealt_damage', who: 'opponent' });
+    expect(trigger('Whenever this creature is dealt noncombat damage, draw a card.')).toMatchObject({ type: 'dealt_damage', combat: false });
+  });
+
+  it('"equip / cycling / ninjutsu abilities you activate": the keyword, as "Whenever you activate a cycling ability" says it', () => {
+    const effect = (text: string) => (one(text, 'Enchantment') as { effect: Record<string, unknown> }).effect;
+    expect(effect('Equip abilities you activate cost {2} less to activate.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'equip', amount: 2 });
+    expect(effect('Equip costs you pay cost {1} less.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'equip', amount: 1 });
+    expect(effect('Cycling abilities you activate cost {2} less to activate.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'cycling', amount: 2 });
+    expect(effect('Ninjutsu abilities you activate cost {1} less to activate.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'ninjutsu', amount: 1 });
+    expect(trigger('Whenever you cycle another card, draw a card.')).toMatchObject({ type: 'activate', keyword: 'cycling', other: true });
   });
 });

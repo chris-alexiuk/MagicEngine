@@ -9,7 +9,7 @@ import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } 
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
 import { applyLifeGain, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
-import { bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong, isKeywordCounter } from './characteristics.js';
+import { abilityOfKeyword, bindQualityKeywords, chars, lkiStats, hasKeyword, hasRule, hasType, matchesFilter, power, toughness, objectAbilities, colorsAmong, isKeywordCounter } from './characteristics.js';
 import { damageBeforeExcess, dealDamage } from './combat.js';
 import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
@@ -5486,6 +5486,9 @@ function subjectMatches(check: TriggerCheck, subject: Ref, o: GameObject, opts: 
 
 const refTo = (o: GameObject) => ({ id: o.id, zcc: o.zcc });
 
+/** A damage trigger's "combat damage" (`combat: true`) / "noncombat damage" (`combat: false`): whether this damage is of the kind it names — any, if it names none. */
+const ofKind = (t: TriggerNode, e: { combat?: boolean }): boolean => typeof t.combat !== 'boolean' || t.combat === Boolean(e.combat);
+
 const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerInfo[]> = {
   // CR 603.6a: enters-the-battlefield abilities.
   enters(t, check) {
@@ -5612,7 +5615,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       // "Whenever a creature attacks you"
       if (t.defender === 'you_only' && (target.kind !== 'player' || target.player !== check.controller)) return [];
       // "Whenever ~ attacks for the first time each turn"
-      if (t.firstTime && (check.g.turnLog.attacks?.[o.id] ?? 0) !== 1) return [];
+      if (t.firstEachTurn && (check.g.turnLog.attacks?.[o.id] ?? 0) !== 1) return [];
       // CR 702.171b: "attacks while saddled" — saddled this turn, before it attacked.
       if (t.saddled && o.saddledTurn !== check.g.turn) return [];
       // "Whenever a creature attacks enchanted player"
@@ -5677,7 +5680,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.targetedBy === 'spell' && !e.spell) return [];
     if (t.targetedBy === 'ability' && !e.entry) return [];
     // Valiant: "for the first time each turn"
-    if (t.first && !e.first) return [];
+    if (t.firstEachTurn && !e.first) return [];
     const o = check.g.objects[e.object];
     if (!o || !subjectMatches(check, t.subject as Ref, o)) return [];
     const spell = e.spell ? check.g.objects[e.spell] : undefined;
@@ -5780,7 +5783,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
   // "Whenever ~ deals damage" / "deals combat damage": once for everything it dealt at the same time.
   deals_damage(t, check) {
     const e = check.event;
-    if (e.type !== 'damage' || (t.combat && !e.combat) || (t.noncombat && e.combat) || check.sourceLeft) return [];
+    if (e.type !== 'damage' || !ofKind(t, e) || check.sourceLeft) return [];
     // "Whenever ~ deals damage to a creature": once for each creature, which is the trigger's object.
     if (t.to === 'creature') {
       if (e.to.kind !== 'permanent') return [];
@@ -5795,7 +5798,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.to === 'creatures') {
       const src = check.g.objects[e.source];
       if (e.to.kind !== 'permanent' || !src || !subjectMatches(check, t.subject as Ref, src, { anyZone: true })) return [];
-      const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.to.kind === 'permanent' && (!t.combat || x.combat) && Boolean(check.g.objects[x.to.object] && chars(check.g, check.g.objects[x.to.object]!).types.includes('Creature')));
+      const hits = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.source === e.source && x.to.kind === 'permanent' && ofKind(t, x) && Boolean(check.g.objects[x.to.object] && chars(check.g, check.g.objects[x.to.object]!).types.includes('Creature')));
       return hits[0] === e ? [{ object: refTo(src), amount: hits.reduce((n, x) => n + x.amount, 0) }] : [];
     }
     // "Whenever ~ deals damage to a player" / "to an opponent": once for each player dealt damage; No Mercy: "to you".
@@ -5823,8 +5826,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'damage' || e.to.kind !== 'permanent' || check.sourceLeft) return [];
     const to = e.to.object;
     // "Whenever a source deals damage to ~": once for each source, "that source's controller" its controller.
-    // Smaug the Impenetrable: "Whenever Smaug is dealt noncombat damage" (`noncombat`); "… combat damage" (`combat`).
-    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to && (!t.perSource || x.source === e.source) && (t.combat ? Boolean(x.combat) : t.noncombat ? !x.combat : true));
+    // Smaug the Impenetrable: "Whenever Smaug is dealt noncombat damage"; "… combat damage".
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'permanent' && x.to.object === to && (!t.perSource || x.source === e.source) && ofKind(t, x));
     if (together[0] !== e) return [];
     const o = check.g.objects[to];
     const amount = together.reduce((n, x) => n + x.amount, 0);
@@ -5840,14 +5843,14 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'damage' || e.to.kind !== 'player' || check.sourceLeft) return [];
     // War Elemental: "Whenever an opponent is dealt damage"; Chandra's Spitfire: "… noncombat damage".
     if (t.who === 'opponent' ? e.to.player === check.controller : e.to.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
-    if ((t.combat && !e.combat) || (t.noncombat && e.combat)) return [];
+    if (!ofKind(t, e)) return [];
     const player = e.to.player;
     // Master of Barbs: "Whenever one or more opponents are dealt noncombat damage" — once for the batch.
-    if (t.oneOrMore) {
-      const all = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player !== check.controller && (!t.combat || x.combat) && (!t.noncombat || !x.combat));
+    if (t.batch) {
+      const all = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player !== check.controller && ofKind(t, x));
       return all[0] === e ? [{ amount: all.reduce((n, x) => n + x.amount, 0) }] : [];
     }
-    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player && (!t.combat || x.combat) && (!t.noncombat || !x.combat));
+    const together = (check.batch ?? [e]).filter((x): x is typeof e => x.type === 'damage' && x.to.kind === 'player' && x.to.player === player && ofKind(t, x));
     if (together[0] !== e) return [];
     return [{ player, amount: together.reduce((n, x) => n + x.amount, 0) }];
   },
@@ -5857,7 +5860,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
     if (t.who === 'you' ? e.player !== check.controller : t.who !== 'any' && e.player === check.controller) return [];
     // "for the first time each turn" — that player's first loss this turn.
-    if (t.first && !e.firstLoss) return [];
+    if (t.firstEachTurn && !e.firstLoss) return [];
     return [{ player: e.player, amount: -e.delta }];
   },
   // Baral: "Whenever a spell or ability you control counters a spell" (CR 701.6a).
@@ -5913,7 +5916,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'life' || e.delta <= 0 || check.sourceLeft || (t.who === 'opponent' ? e.player === check.controller : e.player !== check.controller)) return [];
     // "Whenever you gain life for the first time each turn"
-    if (t.first && !e.firstGain) return [];
+    if (t.firstEachTurn && !e.firstGain) return [];
     return [{ player: e.player, amount: e.delta }];
   },
   draw(t, check) {
@@ -6136,7 +6139,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (check.sourceLeft || (e.type !== 'scried' && e.type !== 'surveilled' && e.type !== 'foraged')) return [];
     if (e.player !== check.controller || !(t.kinds as string[]).includes(e.type === 'scried' ? 'scry' : e.type === 'foraged' ? 'forage' : 'surveil')) return [];
-    if (t.first && !(e.type === 'surveilled' && e.first)) return [];
+    if (t.firstEachTurn && !(e.type === 'surveilled' && e.first)) return [];
     return [{ player: e.player }];
   },
   // "Whenever one or more +1/+1 counters are put on ~": once per batch, with how many.
@@ -6290,9 +6293,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'you' && e.player !== check.controller) return [];
     if (t.who === 'opponent' && e.player === check.controller) return [];
     if (t.loyalty && !e.loyalty) return [];
-    // A keyword ability: "an exhaust ability" (its text starts with the keyword); CR 702.29f: typecycling is cycling.
-    const text = e.text.toLowerCase();
-    if (typeof t.keyword === 'string' && (t.keyword === 'cycling' ? !/^[a-z -]*cycling\b/.test(text) : !text.startsWith(t.keyword))) return [];
+    // A keyword ability: "an exhaust ability", "a cycling ability".
+    if (typeof t.keyword === 'string' && !abilityOfKeyword(e.text, t.keyword)) return [];
     // CR 702.29c: "When you cycle this card" — it triggers from wherever the card went.
     if (t.self && e.source !== check.source.id) return [];
     if (t.other && e.source === check.source.id) return [];

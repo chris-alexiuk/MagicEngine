@@ -926,6 +926,9 @@ const STEP_WORDS: Record<string, string> = {
  */
 const duringTurn = (yours: boolean, whose: 'yours' | 'theirs' = 'yours'): ConditionNode => ({ type: 'your_turn', value: yours, ...(whose === 'theirs' ? { who: { ref: 'trigger_player' } } : {}) });
 
+/** A damage trigger's "combat damage" / "noncombat damage": `combat` true or false, as for any damage (schema DamageFilter); any damage if it says neither. */
+const damageKind = (word: string | undefined): { combat?: boolean } => (word === 'combat' ? { combat: true } : word === 'noncombat' ? { combat: false } : {});
+
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
   // CR 903.3: Tome of Legends: "Whenever your commander enters or attacks" — a commander you own.
   const t = text.trim().replace(/^your commander (?=enters|attacks|dies|deals|becomes|blocks)/, 'a commander you own ');
@@ -1063,7 +1066,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     // Frost Titan, Kira: "counter that spell or ability".
     for (const n of ['that spell or ability', 'that spell', 'that ability']) b.named[n] ??= { ref: 'trigger_object' };
     return {
-      trigger: { type: 'becomes_target', subject, ...of, ...(targeted[3] ? { by: targeted[3] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[4] ? { first: true } : {}) },
+      trigger: { type: 'becomes_target', subject, ...of, ...(targeted[3] ? { by: targeted[3] === 'you' ? 'you' : 'opponent' } : {}), ...(targeted[4] ? { firstEachTurn: true } : {}) },
       it: subject.ref === 'self' ? { ref: 'self' } : { ref: 'trigger_targeted' },
       player: { ref: 'trigger_player' },
     };
@@ -1132,7 +1135,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const subject: Ref = damage[1] === '~' ? { ref: 'self' } : { ref: 'attached' };
     const dealtKind = /^is dealt (noncombat|combat) damage$/.exec(damage[2]!)?.[1];
     const trigger: TriggerNode = dealtKind
-      ? { type: 'dealt_damage', subject, ...(dealtKind === 'combat' ? { combat: true } : { noncombat: true }) }
+      ? { type: 'dealt_damage', subject, ...damageKind(dealtKind) }
       : damage[2] === 'is dealt damage' ? { type: 'dealt_damage', subject } : { type: 'deals_damage', subject, ...(damage[2] === 'deals combat damage' ? { combat: true } : {}) };
     b.eventAmount = true;
     return { trigger, it: subject, player: null };
@@ -1211,7 +1214,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const least = sourceHits[2] ? parseAmount(sourceHits[2]) : null;
     if (sourceHits[2] && typeof least !== 'number') return null;
     return {
-      trigger: { type: 'deals_damage', subject: { ref: 'all', filter: { controller: 'you' } }, to: sourceHits[3] === 'a player' ? 'player' : 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}), ...(typeof least === 'number' ? { atLeast: least } : {}) },
+      trigger: { type: 'deals_damage', subject: { ref: 'all', filter: { controller: 'you' } }, to: sourceHits[3] === 'a player' ? 'player' : 'opponent', ...damageKind(kind), ...(typeof least === 'number' ? { atLeast: least } : {}) },
       it: { ref: 'trigger_object' },
       player: { ref: 'trigger_player' },
     };
@@ -1292,13 +1295,13 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (oppDealt) {
     b.eventAmount = true;
     const kind = oppDealt[1]?.trim();
-    return { trigger: { type: 'player_dealt_damage', who: 'opponent', ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    return { trigger: { type: 'player_dealt_damage', who: 'opponent', ...damageKind(kind) }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   // Master of Barbs: "Whenever one or more opponents are dealt noncombat damage" — once for all of them at a time.
   const oppsDealt = /^one or more opponents are dealt (combat |noncombat )?damage$/.exec(t);
   if (oppsDealt) {
     const kind = oppsDealt[1]?.trim();
-    return { trigger: { type: 'player_dealt_damage', who: 'opponent', oneOrMore: true, ...(kind === 'combat' ? { combat: true } : kind === 'noncombat' ? { noncombat: true } : {}) }, it: { ref: 'self' }, player: null };
+    return { trigger: { type: 'player_dealt_damage', who: 'opponent', batch: true, ...damageKind(kind) }, it: { ref: 'self' }, player: null };
   }
   // Valgavoth, Harrower of Souls: "Whenever an opponent loses life for the first time during each of their turns"; The Master
   // of Lake-town: "Whenever a player loses life".
@@ -1309,7 +1312,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const theirTurn = /their turn/.test(loses[2] ?? '');
     if (theirTurn && loses[1] === 'you') return null;
     return {
-      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : loses[1] === 'a player' ? 'any' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { while: duringTurn(true, 'theirs') } : {}) },
+      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : loses[1] === 'a player' ? 'any' : 'opponent', ...(first ? { firstEachTurn: true } : {}), ...(theirTurn ? { while: duringTurn(true, 'theirs') } : {}) },
       it: { ref: 'self' },
       player: { ref: 'trigger_player' },
     };
@@ -1525,7 +1528,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // "Whenever ~ attacks for the first time each turn" (with additional combat phases, CR 500.8)
   if (t === '~ attacks for the first time each turn') {
     b.named['defending player'] = { ref: 'trigger_player' };
-    return { trigger: { type: 'attacks', subject: { ref: 'self' }, firstTime: true }, it: { ref: 'self' }, player: null };
+    return { trigger: { type: 'attacks', subject: { ref: 'self' }, firstEachTurn: true }, it: { ref: 'self' }, player: null };
   }
   // CR 702.171b: "Whenever ~ attacks while saddled" — it's saddled as it attacks.
   if (t === '~ attacks while saddled') {
@@ -2063,7 +2066,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const scry = /^you (scry|surveil|scry or surveil|forage)$/.exec(t);
   if (scry) return { trigger: { type: 'scry', kinds: scry[1]!.split(' or ') }, it: { ref: 'self' }, player: null };
   // Whispering Snitch: "Whenever you surveil for the first time each turn".
-  if (t === 'you surveil for the first time each turn') return { trigger: { type: 'scry', kinds: ['surveil'], first: true }, it: { ref: 'self' }, player: null };
+  if (t === 'you surveil for the first time each turn') return { trigger: { type: 'scry', kinds: ['surveil'], firstEachTurn: true }, it: { ref: 'self' }, player: null };
   // "Whenever one or more +1/+1 counters are put on ~": "that many" is how many.
   // Exemplar of Light: "Whenever you put one or more +1/+1 counters on this creature" — counters you put on (CR 122.6).
   // Generous Patron: "Whenever you put one or more counters on a creature you don't control" — of any kind.
@@ -2152,7 +2155,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (life) {
     b.eventAmount = true;
     const yours = / during each of your turns$/.test(t);
-    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}), ...(yours ? { while: duringTurn(true) } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
+    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { firstEachTurn: true } : {}), ...(yours ? { while: duringTurn(true) } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
   // Kavu Predator, Punishing Fire: "Whenever an opponent gains life" — that player, and how much.
   if (t === 'an opponent gains life') {
@@ -5405,14 +5408,11 @@ export const abilityCostReductionRule: GrammarRule = {
     if (zirda) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, amount: Number(zirda[1]), minOne: true } } as StaticAbility;
     // Fighter Class: "Equip abilities you activate cost {2} less to activate." (CR 702.6a: generic mana only, CR 601.2f)
     // Auriok Steelshaper: "Equip costs you pay cost {1} less." — the same.
-    const equip = /^Equip (?:abilities you activate cost \{(\d+)\} less to activate|costs you pay cost \{(\d+)\} less)\.$/.exec(line);
-    if (equip) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, equipOnly: true, amount: Number(equip[1] ?? equip[2]) } } as StaticAbility;
     // Silver-Fur Master: "Ninjutsu abilities you activate cost {1} less to activate." (commander ninjutsu too, CR 702.49d)
-    // Fluctuator: "Cycling abilities you activate cost {2} less to activate." (typecycling too, CR 702.29e)
-    const cycling = /^Cycling abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
-    if (cycling) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, cyclingOnly: true, amount: Number(cycling[1]) } } as StaticAbility;
-    const ninjutsu = /^Ninjutsu abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line);
-    if (ninjutsu) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, ninjutsuOnly: true, amount: Number(ninjutsu[1]) } } as StaticAbility;
+    // Fluctuator: "Cycling abilities you activate cost {2} less to activate." (typecycling too, CR 702.29f)
+    // Which keyword's abilities: `keyword`, as on "Whenever you activate a cycling ability".
+    const ofKeyword = /^(Equip|Cycling|Ninjutsu) abilities you activate cost \{(\d+)\} less to activate\.$/.exec(line) ?? /^(Equip) costs you pay cost \{(\d+)\} less\.$/.exec(line);
+    if (ofKeyword) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', byYou: true, keyword: ofKeyword[1]!.toLowerCase(), amount: Number(ofKeyword[2]) } } as StaticAbility;
     // Power Artifact: "Enchanted artifact's activated abilities cost {2} less to activate. This effect can't reduce …"
     const attached = /^(?:Enchanted|Equipped) (?:artifact|creature|permanent|land)'s activated abilities cost \{(\d+)\} less to activate\.( This effect can't reduce the mana in that cost to less than one mana\.)?$/.exec(line);
     if (attached) return { kind: 'static', text: original, effect: { type: 'ability_cost_reduction', filter: { sourceAttachedTo: true }, amount: Number(attached[1]), ...(attached[2] ? { minOne: true } : {}) } } as StaticAbility;

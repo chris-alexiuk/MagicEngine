@@ -4,7 +4,7 @@ import { playerRule } from './player-rules.js';
 import type { AddManaEffect, Amount, ConditionNode, Cost, EffectNode, ObjectFilter, Ref, TriggeredAbility } from '@mtg/schema';
 import { amountOf } from './resolve.js';
 import { planManaOnly, settlePhyrexian, type PlannedActivation } from './autotap.js';
-import { canActivateTapAbilities, hasRule, hasType, isPermanentCard, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
+import { abilityOfKeyword, canActivateTapAbilities, hasRule, hasType, isPermanentCard, lkiStats, manaAbilities, manaMultiplier, matchesFilter, objectAbilities, power, toughness } from './characteristics.js';
 import { anyColorChoices, parseManaCost, payFromPool, shortfall, type ManaCost } from './mana.js';
 import { canPayMana, OTHER_PURPOSE, payMana, spendablePool, type ManaPurpose } from './spending.js';
 import { runEffect } from './registry.js';
@@ -175,12 +175,9 @@ export function abilityCostReductions(g: GameState, o: GameObject, ability: { co
       // Zirda: "Abilities you activate that aren't mana abilities …"
       if (a.effect.byYou ? player !== src.controller : !matchesFilter(g, o, a.effect.filter as ObjectFilter, { controller: src.controller, source: src })) continue;
       if (a.effect.byYou && ability.mana) continue;
-      // Fighter Class: "Equip abilities you activate …" (CR 702.6a).
-      if (a.effect.equipOnly && !/^Equip\b/.test(ability.text ?? '')) continue;
-      // Silver-Fur Master: "Ninjutsu abilities you activate …" (CR 702.49d: commander ninjutsu is one).
-      // Fluctuator: "Cycling abilities you activate …" — typecycling is cycling (CR 702.29e).
-      if (a.effect.cyclingOnly && !/^[A-Za-z ]*cycling\b/i.test(ability.text ?? '')) continue;
-      if (a.effect.ninjutsuOnly && !/^(?:Commander )?[Nn]injutsu\b/.test(ability.text ?? '')) continue;
+      // Fighter Class: "Equip abilities you activate …" (CR 702.6a); Silver-Fur Master: "Ninjutsu abilities …";
+      // Fluctuator: "Cycling abilities …" — the abilities of that keyword.
+      if (typeof a.effect.keyword === 'string' && !abilityOfKeyword(ability.text, a.effect.keyword)) continue;
       const others = Object.values(mana.specific).reduce((s, v) => s + (v ?? 0), 0) + mana.hybrid.length + mana.phyrexian.length + mana.x;
       if (mana.generic + others === 0) continue;
       const floor = a.effect.minOne && others === 0 ? 1 : 0;

@@ -908,6 +908,18 @@ export function hasType(g: GameState, o: GameObject, type: string): boolean {
   return chars(g, o).types.includes(type);
 }
 
+/**
+ * Whether an activated ability is the ability of a keyword — "equip abilities", "a cycling ability", "an exhaust ability":
+ * its text starts with the keyword. CR 702.29f: typecycling abilities are cycling abilities ("Swampcycling {2}");
+ * CR 702.49d: commander ninjutsu is a variant of ninjutsu.
+ */
+export function abilityOfKeyword(text: string | undefined, keyword: string): boolean {
+  const t = (text ?? '').toLowerCase();
+  if (keyword === 'cycling') return /^[a-z -]*cycling\b/.test(t);
+  if (keyword === 'ninjutsu') return /^(?:commander )?ninjutsu\b/.test(t);
+  return t.startsWith(keyword) && !/[a-z]/.test(t[keyword.length] ?? '');
+}
+
 export function hasKeyword(g: GameState, o: GameObject, id: string): boolean {
   return chars(g, o).keywords.some((k) => k.id === id);
 }
