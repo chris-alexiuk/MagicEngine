@@ -504,8 +504,9 @@ function defaultTargetsInto(g: GameState, controller: PlayerId, specs: TargetSpe
       const need = targetsRequired(g, controller, spec, candidates);
       const ownerOf = (t: Target) => (t.kind === 'object' ? g.objects[t.object]?.owner : undefined);
       const owner = [...new Set(candidates.map(ownerOf))].find((p) => p && candidates.filter((t) => ownerOf(t) === p).length >= need);
-      if (!owner) return null;
-      out.push(candidates.filter((t) => ownerOf(t) === owner).slice(0, n));
+      // Scarab Feast: "up to three target cards from a single graveyard" — with every graveyard empty, none (CR 601.2c).
+      if (!owner && need > 0) return null;
+      out.push(owner ? candidates.filter((t) => ownerOf(t) === owner).slice(0, n) : []);
       continue;
     }
     // Agadeem's Awakening, Run Away Together, Secret Tunnel: a set of targets related as the spec says.

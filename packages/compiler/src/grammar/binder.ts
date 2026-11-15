@@ -13,6 +13,8 @@ export interface GrammarEnv {
   quotes?: string[];
   /** Parses a quoted or predefined ability text (used for tokens' abilities). */
   parseAbilities?: (text: string, name: string, typeLine: string) => import('../parser.js').ParseResult;
+  /** The reminder text printed with the line being parsed (see ParseContext.reminder). */
+  reminder?: { text: string; after: string }[];
 }
 
 /**

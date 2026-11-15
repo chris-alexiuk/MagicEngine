@@ -9,7 +9,7 @@ import { isRingBearer } from './ring.js';
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
   'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'top_card', 'graveyard', 'this_turn', 'spells_last_turn',
-  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+  'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
 ];
 
@@ -360,8 +360,9 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'max_speed':
       // CR 702.179e: speed 4.
       return ((g.players[controller]?.speed ?? 0) >= 4) !== Boolean(cond.not);
-    case 'city_blessing':
-      return Boolean(g.players[controller]?.cityBlessing);
+    // "you have the city's blessing" (CR 702.131c), "you have an enduring story" (CR 702.195b): a marker, by its name.
+    case 'has_designation':
+      return Boolean(g.players[controller]?.designations?.[String(cond.name)]);
     // The Enduring cycle: "if it was a creature" — as it last existed on the battlefield (CR 603.10a).
     // "If the discarded card wasn't a land card", "If the sacrificed creature was a Human" (CR 608.2h): as a cost was
     // paid, or as this effect sacrificed or discarded it.
@@ -370,11 +371,18 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       const list = ctx.resolution?.entry.costLKI?.[what] ?? ctx.resolution?.lkiThisWay?.[what] ?? ctx.trigger?.lkiThisWay?.[what] ?? [];
       if (!list.length) return false;
       const f = cond.filter as ObjectFilter;
+      // What it was, by what a card or permanent is in itself: its types and colors ("a nonland card", "a red creature").
       const fits = (s: LKIStats) =>
         (!f.types || f.types.some((t) => s.types?.includes(t))) &&
+        (!f.allTypes || f.allTypes.every((t) => s.types?.includes(t))) &&
+        (!f.notTypes || !f.notTypes.some((t) => s.types?.includes(t))) &&
         (!f.subtypes || f.subtypes.some((t) => s.subtypes?.includes(t))) &&
+        (!f.notSubtypes || !f.notSubtypes.some((t) => s.subtypes?.includes(t))) &&
         (!f.supertypes || f.supertypes.every((t) => s.supertypes?.includes(t))) &&
+        (!f.notSupertypes || !f.notSupertypes.some((t) => s.supertypes?.includes(t))) &&
         (!f.colors || f.colors.some((c) => s.colors?.includes(c))) &&
+        (!f.notColors || !f.notColors.some((c) => s.colors?.includes(c))) &&
+        (!f.colorless || !(s.colors?.length ?? 0)) &&
         (!f.multicolored || (s.colors?.length ?? 0) > 1);
       return list.some(fits) !== Boolean(cond.not);
     }

@@ -3,6 +3,7 @@ import { attempt, type Binder } from './binder.js';
 import { parseFilter, parseObjectRef, parsePlayerRef, type ParsedFilter } from './nouns.js';
 import { movedThisWay, parseCount } from './amounts.js';
 import { capitalise, COLOR_WORDS, isSubtype, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
+import { HAS_DESIGNATION } from '../designations.js';
 
 /**
  * Conditions in "if" clauses: intervening "if" on triggers (CR 603.4) and
@@ -394,6 +395,10 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^(?:it's not|it isn't|it wasn't|it was not|~ isn't|~ wasn't|~ is not|~ was not) a token$/.test(t)) return { type: 'is', of: b.it ?? { ref: 'self' }, filter: { token: false } };
   // CR 702.194b: "if this spell was cast using teamwork"
   if (/^(?:~|this spell|it) was cast using teamwork$/.test(t)) return { type: 'paid', cost: 'teamwork' };
+  // CR 702.188a: "if they were cast using web-slinging" — the cost of a keyword read from its definition, by its name.
+  const using = /^(?:~|this spell|it|they|he|she) (?:was|were) cast using ([a-z][a-z-]*(?: [a-z-]+)?)$/.exec(t);
+  const usingId = using?.[1]!.replace(/[^a-z0-9]+/g, '_');
+  if (usingId && b.env.keywords.isLearned(usingId)) return { type: 'paid', cost: usingId };
   // CR 702.174: "if the gift was promised", "if the gift wasn't promised"
   const promised = /^the gift (was|wasn't|was not) promised$/.exec(t);
   if (promised) return { type: 'paid', cost: 'gift', ...(promised[1] !== 'was' ? { not: true } : {}) };
@@ -635,10 +640,13 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Planar Chaos: "If they lose the flip" — the player who flipped.
   const theyFlip = /^(?:they|that player) (win|lose)s? the flip$/.exec(t);
   if (theyFlip) return { type: 'won_flip', ...(theyFlip[1] === 'lose' ? { not: true } : {}) };
-  // CR 702.179e: "you have max speed"; CR 702.131c: "you have the city's blessing"
+  // CR 702.179e: "you have max speed"
   if (/^you have max speed$/.test(t)) return { type: 'max_speed' };
   if (/^you don't have max speed$/.test(t)) return { type: 'max_speed', not: true };
-  if (/^you have the city's blessing$/.test(t)) return { type: 'city_blessing' };
+  // CR 702.131c, 702.195b: "you have the city's blessing", "you don't have an enduring story" — a designation that is
+  // only a marker, by its name.
+  const marked = HAS_DESIGNATION.exec(t);
+  if (marked) return marked[1] === 'have' ? { type: 'has_designation', name: marked[2]! } : { type: 'not', cond: { type: 'has_designation', name: marked[2]! } };
   // Pelt Collector: "if that creature's power is greater than this creature's".
   if (/^that creature's power is greater than (?:~|this creature)'s(?: power)?$/.test(t) && b.it?.ref === 'trigger_object') return { type: 'compare_stats', of: b.it, than: { ref: 'self' }, stats: ['power'] };
   // CR 702.100a (evolve): "that creature's power is greater than ~'s power and/or that creature's toughness is greater than ~'s toughness"
@@ -1243,7 +1251,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
       delete f.zone;
       delete f.owner;
     }
-    const allowed = ['types', 'subtypes', 'supertypes', 'colors', 'multicolored'];
+    const allowed = ['types', 'notTypes', 'allTypes', 'subtypes', 'notSubtypes', 'supertypes', 'notSupertypes', 'colors', 'notColors', 'multicolored', 'colorless'];
     if (!f || !Object.keys(f).length || Object.keys(f).some((k) => !allowed.includes(k))) return null;
     return { type: 'lki_was', what: lkiWas[1], filter: f, ...(lkiWas[2] === "wasn't" ? { not: true } : {}) };
   }

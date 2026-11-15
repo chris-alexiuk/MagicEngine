@@ -23,6 +23,18 @@ const PLURAL_HEADS = new Set(['permanents', 'spells', 'cards', 'tokens']);
 /** CR 110.4: the permanent card types. */
 const PERMANENT_TYPES = ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'];
 
+/** One word that says what a thing is — a card type, a supertype, a color, a subtype, "token", "historic" — as a filter. */
+function oneQuality(word: string): ObjectFilter | null {
+  const w = word.toLowerCase();
+  if (TYPE_NOUNS[w] && w === word) return { types: [TYPE_NOUNS[w]!] };
+  if (SUPERTYPE_WORDS[w] && w === word) return { supertypes: [SUPERTYPE_WORDS[w]!] };
+  if (COLOR_WORDS[w] && w === word) return { colors: [COLOR_WORDS[w]!] };
+  if (w === 'token' || w === 'tokens') return { token: true };
+  if (word === 'historic') return { historic: true };
+  const st = /^[A-Z]/.test(word) ? subtypeOf(word) : null;
+  return st ? { subtypes: [st] } : null;
+}
+
 /** Post-modifiers, peeled off the end of a phrase one at a time. */
 const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boolean][] = [
   // Obelisk of Undoing: "target permanent you both own and control".
@@ -357,6 +369,13 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
   [/ that are ([A-Z][\w-]*s) and\/or tokens$/, (f, m) => {
     const st = subtypeOf(m[1]!);
     return Boolean(st && !f.anyOf && ((f.anyOf = [{ subtypes: [st] }, { token: true }]), true));
+  }],
+  // What a thing is, as a list of single words: "permanents that are artifacts, Sagas, and/or legendary" (storied,
+  // CR 702.195a) — anything that is any of them. The wordings above, each with its own reading, come first.
+  [/ that (?:are|is) ((?:an? )?[\w-]+(?:, (?:an? )?[\w-]+)*),? and\/or ((?:an? )?[\w-]+)$/, (f, m) => {
+    if (f.anyOf) return false;
+    const each = [...m[1]!.split(', '), m[2]!].map((w) => oneQuality(w.replace(/^an? /, '')));
+    return each.every(Boolean) && ((f.anyOf = each as ObjectFilter[]), true);
   }],
   [/ with (?:an )?(even|odd) mana values?$/, (f, m) => !f.manaValueParity && ((f.manaValueParity = m[1] as 'even' | 'odd'), true)],
   // Brought Back: "permanent cards in your graveyard that were put there from the battlefield this turn"; Captain

@@ -369,6 +369,11 @@ export function Plate({ g, player, h, deciding, me, look }: { g: GameState; play
           {ps.lost && <span className="chip warn-chip">Out</span>}
           {g.monarch === player && <span className="chip">Monarch</span>}
           {g.initiative === player && <span className="chip">Initiative</span>}
+          {Object.keys(ps.designations ?? {}).map((d) => (
+            <span key={d} className="chip" title={`Has ${d} for the rest of the game`}>
+              {d.replace(/^(?:the|an?) /, '').replace(/^\w/, (c) => c.toUpperCase())}
+            </span>
+          ))}
           {ps.poison > 0 && <span className="chip warn-chip" title="Poison counters">☠ {ps.poison}</span>}
           {cmdDamage.map(([id, n]) => (
             <span key={id} className="chip warn-chip" title={`Commander damage from ${publicName(id, g)} (21 loses)`}>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GameState, PlayerId, Target } from '../src/index.js';
-import { relatedPick } from '../src/index.js';
+import { legalActions, relatedPick } from '../src/index.js';
 import { createBot } from '../scripts/lib/bot.js';
 import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
@@ -62,6 +62,19 @@ describe('CR 115.3: a prompt for targets that must be related says so', () => {
     give(g, 'bob', 'Cub', 'battlefield');
     give(g, 'bob', 'Ox', 'battlefield');
     expect(asked(enters(g, 'Pinger')).prompt.related).toBeUndefined();
+  });
+
+  it('"up to three target cards from a single graveyard" with every graveyard empty: cast with no targets (CR 601.2c)', () => {
+    let g = toStep(start({ extra: [...CARDS, card('Feast', 'Sorcery', 'Exile up to three target cards from a single graveyard.')] }), 'main1', 'alice');
+    const feast = give(g, 'alice', 'Feast', 'hand');
+    const offered = () => legalActions(g, 'alice').filter((a) => a.type === 'cast' && a.object === feast);
+    expect(offered()).toMatchObject([{ targets: [[]] }]);
+    // With cards in two graveyards: those of one owner.
+    const hers = [give(g, 'alice', 'Cub', 'graveyard'), give(g, 'alice', 'Ox', 'graveyard')];
+    give(g, 'bob', 'Ox', 'graveyard');
+    expect(offered()).toMatchObject([{ targets: [hers.map((object) => ({ kind: 'object', object }))] }]);
+    g = act(g, offered()[0]!);
+    expect(g.stack).toHaveLength(1);
   });
 
   it('the bot of the random games answers such prompts with sets the engine takes', () => {

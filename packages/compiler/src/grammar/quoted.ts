@@ -14,6 +14,23 @@ import type { Binder } from './binder.js';
 
 const QUOTED = /^QUOTED_(\d+)$/;
 
+/**
+ * Sets each quoted text of a line aside as QUOTED_n (added to `quotes`), so sentence and list splitting don't look
+ * inside it. A sentence that ends with the quote has its period inside it ('have "{T}: Add {G}."'): one is kept outside.
+ */
+export function setAsideQuotes(line: string, quotes: string[]): string {
+  return line.replace(/"([^"]*)"|“([^”]*)”/g, (_m, a: string | undefined, b: string | undefined, at: number, all: string) => {
+    let inner = (a ?? b)!;
+    const after = all.slice(at + _m.length);
+    // Urza's Saga: '… with 'This token gets +1/+1 for each artifact you control.'"' — a quote inside ends it too.
+    const ends = /\.['’]?$/.test(inner) && (after === '' || /^\s+[A-Z]/.test(after));
+    // 'has "Whenever this creature attacks, untap target creature," and is a Cleric' — the comma is the outer sentence's.
+    const comma = inner.endsWith(',');
+    if (comma) inner = `${inner.slice(0, -1)}.`;
+    return `QUOTED_${quotes.push(inner) - 1}${ends ? '.' : comma ? ',' : ''}`;
+  });
+}
+
 /** Words inside the quotes that name the card granting the ability rather than the one that has it. */
 const SOURCE_WORDS = /\bthis (?:equipment|aura|vehicle|saga|class|case|room|siege|spell|card|enchantment)\b/i;
 
@@ -43,7 +60,10 @@ export function parseQuotedAbility(item: string, b: Binder, printed: boolean): K
   const text = (/[.:]['’]?$/.test(quoted) ? quoted : `${quoted}.`).replace(/(^|\s)'([^']+?[.,])'(?=\s|$|[.,])/g, '$1"$2"').replace(/\bthis emblem\b/g, 'this creature');
   const names = [b.env.cardName, b.env.faceName].filter((n) => n && n.length > 1);
   if (names.some((n) => text.includes(n)) || SOURCE_WORDS.test(text)) return null;
-  const r = b.env.parseAbilities(text, '\u0001', 'Creature');
+  // Way of the Wildspeaker: 'Planeswalkers you control have "[−4]: Create a 4/4 green Beast creature token with
+  // trample."' — a loyalty ability, its cost in brackets where it isn't printed on a planeswalker (CR 606.4).
+  const loyalty = /^\[([+−-]?(?:\d+|X))\]: /.exec(text);
+  const r = loyalty ? b.env.parseAbilities(`${loyalty[1]}: ${text.slice(loyalty[0].length)}`, '\u0001', 'Planeswalker') : b.env.parseAbilities(text, '\u0001', 'Creature');
   if (r.unparsed.length || r.manualKeywords.length) return null;
   // 'have "Ward—Pay 2 life."': a quoted keyword is that keyword.
   if (r.keywords.length === 1 && !r.abilities.length) return r.keywords[0]!;

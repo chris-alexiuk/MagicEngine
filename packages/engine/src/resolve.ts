@@ -344,6 +344,10 @@ function statOf(ctx: EffectContext, ref: Ref, stat: 'power' | 'toughness' | 'man
   const o = g.objects[r.id];
   // Dovescape: "counter that spell. That player creates X … where X is the spell's mana value" — as it was on the stack.
   if (stat === 'mana_value' && ref.ref === 'trigger_object' && ctx.trigger?.mv !== undefined && (!o || o.zcc !== r.zcc)) return ctx.trigger.mv;
+  // Mana Drain, Sound the Trumpets: "Counter target spell. If that spell's mana value was 2 or less, …" — the spell this
+  // resolution took off the stack, as it last was there: its X counts (CR 202.3e), and a copy has ceased to exist.
+  const left = stat === 'mana_value' && (!o || o.zcc !== r.zcc) ? (ctx.resolution?.moves ?? []).find((m) => m.id === r.id && m.from === 'stack' && m.mv !== undefined) : undefined;
+  if (left) return left.mv!;
   if (stat === 'mana_value') return o ? manaValueOf(g, o) : 0;
   // Ramos, Dragon Engine: "for each of that spell's colors" (CR 105.2).
   if (stat === 'colors') return o ? chars(g, o).colors.length : 0;

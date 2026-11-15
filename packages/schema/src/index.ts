@@ -1643,7 +1643,7 @@ export const CORE_NODES = {
     'put_from_milled', 'grant_play', 'grant_graveyard_cast', 'return_chosen', 'add_counters', 'modify', 'create_token', 'scry', 'surveil', 'mill', 'discard', 'regenerate', 'attach',
     'sacrifice', 'may', 'transform', 'incubate', 'reveal_top_card', 'spell_enter_counters', 'choose_number', 'skip_next', 'monstrosity', 'may_pay', 'unless_pays', 'search', 'sacrifice_choice', 'if', 'may_do',
     'delayed', 'gain_control', 'exchange_control', 'exchange_life', 'exchange_life_stat', 'player_counters_lost', 'choose_object', 'exile_if_dies', 'prevent', 'explore', 'become_monarch', 'get_counters', 'skip_untap',
-    'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does',
+    'proliferate', 'connive', 'amass', 'exile_top', 'class_level', 'exile_on_leave', 'unless_does', 'get_designation',
     'players_do', 'emblem', 'copy_spell', 'manifest', 'grant_rebound', 'radiation', 'cast_free', 'play_free', 'play_exiled', 'cast_among_free', 'cast_copy_of', 'look_sort', 'name_and_dig', 'tainted_pact', 'repeat_may', 'hideaway', 'put_lki_counters', 'cascade', 'ripple', 'discover', 'suspend_tick', 'madness_cast',
     'remove_counters', 'choose_opponent', 'opponents_may', 'become_renowned', 'day_night', 'become_saddled', 'fight', 'fight_distinct', 'scroll_rack', 'plot', 'move_chosen', 'choose_from_hand', 'bolster', 'reorder_top', 'dig', 'increase_speed', 'shuffle', 'populate', 'flip_coin', 'look_at_hand', 'tap_or_untap', 'extra_turn', 'choose_value', 'goad', 'suspect', 'solve', 'soulbond_pair', 'game_result', 'process', 'kinship', 'reveal_choose', 'fateseal', 'extirpate', 'meld',
     'become_prepared', 'become_unprepared', 'end_turn', 'reveal_random', 'shuffle_zones', 'extra_land', 'clash', 'piles', 'mana_trigger_this_turn', 'look_at_top', 'put_counters', 'ninjutsu', 'move_counters', 'myriad', 'encore', 'miracle_cast',
@@ -1651,11 +1651,11 @@ export const CORE_NODES = {
   ],
   conditions: [
     'greatest_power', 'kicked', 'cast_by_you', 'self_tapped', 'your_turn', 'count', 'life', 'hand', 'graveyard', 'this_turn', 'spells_last_turn',
-    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'city_blessing', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
+    'counters', 'is', 'has_attached', 'monstrous', 'harnessed', 'and', 'opponents', 'monarch', 'class_level', 'paid', 'arrived_since_upkeep', 'renowned', 'day_night', 'saddled', 'max_speed', 'solved', 'paired', 'to_graveyard_this_turn', 'has_designation', 'compare_stats', 'won_flip', 'before_attackers', 'step', 'prepared', 'won_clash', 'ring_bearer', 'chose_other_ring_bearer', 'completed_dungeon', 'initiative',
     'top_card', 'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
   ],
   statics: [
-    'x_color', 'ignore_landwalk',
+    'x_color', 'ignore_landwalk', 'designation',
     'enters_tapped', 'enters_with_counters', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule',
     'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'enters_day', 'as_enters', 'per_target_cost', 'enters_prepared', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal', 'as_turned_face_up',
   ],
@@ -1679,7 +1679,7 @@ export const CORE_NODES = {
     'untargetable',
     'indestructible', 'lifelink', 'menace', 'reach', 'trample', 'vigilance', 'fear', 'intimidate', 'shroud', 'skulk',
     'horsemanship', 'protection', 'landwalk', 'infect', 'wither', 'toxic', 'shadow', 'enchant', 'devoid', 'changeling',
-    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'ascend', 'sunburst',
+    'flashback', 'convoke', 'delve', 'improvise', 'morph', 'megamorph', 'disguise', 'foretell', 'plot', 'suspend', 'madness', 'split_second', 'daybound', 'nightbound', 'start_your_engines', 'sunburst',
     // Deck-construction rules only (CR 702.124, 702.124h–k): nothing to do during a game.
     'partner', 'friends_forever', 'choose_a_background', 'doctor_s_companion',
     'kicker', 'multikicker', 'partner_with',

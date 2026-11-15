@@ -13,7 +13,7 @@ import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule,
 import { promptAsEnters } from './as-enters.js';
 import { checkDayNight, syncDayNight } from './day-night.js';
 import { preparedSource } from './prepare.js';
-import { ascendOnResolve, checkDesignations } from './designations.js';
+import { checkDesignations } from './designations.js';
 import { prunePermissions } from './permissions.js';
 import { shuffleInPlace } from './rng.js';
 import { addLore, sagaDone } from './sagas.js';
@@ -54,7 +54,7 @@ export function settle(g: GameState, events: GameEvent[]): void {
     applyControlEffects(g, events);
     // CR 702.145c/d/f/g: day and night follow daybound and nightbound permanents.
     syncDayNight(g, events);
-    // CR 702.179a: speed; CR 702.131b: the city's blessing.
+    // CR 702.179a: speed; CR 702.131b, 702.195a: designations a keyword gives (the city's blessing, an enduring story).
     checkDesignations(g, events);
     checkStateBasedActions(g, events);
     if (g.over || g.pending) return;
@@ -171,8 +171,6 @@ export function resolveTop(g: GameState, events: GameEvent[]): void {
     finishResolution(g, entry, events);
     return;
   }
-  // CR 702.131a: ascend on an instant or sorcery is a spell ability (printed first).
-  if (entry.kind === 'spell' && faceOf(g, obj(g, entry.object)).keywords.some((k) => k.id === 'ascend')) ascendOnResolve(g, entry.controller, events);
   startResolution(g, entry, targets);
   continueResolution(g, events);
 }

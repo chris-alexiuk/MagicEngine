@@ -1,5 +1,5 @@
 import type { ActivatedAbility, ConditionNode, EffectNode, FaceDef, Program, TargetSpec } from '@mtg/schema';
-import { abilitiesOf, chars } from './characteristics.js';
+import { abilitiesOf, chars, keywordAbilities } from './characteristics.js';
 import { canAutomate } from './registry.js';
 import { RulesError, type CompiledProgram, type GameObject, type GameState } from './types.js';
 
@@ -126,7 +126,9 @@ export function programRuns(p: Program): boolean {
 /** The spell programs of an instant or sorcery face, or null if players must resolve it (some line unparsed). */
 export function spellPrograms(face: FaceDef): Program[] | null {
   if (face.unparsed.length) return null;
-  const programs = face.abilities.filter((a) => a.kind === 'spell');
+  // A keyword can stand for a spell ability (ascend on an instant or sorcery, CR 702.131a): it is printed first, and is
+  // carried out first.
+  const programs = [...keywordAbilities(face.keywords), ...face.abilities].filter((a) => a.kind === 'spell');
   return programs.every(programRuns) ? programs : null;
 }
 

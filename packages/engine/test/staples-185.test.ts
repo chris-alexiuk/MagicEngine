@@ -9627,7 +9627,7 @@ describe('Sieges', () => {
       give(r, 'alice', 'Kumena Lite', 'battlefield');
       r = drive(settle(toStep(r, 'end', 'bob')), () => null);
       for (const p of ['alice', 'bob']) for (const id of [...r.zones.hand[p]!]) moveObject(r, id, 'graveyard', []);
-      if (blessed) r.players.alice!.cityBlessing = true;
+      if (blessed) r.players.alice!.designations = { "the city's blessing": true };
       const hands = [r.zones.hand.alice!.length, r.zones.hand.bob!.length];
       r = drive(settle(toStep(r, 'upkeep', 'alice')), () => null);
       expect([r.zones.hand.alice!.length - hands[0]!, r.zones.hand.bob!.length - hands[1]!]).toEqual(blessed ? [1, 0] : [1, 1]);

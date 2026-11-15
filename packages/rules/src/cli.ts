@@ -20,7 +20,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { parseComprehensiveRules, type RulesDoc } from './parse.js';
-import { extractKeywordDefinitions, keywordDefinitionsModule } from './keywords.js';
+import { actionDefinitionsModule, extractActionDefinitions, extractKeywordDefinitions, keywordDefinitionsModule, sectionNames } from './keywords.js';
 import { extractSubtypes, subtypesModule } from './subtypes.js';
 import { buildTrace, diffRules, findCitations, findRuleChecks, pinned, pinProblems, traceMarkdown, type Citation, type Pins, type TraceReport } from './trace.js';
 
@@ -143,13 +143,18 @@ async function subtypes(): Promise<void> {
   console.log(Object.entries(lists).map(([k, v]) => `${v.length} ${k}`).join(', ') + ` → ${out}`);
 }
 
-/** Writes the keyword definitions (CR 702) the compiler expands keywords with. */
+/** Writes the keyword definitions (CR 702) and keyword action definitions (CR 701) the compiler expands them with. */
 async function keywords(): Promise<void> {
   const doc: RulesDoc = JSON.parse(await readFile(fromRoot('docs/rules/rules.json'), 'utf8'));
   const defs = extractKeywordDefinitions(doc);
   const out = 'packages/compiler/src/keyword-definitions.ts';
-  await writeFile(fromRoot(out), keywordDefinitionsModule(defs, doc.effectiveDate));
+  await writeFile(fromRoot(out), keywordDefinitionsModule(defs, doc.effectiveDate, sectionNames(doc, '702')));
   console.log(`${Object.keys(defs).length} keyword definitions → ${out}`);
+  // And the keyword actions CR 701 defines the same way (“Recruit” means “…”).
+  const actions = extractActionDefinitions(doc);
+  const actionsOut = 'packages/compiler/src/action-definitions.ts';
+  await writeFile(fromRoot(actionsOut), actionDefinitionsModule(actions, doc.effectiveDate, sectionNames(doc, '701')));
+  console.log(`${Object.keys(actions).length} keyword action definitions → ${actionsOut}`);
 }
 
 const [cmd, ...args] = process.argv.slice(2).filter((a) => a !== '--');

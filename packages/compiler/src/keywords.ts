@@ -1,4 +1,5 @@
 import type { KeywordInstance } from '@mtg/schema';
+import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
 
 /**
  * Keyword abilities (CR 702) the compiler recognises on keyword lines.
@@ -19,6 +20,8 @@ export interface KeywordSpec {
   /** Lower-case name as printed. */
   name: string;
   param: KeywordParam;
+  /** Known only from its definition in the rules (LEARNED_KEYWORDS): a keyword only where that definition reads. */
+  learned?: true;
 }
 
 const none = (names: string[]): KeywordSpec[] => names.map((name) => ({ id: slug(name), name, param: 'none' }));
@@ -38,7 +41,7 @@ export const CORE_KEYWORDS: KeywordSpec[] = [
     'skulk', 'horsemanship', 'changeling', 'devoid', 'flanking', 'phasing', 'wither', 'infect', 'persist',
     'undying', 'exalted', 'convoke', 'delve', 'cascade', 'prowess', 'split second', 'rebound', 'storm',
     'living weapon', 'sunburst', 'provoke', 'soulbond', 'battle cry', 'evolve', 'extort', 'dethrone', 'mentor',
-    'riot', 'ascend', 'myriad', 'melee', 'partner', 'improvise', 'assist', 'jump-start', 'undaunted', 'training',
+    'riot', 'myriad', 'melee', 'partner', 'improvise', 'assist', 'jump-start', 'undaunted', 'training',
     'decayed', 'daybound', 'nightbound', 'enlist', 'ravenous', 'read ahead', 'unleash', 'haunt', 'epic',
     'gravestorm', 'retrace', 'conspire', 'fuse', 'double team', 'demonstrate', 'banding', 'bargain',
     'living metal', 'cipher', 'aftermath', 'exploit', 'ingest', 'friends forever', 'choose a background',
@@ -70,8 +73,22 @@ export const CORE_KEYWORDS: KeywordSpec[] = [
   ]),
 ];
 
+/**
+ * Keywords the list above doesn't name, learned from their definitions in the rules (CR 702): one the rules write as
+ * its name alone, with a number or with a cost — "Storied", "Ascend", "Web-slinging [cost]". A line is such a keyword
+ * only if the grammar reads the definition (parser `keywordsOf`); then the keyword does what the definition says, with
+ * nothing written for it here or in the engine. So a keyword a new set brings works once its rule is in the rules file.
+ */
+export const LEARNED_KEYWORDS: KeywordSpec[] = Object.entries(KEYWORD_DEFINITIONS).flatMap(([id, def]): KeywordSpec[] => {
+  const m = /^([A-Z][A-Za-z'!-]*(?: [a-z][A-Za-z'!-]*)*)( N| \[cost\])?$/.exec(def.pattern);
+  const sentences = [...def.meaning, ...(def.spell?.meaning ?? [])];
+  // (Not what the rules define of a trigger's wording: "When you cycle this card" means "When you discard this card to …".)
+  if (!m || /^When/.test(m[1]!) || slug(m[1]!) !== id || CORE_KEYWORDS.some((k) => k.id === id) || !sentences.every((s) => /^[A-Z\[{]/.test(s))) return [];
+  return [{ id, name: m[1]!.toLowerCase(), param: m[2] === ' N' ? 'number' : m[2] ? 'cost' : 'none', learned: true }];
+});
+
 const LANDWALK = /^((?:non)?[a-z]+ ?[a-z]*)walk$/; // forestwalk, nonbasic landwalk, legendary landwalk
-const TYPECYCLING = /^((?:basic )?[a-z]+)cycling (.+)$/; // plainscycling {2}, basic landcycling {1}{G}
+const TYPECYCLING = /^((?:basic |artifact )?[a-z]+)cycling (.+)$/; // plainscycling {2}, basic landcycling {1}{G}, artifact landcycling {2}
 const MANA_RUN = /^(\{[^}]+\})+$/;
 const NUMBER_DASH_COST = /^\d+—.+/; // suspend 4—{1}{U}, impending 4—{2}{G}{G}
 const AND_OR_COSTS = /^(\{[^}]+\})+ and\/or (\{[^}]+\})+$/; // kicker {1}{U} and/or {2}
@@ -91,15 +108,22 @@ function isCostArg(arg: string, emDash: boolean, strict: boolean): boolean {
 
 export class KeywordRegistry {
   private specs: KeywordSpec[] = [];
+  private ordered: KeywordSpec[] = [];
 
-  constructor(initial: KeywordSpec[] = CORE_KEYWORDS) {
+  constructor(initial: KeywordSpec[] = [...CORE_KEYWORDS, ...LEARNED_KEYWORDS]) {
     for (const spec of initial) this.add(spec);
+  }
+
+  /** Whether the keyword is known only from its definition in the rules. */
+  isLearned(id: string): boolean {
+    return this.specs.some((s) => s.id === id && s.learned);
   }
 
   add(spec: KeywordSpec): void {
     this.specs.push(spec);
     // Longest names first so "double strike" wins over a hypothetical "double".
     this.specs.sort((a, b) => b.name.length - a.name.length);
+    this.ordered = [...this.specs.filter((s) => !s.learned), ...this.specs.filter((s) => s.learned)];
   }
 
   get all(): readonly KeywordSpec[] {
@@ -123,7 +147,8 @@ export class KeywordRegistry {
       if (!strictCost || MANA_RUN.test(c)) return { id: 'typecycling', text: typecycle[1], cost: c };
     }
 
-    for (const spec of this.specs) {
+    // The keywords named here first: one learned from the rules never takes a line from them ("Equip planeswalker {1}").
+    for (const spec of this.ordered) {
       if (!lower.startsWith(spec.name)) continue;
       const rest = chunk.slice(spec.name.length);
       // Must end at a word boundary: "flash" must not match "flashback".

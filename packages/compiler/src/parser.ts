@@ -3,11 +3,13 @@ import type { AbilityNode, AsEntersNode, CastOptionNode, ConditionNode, EffectNo
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
 import { parseFilter } from './grammar/nouns.js';
+import { setAsideQuotes } from './grammar/quoted.js';
 import { parseCondition } from './grammar/conditions.js';
 import { parseCount } from './grammar/amounts.js';
 import { parseCost } from './grammar/lines.js';
 import { capitalise, subtypeOf, TYPE_NOUNS } from './grammar/words.js';
-import { KEYWORD_DEFINITIONS } from './keyword-definitions.js';
+import { KEYWORD_DEFINITIONS, RULES_KEYWORDS, type KeywordDefinition } from './keyword-definitions.js';
+import { ACTION_DEFINITIONS } from './action-definitions.js';
 import { KeywordRegistry } from './keywords.js';
 import { CORE_RULES } from './rules/index.js';
 
@@ -37,6 +39,11 @@ export interface ParseContext {
   parseAbilities?: (text: string, name: string, typeLine: string) => ParseResult;
   /** Quoted ability texts set aside from the line being parsed (QUOTED_n). */
   quotes?: string[];
+  /**
+   * The reminder text printed with the line being parsed, each with the text it follows. Reminder text has no rules
+   * meaning (CR 207.2); it is read only for a word the rules don't define yet, while a set is being previewed.
+   */
+  reminder?: { text: string; after: string }[];
 }
 
 export interface GrammarRule {
@@ -120,6 +127,11 @@ export class ParserRegistry {
     }
     // Traxos: "Traxos enters tapped and doesn't untap during your untap step."; Sphere of the Suns: "This artifact enters
     // tapped and with three charge counters on it." — two static abilities in one sentence, read as two lines.
+    const reminders = new Map<string, { text: string; after: string }[]>();
+    for (const raw of text.split('\n')) {
+      const said = [...raw.matchAll(/\(([^()]*)\)/g)].map((m) => ({ text: m[1]!.trim(), after: normaliseSelf(stripReminder(raw.slice(0, m.index)), env).replace(/[‘’]/g, "'") })).filter((r) => r.text);
+      if (said.length && stripReminder(raw)) reminders.set(stripReminder(raw), said);
+    }
     const lines = text
       .split('\n')
       .map(stripReminder)
@@ -285,6 +297,7 @@ export class ParserRegistry {
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i]!;
       if (line === '') continue; // pure reminder text, e.g. a basic land's "({T}: Add {G}.)"
+      env.reminder = reminders.get(line);
 
       // CR 716.2a: "[Cost]: Level N" — "This Class's level becomes N. Activate only if this Class is level N-1
       // and only as a sorcery." What follows is the level N ability.
@@ -771,10 +784,17 @@ export class ParserRegistry {
           continue;
         }
       }
+      // A keyword the rules don't have yet, known by the reminder text printed with it.
+      const previewed = !node && !gate && block.length === 1 ? this.keywordFromReminder(line, reminders.get(line), env) : null;
+      if (previewed) {
+        result.keywords.push(previewed);
+        continue;
+      }
       if (node && gate) node.gate = gate;
       if (node) result.abilities.push(node);
       else result.unparsed.push(...block);
     }
+    delete env.reminder;
     for (const kw of result.keywords) {
       // CR 702.110a: "When this creature enters, you may sacrifice a creature" — marked so "exploits a creature" can see it.
       if (kw.id === 'exploit') {
@@ -992,19 +1012,7 @@ export class ParserRegistry {
     // Quoted abilities are set aside as QUOTED_n, so sentence and list splitting don't look inside
     // them and the card's name inside them isn't taken for "~" (see grammar/quoted.ts).
     const quotes: string[] = [];
-    // A sentence that ends with the quote has its period inside it ('have "{T}: Add {G}."'): keep one outside.
-    const masked = block.map((l) =>
-      l.replace(/"([^"]*)"|“([^”]*)”/g, (_m, a: string | undefined, b: string | undefined, at: number, all: string) => {
-        let inner = (a ?? b)!;
-        const after = all.slice(at + _m.length);
-        // Urza's Saga: '… with 'This token gets +1/+1 for each artifact you control.'"' — a quote inside ends it too.
-        const ends = /\.['’]?$/.test(inner) && (after === '' || /^\s+[A-Z]/.test(after));
-        // 'has "Whenever this creature attacks, untap target creature," and is a Cleric' — the comma is the outer sentence's.
-        const comma = inner.endsWith(',');
-        if (comma) inner = `${inner.slice(0, -1)}.`;
-        return `QUOTED_${quotes.push(inner) - 1}${ends ? '.' : comma ? ',' : ''}`;
-      }),
-    );
+    const masked = block.map((l) => setAsideQuotes(l, quotes));
     const normalised = masked
       .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
       // Saw in Half: "… half that creature's toughness. Round up each time." — the rounding belongs to the exception.
@@ -1090,8 +1098,38 @@ export class ParserRegistry {
       }
       const abilities = this.expandKeyword(kw, env);
       if (abilities) kw.abilities = abilities;
+      // A keyword known only from its definition is one only where that definition reads.
+      else if (this.keywords.isLearned(kw.id)) return null;
     }
     return kws;
+  }
+
+  /**
+   * A keyword the rules don't define yet — a set being previewed — read from the reminder text printed with it, which
+   * says what it does in a card's words: "Beam me up {3}{G} (You may cast this card from your graveyard for {3}{G} if you
+   * also return a creature you control to its owner's hand. Then exile this spell.)" Only a line that is a name, with a
+   * number or a mana cost, that no rule (CR 702) and no list here knows; the keyword is then its abilities, as one read
+   * from the rules is. When the rules define it, the rule is read instead and this never runs for it.
+   */
+  private keywordFromReminder(line: string, reminder: { text: string }[] | undefined, env: ParseContext): KeywordInstance | null {
+    const m = reminder?.length === 1 ? /^([A-Z][A-Za-z'-]*(?: [a-z][A-Za-z'-]*){0,3})(?: (\d+|X))?(?:(?: |—)((?:\{[^}]+\})+))?$/.exec(line) : null;
+    if (!m || !reminder) return null;
+    const name = m[1]!.toLowerCase();
+    const id = name.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    // (Nor a variant of a keyword the rules have: "artifact landcycling", "equip worthy" — the rule says what those do.)
+    if (KEYWORD_DEFINITIONS[id] || this.keywords.all.some((k) => k.id === id || k.name === name) || RULES_KEYWORDS.some((k) => name === k || name.endsWith(k) || name.startsWith(`${k} `))) return null;
+    // The reminder as one ability, or each of its sentences as one.
+    const text = reminder[0]!.text;
+    const whole = this.parseBlock([text], env, line);
+    const sentences = whole ? [] : (text.match(/[^.]+\.(?:"|\))?/g)?.map((s) => s.trim()) ?? []);
+    const abilities = whole ? [whole] : sentences.length > 1 && sentences.join(' ') === text ? sentences.map((s) => this.parseBlock([s], env, line)) : [];
+    if (!abilities.length || !abilities.every((a): a is AbilityNode => Boolean(a))) return null;
+    for (const a of abilities) {
+      a.text = line;
+      // The option is named after its keyword, as one read from the rules is ("if its evoke cost was paid").
+      if (a.kind === 'static' && a.effect.type === 'cast_option') a.effect.id = id;
+    }
+    return { id, ...(m[2] ? (m[2] === 'X' ? { text: 'X' } : { n: Number(m[2]) }) : {}), ...(m[3] ? { cost: m[3] } : {}), abilities };
   }
 
   /**
@@ -1118,12 +1156,15 @@ export class ParserRegistry {
         },
       ] as AbilityNode[];
     }
-    const def = EXTRA_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
+    const def: KeywordDefinition | undefined = EXTRA_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[kw.id] ?? KEYWORD_DEFINITIONS[`${kw.id}_for`];
     if (!def) return null;
     const printed = keywordText(def.pattern, kw);
     if (printed === null) return null;
+    // CR 702.131a–b: what some keywords mean on an instant or sorcery spell is said apart (ascend: a spell ability).
+    const meaning = def.spell && /\b(?:Instant|Sorcery)\b/.test(env.typeLine) ? def.spell.meaning : def.meaning;
+    if (!meaning.length) return null;
     const out: AbilityNode[] = [];
-    for (const sentence of def.meaning) {
+    for (const sentence of meaning) {
       // The CR quotes granted abilities with ‘…’; card text uses "…".
       const text = keywordText(sentence, kw)?.replace(/‘([^’']*)['’]/g, '"$1"') ?? null;
       const node = text === null ? null : this.parseBlock([text], env, printed);
@@ -1141,7 +1182,7 @@ export class ParserRegistry {
  * Keywords whose CR definition is one of several in a rule: CR 702.124j "Partner with [name]" — the deck
  * rule does nothing in a game; the other ability is this trigger.
  */
-const EXTRA_DEFINITIONS: Record<string, { rule: string; pattern: string; meaning: string[]; zone?: 'hand' | 'graveyard' }> = {
+const EXTRA_DEFINITIONS: Record<string, KeywordDefinition> = {
   // CR 702.125a: "Undaunted means 'This spell costs {1} less to cast for each opponent you have.'"
   undaunted: { rule: '702.125a', pattern: 'Undaunted', meaning: ['This spell costs {1} less to cast for each opponent you have.'] },
   // CR 702.176a, in words the grammar reads ("this permanent's impending cost" is "its impending cost").
@@ -1247,7 +1288,8 @@ const SELF_NOUNS =
 const TITLES = new Set(['The', 'Lord', 'Lady', 'Captain', 'King', 'Queen', 'General', 'Sir', 'Saint', 'Mother', 'Father', 'Doctor', 'Professor', 'Agent', 'Ambassador', 'Prince', 'Princess', 'Grand', 'High', 'Old', 'Young', 'Great', 'Elder', 'Master', 'Commander', 'Baron', 'Count', 'Duke', 'Sister', 'Brother', 'Uncle', 'Aunt', 'Mister', 'Miss', 'Admiral', 'Chief', 'Emperor', 'Empress']);
 function firstName(name: string): string | undefined {
   if (name.includes(',') || name.includes(' // ')) return undefined;
-  const m = /^([A-Z][\p{L}'’-]{2,}) (?:of |the |[A-Z])/u.exec(name);
+  // (Any capital: "Óin the Brave" → "Óin".)
+  const m = /^(\p{Lu}[\p{L}'’-]{2,}) (?:of |the |\p{Lu})/u.exec(name);
   const w = m?.[1];
   if (!w || TITLES.has(w) || /['’]s$/.test(w)) return undefined;
   // A creature type or card type word is more likely the type than the card ("Goblin …").
@@ -1255,8 +1297,16 @@ function firstName(name: string): string | undefined {
   return w;
 }
 
+/** Keyword actions that name a character ("empower Jace", CR 701.71): there the name isn't the card speaking of itself. */
+const NAMED_ACTIONS = Object.values(ACTION_DEFINITIONS)
+  .map((d) => d.pattern.replace(/ (?:N|\[[^\]]+\])$/, ''))
+  .filter((p) => /\s\p{Lu}/u.test(p));
+const NAMED_ACTION = NAMED_ACTIONS.length ? new RegExp(`\\b(?:${NAMED_ACTIONS.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'gi') : null;
+
 export function normaliseSelf(line: string, ctx: ParseContext): string {
-  let out = line;
+  // Jace, Reality Sculptor: "+1: Empower Jace X, …" — the action's own name is set aside while the card's is replaced.
+  const held: string[] = [];
+  let out = NAMED_ACTION ? line.replace(NAMED_ACTION, (m) => `\u0003${held.push(m) - 1}\u0003`) : line;
   // A legendary card may call itself by the first word of its name: "Barrowin of Clan Undurr" → "Barrowin",
   // "Acererak the Archlich" → "Acererak", "Ajani Vengeant" → "Ajani" (not a title or a type word).
   const legendary = /\bLegendary\b/.test(ctx.typeLine);
@@ -1278,7 +1328,7 @@ export function normaliseSelf(line: string, ctx: ParseContext): string {
   if (/ (?:and|&) /.test(ctx.faceName)) out = out.replace(/(^|[ ,(])~ (deal|attack|enter|die|block|leave|get|gain|have|become) /g, (_m, pre: string, verb: string) => `${pre}~ ${verb === 'have' ? 'has' : `${verb}s`} `).replace(/(~ (?:enters|attacks|blocks)) or (attack|block|die)\b/g, '$1 or $2s');
   // Blood for the Blood God!: "… Exile Blood for the Blood God!" — the name's "!" ended the sentence.
   if (/~$/.test(out) && [...names].some((n) => n.endsWith('!'))) out += '.';
-  return out;
+  return held.length ? out.replace(/\u0003(\d+)\u0003/g, (_m, i: string) => held[Number(i)]!) : out;
 }
 
 function escapeRegExp(s: string): string {

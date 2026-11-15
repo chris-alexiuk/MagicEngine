@@ -22,7 +22,15 @@ export function learnCreatureTypes(cards: Iterable<CardDef>): void {
       return;
     }
     if (!v || typeof v !== 'object') return;
-    const o = v as { typeLine?: unknown; types?: unknown; subtypes?: unknown };
+    const o = v as { typeLine?: unknown; types?: unknown; subtypes?: unknown; creatureTypes?: unknown };
+    // "It's a Borg artifact creature and loses all other creature types": the type an effect makes a creature.
+    if (Array.isArray(o.creatureTypes)) {
+      for (const s of o.creatureTypes as unknown[]) {
+        if (typeof s !== 'string' || s === 'chosen' || known.has(s) || otherKinds.has(s)) continue;
+        known.add(s);
+        CREATURE_TYPES.push(s);
+      }
+    }
     // A face: a card's own, or a token's inside one of its abilities.
     if (typeof o.typeLine === 'string' && Array.isArray(o.types) && Array.isArray(o.subtypes) && (o.types.includes('Creature') || o.types.includes('Kindred'))) {
       for (const s of o.subtypes as string[]) {

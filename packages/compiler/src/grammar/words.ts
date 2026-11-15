@@ -104,6 +104,9 @@ export function subtypeOf(word: string): string | null {
 
 export const isSubtype = (word: string) => SUBTYPE_SET.has(word);
 
+/** A creature type: the rules' own (CR 205.3m), or one the pool's cards brought (registerPoolSubtypes). */
+export const isCreatureType = (word: string) => (SUBTYPES.creature as readonly string[]).includes(word) || registered.has(word);
+
 export function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

@@ -123,10 +123,10 @@ describe('more keywords from CR 702 (slice 21)', () => {
     const a = give(g, 'alice', 'Ascender', 'battlefield');
     for (let i = 0; i < 8; i++) give(g, 'alice', 'Forest', 'battlefield');
     g = cast(g, 'Signal');
-    expect(g.players.alice!.cityBlessing).toBeUndefined();
+    expect(g.players.alice!.designations).toBeUndefined();
     give(g, 'alice', 'Forest', 'battlefield');
     g = settle(cast(g, 'Signal'));
-    expect(g.players.alice!.cityBlessing).toBe(true);
+    expect(g.players.alice!.designations).toEqual({ "the city's blessing": true });
     expect(power(g, g.objects[a]!)).toBe(4);
   });
 

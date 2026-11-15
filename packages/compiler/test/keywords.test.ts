@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KeywordRegistry } from '../src/keywords.js';
+import { CORE_KEYWORDS, KeywordRegistry, LEARNED_KEYWORDS } from '../src/keywords.js';
 
 const reg = new KeywordRegistry();
 
@@ -18,6 +18,13 @@ describe('keyword lines', () => {
     ],
     ['Cycling—Pay 2 life.', [{ id: 'cycling', cost: 'Pay 2 life' }]],
     ['Basic landcycling {1}', [{ id: 'typecycling', text: 'basic land', cost: '{1}' }]],
+    ['Artifact landcycling {2}', [{ id: 'typecycling', text: 'artifact land', cost: '{2}' }]],
+    // Learned from their definitions in the rules (CR 702.195a, 702.131, 702.188a): no list here names them.
+    ['Storied', [{ id: 'storied' }]],
+    ['Ascend', [{ id: 'ascend' }]],
+    ['Web-slinging {2}{W}', [{ id: 'web_slinging', cost: '{2}{W}' }]],
+    // A keyword this list names keeps its line from one the rules taught ("Equip planeswalker [cost]", CR 702.6e).
+    ['Equip planeswalker {1}', [{ id: 'equip', cost: 'planeswalker {1}' }]],
     ['Swampwalk', [{ id: 'landwalk', text: 'swamp' }]],
     ['Crew 3', [{ id: 'crew', n: 3 }]],
     ['Suspend 4—{1}{U}', [{ id: 'suspend', n: 4, cost: '{1}{U}' }]],
@@ -47,6 +54,18 @@ describe('keyword lines', () => {
   it('distinguishes flash from flashback', () => {
     expect(reg.parseLine('Flashback {2}{R}')).toEqual([{ id: 'flashback', cost: '{2}{R}' }]);
     expect(reg.parseLine('Flash')).toEqual([{ id: 'flash' }]);
+  });
+
+  it('learns keywords from the rules: a name alone, with a number or with a cost — and only those', () => {
+    const learned = Object.fromEntries(LEARNED_KEYWORDS.map((k) => [k.id, k]));
+    expect(learned.storied).toEqual({ id: 'storied', name: 'storied', param: 'none', learned: true });
+    expect(learned.ascend).toMatchObject({ param: 'none' });
+    expect(learned.web_slinging).toEqual({ id: 'web_slinging', name: 'web-slinging', param: 'cost', learned: true });
+    // Never one the list above names; never what the rules define of a trigger's wording or of a phrase.
+    expect(LEARNED_KEYWORDS.filter((k) => CORE_KEYWORDS.some((c) => c.id === k.id))).toEqual([]);
+    expect(Object.keys(learned).filter((id) => /^when|^it_/.test(id))).toEqual([]);
+    expect(reg.isLearned('storied')).toBe(true);
+    expect(reg.isLearned('flying')).toBe(false);
   });
 
   it('accepts new keywords at runtime', () => {

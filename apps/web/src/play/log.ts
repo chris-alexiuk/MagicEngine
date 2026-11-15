@@ -216,6 +216,9 @@ export function narrate(before: GameState, after: GameState, events: GameEvent[]
       case 'initiative':
         push('info', `${who(e.player)} takes the initiative.`);
         break;
+      case 'designation':
+        push('info', `${who(e.player)} gets ${e.name} for the rest of the game.`);
+        break;
       case 'day_night':
         push('info', `It becomes ${e.to}.`);
         break;

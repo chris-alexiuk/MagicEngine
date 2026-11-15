@@ -355,6 +355,8 @@ function makeMove(g: GameState, settled: SettledMove, events: GameEvent[]): Move
       subtypes: from === 'battlefield' ? [...(g.lastKnown?.[id]?.subtypes ?? [])] : [...chars(g, o).subtypes],
       controller: o.controller,
       ...(o.token ? { token: true as const } : {}),
+      // CR 608.2h: "Counter target spell. … X is that spell's mana value" — as it was on the stack, with its X.
+      ...(from === 'stack' ? { mv: manaValueOf(g, o) } : {}),
     });
   }
   const castInfo = from === 'stack' && to === 'battlefield' ? o.cast : undefined;

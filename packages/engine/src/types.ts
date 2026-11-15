@@ -107,8 +107,11 @@ export interface PlayerState {
   /** CR 702.179: speed, once a player has any (start your engines!); the turn it last increased. */
   speed?: number;
   speedTurn?: number;
-  /** CR 702.131c: the city's blessing (ascend), for the rest of the game. */
-  cityBlessing?: true;
+  /**
+   * Designations that are only markers, kept for the rest of the game: "the city's blessing" (ascend, CR 702.131c),
+   * "an enduring story" (storied, CR 702.195b) — each as the rules say it.
+   */
+  designations?: Record<string, true>;
 }
 
 /** What paid costs were, for "the sacrificed creature's power" (CR 608.2h: as it last existed). */
@@ -649,7 +652,8 @@ export interface Resolution {
   excess?: number;
   /** What this resolution moved, by the effect that moved it ("for each creature destroyed this way"). */
   /** `controller`: who controlled it as it moved ("its controller creates a 2/2 green Boar creature token"). */
-  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; subtypes?: string[]; controller: PlayerId; token?: true }[];
+  /** `mv`: a spell's mana value as it left the stack, with its X (CR 202.3e) — what "that spell's mana value" is afterwards. */
+  moves?: { id: ObjectId; effect: string; from: ZoneName; to: ZoneName; types: string[]; subtypes?: string[]; controller: PlayerId; token?: true; mv?: number }[];
   /** Fangs of Kalonia, Spectacular Showdown: the permanents this resolution put counters on ("each creature that had a +1/+1
    * counter put on it this way"). */
   countersPut?: { id: ObjectId; zcc: number; counter: string }[];
@@ -1002,7 +1006,7 @@ export type GameEvent =
   /** CR 701.30: a player clashed (and whether they won). */
   | { type: 'clashed'; player: PlayerId; won: boolean }
   | { type: 'goaded'; object: ObjectId; by: PlayerId }
-  | { type: 'city_blessing'; player: PlayerId }
+  | { type: 'designation'; player: PlayerId; name: string }
   /** CR 701.9a: discarded; `madness`: exiled instead (CR 702.35a). */
   | { type: 'discarded'; object: ObjectId; player: PlayerId; madness?: true }
   | { type: 'triggered'; source: ObjectId; text: string; controller: PlayerId }

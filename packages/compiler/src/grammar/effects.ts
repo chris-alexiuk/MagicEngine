@@ -7,9 +7,11 @@ import { parseCombatRule } from './combat.js';
 import { parseCopyExcept } from './copies.js';
 import { parseCondition } from './conditions.js';
 import { keywordIds, parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
-import { quotedLivePT } from './quoted.js';
+import { quotedLivePT, setAsideQuotes } from './quoted.js';
+import { ACTION_DEFINITIONS, RULES_ACTIONS } from '../action-definitions.js';
+import { GETS_DESIGNATION } from '../designations.js';
 import { addTokenText, parseTokenPhrase } from './tokens.js';
-import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
+import { COLOR_WORDS, isCreatureType, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /**
  * Effect text → effect nodes, compositionally:
@@ -2557,6 +2559,15 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         const last = out[out.length - 1];
         if (!last || last.type !== 'move' || last.to !== 'battlefield' || !b.it) return null;
         out.push({ type: 'modify', what: b.it, types: [], subtypes: [itsAlso[1]!], retainTypes: true, until: 'game' });
+        continue;
+      }
+      // Assimilate: "It's a Borg artifact creature and loses all other creature types." — the card types named are added
+      // to what it is, and the creature type named is the only one it has (CR 205.1b; layer 4).
+      const itsOnly = /^It's an? ([A-Z][a-z]+) ((?:(?:artifact|enchantment) )*)creature and loses all other creature types$/.exec(s);
+      if (itsOnly && isCreatureType(itsOnly[1]!)) {
+        if (!b.it || !out.length) return null;
+        const types = itsOnly[2]!.trim().split(' ').filter(Boolean).map((w) => TYPE_NOUNS[w]!);
+        out.push({ type: 'modify', what: b.it, types, subtypes: [], retainTypes: true, creatureTypes: [itsOnly[1]!], until: 'game' });
         continue;
       }
       // CR 608.2c: later text can modify earlier text ("Destroy target creature. It can't be regenerated.").
@@ -5902,7 +5913,8 @@ const VERBS: Record<string, VerbHandler> = {
     // "Put target creature card from a graveyard onto the battlefield under your control." — "return … to the battlefield".
     // The Darkness Crystal: "Put target creature card exiled with ~ onto the battlefield tapped under your control with two
     // additional +1/+1 counters on it."
-    const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters? on it)?$/.exec(args);
+    // (Reminder text leaves "on it" out: "… under your control with a +1/+1 counter.")
+    const onto = /^(.+?) onto the battlefield( tapped)?( transformed)?( under (?:your|its owner's|their owners'|their owner's) control)?(?: with (?:a|an|one|two|three) (?:additional )?\S+ counters?(?: on it)?)?$/.exec(args);
     // Grim Return: "Choose target creature card in a graveyard …. Put that card onto the battlefield under your control." — a
     // target card in a graveyard.
     const itCardTarget = b.it?.ref === 'target' && b.targets[b.it.index]?.filter?.zone === 'graveyard';
@@ -6178,7 +6190,7 @@ const VERBS: Record<string, VerbHandler> = {
     }
     // Ojer Taq: "return it to the battlefield tapped and transformed under its owner's control"
     // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
-    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( attacking)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters?(?: and (a|an|one|two|three) (\S+) counters?)? on (?:it|him|her))?$/.exec(args);
+    const field = /^(.+?) to the battlefield( tapped)?(?: and)?( attacking)?(?: and)?( transformed)?( under (?:your|its owner's|his owner's|her owner's|their owners'|their owner's) control)?(?: with (a|an|one|two|three) (?:additional )?(\S+) counters?(?: and (a|an|one|two|three) (\S+) counters?)?(?: on (?:it|him|her))?)?$/.exec(args);
     // (Attacking only as "tapped and attacking", and not with "transformed" too.)
     if (field && (!field[3] || (field[2] && !field[4]))) {
       const what = parseObjectRef(field[1]!, b);
@@ -6782,6 +6794,9 @@ function parseKeywordAction(c: string, b: Binder): EffectNode[] | null {
     const who = parsePlayerRef(skipAllCombat[1]!, b);
     if (who) return [{ type: 'skip_next', who, what: 'combat_turn' }];
   }
+  // CR 702.131a, 702.195a: "you get the city's blessing for the rest of the game" — a designation that is only a marker.
+  const marked = GETS_DESIGNATION.exec(c);
+  if (marked) return [{ type: 'get_designation', name: marked[1]! }];
   // CR 725.1: "you become the monarch", "target player becomes the monarch".
   const monarch = /^(.+?) becomes? the monarch$/i.exec(c);
   if (monarch) {
@@ -7169,6 +7184,88 @@ function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null
       return effects ? { effects, subject: who } : null;
     });
     if (r) return r;
+  }
+  // No verb the grammar knows: an action the rules define by what it means — or, for a word the rules don't have yet,
+  // what the card's own reminder text says.
+  const defined = parseDefinedAction(c, b) ?? parseReminderAction(c, b);
+  return defined ? { effects: defined, subject: { ref: 'you' } } : null;
+}
+
+/** The actions CR 701 defines by a quoted meaning, as patterns over a clause ("empower Jace N": N a number, or X). */
+const DEFINED_ACTIONS = Object.values(ACTION_DEFINITIONS)
+  .filter((d) => !d.pattern.includes('['))
+  .map((d) => {
+    const counted = / N$/.test(d.pattern);
+    const name = d.pattern.replace(/ N$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return { meaning: d.meaning, re: new RegExp(`^(?:you )?${name}${counted ? ' (\\d+|X)' : ''}$`, 'i') };
+  });
+
+/**
+ * An action the rules define by what it means (CR 701.70a: “Recruit” means “Draw a card, then discard a card. If you
+ * discarded a nonland card this way, create a 1/1 white Human Soldier creature token.”): the clause is read as that
+ * text is. Nothing about the action is written here, so a new keyword action works once the grammar reads the sentences
+ * of its definition — and the ones with a reader of their own never get this far.
+ */
+function parseDefinedAction(c: string, b: Binder): EffectNode[] | null {
+  for (const d of DEFINED_ACTIONS) {
+    const m = d.re.exec(c);
+    if (!m) continue;
+    // (The CR quotes an ability inside a definition with ‘…’; card text uses "…".)
+    let text = d.meaning.replace(/‘([^’']*)['’]/g, '"$1"');
+    // "Put N loyalty counters on it" with N = 1 is "a loyalty counter".
+    if (m[1] !== undefined) text = m[1] === '1' ? text.replace(/\bN ((?:\S+ )?)counters\b/g, 'a $1counter').replace(/\bN\b/g, '1') : text.replace(/\bN\b/g, m[1]);
+    const quotes = [...(b.env.quotes ?? [])];
+    const masked = setAsideQuotes(text, quotes);
+    const r = attempt(b, (b) => {
+      // The definition's own quoted abilities (a token's) are set aside like a line's.
+      const inner = b.clone();
+      (inner as { env: Binder['env'] }).env = { ...b.env, quotes };
+      const effects = parseEffectText(masked, inner);
+      if (effects) b.adopt(inner);
+      return effects;
+    });
+    if (r) return r;
+  }
+  return null;
+}
+
+/**
+ * An action the rules don't define yet — a set being previewed — read from the reminder text printed with it:
+ * "assimilate target creature card from a graveyard. (Put it onto the battlefield under your control with a +1/+1
+ * counter. It's a Borg artifact creature and loses all other creature types.)" The clause is one word no rule and no
+ * reader here knows, and what it's done to; the reminder is instructions, with "it" that thing. The reminder has to be
+ * about that word: it says so ("To assimilate a card, put it …"), or the clause is what it directly follows. Once the
+ * rules define the word (CR 701), the rule is read instead and this never runs for it.
+ */
+function parseReminderAction(c: string, b: Binder): EffectNode[] | null {
+  const reminders = b.env.reminder;
+  const m = reminders?.length ? /^([A-Za-z]+)(?: (.+))?$/.exec(c) : null;
+  if (!m || !reminders) return null;
+  const word = m[1]!.toLowerCase();
+  if (VERB_FORMS[word] || RULES_ACTIONS.some((a) => a === word || a.startsWith(`${word} `))) return null;
+  for (const r of reminders) {
+    // "To assimilate a card, put it onto the battlefield …" names the word; otherwise the clause is the last thing said
+    // before the reminder.
+    const named = /^To ([a-z]+)(?: (?:an?|target|that|the) [^,.]*)?, (.+)$/.exec(r.text);
+    if (named ? named[1] !== word : !r.after.replace(/[.,]$/, '').toLowerCase().endsWith(c.toLowerCase())) continue;
+    const text = named ? named[2]!.replace(/^\w/, (ch) => ch.toUpperCase()) : r.text;
+    // Instructions: they begin with a verb the grammar reads ("Put it …", "Gain control of it …").
+    if (!VERB_FORMS[/^[A-Za-z]+/.exec(text)?.[0].toLowerCase() ?? '']) continue;
+    const read = attempt(b, (b) => {
+      if (m[2]) {
+        const what = parseObjectRef(m[2], b);
+        if (!what || what.plural) return null;
+        b.it = what.ref;
+      }
+      const quotes = [...(b.env.quotes ?? [])];
+      const masked = setAsideQuotes(text, quotes);
+      const inner = b.clone();
+      (inner as { env: Binder['env'] }).env = { ...b.env, quotes, reminder: undefined };
+      const effects = parseEffectText(masked, inner);
+      if (effects) b.adopt(inner);
+      return effects;
+    });
+    if (read) return read;
   }
   return null;
 }

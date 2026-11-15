@@ -16,7 +16,7 @@
 
 - `PINNED.json` holds the text of every cited rule as it read when it was first cited or last looked at (`pnpm rules:trace` adds new ones; it never moves an old one).
 - When a new CR release rewords a cited rule, `pnpm rules:check` fails and prints the old text, the new text and every place that cites it. Read the rule against that code, change what it changes, then `pnpm rules:pin` (all changed rules, or `pnpm rules:pin 704.5j`) to say it has been looked at.
-- `pnpm rules:diff <older rules.json>` lists what a release adds, removes and rewords: a new set's keywords are the added rules in 701 and 702. `pnpm rules:keywords` then regenerates the keyword definitions the compiler reads.
+- `pnpm rules:diff <older rules.json>` lists what a release adds, removes and rewords: a new set's keywords are the added rules in 701 and 702. `pnpm rules:keywords` then regenerates what the compiler reads from them: the keyword definitions (CR 702), the keyword actions defined by a quoted meaning (CR 701), and the names of every section of both — a word in neither list is one the rules don't have yet.
 
 ## Rules as properties
 

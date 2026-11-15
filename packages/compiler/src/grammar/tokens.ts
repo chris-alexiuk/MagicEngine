@@ -126,7 +126,10 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
   // A token without subtypes needs a name (CR 111.4).
   if ((!subtypes.length && !m[6]) || !types.length) return null;
   const isCreature = types.includes('Creature');
-  const extra = m[7] ? withText(m[7], b) : { text: '', quoted: [] };
+  // CR 306.5a: "a blue Jace planeswalker token with 0 loyalty, …" — a planeswalker token says the loyalty it enters with.
+  const loyal = types.includes('Planeswalker') && m[7] ? /^(\d+) loyalty(?:,? (?:and )?(.+))?$/.exec(m[7]) : null;
+  if (types.includes('Planeswalker') && !loyal) return null;
+  const extra = loyal ? (loyal[2] ? withText(loyal[2], b) : { text: '', quoted: [] }) : m[7] ? withText(m[7], b) : { text: '', quoted: [] };
   if (!extra) return null;
   // Wrenn and Seven: "a green Treefolk creature token with reach and "This token's power and toughness are each equal to
   // the number of lands you control."" — no stated size; it's defined by the ability (CR 604.3).
@@ -151,6 +154,7 @@ export function parseTokenPhrase(text: string, b: Binder): ParsedToken | null {
     face.supertypes = [...face.supertypes, 'Snow'];
     face.typeLine = face.typeLine.replace(/^Token /, 'Token Snow ');
   }
+  if (loyal) face.loyalty = loyal[1]!;
   // A quoted ability the grammar can't read leaves the whole phrase unread, rather than a token resolved by hand.
   if (extra.quoted.some((q) => face.unparsed.includes(q))) return null;
   return { amount, tapped, face, ...(sizeX ? { size: 'X' as const } : {}) };
@@ -162,7 +166,13 @@ function withText(text: string, b: Binder): { text: string; quoted: string[] } |
   const words = items.filter((i) => !isQuoted(i));
   // Tamiyo's Notebook: 'with "Spells you cast cost {2} less to cast" and "{T}: Draw a card."' — a quote in a list has no
   // period of its own; as a line of the token's text it ends with one.
-  const quoted = items.filter(isQuoted).map((i) => quotedText(i, b)).map((t) => (t && !/[.:!]['’"]?$/.test(t) ? `${t}.` : t));
+  const quoted = items
+    .filter(isQuoted)
+    .map((i) => quotedText(i, b))
+    .map((t) => (t && !/[.:!]['’"]?$/.test(t) ? `${t}.` : t))
+    // CR 606.4: a loyalty ability quoted in running text has its cost in brackets ("[−1]: Surveil 1."); on the token it is
+    // written as on a card ("−1: Surveil 1.").
+    .map((t) => t?.replace(/^\[([+−-]?\d+)\]: /, '$1: ') ?? null);
   if (quoted.some((t) => t === null)) return null;
   if (words.length && !namesKeywords(words.join(', '), b)) return null;
   const lines = [...(words.length ? [words.join(', ').replace(/^\w/, (c) => c.toUpperCase())] : []), ...(quoted as string[])];

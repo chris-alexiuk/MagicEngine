@@ -47,6 +47,7 @@ import { parseCopyCandidates, parseCopyExcept, parseCopyExceptLoosely } from './
 import { parseCastBan, parseEffectText, parseManaSpend, splitSentences } from './effects.js';
 import { keywordIds, parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
+import { DESIGNATION_RULE } from '../designations.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
 function envOf(ctx: Parameters<GrammarRule['parse']>[2]): GrammarEnv | null {
@@ -4903,10 +4904,25 @@ export const castOptionRule: GrammarRule = {
     const t = line.slice(0, -1);
     const b = new Binder(env);
     const make = (kind: CastOptionNode['kind'], costText: string, extra: Partial<CastOptionNode> = {}): StaticAbility | null => {
-      const cost = parseCost(costText.replace(/^an? /, ''), false, b);
+      // "by paying {2}{W} and returning a tapped creature you control to its owner's hand" (web-slinging, CR 702.188a):
+      // what is done as well as paid, each as the cost it is.
+      const and = /^((?:\{[^}]+\})+) and ((?:returning|sacrificing|discarding|exiling|tapping) .+)$/.exec(costText);
+      const text = and ? `${and[1]}, ${and[2]!.replace(/^(\w+?)ing /, (_m, v: string) => `${v.replace(/^\w/, (c) => c.toUpperCase())}${/(?:sacrific|exil)$/.test(v) ? 'e' : ''} `).replace(/^Tapp /, 'Tap ')}` : costText.replace(/^an? /, '');
+      const cost = parseCost(text, false, b);
       if (!cost || cost.tap || cost.untap || cost.loyalty !== undefined) return null;
       return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind, cost, ...extra } as CastOptionNode };
     };
+    // A set's reminder text says the same in plainer words, before the rules have the keyword: "You may cast this spell
+    // for {2}{W} if you also return a tapped creature you control to its owner's hand." (web-slinging); "You may cast this
+    // card from your graveyard for {3}{G} if you also return a creature you control to its owner's hand. Then exile this
+    // spell." (Beam me up: exiled instead of going anywhere else, as flashback's is).
+    const also = /^You may cast ~( from your graveyard)? for ((?:\{[^}]+\})+) if you also (.+?)(\. Then exile (?:~|it))?$/.exec(t);
+    if (also) {
+      const cost = parseCost(`${also[2]}, ${also[3]!.replace(/^\w/, (c) => c.toUpperCase())}`, false, b);
+      if (!cost || cost.tap || cost.untap || cost.loyalty !== undefined || !cost.other?.length) return null;
+      if (also[4] && !also[1]) return null;
+      return { kind: 'static', text: original, effect: { type: 'cast_option', id: 'alt', kind: 'alternative', cost, ...(also[1] ? { zone: 'graveyard' } : {}), ...(also[4] ? { exileOnLeave: true } : {}) } as CastOptionNode };
+    }
     // CR 702.81a (retrace): from the graveyard, discarding a land card as well as paying its mana cost.
     const retrace = /^You may cast ~ from your graveyard by discarding (a|an) (.+?) as an additional cost to cast it$/.exec(t);
     if (retrace) {
@@ -5082,6 +5098,22 @@ export const returnIfPaidRule: GrammarRule = {
  */
 /** Consume Spirit: "Spend only black mana on X." — the spell's X paid in that color (CR 107.3). */
 /** Great Wall: "Creatures with plainswalk can be blocked as though they didn't have plainswalk." (CR 702.14) */
+/**
+ * CR 702.131b, 702.195a: "Any time you control ten or more permanents and you don't have the city's blessing, you get the
+ * city's blessing for the rest of the game." — a designation that is only a marker, given whenever its condition holds
+ * (the engine looks when it checks state-based actions).
+ */
+export const designationRule: GrammarRule = {
+  id: 'designation',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    const m = DESIGNATION_RULE.exec(line);
+    if (!env || !m) return null;
+    const condition = parseCondition(m[1]!, new Binder(env));
+    return condition ? ({ kind: 'static', text: original, effect: { type: 'designation', name: m[2]!, condition } } as StaticAbility) : null;
+  },
+};
+
 export const ignoreLandwalkRule: GrammarRule = {
   id: 'ignore_landwalk',
   parse(line, original) {
@@ -5640,6 +5672,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   reboundRule,
   xColorRule,
   ignoreLandwalkRule,
+  designationRule,
   entersDayRule,
   entersPreparedRule,
   exertRule,

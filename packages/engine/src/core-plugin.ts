@@ -21,6 +21,7 @@ import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
 import { dayNightCard, setDayNight } from './day-night.js';
+import { giveDesignation } from './designations.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetingAs, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
@@ -3096,6 +3097,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const o of Object.values(g.objects)) if (o.ringBearer === p && o.id !== chosen) delete o.ringBearer;
     if (chosen) g.objects[chosen]!.ringBearer = p;
     ctx.events.push({ type: 'ring_tempted', player: p, ...(chosen ? { object: chosen } : {}) });
+    return true;
+  },
+
+  // CR 702.131a, 702.195a: "you get the city's blessing for the rest of the game" — a marker, by its name.
+  get_designation(node, ctx) {
+    giveDesignation(ctx.g, ctx.controller, String(node.name), ctx.events);
     return true;
   },
 
@@ -6378,7 +6385,7 @@ export const corePlugin: MechanicPlugin = {
   // Applied elsewhere: continuous effects in characteristics, additional costs when casting,
   // "exile it instead" in moveObject, rules for players in player-rules.ts, cost changes in costs.ts.
   // Deck-construction rules (CR 113.6n) do nothing during a game.
-  statics: ['x_color', 'ignore_landwalk', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal', 'as_turned_face_up'],
+  statics: ['x_color', 'ignore_landwalk', 'designation', 'continuous', 'additional_cost', 'additional_cost_choice', 'additional_mana', 'top_permission', 'graveyard_to_exile', 'player_rule', 'as_enters', 'deck_rule', 'cost_modifier', 'replace_quantity', 'exile_instead', 'cast_option', 'resolve_to_hand', 'rebound', 'per_target_cost', 'graveyard_to_library', 'exert_option', 'begin_on_battlefield', 'dungeon_entry', 'gift_spell', 'cast_restriction', 'cast_prohibition', 'attack_tax', 'enter_tapped_others', 'enter_counters_others', 'uncounterable', 'draw_replacement', 'trigger_extra', 'prevent_damage', 'token_one_of_each', 'grant_escape', 'grant_retrace', 'target_life_tax', 'ability_cost_reduction', 'mana_multiplier', 'combat_limit', 'spell_keyword', 'enter_untapped_others', 'unpreventable', 'search_control', 'search_exile', 'redirect_damage', 'graveyard_cast', 'phyrexian_grant', 'cant_enter', 'enter_exile_uncast', 'as_transforms', 'flash_if', 'special_action_discount', 'exile_play', 'opening_reveal', 'as_turned_face_up'],
   enterReplacements: {
     // CR 614.1d / 614.12: "[This permanent] enters tapped" is a replacement effect on how it enters.
     enters_tapped(node, o, g) {

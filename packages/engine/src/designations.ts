@@ -1,23 +1,32 @@
-import type { GameEvent, GameObject, GameState, PlayerId } from './types.js';
+import type { ConditionNode } from '@mtg/schema';
+import { evalCondition } from './conditions.js';
 import { chars } from './characteristics.js';
+import type { GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { faceOf } from './zones.js';
 
 /**
- * Player designations checked whenever state-based actions are (CR 702.179a is one; CR 702.131b isn't,
- * but works "any time"): start your engines! gives a player speed 1; ascend gives the city's blessing.
+ * Player designations checked whenever state-based actions are (CR 702.179a is one; the others aren't, but work "any
+ * time"): start your engines! gives a player speed 1; a keyword that means "Any time [something is true] and you don't
+ * have [a designation], you get it for the rest of the game" gives it — ascend and the city's blessing (CR 702.131b),
+ * storied and an enduring story (CR 702.195a). Which keywords those are, and what has to be true, is their definition
+ * in the rules as the compiler read it (a `designation` static ability): nothing here names one.
  */
 export function checkDesignations(g: GameState, events: GameEvent[]): void {
-  // Cheap first: only permanents printed with these keywords can matter (granting them is vanishingly rare).
+  // Cheap first: only permanents printed with such a keyword can matter (granting one is vanishingly rare).
   const printed = (o: GameObject, id: string) => faceOf(g, o).keywords.some((k) => k.id === id);
   const has = (o: GameObject, id: string) => printed(o, id) && chars(g, o).keywords.some((k) => k.id === id);
   let engines: GameObject[] | null = null;
-  let ascend: GameObject[] | null = null;
+  let marking: { o: GameObject; keyword: string; name: string; condition: ConditionNode }[] | null = null;
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     if (printed(o, 'start_your_engines')) (engines ??= []).push(o);
-    if (printed(o, 'ascend')) (ascend ??= []).push(o);
+    for (const k of faceOf(g, o).keywords) {
+      for (const a of k.abilities ?? []) {
+        if (a.kind === 'static' && a.effect.type === 'designation') (marking ??= []).push({ o, keyword: k.id, name: String(a.effect.name), condition: a.effect.condition as ConditionNode });
+      }
+    }
   }
-  if (!engines && !ascend) return;
+  if (!engines && !marking) return;
   for (const p of g.order) {
     const ps = g.players[p]!;
     if (ps.lost) continue;
@@ -26,21 +35,17 @@ export function checkDesignations(g: GameState, events: GameEvent[]): void {
       ps.speed = 1;
       events.push({ type: 'speed', player: p, speed: 1 });
     }
-    // CR 702.131b: ten or more permanents and a permanent with ascend.
-    if (!ps.cityBlessing && ascend?.some((o) => o.controller === p && has(o, 'ascend'))) {
-      if (g.zones.battlefield.filter((id) => g.objects[id]!.controller === p).length >= 10) giveCityBlessing(g, p, events);
+    for (const m of marking ?? []) {
+      if (m.o.controller !== p || ps.designations?.[m.name] || !has(m.o, m.keyword)) continue;
+      if (evalCondition(m.condition, { g, controller: p, source: m.o, events: [], targets: [], x: 0, memo: {} })) giveDesignation(g, p, m.name, events);
     }
   }
 }
 
-export function giveCityBlessing(g: GameState, p: PlayerId, events: GameEvent[]): void {
+/** The player gets a designation that is only a marker ("the city's blessing"), for the rest of the game. */
+export function giveDesignation(g: GameState, p: PlayerId, name: string, events: GameEvent[]): void {
   const ps = g.players[p]!;
-  if (ps.cityBlessing) return;
-  ps.cityBlessing = true;
-  events.push({ type: 'city_blessing', player: p });
-}
-
-/** CR 702.131a: an ascend spell — checked as it resolves. */
-export function ascendOnResolve(g: GameState, p: PlayerId, events: GameEvent[]): void {
-  if (g.zones.battlefield.filter((id) => g.objects[id]!.controller === p).length >= 10) giveCityBlessing(g, p, events);
+  if (ps.designations?.[name]) return;
+  ps.designations = { ...(ps.designations ?? {}), [name]: true };
+  events.push({ type: 'designation', player: p, name });
 }
