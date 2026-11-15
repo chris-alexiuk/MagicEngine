@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { OrderNeeded, deciding, lookingAhead, replaced, type Move, type Replacement, type Rules } from '../src/instead.js';
+import { DAMAGE_RULES } from '../src/instead-damage.js';
+import { DESTROY_RULES } from '../src/instead-destroy.js';
 import { MOVE_RULES } from '../src/instead-moves.js';
+import { TOKEN_RULES } from '../src/instead-tokens.js';
 import { apply, foresee, viewFor, type GameEvent, type GameState, type PendingChoice, type PlayerId, type ZoneName } from '../src/index.js';
 import { act, actWithEvents, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
 
@@ -415,14 +418,14 @@ describe('a card changing zones', () => {
   });
 
   it('every sort of replacement of a move is a rule in the table, and the mover names none of them', async () => {
-    expect(Object.keys(MOVE_RULES)).toEqual(['madness', 'enters_uncast', 'leaves_the_stack', 'leaves_the_battlefield', 'dies_this_turn', 'creatures_die_this_turn', 'own_exile', 'exile_instead', 'own_shuffle']);
+    expect(Object.keys(MOVE_RULES)).toEqual(['madness', 'enters_uncast', 'leaves_the_stack', 'leaves_the_battlefield', 'dies_this_turn', 'creatures_die_this_turn', 'own_exile', 'exile_instead', 'own_shuffle', 'commander']);
     const { readFileSync } = await import('node:fs');
     const mover = readFileSync(new URL('../src/zones.ts', import.meta.url), 'utf8');
     const body = mover
       .slice(mover.indexOf('export function moveObject('), mover.indexOf('function hostsForEnteringAura('))
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*$/gm, '');
-    for (const word of ['exile_instead', 'exileOnLeave ===', 'exileWhenLeaves)', 'exileIfDiesTurn ===', 'exileDyingTurn', 'graveyard_to_', 'enter_exile_uncast', 'madness']) expect(body, word).not.toContain(word);
+    for (const word of ['exile_instead', 'exileOnLeave ===', 'exileWhenLeaves)', 'exileIfDiesTurn ===', 'exileDyingTurn', 'graveyard_to_', 'enter_exile_uncast', 'madness', "to === 'hand'"]) expect(body, word).not.toContain(word);
   });
 });
 
@@ -568,5 +571,579 @@ describe('a player drawing', () => {
     g.zones.library.alice = g.zones.library.alice!.slice(0, 1);
     g = passRound(cast(g, 'alice', 'Divination'));
     expect(g.winner).toBe('alice');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Damage about to be dealt: the same path, the rules of instead-damage.ts
+// ---------------------------------------------------------------------------
+
+describe('damage about to be dealt', () => {
+  const DAMAGE = [
+    card('Bolt', 'Instant', 'Bolt deals 2 damage to any target.'),
+    card('Big Bolt', 'Instant', 'Big Bolt deals 5 damage to any target.'),
+    card('Furnace', 'Enchantment', 'If a source would deal damage to a permanent or player, it deals double that damage to that permanent or player instead.'),
+    card('Salve', 'Instant', 'Prevent the next 3 damage that would be dealt to any target this turn.'),
+    card('Giant', 'Creature — Giant', 'If a source would deal 3 or less damage to this creature, prevent that damage.', { power: '4', toughness: '4' }),
+    card('Warded Bear', 'Creature — Bear', 'Protection from red', { power: '2', toughness: '2' }),
+    card('Shield Up', 'Instant', 'Put a shield counter on target creature.'),
+    card('Unstoppable', 'Instant', "Unstoppable deals 2 damage to target creature. The damage can't be prevented."),
+    card('Pariah', 'Enchantment — Aura', 'Enchant creature\nAll damage that would be dealt to you is dealt to enchanted creature instead.'),
+    card('Vigor', 'Enchantment', 'If damage would be dealt to a creature you control, prevent that damage. Put a +1/+1 counter on that creature for each 1 damage prevented this way.'),
+    card('Wall', 'Creature — Wall', 'Defender', { power: '0', toughness: '7' }),
+    card('Rain', 'Sorcery', 'Rain deals 2 damage to each creature.'),
+  ];
+  const board = () => toStep(start({ extra: DAMAGE }), 'main1');
+  const red = (g: GameState, name: string) => {
+    g.cards[name] = { ...g.cards[name]!, faces: [{ ...g.cards[name]!.faces[0]!, colors: ['R'] }] };
+  };
+  const prevented = (events: GameEvent[]) => events.filter((e) => e.type === 'prevented').map((e) => (e as { amount: number }).amount);
+
+  it('CR 616.1: damage that would be doubled and has a "prevent the next 3" on it — prevented first, then doubled', () => {
+    let g = board();
+    give(g, 'bob', 'Furnace', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Salve', 'alice'));
+    // 2 damage: all of it prevented, and twice nothing is nothing. (Doubled first, 1 of the 4 would get through.)
+    g = passRound(cast(g, 'alice', 'Bolt', 'alice'));
+    expect(g.players.alice!.life).toBe(20);
+    // The shield still has 1 to give: 5 damage, 1 prevented, 4 doubled.
+    expect(g.prevention).toMatchObject([{ amount: 1 }]);
+    g = passRound(cast(g, 'alice', 'Big Bolt', 'alice'));
+    expect(g.players.alice!.life).toBe(12);
+    expect(g.prevention).toEqual([]);
+  });
+
+  it('"3 or less damage" that would be doubled past 3: prevented while it is 2', () => {
+    let g = board();
+    give(g, 'bob', 'Furnace', 'battlefield');
+    const giant = give(g, 'alice', 'Giant', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Bolt', giant));
+    expect(g.objects[giant]!.damage).toBe(0);
+    // 5 is more than 3 either way: doubled, and dealt.
+    g = passRound(cast(g, 'alice', 'Big Bolt', giant));
+    expect(g.objects[giant]?.zone).toBe('graveyard');
+  });
+
+  it('protection from the source, and a shield counter or a "prevent the next 3": the protection takes it, and nothing is used up', () => {
+    let g = board();
+    red(g, 'Rain');
+    const bear = give(g, 'alice', 'Warded Bear', 'battlefield');
+    const wall = give(g, 'alice', 'Wall', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Shield Up', bear));
+    g = passRound(cast(g, 'alice', 'Salve', bear));
+    const r = actWithEvents(act(cast(g, 'alice', 'Rain'), { type: 'pass', player: 'alice' }), { type: 'pass', player: 'bob' });
+    // The Wall, with no protection, is dealt it; the Bear isn't, and has all it had.
+    expect(r.state.objects[wall]!.damage).toBe(2);
+    expect(r.state.objects[bear]!.damage).toBe(0);
+    expect(r.state.objects[bear]!.counters.shield).toBe(1);
+    expect(r.state.prevention).toMatchObject([{ amount: 3 }]);
+  });
+
+  it("CR 122.1c: a shield counter is removed instead even of damage that can't be prevented; protection doesn't stop that damage", () => {
+    let g = board();
+    const wall = give(g, 'alice', 'Wall', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Shield Up', wall));
+    g = passRound(cast(g, 'alice', 'Salve', wall));
+    g = passRound(cast(g, 'alice', 'Unstoppable', wall));
+    // Not prevented (the "next 3" is untouched): the shield counter went instead.
+    expect(g.objects[wall]!.damage).toBe(0);
+    expect(g.objects[wall]!.counters.shield).toBeUndefined();
+    expect(g.prevention).toMatchObject([{ amount: 3 }]);
+    g = passRound(cast(g, 'alice', 'Unstoppable', wall));
+    expect(g.objects[wall]!.damage).toBe(2);
+  });
+
+  it('a shield counter is kept where plain prevention does the same: "prevent the next 3" first', () => {
+    let g = board();
+    const wall = give(g, 'alice', 'Wall', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Shield Up', wall));
+    g = passRound(cast(g, 'alice', 'Salve', wall));
+    g = passRound(cast(g, 'alice', 'Bolt', wall));
+    // Either leaves no damage; the shield counter is the one that couldn't be had back. (Nothing prevents all of 5:
+    // then it goes — the least damage first.)
+    expect(g.objects[wall]!.counters.shield).toBe(1);
+    expect(g.prevention).toMatchObject([{ amount: 1 }]);
+    g = passRound(cast(g, 'alice', 'Big Bolt', wall));
+    expect(g.objects[wall]!.damage).toBe(0);
+    expect(g.objects[wall]!.counters.shield).toBeUndefined();
+  });
+
+  it('CR 614.1b, 615.5: damage sent on to a creature, prevented there, with what the prevention does besides', () => {
+    let g = board();
+    const wall = give(g, 'alice', 'Wall', 'battlefield');
+    const pariah = give(g, 'alice', 'Pariah', 'battlefield');
+    g.objects[pariah]!.attachedTo = { id: wall, zcc: g.objects[wall]!.zcc };
+    const r = actWithEvents(act(cast(toStep(g, 'main1', 'bob'), 'bob', 'Bolt', 'alice'), { type: 'pass', player: 'bob' }), { type: 'pass', player: 'alice' });
+    expect(r.state.players.alice!.life).toBe(20);
+    expect(r.state.objects[wall]!.damage).toBe(2);
+
+    let v = board();
+    const wall2 = give(v, 'alice', 'Wall', 'battlefield');
+    const aura = give(v, 'alice', 'Pariah', 'battlefield');
+    v.objects[aura]!.attachedTo = { id: wall2, zcc: v.objects[wall2]!.zcc };
+    give(v, 'alice', 'Vigor', 'battlefield');
+    const s = actWithEvents(act(cast(toStep(v, 'main1', 'bob'), 'bob', 'Bolt', 'alice'), { type: 'pass', player: 'bob' }), { type: 'pass', player: 'alice' });
+    expect(s.state.players.alice!.life).toBe(20);
+    expect(s.state.objects[wall2]!.damage).toBe(0);
+    expect(s.state.objects[wall2]!.counters['+1/+1']).toBe(2);
+    expect(prevented(s.events)).toEqual([2]);
+  });
+
+  it('every sort of replacement or prevention of damage is a rule in the table, and the dealer names none of them', async () => {
+    expect(Object.keys(DAMAGE_RULES)).toEqual(['redirected', 'changed', 'prevented', 'shielded', 'protected', 'shield_counter']);
+    const { readFileSync } = await import('node:fs');
+    const code = readFileSync(new URL('../src/combat.ts', import.meta.url), 'utf8');
+    const body = code
+      .slice(code.indexOf('export function dealDamage('), code.indexOf('export function needsSecondDamageStep('))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    expect(body.length).toBeGreaterThan(500);
+    for (const word of ['prevent_damage', 'redirect_damage', 'g.prevention', 'rotectedFrom', 'removeShield', "replaceQuantity(g, 'damage'", 'shield']) expect(body, word).not.toContain(word);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A permanent about to be destroyed (CR 701.8): the same path, the rules of instead-destroy.ts
+// ---------------------------------------------------------------------------
+
+describe('a permanent about to be destroyed', () => {
+  const DESTROY = [
+    card('Shield Up', 'Instant', 'Put a shield counter on target creature.'),
+    card('Troll', 'Creature — Troll', '{0}: Regenerate this creature.', { power: '2', toughness: '2' }),
+    card('Hyena Umbra', 'Enchantment — Aura', 'Enchant creature\nEnchanted creature gets +1/+1 and has first strike.\nUmbra armor'),
+    card('Spider Umbra', 'Enchantment — Aura', 'Enchant creature\nEnchanted creature gets +1/+1 and has reach.\nUmbra armor'),
+    card('Doom', 'Instant', 'Destroy target creature.'),
+    card('Final Doom', 'Instant', "Destroy target creature. It can't be regenerated."),
+    card('Darksteel Bear', 'Creature — Bear', 'Indestructible', { power: '2', toughness: '2' }),
+    card('Bolt', 'Instant', 'Bolt deals 3 damage to any target.'),
+  ];
+  const board = () => toStep(start({ extra: DESTROY }), 'main1');
+  /** A Troll of Alice's with a regeneration shield. */
+  const troll = (g: GameState): [GameState, string] => {
+    const id = give(g, 'alice', 'Troll', 'battlefield');
+    const next = passRound(act(g, { type: 'activate', player: 'alice', object: id, ability: 0 }));
+    expect(next.objects[id]!.regenShields).toBe(1);
+    return [next, id];
+  };
+  const enchant = (g: GameState, name: string, on: string): string => {
+    const aura = give(g, 'alice', name, 'battlefield');
+    g.objects[aura]!.attachedTo = { id: on, zcc: g.objects[on]!.zcc };
+    return aura;
+  };
+
+  it('one effect: it applies, and nobody is asked', () => {
+    let [g, id] = troll(board());
+    g = passRound(cast(g, 'alice', 'Doom', id));
+    expect(g.pending).toBeNull();
+    expect(g.objects[id]).toMatchObject({ zone: 'battlefield', tapped: true, regenShields: 0 });
+  });
+
+  it('CR 616.1: a shield counter and a regeneration shield — its controller chooses which is used', () => {
+    let [g, id] = troll(board());
+    g = passRound(cast(g, 'alice', 'Shield Up', id));
+    g = passRound(cast(g, 'alice', 'Doom', id));
+    const p = order(g);
+    expect(p.player).toBe('alice');
+    expect(p.text).toBe('Troll would be destroyed, and more than one effect replaces that. Which applies?');
+    expect(p.options).toEqual(['Its shield counter: remove it instead', 'Regeneration: remove all damage from it and tap it instead']);
+
+    const counter = answer(g, 'Its shield counter');
+    expect(counter.pending).toBeNull();
+    expect(counter.objects[id]).toMatchObject({ zone: 'battlefield', tapped: false, regenShields: 1 });
+    expect(counter.objects[id]!.counters.shield).toBeUndefined();
+
+    const regenerated = answer(g, 'Regeneration');
+    expect(regenerated.objects[id]).toMatchObject({ zone: 'battlefield', tapped: true, regenShields: 0 });
+    expect(regenerated.objects[id]!.counters.shield).toBe(1);
+  });
+
+  it('CR 702.89a: two Umbras on it — its controller chooses which is destroyed', () => {
+    let g = board();
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    const hyena = enchant(g, 'Hyena Umbra', bear);
+    const spider = enchant(g, 'Spider Umbra', bear);
+    g.objects[bear]!.damage = 1;
+    g = passRound(cast(g, 'alice', 'Doom', bear));
+    expect(order(g).options).toEqual(['Hyena Umbra: umbra armor — remove all damage from it and destroy this Aura instead', 'Spider Umbra: umbra armor — remove all damage from it and destroy this Aura instead']);
+    g = answer(g, 'Spider Umbra');
+    expect(g.pending).toBeNull();
+    expect(g.objects[bear]).toMatchObject({ zone: 'battlefield', damage: 0 });
+    expect([zoneOf(g, hyena), zoneOf(g, spider)]).toEqual(['battlefield', 'graveyard']);
+  });
+
+  it('CR 704.5g: destroyed for the damage on it — the same choice', () => {
+    let [g, id] = troll(board());
+    const umbra = enchant(g, 'Hyena Umbra', id);
+    g = passRound(cast(g, 'alice', 'Bolt', id));
+    expect(order(g).options).toHaveLength(2);
+    const kept = answer(g, 'Regeneration');
+    expect(kept.objects[id]).toMatchObject({ zone: 'battlefield', damage: 0, tapped: true });
+    expect(zoneOf(kept, umbra)).toBe('battlefield');
+    const lost = answer(g, 'Hyena Umbra');
+    expect(lost.objects[id]).toMatchObject({ zone: 'battlefield', damage: 0, tapped: false, regenShields: 1 });
+    expect(zoneOf(lost, umbra)).toBe('graveyard');
+  });
+
+  it("CR 701.19c: \"It can't be regenerated\" — the shield counter is all that applies, and nobody is asked", () => {
+    let [g, id] = troll(board());
+    g = passRound(cast(g, 'alice', 'Shield Up', id));
+    g = passRound(cast(g, 'alice', 'Final Doom', id));
+    expect(g.pending).toBeNull();
+    expect(g.objects[id]).toMatchObject({ zone: 'battlefield', tapped: false, regenShields: 1 });
+    expect(g.objects[id]!.counters.shield).toBeUndefined();
+    // With nothing left to replace it, it is destroyed.
+    g = passRound(cast(g, 'alice', 'Final Doom', id));
+    expect(zoneOf(g, id)).toBe('graveyard');
+  });
+
+  it("CR 702.12b: a permanent that can't be destroyed isn't about to be — its shield counter stays", () => {
+    let g = board();
+    const bear = give(g, 'alice', 'Darksteel Bear', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Shield Up', bear));
+    g = passRound(cast(g, 'alice', 'Doom', bear));
+    expect(g.objects[bear]!.zone).toBe('battlefield');
+    expect(g.objects[bear]!.counters.shield).toBe(1);
+  });
+
+  it('what is done instead is put to the rules in its turn: an Umbra with a shield counter loses that, and both stay', () => {
+    let g = board();
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    const umbra = enchant(g, 'Hyena Umbra', bear);
+    g.objects[umbra]!.counters.shield = 1;
+    g = passRound(cast(g, 'alice', 'Doom', bear));
+    expect(g.pending).toBeNull();
+    expect([zoneOf(g, bear), zoneOf(g, umbra)]).toEqual(['battlefield', 'battlefield']);
+    expect(g.objects[umbra]!.counters.shield).toBeUndefined();
+  });
+
+  it('while the engine only looks ahead nobody is asked: the first takes it', () => {
+    let [g, id] = troll(board());
+    g = passRound(cast(g, 'alice', 'Shield Up', id));
+    g = act(cast(g, 'alice', 'Doom', id), { type: 'pass', player: 'alice' });
+    const seen = foresee(g, { type: 'pass', player: 'bob' });
+    if (!seen.ok) throw new Error(seen.error);
+    expect(seen.state.pending).toBeNull();
+    expect(seen.state.objects[id]!.counters.shield).toBeUndefined();
+    expect(seen.state.objects[id]!.regenShields).toBe(1);
+  });
+
+  it('every sort of replacement of a destruction is a rule in the table, and permanents.ts names none of them', async () => {
+    expect(Object.keys(DESTROY_RULES)).toEqual(['shield_counter', 'regenerated', 'umbra_armor']);
+    const { readFileSync } = await import('node:fs');
+    const code = readFileSync(new URL('../src/permanents.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    for (const word of ['regenShields', 'umbra_armor', 'totem_armor', 'cant_be_regenerated']) expect(code, word).not.toContain(word);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tokens about to be created (CR 111.1): the same path, the rules of instead-tokens.ts
+// ---------------------------------------------------------------------------
+
+describe('tokens about to be created', () => {
+  const TOKENS = [
+    card('Soldiers', 'Sorcery', 'Create a 1/1 white Soldier creature token.'),
+    card('Tapped Soldiers', 'Sorcery', 'Create two tapped 1/1 white Soldier creature tokens.'),
+    card('Riches', 'Sorcery', 'Create a Treasure token.'),
+    card('Season', 'Enchantment', 'If an effect would create one or more tokens under your control, it creates twice that many of those tokens instead.'),
+    card('Took', 'Legendary Creature — Halfling', 'If one or more tokens would be created under your control, those tokens plus an additional Food token are created instead.', { power: '2', toughness: '3' }),
+    card('Chatterfang', 'Legendary Creature — Squirrel', 'If one or more tokens would be created under your control, those tokens plus that many 1/1 green Squirrel creature tokens are created instead.', { power: '3', toughness: '3' }),
+    card('Visitation', 'Enchantment', 'If one or more creature tokens would be created under your control, that many 4/4 white Angel creature tokens with flying and vigilance are created instead.'),
+    card('Manufactor', 'Artifact Creature — Assembly-Worker', 'If you would create a Clue, Food, or Treasure token, instead create one of each.', { power: '1', toughness: '3' }),
+    card('Xorn', 'Creature — Elemental', 'If you would create one or more Treasure tokens, instead create those tokens plus an additional Treasure token.', { power: '3', toughness: '2' }),
+  ];
+  const board = (...permanents: string[]) => {
+    const g = toStep(start({ extra: TOKENS }), 'main1');
+    for (const name of permanents) give(g, 'alice', name, 'battlefield');
+    return g;
+  };
+  /** Alice's tokens, by kind: "Soldier ×2, Food". */
+  const made = (g: GameState): string => {
+    const counts: Record<string, number> = {};
+    for (const id of g.zones.battlefield) {
+      const o = g.objects[id]!;
+      if (!o.token || o.controller !== 'alice') continue;
+      const name = g.cards[o.card]!.faces[0]!.name.replace(/ Token$/, '');
+      counts[name] = (counts[name] ?? 0) + 1;
+    }
+    return Object.entries(counts)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name))
+      .join(', ');
+  };
+
+  it('no effect: the tokens asked for; one effect: it applies, and nobody is asked', () => {
+    expect(made(passRound(cast(board(), 'alice', 'Soldiers')))).toBe('Soldier');
+    const g = passRound(cast(board('Season'), 'alice', 'Soldiers'));
+    expect(g.pending).toBeNull();
+    expect(made(g)).toBe('Soldier ×2');
+  });
+
+  it('CR 616.1: "plus an additional Food token" and "twice that many" — the Food first, unasked: it is doubled too', () => {
+    const g = passRound(cast(board('Took', 'Season'), 'alice', 'Soldiers'));
+    expect(g.pending).toBeNull();
+    expect(made(g)).toBe('Food ×2, Soldier ×2');
+  });
+
+  it('CR 614.5: "plus that many Squirrels" and "twice that many" — each applies once, whichever goes first', () => {
+    const g = passRound(cast(board('Chatterfang', 'Season'), 'alice', 'Soldiers'));
+    expect(g.pending).toBeNull();
+    // (Not four Squirrels: the doubling isn't done to the Soldier and then again to the Squirrels made for two Soldiers.)
+    expect(made(g)).toBe('Soldier ×2, Squirrel ×2');
+  });
+
+  it('"plus an additional Food" and "plus that many Squirrels": the Food first — a Squirrel for it too', () => {
+    const g = passRound(cast(board('Chatterfang', 'Took'), 'alice', 'Soldiers'));
+    expect(g.pending).toBeNull();
+    expect(made(g)).toBe('Food, Soldier, Squirrel ×2');
+  });
+
+  it('Academy Manufactor and Xorn: the additional Treasure first — two of each', () => {
+    const g = passRound(cast(board('Manufactor', 'Xorn'), 'alice', 'Riches'));
+    expect(g.pending).toBeNull();
+    expect(made(g)).toBe('Clue ×2, Food ×2, Treasure ×2');
+  });
+
+  it('two Academy Manufactors: each applies once — three of each', () => {
+    expect(made(passRound(cast(board('Manufactor', 'Manufactor'), 'alice', 'Riches')))).toBe('Clue ×3, Food ×3, Treasure ×3');
+  });
+
+  it('CR 616.1: Divine Visitation and Chatterfang — two Angels, or an Angel and a Squirrel: the player is asked', () => {
+    const g = passRound(cast(board('Visitation', 'Chatterfang'), 'alice', 'Soldiers'));
+    const p = order(g);
+    expect(p.player).toBe('alice');
+    expect(p.text).toBe('Alice would create tokens (1 Soldier Token), and more than one effect replaces that. Which applies first?');
+    expect(p.options).toHaveLength(2);
+    expect(made(g)).toBe('');
+    expect(made(answer(g, 'Chatterfang'))).toBe('Angel ×2');
+    expect(made(answer(g, 'Visitation'))).toBe('Angel, Squirrel');
+    // Looking ahead, nobody is asked.
+    const before = act(cast(board('Visitation', 'Chatterfang'), 'alice', 'Soldiers'), { type: 'pass', player: 'alice' });
+    const seen = foresee(before, { type: 'pass', player: 'bob' });
+    expect(seen.ok && seen.state.pending).toBeNull();
+  });
+
+  it('what an effect says of its tokens it says of those: the ones another effect adds are not tapped', () => {
+    const g = passRound(cast(board('Took', 'Season'), 'alice', 'Tapped Soldiers'));
+    const tapped = (name: string) => g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => o.token && g.cards[o.card]!.faces[0]!.name.startsWith(name)).map((o) => o.tapped);
+    expect(tapped('Soldier')).toEqual([true, true, true, true]);
+    expect(tapped('Food')).toEqual([false, false]);
+  });
+
+  it("another player's tokens are theirs: these effects say \"under your control\"", () => {
+    let g = board('Took', 'Season', 'Visitation');
+    g = toStep(g, 'main1', 'bob');
+    g = passRound(cast(g, 'bob', 'Soldiers'));
+    expect(made(g)).toBe('');
+    expect(g.zones.battlefield.filter((id) => g.objects[id]!.token && g.objects[id]!.controller === 'bob')).toHaveLength(1);
+  });
+
+  it('every sort of replacement of a creation is a rule in the table, and nothing that creates tokens names one', async () => {
+    expect(Object.keys(TOKEN_RULES)).toEqual(['one_of_each', 'added', 'changed', 'swapped']);
+    const { readFileSync } = await import('node:fs');
+    const code = (file: string) =>
+      readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '');
+    for (const word of ['replace_quantity', 'token_one_of_each', 'tokenFilter', "'swap'", "'extra'"]) expect(code('permanents.ts'), word).not.toContain(word);
+    for (const word of ["'tokens'", 'tokenFilter', "a.effect.type === 'token_one_of_each'"]) expect(code('core-plugin.ts'), word).not.toContain(word);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR 903.9b: a commander about to go to its owner's hand or library — an effect its owner may leave unapplied
+// ---------------------------------------------------------------------------
+
+describe("a commander about to be put into its owner's hand or library", () => {
+  const COMMAND = [
+    card('Captain', 'Legendary Creature — Human Soldier', '', { power: '3', toughness: '3' }),
+    card('Hydra', 'Legendary Creature — Hydra', "If Hydra would be put into a graveyard from anywhere, reveal Hydra and shuffle it into its owner's library instead.", { power: '5', toughness: '5' }),
+    card('Unsummon', 'Instant', "Return target creature to its owner's hand."),
+    card('Tuck', 'Instant', "Put target creature on the bottom of its owner's library."),
+    card('Lapse', 'Instant', "Put target creature on top of its owner's library."),
+    card('Doom', 'Instant', 'Destroy target creature.'),
+    card('Insight', 'Sorcery', 'Draw a card.'),
+  ];
+  const forests = Array.from({ length: 40 }, () => 'Forest');
+  /** Alice's commander, cast and on the battlefield. */
+  const game = (name = 'Captain'): [GameState, string] => {
+    // (Bob's deck holds the spells, so that the game knows them.)
+    const spells = COMMAND.map((c) => c.name).filter((n) => n !== 'Captain' && n !== 'Hydra');
+    let g = toStep(start({ format: 'commander', extra: COMMAND, decks: { alice: [...forests.slice(1), name], bob: [...forests, ...spells] }, commanders: { alice: [name] } }), 'main1');
+    const commander = g.zones.command.find((id) => g.objects[id]!.card === name)!;
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: commander, autoTap: true }));
+    expect(g.objects[commander]!.zone).toBe('battlefield');
+    return [g, commander];
+  };
+  const YES = 'Put it into the command zone instead';
+
+  it('its owner is asked before it moves; put into the command zone, it was never in the hand', () => {
+    let [g, captain] = game();
+    g = passRound(cast(g, 'alice', 'Unsummon', captain));
+    const p = order(g);
+    expect(p.player).toBe('alice');
+    expect(p.text).toBe("Captain would be put into its owner's hand. Put it into the command zone instead?");
+    expect(p.options).toEqual([YES, "Let it go to its owner's hand"]);
+    expect(zoneOf(g, captain)).toBe('battlefield');
+
+    const yes = actWithEvents(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: YES } });
+    expect(zoneOf(yes.state, captain)).toBe('command');
+    expect(yes.state.pending).toBeNull();
+    expect(yes.events.filter((e) => e.type === 'moved' && e.object === captain).map((e) => (e as { to: ZoneName }).to)).toEqual(['command']);
+
+    const no = answer(g, 'Let it go');
+    expect(zoneOf(no, captain)).toBe('hand');
+    // It isn't asked about again where it is.
+    expect(no.pending).toBeNull();
+  });
+
+  it('to the library the same — and drawn from there, once more', () => {
+    let [g, captain] = game();
+    g = passRound(cast(g, 'alice', 'Tuck', captain));
+    expect(order(g).text).toBe("Captain would be put into its owner's library. Put it into the command zone instead?");
+    expect(zoneOf(answer(g, YES), captain)).toBe('command');
+
+    [g, captain] = game();
+    g = answer(passRound(cast(g, 'alice', 'Lapse', captain)), 'Let it go');
+    expect(g.zones.library.alice![0]).toBe(captain);
+    g = passRound(cast(g, 'alice', 'Insight'));
+    expect(order(g).text).toBe("Captain would be put into its owner's hand. Put it into the command zone instead?");
+    expect(zoneOf(answer(g, YES), captain)).toBe('command');
+    expect(zoneOf(answer(g, 'Let it go'), captain)).toBe('hand');
+  });
+
+  it("CR 903.9b: its owner decides, whoever controls it", () => {
+    let [g, captain] = game();
+    g.objects[captain]!.controller = 'bob';
+    g = passRound(cast(g, 'alice', 'Unsummon', captain));
+    expect(order(g).player).toBe('alice');
+    expect(zoneOf(answer(g, YES), captain)).toBe('command');
+  });
+
+  it('CR 903.9a: into a graveyard it goes first, and may go on from there — a state-based action, asked after', () => {
+    let [g, captain] = game();
+    g = passRound(cast(g, 'alice', 'Doom', captain));
+    expect(g.pending).toMatchObject({ kind: 'commander_zone', player: 'alice', object: captain, zone: 'graveyard' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'commander_zone', move: true } });
+    expect(zoneOf(g, captain)).toBe('command');
+  });
+
+  it("CR 616.1f: what another effect makes of the move is looked at afresh — \"shuffle it into its owner's library instead\", then this", () => {
+    let [g, hydra] = game('Hydra');
+    g = passRound(cast(g, 'alice', 'Doom', hydra));
+    expect(order(g).text).toBe("Hydra would be put into its owner's library. Put it into the command zone instead?");
+    expect(zoneOf(answer(g, YES), hydra)).toBe('command');
+    const no = answer(g, 'Let it go');
+    expect(zoneOf(no, hydra)).toBe('library');
+    expect(no.pending).toBeNull();
+  });
+
+  it('while the engine only looks ahead nobody is asked: it goes to the command zone', () => {
+    let [g, captain] = game();
+    g = act(cast(g, 'alice', 'Unsummon', captain), { type: 'pass', player: 'alice' });
+    const seen = foresee(g, { type: 'pass', player: 'bob' });
+    if (!seen.ok) throw new Error(seen.error);
+    expect(seen.state.pending).toBeNull();
+    expect(seen.state.objects[captain]!.zone).toBe('command');
+  });
+
+  it("a card that isn't a commander, and a commander's token copy, are put where they are put", () => {
+    let [g] = game();
+    const bear = give(g, 'alice', 'Grizzly Bears', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Unsummon', bear));
+    expect(g.pending).toBeNull();
+    expect(zoneOf(g, bear)).toBe('hand');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Several at once (CR 101.4, 608.2c, 614.12): settled as the game stands before any of them moves
+// ---------------------------------------------------------------------------
+
+describe('several permanents moved at once', () => {
+  const MANY = [
+    ...EXTRA,
+    card('Edict', 'Sorcery', 'Each player sacrifices a creature.'),
+    card('Barter', 'Sorcery', 'Each player sacrifices all permanents they control.'),
+    card('Living Death', 'Sorcery', 'Each player exiles all creature cards from their graveyard, then sacrifices all creatures they control, then puts all cards they exiled this way onto the battlefield.'),
+    card('Rally', 'Sorcery', 'Return all creature cards from your graveyard to the battlefield.'),
+    card('Show and Tell', 'Sorcery', 'Each player may put an artifact, creature, enchantment, or land card from their hand onto the battlefield.'),
+    card('Sovereign', 'Creature — Human', 'Creatures your opponents control enter tapped.', { power: '2', toughness: '1' }),
+  ];
+  const board = () => toStep(start({ extra: MANY }), 'main1');
+
+  it('the cards these tests go by are read in full', () => {
+    for (const c of MANY) expect(c.automation, c.name).toBe('full');
+  });
+
+  it('CR 101.4: "each player sacrifices a creature" — at once: Kalitas, sacrificed with it, still exiles the other', () => {
+    let g = board();
+    const kalitas = give(g, 'alice', 'Kalitas', 'battlefield');
+    const bear = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Edict'));
+    expect(g.pending).toBeNull();
+    expect(zoneOf(g, kalitas)).toBe('graveyard');
+    expect(zoneOf(g, bear)).toBe('exile');
+    expect(tokens(g, 'alice')).toBe(1);
+  });
+
+  it('each chooses in turn, and nothing is sacrificed until all have', () => {
+    let g = board();
+    const mine = [give(g, 'alice', 'Grizzly Bears', 'battlefield'), give(g, 'alice', 'Kalitas', 'battlefield')];
+    const theirs = [give(g, 'bob', 'Grizzly Bears', 'battlefield'), give(g, 'bob', 'Grizzly Bears', 'battlefield')];
+    g = passRound(cast(g, 'alice', 'Edict'));
+    expect(g.pending).toMatchObject({ kind: 'sacrifice', player: 'alice' });
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'sacrifice', objects: [mine[1]!] } });
+    expect(g.pending).toMatchObject({ kind: 'sacrifice', player: 'bob' });
+    expect(zoneOf(g, mine[1]!)).toBe('battlefield');
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'sacrifice', objects: [theirs[0]!] } });
+    expect(g.pending).toBeNull();
+    expect([zoneOf(g, mine[0]!), zoneOf(g, mine[1]!), zoneOf(g, theirs[0]!), zoneOf(g, theirs[1]!)]).toEqual(['battlefield', 'graveyard', 'exile', 'battlefield']);
+    expect(tokens(g, 'alice')).toBe(1);
+  });
+
+  it('"sacrifices all permanents": Rest in Peace, sacrificed with the rest, exiles them all — and itself', () => {
+    let g = board();
+    const rip = give(g, 'alice', 'Rest in Peace', 'battlefield');
+    const bear = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    const forest = give(g, 'alice', 'Forest', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Barter'));
+    expect([zoneOf(g, rip), zoneOf(g, bear), zoneOf(g, forest)]).toEqual(['exile', 'exile', 'exile']);
+  });
+
+  it('CR 614.12: creatures returned together — Containment Priest is not there yet for the others to enter under', () => {
+    let g = board();
+    const priest = give(g, 'alice', 'Containment Priest', 'graveyard');
+    const bear = give(g, 'alice', 'Grizzly Bears', 'graveyard');
+    g = passRound(cast(g, 'alice', 'Rally'));
+    expect([zoneOf(g, priest), zoneOf(g, bear)]).toEqual(['battlefield', 'battlefield']);
+    // One returned later finds the Priest there.
+    const late = give(g, 'alice', 'Grizzly Bears', 'graveyard');
+    g = passRound(cast(g, 'alice', 'Rally'));
+    expect(zoneOf(g, late)).toBe('exile');
+  });
+
+  it('Living Death: sacrificed at once, returned at once — nothing enters tapped for a creature that enters with it', () => {
+    let g = board();
+    const sovereign = give(g, 'alice', 'Sovereign', 'graveyard');
+    const returned = give(g, 'bob', 'Grizzly Bears', 'graveyard');
+    const kalitas = give(g, 'alice', 'Kalitas', 'battlefield');
+    const dying = give(g, 'bob', 'Grizzly Bears', 'battlefield');
+    g = passRound(cast(g, 'alice', 'Living Death'));
+    expect([zoneOf(g, kalitas), zoneOf(g, dying)]).toEqual(['graveyard', 'exile']);
+    expect(tokens(g, 'alice')).toBe(1);
+    expect([zoneOf(g, sovereign), zoneOf(g, returned)]).toEqual(['battlefield', 'battlefield']);
+    expect(g.objects[returned]!.tapped).toBe(false);
+  });
+
+  it('Show and Tell: what each player puts onto the battlefield enters with the others', () => {
+    let g = board();
+    const priest = give(g, 'alice', 'Containment Priest', 'hand');
+    const bear = give(g, 'bob', 'Grizzly Bears', 'hand');
+    g = passRound(cast(g, 'alice', 'Show and Tell'));
+    g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'choose_objects', objects: [priest] } });
+    g = act(g, { type: 'choose', player: 'bob', answer: { kind: 'choose_objects', objects: [bear] } });
+    expect([zoneOf(g, priest), zoneOf(g, bear)]).toEqual(['battlefield', 'battlefield']);
   });
 });

@@ -1,26 +1,13 @@
-import type { CardDef, FaceDef, QuantityReplacementNode, TargetSpec } from '@mtg/schema';
-import { chars, hasKeyword, hasType, matchesFilter, objectAbilities, protectedFromAttachment } from './characteristics.js';
-import { counterBlocked, extraTokens, replaceQuantity } from './quantities.js';
+import type { CardDef, FaceDef, TargetSpec } from '@mtg/schema';
+import { chars, hasKeyword, hasType, matchesFilter, protectedFromAttachment } from './characteristics.js';
+import { replaced, type Destroy, type TokenLot, type Tokens } from './instead.js';
+import { DESTROY_RULES, destroyQuestion } from './instead-destroy.js';
+import { TOKEN_RULES, noFewerTokens, settling, tokensQuestion } from './instead-tokens.js';
+import { counterBlocked, replaceQuantity } from './quantities.js';
 import { onEnterBattlefield } from './registry.js';
 import type { GameEvent, GameObject, GameState, ObjectId, PlayerId } from './types.js';
-import { abilitySources, createObject, faceOf, livePlayers, moveObject, moveTogether, nameOf, setTapped } from './zones.js';
+import { createObject, faceOf, livePlayers, moveObject, moveTogether, nameOf } from './zones.js';
 import { playerProtectedFrom } from './player-rules.js';
-
-/**
- * CR 701.8a: destroying moves a permanent to its owner's graveyard.
- * CR 702.12b: indestructible permanents aren't destroyed.
- * CR 701.19a: a regeneration shield replaces the destruction.
- * Returns whether it was destroyed.
- */
-/**
- * CR 702.89a (umbra armor): "If enchanted permanent would be destroyed, instead remove all damage marked on it and
- * destroy this Aura." The first such Aura is destroyed instead (the controller's choice; the engine takes the oldest).
- */
-function umbraArmor(g: GameState, o: GameObject): GameObject | undefined {
-  return g.zones.battlefield
-    .map((id) => g.objects[id]!)
-    .find((a) => a.attachedTo?.id === o.id && a.attachedTo.zcc === o.zcc && faceOf(g, a).keywords.some((k) => k.id === 'umbra_armor' || k.id === 'totem_armor'));
-}
 
 /** CR 122.1c: a shield counter is removed instead of the permanent being dealt damage or destroyed. */
 export function removeShield(o: GameObject, events: GameEvent[]): boolean {
@@ -31,6 +18,10 @@ export function removeShield(o: GameObject, events: GameEvent[]): boolean {
   return true;
 }
 
+/**
+ * CR 701.8a: destroying a permanent moves it to its owner's graveyard — unless it can't be destroyed, or something
+ * happens instead. Returns whether it was destroyed.
+ */
 export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean } = {}): boolean {
   if (!isDestroyed(g, o, events, opts)) return false;
   moveObject(g, o.id, 'graveyard', events);
@@ -44,37 +35,26 @@ export function destroy(g: GameState, o: GameObject, events: GameEvent[], opts: 
 export function destroyTogether(g: GameState, objects: GameObject[], events: GameEvent[], opts: { noRegen?: boolean } = {}, alongside: Iterable<ObjectId> = []): void {
   const dying = objects.filter((o) => isDestroyed(g, o, events, opts));
   // `alongside`: permanents put into their graveyards at the same time without being destroyed (CR 704.5f: toughness 0).
-  moveTogether(g, [...alongside, ...dying.map((o) => o.id)], 'graveyard', events);
+  moveTogether(
+    g,
+    [...alongside, ...dying.map((o) => o.id)].map((id) => ({ id, to: 'graveyard' as const })),
+    events,
+  );
 }
 
 /**
- * Whether destroying this permanent puts it into its owner's graveyard — what happens instead where it doesn't (a
- * shield counter removed, a regeneration shield used, its umbra armor destroyed) happens here.
+ * Whether destroying this permanent puts it into its owner's graveyard. What the replacement effects on its destruction
+ * make of that (CR 614.1a, 616.1) — a shield counter removed, a regeneration shield used, its Umbra destroyed — is
+ * done here; each is a rule in instead-destroy.ts, none is known here.
  */
 function isDestroyed(g: GameState, o: GameObject, events: GameEvent[], opts: { noRegen?: boolean }): boolean {
   if (o.zone !== 'battlefield') return false;
+  // CR 702.12b: a permanent with indestructible can't be destroyed — so there is nothing to replace either.
   if (hasKeyword(g, o, 'indestructible')) return false;
-  // CR 122.1c: "If a permanent with a shield counter on it would be … destroyed, instead remove a shield counter from it."
-  if (removeShield(o, events)) return false;
-  // CR 701.19c: "can't be regenerated" — the shield doesn't apply.
-  if (!opts.noRegen && (o.regenShields ?? 0) > 0 && !chars(g, o).rules.has('cant_be_regenerated')) {
-    // CR 701.19a: instead remove all damage from it, tap it, and remove it from combat.
-    o.regenShields!--;
-    o.damage = 0;
-    delete o.deathtouched;
-    setTapped(g, o.id, true, events);
-    removeFromCombat(g, o.id);
-    events.push({ type: 'regenerated', object: o.id });
-    return false;
-  }
-  const umbra = umbraArmor(g, o);
-  if (umbra) {
-    o.damage = 0;
-    delete o.deathtouched;
-    destroy(g, umbra, events);
-    return false;
-  }
-  return true;
+  const asked: Destroy = { kind: 'destroy', object: o, noRegen: Boolean(opts.noRegen), also: [] };
+  const settled = replaced(g, asked, DESTROY_RULES, { by: o.controller, about: () => destroyQuestion(g, asked) }) ?? asked;
+  for (const more of settled.also) more.run(g, o, events);
+  return settled.saved === undefined;
 }
 
 /** CR 506.4: a permanent removed from combat stops being an attacking or blocking creature. */
@@ -94,6 +74,25 @@ export function sacrifice(g: GameState, o: GameObject, player: PlayerId, events:
   events.push({ type: 'sacrificed', object: o.id, player, ...(exploitedBy ? { exploitedBy } : {}) });
   moveObject(g, o.id, 'graveyard', events);
   return true;
+}
+
+/**
+ * CR 701.21a: several permanents sacrificed at once ("sacrifice all creatures"; CR 101.4: "each player sacrifices a
+ * creature") — each by its controller. They leave together: what would replace that for one is settled before any
+ * has left.
+ */
+export function sacrificeTogether(g: GameState, those: { object: GameObject; player: PlayerId; exploitedBy?: ObjectId }[], events: GameEvent[]): void {
+  moveTogether(
+    g,
+    those
+      .filter((s) => s.object.zone === 'battlefield' && s.object.controller === s.player)
+      .map((s) => ({
+        id: s.object.id,
+        to: 'graveyard' as const,
+        before: () => void events.push({ type: 'sacrificed', object: s.object.id, player: s.player, ...(s.exploitedBy ? { exploitedBy: s.exploitedBy } : {}) }),
+      })),
+    events,
+  );
 }
 
 /**
@@ -184,54 +183,65 @@ function tokenCard(g: GameState, face: FaceDef): string {
   return key;
 }
 
-/**
- * Divine Visitation: the token created instead of a creature token under `controller`'s control (CR 614.1a), if any.
- * (The replacement token isn't replaced again, CR 614.5.)
- */
-function tokenSwap(g: GameState, controller: PlayerId, face: FaceDef | undefined): FaceDef | undefined {
-  if (!face) return undefined;
-  for (const id of abilitySources(g)) {
-    const src = g.objects[id]!;
-    if (src.controller !== controller) continue;
-    for (const a of objectAbilities(g, src)) {
-      if (a.kind !== 'static' || a.effect.type !== 'replace_quantity') continue;
-      const e = a.effect as QuantityReplacementNode;
-      if (e.event !== 'tokens' || e.op !== 'swap' || !e.extra) continue;
-      if (e.tokenFilter?.types && !e.tokenFilter.types.some((t) => face.types.includes(t))) continue;
-      return e.extra.token;
-    }
-  }
-  return undefined;
+/** How the tokens asked for are created. */
+export interface TokenOptions {
+  tapped?: boolean;
+  /** A copy: counters it enters with besides (Littjara Mirrorlake: "except it enters with an additional +1/+1 counter"). */
+  counters?: Record<string, number>;
+  /** Those are counters an effect puts on it (incubate), so effects on that apply (CR 122.6). */
+  replace?: boolean;
+  /**
+   * The event this creation is part of, where an effect creates tokens in several goes ("create X Halflings and X
+   * Foods", a token for each opponent): the effects that have added their one token to it. Each go passes the same list.
+   */
+  event?: string[];
+  /** Done with each of the tokens asked for as it is created — not with those an effect added to them. */
+  each?: (token: GameObject) => void;
 }
 
 /**
- * CR 614.1a / 616.1: every way a player creates tokens goes through the same replacements. Returns how many are created
- * when `player` would create `n` tokens like `made` (Doubling Season: twice that many) and creates the tokens "plus an
- * additional …" replacements add (Peregrin Took; doubled too). `seen`: the once-an-event additions already made for the
- * event this is part of — a caller creating several kinds of token at once passes the same list for each.
+ * CR 111.1: `player` creates `n` tokens with this face. What the replacement effects on that make of it (CR 614.1a,
+ * 616.1) — twice as many, Angels instead, a Food besides — is settled first; each is a rule in instead-tokens.ts, none
+ * is known here. Returns "those tokens": the ones asked for as the effects left them, not the ones an effect added.
  */
-export function tokensToCreate(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number, events: GameEvent[], seen: string[] = []): number {
-  const count = replaceQuantity(g, 'tokens', n, { player, made });
-  alsoCreated(g, player, made, count, events, seen);
-  return count;
+export function createTokens(g: GameState, player: PlayerId, face: FaceDef, n: number, events: GameEvent[], opts: TokenOptions = {}): GameObject[] {
+  return created(g, player, { face, n }, events, opts);
 }
 
-/** The "plus an additional …" tokens for `count` tokens like `made` being created (see `tokensToCreate`). */
-export function alsoCreated(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, count: number, events: GameEvent[], seen: string[] = []): void {
-  for (const x of extraTokens(g, player, made, count)) {
-    if (x.once) {
-      if (seen.includes(x.key)) continue;
-      seen.push(x.key);
+/** CR 707.2 / 111.1: `player` creates `n` tokens that are copies of something — of its copiable values. See `createTokens`. */
+export function createTokenCopies(g: GameState, player: PlayerId, of: { card: string; face: number }, n: number, events: GameEvent[], opts: TokenOptions = {}): GameObject[] {
+  const face = g.cards[of.card]?.faces[of.face];
+  // (A copy of nothing the game knows: put there as it is.)
+  if (!face) return Array.from({ length: Math.max(0, n) }, () => putTokenCopy(g, of, player, events, opts));
+  return created(g, player, { face, copy: of, n }, events, opts);
+}
+
+function created(g: GameState, player: PlayerId, lot: TokenLot, events: GameEvent[], opts: TokenOptions): GameObject[] {
+  if (lot.n <= 0) return [];
+  const asked: Tokens = { kind: 'tokens', player, lots: [lot], already: opts.event ?? [] };
+  const applied = new Set<string>();
+  const settled = settling(g, () => replaced(g, asked, TOKEN_RULES, { by: player, about: () => tokensQuestion(g, asked), noWorse: noFewerTokens }, applied)) ?? asked;
+  opts.event?.push(...applied);
+  const those: GameObject[] = [];
+  // The tokens asked for, then the ones added to them.
+  for (const added of [false, true]) {
+    for (const made of settled.lots) {
+      if (Boolean(made.added) !== added) continue;
+      for (let i = 0; i < made.n; i++) {
+        // What the effect says of its tokens — tapped, with a counter — it says of the ones it asked for.
+        const how = added ? {} : opts;
+        const token = made.copy ? putTokenCopy(g, made.copy, player, events, how) : putToken(g, made.face, player, events, how);
+        if (added) continue;
+        opts.each?.(token);
+        those.push(token);
+      }
     }
-    const more = replaceQuantity(g, 'tokens', x.count, { player, made: { types: x.token.types, subtypes: x.token.subtypes } });
-    for (let i = 0; i < more; i++) createToken(g, x.token, player, events, {});
   }
+  return those;
 }
 
 /** CR 111.2: a token is created on the battlefield under the control of the player who created it. */
-export function createToken(g: GameState, face: FaceDef, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; swapped?: boolean } = {}): GameObject {
-  const swap = opts.swapped ? undefined : tokenSwap(g, controller, face);
-  if (swap) return createToken(g, swap, controller, events, { ...opts, swapped: true });
+function putToken(g: GameState, face: FaceDef, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean }): GameObject {
   const o = createObject(g, tokenCard(g, face), controller, 'battlefield');
   o.token = true;
   o.sick = true;
@@ -272,10 +282,7 @@ export function createEmblem(g: GameState, face: FaceDef, player: PlayerId): Gam
 }
 
 /** CR 707.2 / CR 111.1: a token that's a copy of something — it has those copiable values. */
-export function createTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number>; replace?: boolean } = {}): GameObject {
-  // Divine Visitation: a token copy of a creature is a creature token too — an Angel is created instead.
-  const swap = tokenSwap(g, controller, g.cards[of.card]?.faces[of.face]);
-  if (swap) return createToken(g, swap, controller, events, { tapped: opts.tapped, swapped: true });
+function putTokenCopy(g: GameState, of: { card: string; face: number }, controller: PlayerId, events: GameEvent[], opts: { tapped?: boolean; counters?: Record<string, number>; replace?: boolean }): GameObject {
   const o = createObject(g, of.card, controller, 'battlefield');
   o.face = of.face;
   o.token = true;

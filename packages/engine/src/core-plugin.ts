@@ -15,7 +15,7 @@ import { evalCondition } from './conditions.js';
 import { applyControlEffects } from './control.js';
 import { anyColorChoices, MANA_COLORS, manaOption } from './mana.js';
 import { blight, blightCandidates, foodCandidates, payDuringResolution } from './payment.js';
-import { removeFromCombat, alsoCreated, attach, canAttach, createEmblem, createToken, createTokenCopy, destroyTogether, tokensToCreate, sacrifice, sacrifice as sacrificeObject } from './permanents.js';
+import { removeFromCombat, attach, canAttach, createEmblem, createTokenCopies, createTokens, destroyTogether, sacrifice, sacrificeTogether, type TokenOptions } from './permanents.js';
 import { copiable, withExceptions } from './copies.js';
 import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
@@ -28,7 +28,7 @@ import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEnt
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { cantLose, cantWin, playerLoses } from './flow.js';
-import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner } from './zones.js';
+import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, moveTogether, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner, type PlannedMove } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
 
 /**
@@ -611,10 +611,13 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return true;
     }
     const movedOnto: ObjectRef[] = [];
+    // CR 608.2c: what the effect moves, it moves at once — each move is planned here, with what the effect does about
+    // each permanent or card as it is moved, and they are made together.
+    const plan: PlannedMove[] = [];
     for (const o of refObjects(ctx, ref(node, 'what'))) {
       if (to === 'library') {
         // Unexpectedly Absent: "just beneath the top X cards" — X+1th from the top.
-        moveObject(ctx.g, o.id, 'library', ctx.events, { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : node.beneath !== undefined ? Math.max(0, amountOf(ctx, node.beneath as Amount)) + 1 : 'top' });
+        plan.push({ id: o.id, to: 'library', opts: { position: node.position === 'bottom' ? 'bottom' : typeof node.position === 'number' ? node.position : node.beneath !== undefined ? Math.max(0, amountOf(ctx, node.beneath as Amount)) + 1 : 'top' } });
       } else if (to === 'battlefield') {
         // Unless it says otherwise, a permanent is put onto the battlefield under its owner's control.
         const controller = node.under === 'you' ? ctx.controller : o.owner;
@@ -629,44 +632,61 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         const attachTo = node.attachTo ? refObjects(ctx, ref(node, 'attachTo'))[0] : undefined;
         const onto = attachTo && attachTo.zone === 'battlefield' ? attachTo : undefined;
         if (node.attachTo && faceOf(ctx.g, o).subtypes.includes('Aura') && (!onto || !canAttach(ctx.g, o, onto))) continue;
-        moveObject(ctx.g, o.id, 'battlefield', ctx.events, { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}), ...(onto ? { attached: true } : {}) });
-        const now = ctx.g.objects[o.id]!;
-        if (now.zone === 'battlefield') movedOnto.push({ id: now.id, zcc: now.zcc });
-        if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
-        // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
-        if (node.attacking && now.zone === 'battlefield') enterAttacking(ctx.g, now, ctx.source ?? undefined);
+        plan.push({
+          id: o.id,
+          to: 'battlefield',
+          opts: { controller, ...(counters ? { counters } : {}), ...(node.transformed ? { face: 1 } : {}), ...(node.tapped ? { tapped: true } : {}), ...(onto ? { attached: true } : {}) },
+          then: () => {
+            const now = ctx.g.objects[o.id]!;
+            if (now.zone === 'battlefield') movedOnto.push({ id: now.id, zcc: now.zcc });
+            if (onto && now.zone === 'battlefield') attach(ctx.g, now, onto, ctx.events);
+            // Alesha, Who Smiles at Death: "… to the battlefield tapped and attacking" (CR 508.4).
+            if (node.attacking && now.zone === 'battlefield') enterAttacking(ctx.g, now, ctx.source ?? undefined);
+          },
+        });
       } else if (node.until === 'opponent_monarch') {
         // Palace Jailer: back to the battlefield when an opponent of this ability's controller becomes the monarch.
         if (o.zone !== 'battlefield') continue;
-        moveObject(ctx.g, o.id, 'exile', ctx.events);
-        const now = ctx.g.objects[o.id]!;
-        if (now.zone === 'exile') (ctx.g.exiledUntil ??= []).push({ source: { id: '', zcc: 0 }, object: { id: now.id, zcc: now.zcc }, monarch: { controller: ctx.controller, was: ctx.g.monarch ?? null } });
+        plan.push({
+          id: o.id,
+          to: 'exile',
+          then: () => {
+            const now = ctx.g.objects[o.id]!;
+            if (now.zone === 'exile') (ctx.g.exiledUntil ??= []).push({ source: { id: '', zcc: 0 }, object: { id: now.id, zcc: now.zcc }, monarch: { controller: ctx.controller, was: ctx.g.monarch ?? null } });
+          },
+        });
       } else if (node.until === 'source_leaves') {
         // CR 610.3a: if the source has already left the battlefield, the object doesn't move at all.
         const src = ctx.source;
         if (!src || src.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && src.zcc !== ctx.sourceZcc)) continue;
         if (o.zone !== 'battlefield') continue;
-        moveObject(ctx.g, o.id, 'exile', ctx.events);
-        (ctx.g.exiledUntil ??= []).push({ source: { id: src.id, zcc: src.zcc }, object: { id: o.id, zcc: o.zcc } });
+        const from = { id: src.id, zcc: src.zcc };
+        plan.push({ id: o.id, to: 'exile', then: () => void (ctx.g.exiledUntil ??= []).push({ source: from, object: { id: o.id, zcc: o.zcc } }) });
       } else {
         // CR 701.13a: exile moves it to the exile zone from wherever it is. A spell on the stack moves only when it's
         // the source or what the effect targets ("Return target spell to its owner's hand", Venser, Narset's Reversal).
         if (o.zone === 'stack' && o.id !== ctx.source?.id && (node.what as Ref | undefined)?.ref !== 'target') continue;
-        moveObject(ctx.g, o.id, to, ctx.events);
-        // Mizzix's Mastery: "For each card exiled this way, copy it …" — what this move exiled.
-        if (to === 'exile' && ctx.g.objects[o.id]?.zone === 'exile') movedOnto.push({ id: o.id, zcc: ctx.g.objects[o.id]!.zcc });
-        // Rousing Refrain: "Exile ~ with three time counters on it."
-        const withCounters = node.counters as Record<string, number> | undefined;
-        if (withCounters && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') for (const [k, n] of Object.entries(withCounters)) ctx.g.objects[o.id]!.counters[k] = (ctx.g.objects[o.id]!.counters[k] ?? 0) + n;
-        // Epochrasite: "exile it with three time counters on it and it gains suspend" (CR 702.62b: it's suspended).
-        if (node.gainSuspend && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') ctx.g.objects[o.id]!.suspended = true;
-        // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
-        if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
-        // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
-        const src = ctx.source;
-        if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
+        plan.push({
+          id: o.id,
+          to,
+          then: () => {
+            // Mizzix's Mastery: "For each card exiled this way, copy it …" — what this move exiled.
+            if (to === 'exile' && ctx.g.objects[o.id]?.zone === 'exile') movedOnto.push({ id: o.id, zcc: ctx.g.objects[o.id]!.zcc });
+            // Rousing Refrain: "Exile ~ with three time counters on it."
+            const withCounters = node.counters as Record<string, number> | undefined;
+            if (withCounters && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') for (const [k, n] of Object.entries(withCounters)) ctx.g.objects[o.id]!.counters[k] = (ctx.g.objects[o.id]!.counters[k] ?? 0) + n;
+            // Epochrasite: "exile it with three time counters on it and it gains suspend" (CR 702.62b: it's suspended).
+            if (node.gainSuspend && to === 'exile' && ctx.g.objects[o.id]!.zone === 'exile') ctx.g.objects[o.id]!.suspended = true;
+            // CR 702.185a: "Its owner may cast this card after the current turn has ended for as long as it remains exiled."
+            if (node.warp && o.zone === 'exile') (ctx.g.mayPlay ??= []).push({ object: { id: o.id, zcc: o.zcc }, player: o.owner, mode: 'cast', firstTurn: ctx.g.turn + 1, lastTurn: Number.MAX_SAFE_INTEGER });
+            // CR 607.2a: remember what exiled it, for the source's linked "the exiled card" ability.
+            const src = ctx.source;
+            if (to === 'exile' && src && src.id !== o.id) o.exiledBy = { id: src.id, zcc: battlefieldZcc(ctx.g, src) };
+          },
+        });
       }
     }
+    moveTogether(ctx.g, plan, ctx.events);
     if ((to === 'battlefield' || to === 'exile') && ctx.resolution) ctx.resolution.movedOnto = movedOnto;
     return true;
   },
@@ -1095,12 +1115,15 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           if (k > 0) at = { kind: 'planeswalker', object: walkers[k - 1]! };
         }
         // One event, whoever each token attacks: "plus an additional" adds one token (CR 614.1a).
-        const count = tokensToCreate(g, ctx.controller, { types: face.types, subtypes: face.subtypes }, n, ctx.events, (memo.adds ??= []));
-        for (let j = 0; j < count; j++) {
-          const t = createToken(g, face, ctx.controller, ctx.events, { tapped: true });
-          enterAttacking(g, t, ctx.source, at);
-          memo.created.push({ id: t.id, zcc: t.zcc });
-        }
+        const made = memo.created;
+        createTokens(g, ctx.controller, face, n, ctx.events, {
+          tapped: true,
+          event: (memo.adds ??= []),
+          each: (t) => {
+            enterAttacking(g, t, ctx.source, at);
+            made.push({ id: t.id, zcc: t.zcc });
+          },
+        });
         memo.i = i + 1;
       }
       if (ctx.resolution) ctx.resolution.created = memo.created;
@@ -1132,26 +1155,21 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const adds: Record<string, string[]> = (node.sameEvent ? ctx.resolution?.tokenAdds : undefined) ?? {};
     if (ctx.resolution) ctx.resolution.tokenAdds = adds;
     for (const [ci, copy] of copies.entries()) for (const p of players) {
-      // CR 614.1a: token doublers ("twice that many of those tokens are created instead").
-      const copiedFace = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
-      const madeFace = copiedFace ?? face;
-      const count = replaceQuantity(ctx.g, 'tokens', n, { player: p, ...(madeFace ? { made: { types: madeFace.types, subtypes: madeFace.subtypes } } : {}) });
-      // Academy Manufactor: "If you would create a Clue, Food, or Treasure token, instead create one of each."
-      const each = copy ? null : oneOfEach(ctx.g, face!, p);
-      const kinds = each ? each.faces.flatMap((f) => Array.from({ length: count * each.times }, () => f)) : Array.from({ length: count }, () => face);
-      for (const kind of kinds) {
-        const opts = { tapped: Boolean(node.tapped) };
-        const t = copy ? createTokenCopy(ctx.g, copy, p, ctx.events, { ...opts, counters: copyEntersWith(ctx, except, copiedFace, p, sources[ci]) }) : createToken(ctx.g, kind!, p, ctx.events, opts);
-        if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
-        // Soaring Lightbringer: "… tapped and attacking that player" (CR 508.4).
-        const at = node.attackingPlayer ? refPlayers(ctx, node.attackingPlayer as Ref)[0] : undefined;
-        if (node.attacking) enterAttacking(ctx.g, t, ctx.source, at ? { kind: 'player', player: at } : undefined);
-        created.push({ id: t.id, zcc: t.zcc });
-      }
-      // Peregrin Took, Xorn: "those tokens plus an additional Food token" (CR 614.1a; doubled too, CR 616.1).
-      const copied = copy ? ctx.g.cards[copy.card]?.faces[copy.face] : undefined;
-      const made = { types: (copied ?? face)?.types ?? [], subtypes: (copied ?? face)?.subtypes ?? [] };
-      alsoCreated(ctx.g, p, made, count, ctx.events, (adds[p] ??= []));
+      // What the effect says of its tokens, done with each as it is created. (What replaces their creation — twice as
+      // many, one of each, a Food besides — is `createTokens`' business: CR 614.1a.)
+      const opts: TokenOptions = {
+        tapped: Boolean(node.tapped),
+        event: (adds[p] ??= []),
+        each: (t) => {
+          if (attachTo) attach(ctx.g, t, attachTo, ctx.events);
+          // Soaring Lightbringer: "… tapped and attacking that player" (CR 508.4).
+          const at = node.attackingPlayer ? refPlayers(ctx, node.attackingPlayer as Ref)[0] : undefined;
+          if (node.attacking) enterAttacking(ctx.g, t, ctx.source, at ? { kind: 'player', player: at } : undefined);
+          created.push({ id: t.id, zcc: t.zcc });
+        },
+      };
+      if (copy) createTokenCopies(ctx.g, p, copy, n, ctx.events, { ...opts, counters: copyEntersWith(ctx, except, ctx.g.cards[copy.card]?.faces[copy.face], p, sources[ci]) });
+      else if (face) createTokens(ctx.g, p, face, n, ctx.events, opts);
     }
     if (ctx.resolution) ctx.resolution.created = created;
     return true;
@@ -1365,8 +1383,12 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   },
 
   sacrifice(node, ctx) {
-    // "its controller sacrifices it": whoever controls it now (CR 701.21a: only a permanent you control).
-    for (const o of refObjects(ctx, ref(node, 'what'))) sacrifice(ctx.g, o, node.byController ? o.controller : ctx.controller, ctx.events);
+    // "its controller sacrifices it": whoever controls it now (CR 701.21a: only a permanent you control). Several: at once.
+    sacrificeTogether(
+      ctx.g,
+      refObjects(ctx, ref(node, 'what')).map((o) => ({ object: o, player: node.byController ? o.controller : ctx.controller })),
+      ctx.events,
+    );
     return true;
   },
 
@@ -1413,9 +1435,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const who = node.who ? refPlayers(ctx, ref(node, 'who')) : [ctx.controller];
     for (const p of who) {
       // CR 614.1a: an Incubator is a token like any other (Doubling Season, Worldwalker Helm).
-      const count = tokensToCreate(g, p, { types: ['Artifact'], subtypes: ['Incubator'] }, 1, ctx.events);
-      for (let i = 0; i < count; i++) {
-        const o = createTokenCopy(g, { card: key, face: 0 }, p, ctx.events, { counters: { '+1/+1': n }, replace: true });
+      for (const o of createTokenCopies(g, p, { card: key, face: 0 }, 1, ctx.events, { counters: { '+1/+1': n }, replace: true })) {
         if (ctx.resolution) (ctx.resolution.created ??= []).push({ id: o.id, zcc: o.zcc });
       }
     }
@@ -1770,22 +1790,23 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   swap_graveyard(node, ctx) {
     const g = ctx.g;
     const type = String(node.cardType);
-    const exiled: string[] = [];
-    for (const p of livePlayers(g)) {
-      for (const id of [...zoneList(g, 'graveyard', p)]) {
-        if (!faceOf(g, g.objects[id]!).types.includes(type)) continue;
-        moveObject(g, id, 'exile', ctx.events);
-        exiled.push(id);
-      }
-    }
-    for (const id of [...g.zones.battlefield]) {
-      const o = g.objects[id]!;
-      if (hasType(g, o, type)) sacrifice(g, o, o.controller, ctx.events);
-    }
-    for (const id of exiled) {
-      const o = g.objects[id]!;
-      if (o.zone === 'exile') moveObject(g, id, 'battlefield', ctx.events, { controller: o.owner });
-    }
+    const exiled = livePlayers(g).flatMap((p) => zoneList(g, 'graveyard', p).filter((id) => faceOf(g, g.objects[id]!).types.includes(type)));
+    moveTogether(
+      g,
+      exiled.map((id) => ({ id, to: 'exile' as const })),
+      ctx.events,
+    );
+    sacrificeTogether(
+      g,
+      g.zones.battlefield.map((id) => g.objects[id]!).filter((o) => hasType(g, o, type)).map((o) => ({ object: o, player: o.controller })),
+      ctx.events,
+    );
+    // CR 614.12: they enter together — none is there yet for another to enter under.
+    moveTogether(
+      g,
+      exiled.filter((id) => g.objects[id]!.zone === 'exile').map((id) => ({ id, to: 'battlefield' as const, opts: { controller: g.objects[id]!.owner } })),
+      ctx.events,
+    );
     return true;
   },
 
@@ -2179,17 +2200,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const defending = ctx.trigger?.player;
     if (!src || !g.combat) return true;
     const made: ObjectRef[] = [];
-    const like = chars(g, src);
     const adds: string[] = [];
+    const combat = g.combat;
     for (const p of livePlayers(g)) {
       if (p === ctx.controller || p === defending) continue;
       // CR 614.1a: token doublers apply to each (Parallel Lives: two attacking that player); one event in all.
-      const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events, adds);
-      for (let i = 0; i < count; i++) {
-        const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, { tapped: true });
-        g.combat.attackers[t.id] = { zcc: t.zcc, target: { kind: 'player', player: p }, blocked: false, blockers: [] };
-        made.push({ id: t.id, zcc: t.zcc });
-      }
+      createTokenCopies(g, ctx.controller, copiable(src), 1, ctx.events, {
+        tapped: true,
+        event: adds,
+        each: (t) => {
+          combat.attackers[t.id] = { zcc: t.zcc, target: { kind: 'player', player: p }, blocked: false, blockers: [] };
+          made.push({ id: t.id, zcc: t.zcc });
+        },
+      });
     }
     if (!made.length || !ctx.resolution) return true;
     ctx.resolution.created = made;
@@ -2203,18 +2226,18 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const src = ctx.source;
     if (!src) return true;
     const made: ObjectRef[] = [];
-    const like = faceOf(g, src);
     const adds: string[] = [];
     for (const p of livePlayers(g)) {
       if (p === ctx.controller) continue;
       // CR 614.1a: token doublers apply to each; one event in all.
-      const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events, adds);
-      for (let i = 0; i < count; i++) {
-        const t = createTokenCopy(g, copiable(src), ctx.controller, ctx.events, {});
-        t.attacksPlayer = { player: p, turn: g.turn };
-        g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: t.id, zcc: t.zcc }, controller: ctx.controller, objects: [{ id: t.id, zcc: t.zcc }], keywords: [{ id: 'haste' }], until: 'eot' });
-        made.push({ id: t.id, zcc: t.zcc });
-      }
+      createTokenCopies(g, ctx.controller, copiable(src), 1, ctx.events, {
+        event: adds,
+        each: (t) => {
+          t.attacksPlayer = { player: p, turn: g.turn };
+          g.effects.push({ id: `e${g.nextId++}`, timestamp: ++g.clock, source: { id: t.id, zcc: t.zcc }, controller: ctx.controller, objects: [{ id: t.id, zcc: t.zcc }], keywords: [{ id: 'haste' }], until: 'eot' });
+          made.push({ id: t.id, zcc: t.zcc });
+        },
+      });
     }
     if (!made.length || !ctx.resolution) return true;
     ctx.resolution.created = made;
@@ -2258,9 +2281,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: tokens, min: 1, max: 1, text: 'Choose a creature token to copy.' } };
     }
     // CR 614.1a: the copy is a token being created (Parallel Lives: two of them).
-    const like = chars(g, g.objects[pick]!);
-    const count = tokensToCreate(g, ctx.controller, { types: like.types, subtypes: like.subtypes }, 1, ctx.events);
-    const made = Array.from({ length: count }, () => createTokenCopy(g, copiable(g.objects[pick]!), ctx.controller, ctx.events, {}));
+    const made = createTokenCopies(g, ctx.controller, copiable(g.objects[pick]!), 1, ctx.events);
     if (ctx.resolution) ctx.resolution.created = made.map((t) => ({ id: t.id, zcc: t.zcc }));
     return true;
   },
@@ -2550,7 +2571,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         memo.asking = p;
         return { ask: { kind: 'choose_objects', player: p, candidates, min: 0, max: Math.min(n, candidates.length), text: `You may put ${n === 1 ? 'a card' : 'any number of cards'} from your hand onto the battlefield.`, sourceName: sourceName(ctx) } };
       }
-      for (const [p, ids] of picks) for (const id of ids) if (g.objects[id]?.zone === 'hand') moveObject(g, id, 'battlefield', ctx.events, { controller: p, ...(put.tapped ? { tapped: true } : {}) });
+      moveTogether(
+        g,
+        picks.flatMap(([p, ids]) => ids.filter((id) => g.objects[id]?.zone === 'hand').map((id) => ({ id, to: 'battlefield' as const, opts: { controller: p, ...(put.tapped ? { tapped: true } : {}) } }))),
+        ctx.events,
+      );
       return true;
     }
     const doIt = (p: PlayerId) => theirs.map((e) => ({ ...structuredClone(e), asPlayer: p }));
@@ -2761,8 +2786,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const g = ctx.g;
     // Tekuthal, Inquiry Dominus: "If you would proliferate, proliferate twice instead." (CR 614.1a; each once, CR 614.5)
     if (!node.replaced) {
-      const k = abilitySources(g).filter((id) => g.objects[id]!.controller === ctx.controller && objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'replace_quantity' && a.effect.event === 'proliferate')).length;
-      if (k) return { expand: Array.from({ length: 2 ** k }, () => ({ type: 'proliferate', replaced: true })) };
+      const times = replaceQuantity(g, 'proliferate', 1, { player: ctx.controller });
+      if (times > 1) return { expand: Array.from({ length: times }, () => ({ type: 'proliferate', replaced: true })) };
     }
     const objects = g.zones.battlefield.filter((id) => Object.values(g.objects[id]!.counters).some((n) => n > 0));
     const players = livePlayers(g).filter((p) => g.players[p]!.poison > 0 || Object.values(g.players[p]!.counters ?? {}).some((n) => n > 0));
@@ -2861,8 +2886,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           subtypes: [...new Set([subtype, 'Army'])], oracle: '', colors: ['B'], keywords: [], abilities: [], unparsed: [], power: '0', toughness: '0',
         };
         // CR 614.1a: the Army is a token being created (Doubling Season: two, and one of them gets the counters).
-        const count = tokensToCreate(g, ctx.controller, { types: face.types, subtypes: face.subtypes }, 1, ctx.events);
-        for (let i = 0; i < count; i++) createToken(g, face, ctx.controller, ctx.events);
+        createTokens(g, ctx.controller, face, 1, ctx.events);
       }
       const list = armies();
       if (list.length > 1) return { ask: { kind: 'choose_objects', player: ctx.controller, candidates: list, min: 1, max: 1, text: 'Choose an Army creature you control.' } };
@@ -3514,19 +3538,32 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       return all.filter((id) => statOf(id) === most);
     };
     const answer = answerOf(ctx, 'sacrifice');
-    // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
-    const sacrifice = (o: GameObject, p: PlayerId) => {
-      if (ctx.resolution) {
+    // CR 101.4: each player chooses, in turn order; then what they chose is sacrificed at the same time.
+    const picks = (ctx.memo.picks as [ObjectId, PlayerId][] | undefined) ?? [];
+    const sacrifice = (o: GameObject, p: PlayerId) => void picks.push([o.id, p]);
+    const carryOut = () => {
+      const those = picks.map(([id, p]) => ({ object: g.objects[id]!, player: p })).filter((s) => s.object);
+      // CR 608.2h: "the sacrificed creature's power" — as it was when it was sacrificed.
+      if (ctx.resolution && those.length) {
         const lki = (ctx.resolution.lkiThisWay ??= {});
-        lki.sacrificed = [...(lki.sacrificed ?? []), lkiStats(g, o)];
+        lki.sacrificed = [...(lki.sacrificed ?? []), ...those.map((s) => lkiStats(g, s.object))];
       }
       // Blot Out: "Target opponent exiles a creature … they control" — chosen the same way, but exiled.
       if (node.exile) {
         const src = ctx.source;
-        moveObject(g, o.id, 'exile', ctx.events);
-        // CR 607.2a: "exiled with ~".
-        if (src && src.id !== o.id && src.zone !== 'stack' && g.objects[o.id]?.zone === 'exile') g.objects[o.id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
-      } else sacrificeObject(g, o, p, ctx.events, node.exploit ? ctx.source?.id : undefined);
+        moveTogether(
+          g,
+          those.map(({ object: o }) => ({
+            id: o.id,
+            to: 'exile' as const,
+            // CR 607.2a: "exiled with ~".
+            then: () => {
+              if (src && src.id !== o.id && src.zone !== 'stack' && g.objects[o.id]?.zone === 'exile') g.objects[o.id]!.exiledBy = { id: src.id, zcc: battlefieldZcc(g, src) };
+            },
+          })),
+          ctx.events,
+        );
+      } else sacrificeTogether(g, node.exploit && ctx.source ? those.map((s) => ({ ...s, exploitedBy: ctx.source!.id })) : those, ctx.events);
     };
     // Scapeshift: "Sacrifice any number of lands."
     if (node.anyNumber) {
@@ -3540,6 +3577,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
       if (new Set(pick.objects).size !== pick.objects.length || !pick.objects.every((id) => candidates.includes(id))) throw new RulesError('Choose among those permanents.');
       for (const id of pick.objects) sacrifice(g.objects[id]!, p);
+      carryOut();
       return true;
     }
     if (answer) {
@@ -3561,9 +3599,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
         continue;
       }
       ctx.memo.done = done;
+      ctx.memo.picks = picks;
       ctx.memo.asking = p;
       return { ask: { kind: 'sacrifice', player: p, candidates, count: n } };
     }
+    carryOut();
     // Plaguecrafter: "Each player who can't discards a card." — each player who had nothing to sacrifice.
     const couldnt = (ctx.memo.couldnt as PlayerId[] | undefined) ?? [];
     if (node.cant && couldnt.length) return { expand: couldnt.flatMap((p) => (node.cant as EffectNode[]).map((e) => ({ ...structuredClone(e), asPlayer: p }))) };
@@ -3637,7 +3677,11 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     for (const [counter, n] of Object.entries((node.keptCounters as Record<string, number> | undefined) ?? {})) {
       for (const p of players) for (const id of memo.kept[p]!) if (g.objects[id]?.zone === 'battlefield') addCounters({ ...ctx, controller: p }, g.objects[id]!, counter, n);
     }
-    for (const p of players) for (const id of mine(p)) if (!memo.kept[p]!.includes(id)) sacrificeObject(g, g.objects[id]!, p, ctx.events);
+    sacrificeTogether(
+      g,
+      players.flatMap((p) => mine(p).filter((id) => !memo.kept![p]!.includes(id)).map((id) => ({ object: g.objects[id]!, player: p }))),
+      ctx.events,
+    );
     // "Each of those creatures …": the ones kept.
     if (ctx.resolution) ctx.resolution.created = players.flatMap((p) => memo.kept![p]!).filter((id) => g.objects[id]?.zone === 'battlefield').map((id) => ({ id, zcc: g.objects[id]!.zcc }));
     return true;
@@ -5311,26 +5355,6 @@ function gainLife(ctx: EffectContext, p: PlayerId, n: number): void {
  * or else the next defending player (the controller's choice in the rules; the engine picks for now).
  * CR 506.3b: only under an attacking player's control, and only once attackers have been declared.
  */
-/**
- * Academy Manufactor (CR 614.1a, 616.1): each one turns a Clue, Food or Treasure token into one of each, so with k of
- * them every such token becomes 3^(k-1) of each kind.
- */
-function oneOfEach(g: GameState, face: FaceDef, player: PlayerId): { faces: FaceDef[]; times: number } | null {
-  if (!face.subtypes.some((t) => t === 'Clue' || t === 'Food' || t === 'Treasure')) return null;
-  let faces: FaceDef[] | null = null;
-  let k = 0;
-  for (const id of abilitySources(g)) {
-    const o = g.objects[id]!;
-    if (o.controller !== player) continue;
-    for (const a of objectAbilities(g, o)) {
-      if (a.kind !== 'static' || a.effect.type !== 'token_one_of_each') continue;
-      faces ??= a.effect.tokens as FaceDef[];
-      k++;
-    }
-  }
-  return faces && k ? { faces, times: 3 ** (k - 1) } : null;
-}
-
 function enterAttacking(g: GameState, o: GameObject, source: GameObject | undefined, at?: AttackTarget): void {
   const c = g.combat;
   if (!c || !c.attackersDeclared || o.controller !== g.active || !chars(g, o).types.includes('Creature')) return;

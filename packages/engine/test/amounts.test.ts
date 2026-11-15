@@ -134,6 +134,8 @@ describe('CR 614.1a: replacements that change an amount', () => {
     ench('Bruvac Lite', 'If an opponent would mill one or more cards, they mill twice that many cards instead.'),
     ench('Water Crystal Lite', 'If an opponent would mill one or more cards, they mill that many cards plus four instead.'),
     card('Glimpse Lite', 'Sorcery', 'Target player mills three cards.'),
+    ench('Tainted Remedy Lite', 'If an opponent would gain life, that player loses that much life instead.'),
+    ench('Bloodletter Lite', 'If an opponent would lose life during your turn, they lose twice that much life instead.'),
   ];
   const base = () => {
     const g = toStep(start({ extra: EXTRA }), 'main1');
@@ -193,6 +195,25 @@ describe('CR 614.1a: replacements that change an amount', () => {
     g.cards['Red Shock'] = { ...g.cards['Red Shock']!, faces: [{ ...g.cards['Red Shock']!.faces[0]!, colors: ['R'] }] };
     g = castIt(g, 'Red Shock', { targets: [[{ kind: 'player', player: 'bob' }]] });
     expect(g.players.bob!.life).toBe(14);
+  });
+
+  it('life you would gain, doubled, that an opponent turns into a loss: the loss first — 3, not 6', () => {
+    let g = base();
+    give(g, 'bob', 'Tainted Remedy Lite', 'battlefield');
+    give(g, 'alice', 'Boon Reflection Lite', 'battlefield');
+    g = castIt(g, 'Healing Salve Lite');
+    expect(g.players.alice!.life).toBe(17);
+  });
+
+  it('CR 616.1f: once it is a loss, an effect on life lost applies to it', () => {
+    let g = toStep(base(), 'main1', 'bob');
+    give(g, 'bob', 'Tainted Remedy Lite', 'battlefield');
+    give(g, 'bob', 'Bloodletter Lite', 'battlefield');
+    give(g, 'alice', 'Boon Reflection Lite', 'battlefield');
+    // Bob's turn: Alice would gain 3 — loses 3 instead, and during Bob's turn twice that.
+    g = act(g, { type: 'pass', player: 'bob' });
+    g = passRound(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Healing Salve Lite', 'hand'), autoTap: true }));
+    expect(g.players.alice!.life).toBe(14);
   });
 
   it('cards you mill, doubled and with four more: doubled first — 10, not 14', () => {

@@ -81,11 +81,14 @@ describe('casting commanders from the command zone (CR 903.8)', () => {
     const k2 = h.zones.command[0]!;
     lands(h, 2);
     h = passRound(act(h, casts(h, k2)[0]!));
+    // CR 903.9b: to its owner's hand it may go to the command zone instead — asked before it moves.
     h = act(h, { type: 'manual', player: 'alice', op: { kind: 'move', object: k2, to: 'hand' } });
-    expect(h.pending).toMatchObject({ kind: 'commander_zone', zone: 'hand' });
+    expect(h.pending).toMatchObject({ kind: 'choose_option', player: 'alice', options: ['Put it into the command zone instead', "Let it go to its owner's hand"] });
+    expect(h.objects[k2]!.zone).toBe('battlefield');
     // Kept in hand, it's cast from there without tax.
-    h = act(h, { type: 'choose', player: 'alice', answer: { kind: 'commander_zone', move: false } });
+    h = act(h, { type: 'choose', player: 'alice', answer: { kind: 'choose_option', choice: "Let it go to its owner's hand" } });
     expect(h.zones.hand.alice).toContain(k2);
+    expect(h.pending).toBeNull();
   });
 
   it('only the owner answers, and only with their commander', () => {

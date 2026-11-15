@@ -229,15 +229,48 @@ export function moveObject(
   return settled ? makeMove(g, settled, events) : undefined;
 }
 
+/** One of several moves made as one event. */
+export interface PlannedMove {
+  id: ObjectId;
+  to: ZoneName;
+  opts?: MoveOptions;
+  /** Done right before this move is made, if it is made. */
+  before?: () => void;
+  /** Done right after it — or after it turned out not to be made. */
+  then?: (move: Move | undefined) => void;
+}
+
+/** The permanents entering the battlefield in the event being carried out, when several enter at once. */
+let alongside: ReadonlySet<ObjectId> | undefined;
+
+/** CR 614.12: whether this permanent is entering at the same time as the one whose entering is being settled. */
+export const entersAlongside = (id: ObjectId): boolean => alongside?.has(id) ?? false;
+
 /**
- * Moves several objects at once (CR 704.3: state-based actions; an effect that destroys them all): what the
- * replacement effects make of each move is settled as the game stands before any of them moves — an effect whose
- * permanent leaves with the others applies to them all the same (Kalitas dying with an opponent's creatures).
+ * Moves several objects at once (CR 704.3: state-based actions; CR 608.2c, 101.4: an effect that destroys, sacrifices,
+ * exiles or returns them all): what the replacement effects make of each move is settled as the game stands before
+ * any of them moves. An effect whose permanent leaves with the others applies to them all the same (Kalitas dying
+ * with an opponent's creatures); one whose permanent enters with the others doesn't yet (CR 614.12: Containment
+ * Priest returned with them).
  */
-export function moveTogether(g: GameState, ids: Iterable<ObjectId>, to: ZoneName, events: GameEvent[]): void {
-  const settled = [...ids].map((id) => settleMove(g, id, to, {}));
-  // (One that another's move has taken along already — a melded permanent's other card — is where it goes.)
-  for (const move of settled) if (move && move.o.zone === move.from) makeMove(g, move, events);
+export function moveTogether(g: GameState, moves: PlannedMove[], events: GameEvent[]): void {
+  const settled = moves.map((planned) => ({ planned, move: settleMove(g, planned.id, planned.to, planned.opts ?? {}) }));
+  const was = alongside;
+  alongside = new Set(settled.filter(({ move }) => move && move.move.to === 'battlefield' && move.from !== 'battlefield').map(({ planned }) => planned.id));
+  try {
+    for (const { planned, move } of settled) {
+      // (One that another's move has taken along already — a melded permanent's other card — is where it goes.)
+      if (!move || move.o.zone !== move.from) {
+        planned.then?.(undefined);
+        continue;
+      }
+      planned.before?.();
+      const made = makeMove(g, move, events);
+      planned.then?.(made);
+    }
+  } finally {
+    alongside = was;
+  }
 }
 
 /** Parts 1 and 2 of a move: whether it can take place, and what the replacement effects on it make of it. Changes nothing. */
@@ -330,12 +363,10 @@ function makeMove(g: GameState, settled: SettledMove, events: GameEvent[]): Move
 
   o.zone = to;
   o.zcc++;
-  // CR 903.9a: a commander put into a graveyard or exile may go to the command zone (a state-based action). CR 903.9b:
-  // one put into its owner's hand or library may go there instead — its owner is asked right after the move, before
-  // anyone gets priority (draws from the library aren't asked).
-  if (o.commander && !o.token && (to === 'graveyard' || to === 'exile' || ((to === 'hand' || to === 'library') && from !== 'library'))) {
-    (g.commanderReturns ??= []).push({ id, zcc: o.zcc });
-  }
+  // CR 903.9a: a commander put into a graveyard or into exile may go on to the command zone — a state-based action:
+  // its owner is asked the next time they are checked. (One that would go to its owner's hand or library may go to
+  // the command zone instead, CR 903.9b: a replacement effect, settled with the others before the move.)
+  if (o.commander && !o.token && (to === 'graveyard' || to === 'exile')) (g.commanderReturns ??= []).push({ id, zcc: o.zcc });
   // CR 400.7a: effects from spells and abilities that changed a spell on the stack (Rivaz of the Claw: "it gains 'When
   // this creature dies, exile it.'") continue to apply to the permanent it becomes.
   if (from === 'stack' && to === 'battlefield') {

@@ -1,16 +1,17 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { hasRule, matchesFilter, objectAbilities } from './characteristics.js';
-import { replaced, type Amount, type Replacement } from './instead.js';
+import { replaced, type Amount, type Life, type Replacement, type Rules } from './instead.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
-import { faceOf, abilitySources } from './zones.js';
+import { abilitySources } from './zones.js';
 import { playerRule } from './player-rules.js';
 
 /**
- * Replacement effects that change an amount (CR 614.1a): life gained, tokens created, counters put on something,
- * damage dealt. Each that applies is put to the amount by instead.ts, once (CR 614.5). CR 616.1: with several, the
+ * Replacement effects that change an amount (CR 614.1a): life gained or lost, counters put on something, cards milled,
+ * copies made. Each that applies is put to the amount by instead.ts, once (CR 614.5). CR 616.1: with several, the
  * affected player (or the affected object's controller) chooses the order — nobody is asked; it is taken to be the
- * order that leaves them best off: the most life, tokens or counters they gain (one more, then twice that many), the
- * least damage, life lost, cards milled or counters that do harm (twice that much, then one more).
+ * order that leaves them best off: the most life or counters they gain (one more, then twice that many), the least
+ * life lost, cards milled or counters that do harm (twice that much, then one more). (How much damage is dealt and how
+ * many tokens are created are settled with everything else about them: instead-damage.ts, instead-tokens.ts.)
  */
 export interface QuantitySubject {
   /** Who gains the life, gets the tokens, or puts the counters. */
@@ -26,8 +27,6 @@ export interface QuantitySubject {
   source?: GameObject;
   to?: DamageRecipient;
   combat?: boolean;
-  /** The tokens being created (Ojer Taq: "If one or more creature tokens would be created …"). */
-  made?: { types: string[]; subtypes: string[] };
 }
 
 /** Counters nobody wants more of on what is theirs. */
@@ -40,9 +39,31 @@ function lessIsBetter(event: QuantityReplacementNode['event'], subject: Quantity
 }
 
 /** What one effect makes of an amount. */
-function changedBy(e: QuantityReplacementNode, n: number): number {
+export function changedBy(e: QuantityReplacementNode, n: number): number {
   // Vorinclex: "half that many …, rounded down".
   return e.op === 'plus' ? n + (e.n ?? 0) : e.op === 'double' ? n * 2 : e.op === 'triple' ? n * 3 : e.op === 'half' ? Math.floor(n / 2) : n;
+}
+
+/** One effect that changes an amount, as it applies to one event: which effect it is, its words, what it makes of the amount. */
+export interface AmountEffect {
+  key: string;
+  label: string;
+  change: (n: number) => number;
+}
+
+/** The effects that change this amount (CR 614.1a): "twice that many", "that many plus one", "half that many". */
+export function amountEffects(g: GameState, event: QuantityReplacementNode['event'], subject: QuantitySubject): AmountEffect[] {
+  const found: AmountEffect[] = [];
+  for (const id of abilitySources(g)) {
+    const source = g.objects[id]!;
+    for (const [i, a] of objectAbilities(g, source).entries()) {
+      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
+      const e = (a as StaticAbility).effect as QuantityReplacementNode;
+      if (e.event !== event || e.op === 'extra' || e.op === 'swap' || !applies(g, e, source, subject)) continue;
+      found.push({ key: `${id}:${source.zcc}:${i}`, label: a.text, change: (n) => changedBy(e, n) });
+    }
+  }
+  return found;
 }
 
 export function replaceQuantity(g: GameState, event: QuantityReplacementNode['event'], n: number, subject: QuantitySubject): number {
@@ -50,21 +71,36 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
   if (event === 'counters' && n > 0 && subject.object && subject.counter && counterBlocked(g, subject.object, subject.counter)) return 0;
   if (n <= 0) return n;
   // The effects that apply. (Whether one does doesn't hang on the amount: they are found once.)
-  const found: Replacement<Amount>[] = [];
-  for (const id of abilitySources(g)) {
-    const source = g.objects[id]!;
-    for (const [i, a] of objectAbilities(g, source).entries()) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
-      const e = (a as StaticAbility).effect as QuantityReplacementNode;
-      if (e.event !== event || e.op === 'extra' || e.op === 'swap' || !applies(g, e, source, subject)) continue;
-      found.push({ key: `${id}:${source.zcc}:${i}`, label: a.text, apply: (h) => ({ ...h, n: changedBy(e, h.n) }) });
-    }
-  }
+  const found: Replacement<Amount>[] = amountEffects(g, event, subject).map((e) => ({ key: e.key, label: e.label, apply: (h) => ({ ...h, n: e.change(h.n) }) }));
   if (!found.length) return n;
   const sign = lessIsBetter(event, subject) ? -1 : 1;
   const end = replaced<Amount>(g, { kind: 'amount', n }, { replace_quantity: (_g, h) => (h.n > 0 ? found : []) }, { prefer: (a, b) => sign * ((a?.n ?? 0) - (b?.n ?? 0)) });
   return end?.n ?? 0;
 }
+
+/**
+ * The replacement effects on a player about to gain or lose life (CR 119, 614.1a):
+ *
+ *   becomes_loss   Tainted Remedy, Plague Drone: "If an opponent would gain life, that player loses that much life instead."
+ *   changed        "you gain twice that much life instead" (Boon Reflection), "they lose twice that much life instead"
+ *                  (Bloodletter of Aclazotz) — of the life as it now is: gained, or lost
+ *
+ * CR 616.1: the player orders them. Nobody is asked — it is the order that leaves them the most life: a gain that
+ * becomes a loss does so before it would have been doubled.
+ */
+export const LIFE_RULES: Rules<Life> = {
+  becomes_loss(g, h) {
+    if (h.loss || h.n <= 0 || !playerRule(g, h.player, 'gain_becomes_loss')) return [];
+    return [{ key: `gain_becomes_loss:${h.player}`, label: 'An effect: that player loses that much life instead', apply: (l) => ({ ...l, loss: true }) }];
+  },
+  changed(g, h) {
+    if (h.n <= 0) return [];
+    return amountEffects(g, h.loss ? 'lose_life' : 'gain_life', { player: h.player }).map((e) => ({ key: e.key, label: e.label, apply: (l) => ({ ...l, n: e.change(l.n) }) }));
+  },
+};
+
+const lifeAfter = (h: Life | null): number => (h ? (h.loss ? -h.n : h.n) : 0);
+const mostLife = (a: Life | null, b: Life | null): number => lifeAfter(a) - lifeAfter(b);
 
 /**
  * How much life a player loses when they would lose `n` (Bloodletter of Aclazotz, CR 614.1a): from damage (CR 120.3a), an
@@ -73,7 +109,8 @@ export function replaceQuantity(g: GameState, event: QuantityReplacementNode['ev
 export function lifeLoss(g: GameState, player: PlayerId, n: number): number {
   // Everybody Lives!: "Players can't lose life this turn." (CR 119.7)
   if (cantLoseLife(g, player)) return 0;
-  return replaceQuantity(g, 'lose_life', n, { player });
+  const asked: Life = { kind: 'life', player, n, loss: true };
+  return (replaced(g, asked, LIFE_RULES, { prefer: mostLife }) ?? asked).n;
 }
 
 /** Melira's Keepers, Melira, Blightbeetle: whether counters of this kind can't be put on this permanent (CR 122.1). */
@@ -83,52 +120,30 @@ export function counterBlocked(g: GameState, o: GameObject, counter: string): bo
 }
 
 /**
- * CR 119.3: a player gains life — unless they can't (CR 119.7) or their life total can't change (CR 119.8); Tainted Remedy,
- * Plague Drone: "If an opponent would gain life, that player loses that much life instead." (CR 614.1a, applied before a
- * doubling, the affected player's choice of order, CR 616.1); Boon Reflection: twice that much. Returns the change.
+ * CR 119.3: a player gains life — unless they can't (CR 119.7) or their life total can't change (CR 119.8). What the
+ * replacement effects on that make of it (twice that much; a loss instead) is settled first: each is a rule above,
+ * none is known here. Returns the change.
  */
 export function applyLifeGain(g: GameState, p: PlayerId, n: number, events: GameEvent[]): number {
   const ps = g.players[p];
   if (!ps || n <= 0 || playerRule(g, p, 'cant_gain_life') || playerRule(g, p, 'life_cant_change')) return 0;
-  if (playerRule(g, p, 'gain_becomes_loss')) {
-    const lost = lifeLoss(g, p, n);
+  const asked: Life = { kind: 'life', player: p, n, loss: false };
+  const life = replaced(g, asked, LIFE_RULES, { prefer: mostLife }) ?? asked;
+  if (life.loss) {
+    // Everybody Lives!: "Players can't lose life this turn." (CR 119.7)
+    const lost = cantLoseLife(g, p) ? 0 : life.n;
     ps.life -= lost;
     events.push({ type: 'life', player: p, delta: -lost, life: ps.life });
     return -lost;
   }
-  const amount = replaceQuantity(g, 'gain_life', n, { player: p });
-  ps.life += amount;
-  events.push({ type: 'life', player: p, delta: amount, life: ps.life });
-  return amount;
+  ps.life += life.n;
+  events.push({ type: 'life', player: p, delta: life.n, life: ps.life });
+  return life.n;
 }
 
 /** CR 119.7: "can't lose life" (an effect this turn); CR 119.8: such a player can't pay life either. */
 export function cantLoseLife(g: GameState, player: PlayerId): boolean {
   return (g.playerEffects ?? []).some((e) => e.player === player && e.rule === 'cant_lose_life' && e.lastTurn >= g.turn);
-}
-
-/**
- * Peregrin Took, Xorn: the extra tokens to create as well when a player creates tokens (CR 614.1a), and how many —
- * for tokens matching `tokenFilter` (by the created face's types and subtypes). `once`: "plus an additional …" adds one
- * token to the whole event however many kinds of token it creates (`key` names the replacement, so a caller creating
- * several kinds in one event applies it once); "plus that many …" follows the count.
- */
-export function extraTokens(g: GameState, player: PlayerId, made: { types: string[]; subtypes: string[] }, n: number): { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number; key: string; once: boolean }[] {
-  const out: { token: NonNullable<QuantityReplacementNode['extra']>['token']; count: number; key: string; once: boolean }[] = [];
-  if (n <= 0) return out;
-  for (const id of abilitySources(g)) {
-    const source = g.objects[id]!;
-    for (const [i, a] of objectAbilities(g, source).entries()) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
-      const e = (a as StaticAbility).effect as QuantityReplacementNode;
-      if (e.event !== 'tokens' || e.op !== 'extra' || !e.extra || source.controller !== player) continue;
-      const f = e.tokenFilter;
-      if (f?.subtypes && !f.subtypes.some((t) => made.subtypes.includes(t))) continue;
-      if (f?.types && !f.types.some((t) => made.types.includes(t))) continue;
-      out.push({ token: e.extra.token, count: e.extra.thatMany ? n : 1, key: `${source.id}:${source.zcc}:${i}`, once: !e.extra.thatMany });
-    }
-  }
-  return out;
 }
 
 function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s: QuantitySubject): boolean {
@@ -140,18 +155,10 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       return who(s.player) && (e.lifeAtMost === undefined || (s.player !== undefined && (g.players[s.player]?.life ?? 0) <= e.lifeAtMost));
     case 'mill':
     case 'copies':
+    case 'proliferate':
       return who(s.player);
     case 'lose_life':
       return who(s.player) && (!e.yourTurn || g.active === you);
-    case 'tokens': {
-      if (!who(s.player)) return false;
-      const f = e.tokenFilter;
-      if (f && s.made) {
-        if (f.types && !f.types.some((t) => s.made!.types.includes(t))) return false;
-        if (f.subtypes && !f.subtypes.some((t) => s.made!.subtypes.includes(t))) return false;
-      }
-      return !f || Boolean(s.made);
-    }
     case 'counters':
       if (!who(s.player)) return false;
       if (e.counter && e.counter !== s.counter) return false;

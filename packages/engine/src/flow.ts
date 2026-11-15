@@ -929,11 +929,11 @@ export function checkStateBasedActions(g: GameState, events: GameEvent[]): boole
   return any;
 }
 
-/** CR 903.9: asks the owner of the first commander still where it went whether to put it into the command zone. */
+/** CR 903.9a: asks the owner of the first commander still in the graveyard or exile it went to whether to put it into the command zone. */
 function promptCommanderReturn(g: GameState): boolean {
   const waiting = (g.commanderReturns ?? []).filter((e) => {
     const o = g.objects[e.id];
-    return o && o.zcc === e.zcc && ['graveyard', 'exile', 'hand', 'library'].includes(o.zone) && !g.players[o.owner]!.lost;
+    return o && o.zcc === e.zcc && (o.zone === 'graveyard' || o.zone === 'exile') && !g.players[o.owner]!.lost;
   });
   if (!waiting.length) {
     delete g.commanderReturns;

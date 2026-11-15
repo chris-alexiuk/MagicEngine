@@ -14,7 +14,7 @@ import type { Enter, Replacement, Rules } from './instead.js';
 import { enterReplacementFor, type EnterChange } from './registry.js';
 import { amountOf } from './resolve.js';
 import type { GameObject, GameState } from './types.js';
-import { abilitySources } from './zones.js';
+import { abilitySources, entersAlongside } from './zones.js';
 
 /** The entering, with what one effect makes of it. */
 function changed(h: Enter, change: EnterChange): Enter {
@@ -23,10 +23,13 @@ function changed(h: Enter, change: EnterChange): Enter {
   return { ...h, tapped: change.tapped ?? h.tapped, counters, also: [...h.also, ...(change.also ?? [])] };
 }
 
-/** Each static ability with this tag on another permanent whose condition holds and whose filter the entering one meets. */
+/**
+ * Each static ability with this tag on another permanent whose condition holds and whose filter the entering one meets.
+ * CR 614.12: not a permanent entering at the same time — it wasn't there for this one to enter under.
+ */
 function* others(g: GameState, o: GameObject, tag: string, sameController = false): Generator<{ source: GameObject; node: Record<string, unknown>; text: string; key: string }> {
   for (const id of abilitySources(g)) {
-    if (id === o.id) continue;
+    if (id === o.id || entersAlongside(id)) continue;
     const source = g.objects[id];
     if (!source || source.zone !== 'battlefield' || (sameController && source.controller !== o.controller)) continue;
     for (const [i, a] of objectAbilities(g, source).entries()) {

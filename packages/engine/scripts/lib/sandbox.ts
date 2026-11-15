@@ -40,7 +40,7 @@ import {
   type Target,
 } from '../../src/index.js';
 import { CREATURE_TYPES } from '../../src/creature-types.js';
-import { createToken } from '../../src/permanents.js';
+import { createTokens } from '../../src/permanents.js';
 import { createObject } from '../../src/zones.js';
 import { checkInvariants, createBot } from './bot.js';
 
@@ -267,11 +267,11 @@ function populate(g: GameState, table: Record<string, CardDef>): Placed {
   at('p2 walker').counters.loyalty = 4;
   const events: GameEvent[] = [];
   for (const p of [ME, P2]) {
-    const token = createToken(g, SOLDIER_TOKEN, p, events);
-    token.sick = false;
-    placed[`${p} token`] = token.id;
+    const [token] = createTokens(g, p, SOLDIER_TOKEN, 1, events);
+    token!.sick = false;
+    placed[`${p} token`] = token!.id;
   }
-  createToken(g, TREASURE_TOKEN, ME, events).sick = false;
+  createTokens(g, ME, TREASURE_TOKEN, 1, events)[0]!.sick = false;
 
   for (const [name, label] of [['Forest', 'land'], ['Sandbox Bear', 'creature'], ['Sandbox Bolt', 'instant'], ['Sandbox Relic', 'artifact']] as const) put(ME, name, 'hand', `hand ${label}`);
   for (const [name, label] of [['Mountain', 'land'], ['Sandbox Golem', 'creature'], ['Sandbox Bolt', 'instant'], ['Sandbox Insight', 'blue instant'], ['Sandbox Omen', 'enchantment'], ['Sandbox Lesson', 'sorcery']] as const) put(P2, name, 'hand', `hand ${label}`);

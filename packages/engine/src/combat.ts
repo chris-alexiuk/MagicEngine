@@ -1,5 +1,5 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, EffectNode, ObjectFilter, RedirectDamageNode, StaticAbility, StaticPreventionNode } from '@mtg/schema';
+import type { AttackTaxNode, ObjectFilter, StaticAbility } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
 import { payDuringResolution } from './payment.js';
 import { planAutoTap } from './autotap.js';
@@ -16,13 +16,12 @@ import {
   type GameState,
   type ObjectId,
   type PlayerId,
-  type PreventionFollowUp,
 } from './types.js';
-import { runEffect, type EffectContext } from './registry.js';
-import { damageFloor, playerProtectedFrom, playerRule } from './player-rules.js';
-import { applyLifeGain, counterBlocked, lifeLoss, putPlayerCounters, replaceQuantity } from './quantities.js';
+import { replaced, type Damage } from './instead.js';
+import { DAMAGE_RULES, dealtTogether, leastDamage } from './instead-damage.js';
+import { damageFloor, playerRule } from './player-rules.js';
+import { applyLifeGain, counterBlocked, lifeLoss, putPlayerCounters } from './quantities.js';
 import { amountOf } from './resolve.js';
-import { removeShield } from './permanents.js';
 import { abilitySources, faceOf, livePlayers, nameOf, nextPlayer, setTapped } from './zones.js';
 
 // ---------------------------------------------------------------------------
@@ -915,31 +914,20 @@ function planDamage(g: GameState, dealers: GameObject[], chosen: Record<ObjectId
   return plan;
 }
 
-/**
- * Combat damage being dealt at once: the prevention follow-ups already done for it. Undergrowth Champion: "If damage would
- * be dealt to this creature …, prevent that damage and remove a +1/+1 counter" — damage from several sources at once is
- * one event, so one counter (CR 615.5); "If a source would deal damage …" (Nine Lives) is one for each source.
- */
-let combatFollowUps: Set<string> | undefined;
-
 /** CR 510.2: all assigned combat damage is dealt at once. */
 function dealCombatDamage(g: GameState, plan: PlannedDamage[], events: GameEvent[]): void {
   const lifeGain = new Map<PlayerId, number>();
-  combatFollowUps = new Set();
-  try {
+  dealtTogether(() => {
     for (const d of plan) {
       const source = g.objects[d.source]!;
       const dealt = dealDamage(g, source, d.to, d.amount, true, events);
       // CR 702.15b / CR 120.3f: lifelink — the source's controller gains the damage dealt.
       if (dealt > 0 && hasKeyword(g, source, 'lifelink')) lifeGain.set(source.controller, (lifeGain.get(source.controller) ?? 0) + dealt);
     }
-  } finally {
-    combatFollowUps = undefined;
-  }
+  });
   for (const [player, dealt] of lifeGain) applyLifeGain(g, player, dealt, events);
 }
 
-/** CR 120.3: what damage does, depending on the recipient and the source's abilities. Returns the damage dealt. */
 /**
  * CR 120.4a / 120.10: how much damage this source would need to deal to a permanent before the rest is excess — lethal
  * damage for a creature (1 from a deathtouch source, CR 702.2c), loyalty for a planeswalker, defense for a battle; with
@@ -954,11 +942,6 @@ export function damageBeforeExcess(g: GameState, source: GameObject, o: GameObje
   if (hasType(g, o, 'Planeswalker')) caps.push(o.counters.loyalty ?? 0);
   if (hasType(g, o, 'Battle')) caps.push(o.counters.defense ?? 0);
   return caps.length ? Math.min(...caps) : Infinity;
-}
-
-/** Whether any permanent has a damage redirection (most games: none). */
-function hasRedirects(g: GameState): boolean {
-  return g.zones.battlefield.some((id) => objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'redirect_damage'));
 }
 
 /** CR 615.12: a static ability saying damage (or combat damage) can't be prevented. */
@@ -978,44 +961,9 @@ function staticUnpreventable(g: GameState, combat: boolean, source: GameObject):
 }
 
 /**
- * CR 614.1b: "All damage that would be dealt to you is dealt to enchanted creature instead." — where the damage goes, each
- * redirection applying at most once (CR 614.5); none if the new recipient isn't there to be dealt damage.
+ * Deals damage: what the replacement and prevention effects on it make of it, then what damage does (CR 120.3),
+ * depending on the recipient and the source's abilities. Returns the damage dealt.
  */
-function redirectDamage(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean): DamageRecipient {
-  const used = new Set<string>();
-  const same = (a: DamageRecipient, b: DamageRecipient) => (a.kind === 'player' ? b.kind === 'player' && a.player === b.player : b.kind === 'permanent' && a.object === b.object);
-  for (let guard = 0; guard < 8; guard++) {
-    let next: DamageRecipient | null = null;
-    for (const id of g.zones.battlefield) {
-      const holder = g.objects[id]!;
-      objectAbilities(g, holder).forEach((a, i) => {
-        if (next || a.kind !== 'static' || a.effect.type !== 'redirect_damage' || used.has(`${id}:${i}`)) return;
-        const e = a.effect as RedirectDamageNode;
-        if (e.combat && !combat) return;
-        if (e.unblocked && !(combat && g.combat?.attackers[source.id] && !g.combat.attackers[source.id]!.blocked)) return;
-        if (!staticConditionHolds(g, e, holder)) return;
-        const attached = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? g.objects[holder.attachedTo.id] : undefined;
-        const hit =
-          (e.fromYou && to.kind === 'player' && to.player === holder.controller) ||
-          (e.fromAttached && to.kind === 'permanent' && attached?.id === to.object) ||
-          (e.fromObjects && to.kind === 'permanent' && g.objects[to.object] && matchesFilter(g, g.objects[to.object]!, e.fromObjects, { controller: holder.controller, source: holder }));
-        if (!hit) return;
-        const there = e.to === 'self' ? holder : attached;
-        if (!there || there.zone !== 'battlefield') return;
-        const candidate: DamageRecipient = e.to === 'attached_controller' ? { kind: 'player', player: there.controller } : { kind: 'permanent', object: there.id };
-        if (candidate.kind === 'permanent' && !['Creature', 'Planeswalker', 'Battle'].some((t) => hasType(g, there, t))) return;
-        if (same(candidate, to)) return;
-        used.add(`${id}:${i}`);
-        next = candidate;
-      });
-      if (next) break;
-    }
-    if (!next) return to;
-    to = next;
-  }
-  return to;
-}
-
 export function dealDamage(
   g: GameState,
   source: GameObject,
@@ -1026,20 +974,19 @@ export function dealDamage(
   /** Pinpoint Avalanche: "The damage can't be prevented." — this damage (CR 615.12). */
   cantBePrevented = false,
 ): number {
-  // CR 614.1b: Pariah — dealt to another permanent or player instead.
-  if (amount > 0 && hasRedirects(g)) to = redirectDamage(g, source, to, combat);
-  // CR 614.1a: "it deals double that damage instead"; then prevention (CR 615).
-  amount = replaceQuantity(g, 'damage', amount, { source, to, combat });
+  if (amount <= 0) return 0;
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).
   const unpreventable = cantBePrevented || g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
-  if (!unpreventable) amount = prevent(g, source, to, amount, combat, events);
-  // CR 615.5: what a prevention effect does with the damage it prevented happens right after.
-  if (preventedFollowUps.length) runPreventedFollowUps(g, source, to, events);
-  // CR 702.16e, 702.16j: damage to a player with protection from it (or from everything) is prevented.
-  if (!unpreventable && amount > 0 && to.kind === 'player' && playerProtectedFrom(g, to.player, source)) {
-    events.push({ type: 'prevented', source: source.id, amount, to });
-    return 0;
-  }
+  // What the replacement and prevention effects on it make of the damage (CR 614, 615, 616.1): who is dealt it, how
+  // much is left. Each is a rule in instead-damage.ts; none is known here.
+  const asked: Damage = { kind: 'damage', source, to, amount, combat, unpreventable, spent: 0, also: [] };
+  const damage = replaced(g, asked, DAMAGE_RULES, { prefer: leastDamage }) ?? asked;
+  // What they do besides: the record of what was prevented and a shield used up, as they applied; then (CR 615.5) what
+  // a prevention effect does with the damage it prevented.
+  for (const more of damage.also) if (!more.late) more.run(g, source, events);
+  for (const more of damage.also) if (more.late) more.run(g, source, events);
+  to = damage.to;
+  amount = damage.amount;
   if (amount <= 0) return 0;
   const infect = hasKeyword(g, source, 'infect');
   if (to.kind === 'player') {
@@ -1075,10 +1022,6 @@ export function dealDamage(
   }
   const o = g.objects[to.object];
   if (!o || o.zone !== 'battlefield') return 0;
-  // CR 702.16e: damage from a source with the protected-against quality is prevented.
-  if (!unpreventable && hasProtectionFrom(g, o, source)) return 0;
-  // CR 122.1c: a shield counter is removed instead (a replacement, not prevention — it works even when damage can't be prevented).
-  if (removeShield(o, events)) return 0;
   events.push({ type: 'damage', source: source.id, sourceZcc: source.zcc, to, amount, combat });
   o.damagedTurn = g.turn;
   if (hasType(g, o, 'Planeswalker') && !hasType(g, o, 'Creature')) {
@@ -1106,170 +1049,6 @@ export function dealDamage(
   }
   // CR 702.2b: any damage from a deathtouch source makes the creature subject to destruction.
   if (hasKeyword(g, source, 'deathtouch')) o.deathtouched = true;
-  return amount;
-}
-
-/** CR 615.1a: a static ability that prevents this damage (Dolmen Gate, Glacial Chasm, Fog Bank). */
-/** Static prevention for this damage: all of it, or how many times half of it is prevented (Gisela). */
-function staticallyPrevented(g: GameState, source: GameObject, to: DamageRecipient, combat: boolean, amount = 0): { all: boolean; halves: number; less?: number; then?: PreventionFollowUp; batch?: string; once?: true } {
-  let halves = 0;
-  let cap: number | undefined;
-  let less = 0;
-  // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
-  // granted ability of the creature itself.
-  const recipient = to.kind === 'permanent' ? g.objects[to.object] : undefined;
-  if (recipient) {
-    for (const k of chars(g, recipient).keywords) {
-      if (k.id !== 'ability') continue;
-      for (const a of k.abilities ?? []) {
-        if (a.kind !== 'static' || a.effect.type !== 'prevent_damage') continue;
-        const e = a.effect as StaticPreventionNode;
-        if (!e.toSelf || (e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
-        if (e.from && !matchesFilter(g, source, e.from, { controller: recipient.controller, source: recipient, anyZone: true })) continue;
-        return { all: true, halves: 0 };
-      }
-    }
-  }
-  for (const id of abilitySources(g)) {
-    const holder = g.objects[id]!;
-    for (const a of objectAbilities(g, holder)) {
-      if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'prevent_damage') continue;
-      const e = (a as StaticAbility).effect as StaticPreventionNode;
-      if ((e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) continue;
-      // Simultaneous combat damage is one event: Undergrowth Champion's "while it has a +1/+1 counter on it" was true for
-      // all of it, though the first counter removed made it false (CR 510.2, 615.5).
-      const batchKey = `${holder.id}:${to.kind === 'player' ? to.player : to.object}`;
-      if (!staticConditionHolds(g, e, holder) && !(e.then && !e.eachSource && combatFollowUps?.has(batchKey))) continue;
-      // The Mindskinner: "If a source you control would deal damage …"; Ironscale Hydra: "If a creature would deal …".
-      if (e.from && !matchesFilter(g, source, e.from, { controller: holder.controller, source: holder, anyZone: true })) continue;
-      // Callous Giant: "3 or less damage".
-      if (e.atMost !== undefined && amount > e.atMost) continue;
-      let hit = false;
-      // Defang: "Prevent all damage that would be dealt by enchanted creature."
-      const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
-      // Goblin Furrier: "… that this creature would deal to snow creatures" — only to those.
-      if (e.bySelf && source.id === holder.id) hit = !e.bySelfTo || (to.kind === 'permanent' && Boolean(g.objects[to.object]) && matchesFilter(g, g.objects[to.object]!, e.bySelfTo, { controller: holder.controller, source: holder }));
-      else if (e.byAttached && attachedHost !== undefined && source.id === attachedHost) hit = true;
-      // Statecraft: "… dealt to and dealt by creatures you control".
-      else if (e.by && matchesFilter(g, source, e.by, { controller: holder.controller, source: holder })) hit = true;
-      else if (to.kind === 'player') hit = Boolean((e.toYou && to.player === holder.controller) || (e.toOpponents && to.player !== holder.controller));
-      else {
-        const o = g.objects[to.object];
-        // Panther Habit: "If equipped creature would be dealt damage".
-        const host = e.toAttached && holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
-        hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (host !== undefined && o.id === host) || (e.to && matchesFilter(g, o, e.to, { controller: holder.controller, source: holder }))));
-      }
-      if (!hit) continue;
-      // Temple Altisaur: "prevent all but 1 of that damage" — a cap on what's left once the others have applied; a second
-      // one finds nothing more to prevent (CR 615.1, 616.1).
-      if (e.allBut !== undefined) {
-        cap = Math.min(cap ?? Infinity, e.allBut);
-        continue;
-      }
-      if (e.half) halves++;
-      // Orbs of Warding: "prevent 1 of that damage" — each such effect takes its share (CR 615.7).
-      else if (e.amount) less += e.amount;
-      // Vigor: "Put a +1/+1 counter on that creature for each 1 damage prevented this way." (CR 615.5)
-      else {
-        const batch = e.then && !e.eachSource ? { batch: batchKey, ...(JSON.stringify(e.then).includes('"kind":"event"') ? {} : { once: true as const }) } : {};
-        return { all: true, halves, ...(e.then ? { then: { effects: e.then as EffectNode[], controller: holder.controller, source: { id: holder.id, zcc: holder.zcc }, about: 'recipient' as const } } : {}), ...batch };
-      }
-    }
-  }
-  if (cap !== undefined) {
-    let left = amount;
-    for (let i = 0; i < halves; i++) left = Math.floor(left / 2);
-    left = Math.max(0, left - less);
-    if (left > cap) less += left - cap;
-  }
-  return { all: false, halves, ...(less ? { less } : {}) };
-}
-
-/** Prevention effects' follow-ups waiting to happen after the damage they prevented (CR 615.5). */
-const preventedFollowUps: { then: PreventionFollowUp; amount: number }[] = [];
-
-/**
- * CR 615.5: "Some prevention effects also include an additional effect, which may refer to the amount of damage that was
- * prevented. … the rest of the effect takes place immediately afterward." These never ask anyone anything (the compiler
- * reads only such follow-ups): the amount prevented is the event amount, the source of the damage the event object.
- */
-function runPreventedFollowUps(g: GameState, source: GameObject, to: DamageRecipient, events: GameEvent[]): void {
-  const queue = preventedFollowUps.splice(0, preventedFollowUps.length);
-  for (const { then, amount } of queue) {
-    const holder = then.source ? g.objects[then.source.id] : undefined;
-    const ctx: EffectContext = {
-      g,
-      controller: then.controller,
-      ...(holder ? { source: holder } : {}),
-      events,
-      targets: then.targets ?? [],
-      x: 0,
-      memo: {},
-      trigger: {
-        amount,
-        object: then.about === 'recipient' && to.kind === 'permanent' && g.objects[to.object] ? { id: to.object, zcc: g.objects[to.object]!.zcc } : { id: source.id, zcc: source.zcc },
-        ...(to.kind === 'player' ? { player: to.player } : {}),
-      },
-    };
-    const list = [...then.effects];
-    while (list.length) {
-      const r = runEffect(structuredClone(list.shift()!), ctx);
-      if (typeof r === 'object' && 'expand' in r) list.unshift(...r.expand);
-      ctx.memo = {};
-    }
-  }
-}
-
-/** CR 615: applies prevention effects to damage about to be dealt; returns what's left. */
-function prevent(g: GameState, source: GameObject, to: DamageRecipient, amount: number, combat: boolean, events: GameEvent[]): number {
-  const fixed = amount > 0 ? staticallyPrevented(g, source, to, combat, amount) : ({ all: false, halves: 0 } as ReturnType<typeof staticallyPrevented>);
-  if (fixed.all) {
-    events.push({ type: 'prevented', source: source.id, amount, to });
-    // "remove a +1/+1 counter from this creature": once for all the damage dealt to it at once.
-    const again = fixed.once && fixed.batch !== undefined && combatFollowUps?.has(fixed.batch);
-    if (fixed.batch !== undefined) combatFollowUps?.add(fixed.batch);
-    if (fixed.then && !again) preventedFollowUps.push({ then: fixed.then, amount });
-    return 0;
-  }
-  // Gisela: "prevent half that damage, rounded up" — what's left is half, rounded down.
-  if (fixed.halves) {
-    const before = amount;
-    for (let i = 0; i < fixed.halves; i++) amount = Math.floor(amount / 2);
-    if (amount < before) events.push({ type: 'prevented', source: source.id, amount: before - amount, to });
-  }
-  if (fixed.less && amount > 0) {
-    const cut = Math.min(amount, fixed.less);
-    amount -= cut;
-    events.push({ type: 'prevented', source: source.id, amount: cut, to });
-  }
-  if (amount <= 0 || !g.prevention.length) return amount;
-  const left0 = amount;
-  for (const p of g.prevention) {
-    if (amount <= 0) break;
-    const before = amount;
-    if ((p.turn !== g.turn && p.untilTurnOf === undefined) || (p.combat && !combat)) continue;
-    if (p.to) {
-      const hit = p.to.kind === 'player' ? to.kind === 'player' && to.player === p.to.player : p.to.kind === 'object' && to.kind === 'permanent' && to.object === p.to.id && g.objects[p.to.id]?.zcc === p.to.zcc;
-      if (!hit) continue;
-    }
-    if (p.by && !(p.by.kind === 'object' && p.by.id === source.id && p.by.zcc === source.zcc)) continue;
-    const fctx = { controller: p.controller ?? source.controller, source: null, anyZone: true };
-    if (p.byFilter && !matchesFilter(g, source, p.byFilter, fctx)) continue;
-    if (p.toFilter && !(to.kind === 'permanent' && g.objects[to.object] && matchesFilter(g, g.objects[to.object]!, p.toFilter, fctx))) continue;
-    if (p.once) {
-      amount = 0;
-      p.amount = 0;
-    } else if (p.amount === 'all') amount = 0;
-    else {
-      // CR 615.7: a shield prevents that much and is used up.
-      const used = Math.min(p.amount, amount);
-      p.amount -= used;
-      amount -= used;
-    }
-    if (p.then && before > amount) preventedFollowUps.push({ then: p.then, amount: before - amount });
-  }
-  g.prevention = g.prevention.filter((p) => (p.amount === 'all' || p.amount > 0) && !(p.once && p.amount === 0));
-  if (amount < left0) events.push({ type: 'prevented', source: source.id, amount: left0 - amount, to });
   return amount;
 }
 

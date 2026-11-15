@@ -6,7 +6,7 @@
 import type { ExileInsteadNode, ObjectFilter } from '@mtg/schema';
 import { abilitiesOf, chars, matchesFilter, objectAbilities } from './characteristics.js';
 import type { Also, Move, Replacement, Rules } from './instead.js';
-import { createToken, tokensToCreate } from './permanents.js';
+import { createTokens } from './permanents.js';
 import { applyLifeGain } from './quantities.js';
 import { shuffleInPlace } from './rng.js';
 import type { GameObject, GameState, PlayerId, ZoneName } from './types.js';
@@ -67,10 +67,7 @@ function exileInstead(g: GameState, h: Move, node: ExileInsteadNode, source: Gam
     const made = node.createToken;
     also.push({
       key: `token:${you}:${made.name}`,
-      run: (game, _o, events) => {
-        const count = tokensToCreate(game, you, { types: made.types, subtypes: made.subtypes }, 1, events);
-        for (let i = 0; i < count; i++) createToken(game, made, you, events);
-      },
+      run: (game, _o, events) => void createTokens(game, you, made, 1, events),
     });
   }
   return { key, label, apply: (m) => elsewhere(m, 'exile', undefined, also) };
@@ -180,6 +177,25 @@ export const MOVE_RULES: Rules<Move> = {
     return [{ key: `own_shuffle:${o.id}:${o.zcc}`, label: says(g, o, own.text), apply: (m) => elsewhere(m, 'library', undefined, [shuffle]) }];
   },
 
+  /**
+   * CR 903.9b: "If a commander would be put into its owner's hand or library from anywhere, its owner may put it into
+   * the command zone instead." It "may apply more than once to the same event" (an exception to CR 614.5): once for
+   * each place the move would take it. (A commander put into a graveyard or into exile goes there, and may go on from
+   * there: CR 903.9a, a state-based action — flow.ts.)
+   */
+  commander(g, h) {
+    const o = h.object;
+    if (!o.commander || o.token || !(h.to === 'hand' || h.to === 'library') || h.from === h.to || h.from === 'command' || g.players[o.owner]?.lost) return [];
+    const name = o.faceDown && h.from === 'battlefield' ? 'A face-down permanent' : nameOf(g, o);
+    return [
+      {
+        key: `commander:${o.id}:${o.zcc}:${h.to}`,
+        label: 'Put it into the command zone instead',
+        may: { ask: `${name} would be put into its owner's ${h.to}. Put it into the command zone instead?`, no: `Let it go to its owner's ${h.to}`, by: o.owner },
+        apply: (m) => elsewhere(m, 'command'),
+      },
+    ];
+  },
 };
 
 /** The mark a move carries when madness exiled the card: its owner may cast it (CR 702.35a). */

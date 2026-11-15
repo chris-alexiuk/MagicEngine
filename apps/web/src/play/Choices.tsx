@@ -997,7 +997,9 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
     case 'legend_rule':
       return <ObjectPicker key="lr" view={view} candidates={p.objects} min={1} max={1} label="Keep this one" title={`Legend rule: keep one ${p.name}; the rest go to the graveyard`} setPick={setPick} onDone={([keep]) => keep && answer({ kind: 'legend_rule', keep })} />;
     case 'commander_zone': {
-      const where = p.zone === 'graveyard' ? 'went to your graveyard' : p.zone === 'exile' ? 'was exiled' : p.zone === 'hand' ? 'was put into your hand' : 'was put into your library';
+      // CR 903.9a: asked once it is in the graveyard or in exile. (To a hand or library it is asked before it moves,
+      // as one of the effects that replace that: an ordinary choice between them.)
+      const where = p.zone === 'graveyard' ? 'went to your graveyard' : 'was exiled';
       return (
         <div className="flow-step">
           <p className="flow-title">
@@ -1012,7 +1014,7 @@ export function ChoicePanel({ g, view, pending, me, answer, act, setPick }: { g:
               Move to command zone
             </button>
             <button type="button" className="secondary" onClick={() => answer({ kind: 'commander_zone', move: false })}>
-              Leave it {p.zone === 'exile' ? 'in exile' : `in your ${p.zone}`}
+              Leave it {p.zone === 'exile' ? 'in exile' : 'in your graveyard'}
             </button>
           </Actions>
         </div>
