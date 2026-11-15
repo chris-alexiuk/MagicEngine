@@ -98,7 +98,10 @@ are `keywordIds`.
 
 A new parameter on a node (`reparse` says "parameters outside NODE_FIELDS") has to be declared in
 `packages/schema/src/node-fields.ts`. Before declaring one that a single card uses, ask whether a filter, an
-amount or a condition already says it: those work for every kind of node at once.
+amount or a condition already says it: those work for every kind of node at once. The build holds to that: a
+parameter that only one card in the pool uses fails the contract step (`reparse`) unless it is one of the ones
+there already were — `ONE_CARD_PARAMETERS` in the same file, a list that only gets shorter (a test pins its
+length). Fold one away and take it off the list.
 
 ## Checking the grades
 

@@ -429,6 +429,7 @@ A card is graded fully automatic when every line was read **and** playing it sho
      - At once: an edict, "sacrifice all …", Living Death and Show and Tell move what they move together. Containment Priest put onto the battlefield with other creatures no longer exiles them; Kalitas sacrificed with an opponent's creature still exiles it.
    - ✅ The card language (step 4 of the engine review, Nov 2026)
      - One place builds keywords. "This artifact is a 2/3 Gargoyle artifact creature with prowess" compiled to a prowess that did nothing, on a card graded fully automatic (no card in the pool reads so; the next one would have). A keyword the engine can't run can no longer be on a fully automatic card, whatever built it.
+     - "No parameter for a single card" is a check, not a note: the pool has 451 parameter names in 1,156 places on nodes, and 91 names are used by one card alone. Those are listed as debt (`ONE_CARD_PARAMETERS`); the build fails on one that isn't listed, and the list only gets shorter.
    - Next: mutate, "the color or colors of your choice", Attractions, "Whenever players finish voting", votes for players, "Choose a card name" as an effect
 4. 4-player Commander and online play via the server
 5. Deck editor: search, Moxfield/Archidekt import/export, legality, color identity, Game Changers

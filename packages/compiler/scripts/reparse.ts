@@ -10,7 +10,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { CORE_NODES, faceAbilities, nodeTags, undeclaredFields, type CardDB } from '@mtg/schema';
+import { CORE_NODES, faceAbilities, nodeFields, nodeTags, oneCardParameters, undeclaredFields, type CardDB } from '@mtg/schema';
 import { buildCoverage, coverageMarkdown, reparseDB } from '../src/index.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -57,6 +57,21 @@ if (strays.size) {
 const undeclared = undeclaredFields([...next.cards, ...next.tokens]);
 if (undeclared.length) {
   console.error(`parameters outside NODE_FIELDS (packages/schema/src/node-fields.ts): ${undeclared.join(', ')}`);
+  process.exitCode = 1;
+}
+
+// The card language rule: no parameter for a single card (schema ONE_CARD_PARAMETERS — the ones there are, and no more).
+const cardNodes = nodeFields;
+const pairs = next.cards.reduce((seen, c) => {
+  for (const [type, fields] of cardNodes(c)) for (const f of fields) seen.add(`${type}.${f}`);
+  return seen;
+}, new Set<string>());
+const rare = oneCardParameters(next.cards);
+console.log(`  parameters: ${rare.names} names in ${pairs.size} places on nodes; ${rare.loners.length} used by one card alone`);
+if (rare.stale.length) console.log(`  no longer one card's alone (take them off ONE_CARD_PARAMETERS): ${rare.stale.join(', ')}`);
+if (rare.fresh.length) {
+  console.error(`parameters only one card uses, not among the ones there were (packages/schema/src/node-fields.ts):\n  ${rare.fresh.map((x) => `${x.name} — ${x.card}`).join('\n  ')}`);
+  console.error('Say it with a filter, an amount or a condition, or leave the line unread: a parameter for one card is not added.');
   process.exitCode = 1;
 }
 

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { CORE_NODES, NODE_FIELDS, faceAbilities, imageUrl, manualModes, nodeFields, nodeTags, undeclaredFields } from '@mtg/schema';
+import { CORE_NODES, NODE_FIELDS, ONE_CARD_PARAMETERS, faceAbilities, imageUrl, manualModes, nodeFields, nodeTags, oneCardParameters, undeclaredFields } from '@mtg/schema';
 import { describe, expect, it } from 'vitest';
 import { automationOf, compileCards, reparseDB } from '../src/compile.js';
 import { buildCoverage, coverageMarkdown, templateOf } from '../src/coverage.js';
@@ -144,6 +144,30 @@ describe('grades', () => {
     // Every other card is graded by how much of it is read, as before.
     const others = reparseDB(pool).cards.filter((c) => c.name !== 'Llanowar Elves');
     expect(others.every((c) => c.automation === automationOf(c.faces))).toBe(true);
+  });
+});
+
+describe('the card language rule: no parameter for a single card', () => {
+  const card = (name: string, effect: Record<string, unknown>) => ({ name, faces: [{ abilities: [{ kind: 'spell', text: 'x', effects: [effect] }], keywords: [] }] }) as never;
+
+  it('tells the parameters one card alone uses from the ones there were', () => {
+    const pool = [card('A', { type: 'draw', amount: 1, onTuesdays: true }), card('B', { type: 'mill', amount: 2 }), card('C', { type: 'scry', amount: 1, secret: true })];
+    const found = oneCardParameters(pool);
+    expect(found.names).toBe(3);
+    // `amount` is everyone's; `secret` is a debt already on the list; `onTuesdays` is new, and not allowed.
+    expect(found.loners).toEqual(['onTuesdays', 'secret']);
+    expect(found.fresh).toEqual([{ name: 'onTuesdays', card: 'A' }]);
+    // What is listed and isn't one card's alone here (unused, or shared by now) is to come off the list.
+    expect(found.stale).toContain('allBut');
+    expect(found.stale).not.toContain('secret');
+  });
+
+  it('the list only gets shorter', () => {
+    const names = Object.keys(ONE_CARD_PARAMETERS);
+    // Lower this number with each parameter folded away. It does not go up.
+    expect(names.length).toBeLessThanOrEqual(91);
+    const declared = new Set(Object.values(NODE_FIELDS).flat());
+    expect(names.filter((n) => !declared.has(n))).toEqual([]);
   });
 });
 

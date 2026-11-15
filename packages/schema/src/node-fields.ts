@@ -406,6 +406,133 @@ export const NODE_FIELDS: Readonly<Record<string, readonly string[]>> = {
   your_turn: ['value', 'who'],
 };
 
+/**
+ * Debt: the parameters that exist for one card — a name that no other card's nodes use, on any kind of node. Most are a
+ * filter, an amount or a condition in disguise (see above), or one case of something a shared part could say.
+ *
+ * The build holds the pool to this list (compiler/scripts/reparse.ts): a parameter that only one card uses and that
+ * isn't listed here fails it. So nothing is added — a new card's oddity goes into a shared part, or its line stays
+ * unread. A name comes out when its parameter is folded away, or when a second card comes to use it.
+ * (name: the kind of node it is on — the card.)
+ */
+export const ONE_CARD_PARAMETERS: Readonly<Record<string, string>> = {
+  abilitiesToo: "uncounterable — Spider-Punk",
+  activateOnly: "cast_prohibition — The Immortal Sun",
+  allBut: "prevent_damage — Temple Altisaur",
+  allOne: "add_mana — Brigid, Clachan's Heart // Brigid, Doun's Mind",
+  allPlayers: "discard — Hostile Investigator",
+  alsoExile: "cast_option — Squee, the Immortal",
+  anyController: "keep_choose — Mount Doom",
+  anyZone: "delayed_leave — Ugin, the Ineffable",
+  asSubtypes: "enter_counters_others — Master Biomancer",
+  atMost: "prevent_damage — Callous Giant",
+  attackingMost: "life — Scourge of the Throne",
+  attackingPlayer: "create_token — Soaring Lightbringer",
+  basicLand: "mana_multiplier — Virtue of Strength // Garenbrig Growth",
+  becomeAura: "reanimate_attach — Necromancy",
+  begin: "extra_combat — Moraug, Fury of Akoum",
+  blocking: "was_attacking — Guildsworn Prowler",
+  blocks: "attack_tax — Archangel of Tithes",
+  chose: "ring_tempted — Call of the Ring",
+  copyUntil: "as_enters — Cursed Mirror",
+  countersIfCreature: "move — Teferi's Time Twist",
+  createToken: "exile_instead — Kalitas, Traitor of Ghet",
+  cyclingOnly: "ability_cost_reduction — Fluctuator",
+  declined: "opponents_may — Braids, Arisen Nightmare",
+  distribute: "move_counters — Forgotten Ancient",
+  doubledIfXAtLeast: "enters_with_counters — Apocalypse Hydra",
+  eachType: "graveyard_cast — Muldrotha, the Gravetide",
+  effectOnly: "replace_quantity — Doubling Season",
+  emptyHand: "draw_replacement — Phial of Galadriel",
+  evenly: "deal_damage — Fireball",
+  exceptCastersTurn: "cost_modifier — Defense Grid",
+  exileFromHand: "begin_on_battlefield — Gemstone Caverns",
+  exiledColors: "add_mana — Chrome Mox",
+  fromExile: "return_chosen — Karn, Scion of Urza",
+  gainLife: "exile_instead — The Darkness Crystal",
+  gainSuspend: "move — Epochrasite",
+  half: "prevent_damage — Gisela, Blade of Goldnight",
+  ifTargetsYou: "cost_modifier — Monastery Siege",
+  index: "deals_combat_damage — Great Train Heist",
+  keptCounters: "keep_choose — Promise of Loyalty",
+  landFilter: "top_permission — Crystal Skull, Isu Spyglass",
+  landsTapped: "search — Archdruid's Charm",
+  landsTo: "search — Archdruid's Charm",
+  legendary: "combat_damage_by — Blitzball",
+  libraryBottom: "exile_instead — Nissa's Chosen",
+  libraryTop: "exile_instead — Gravebane Zombie",
+  lifeAtMost: "replace_quantity — Phial of Galadriel",
+  lifeCost: "top_permission — Bolas's Citadel",
+  lookAt: "exile_top — Ugin, the Ineffable",
+  maxMV: "cast_free — Beseech the Mirror",
+  most: "life — Preacher of the Schism",
+  mostLife: "choose_opponent — The Black Gate",
+  name: "completed_dungeon — Acererak the Archlich",
+  newTargetsForExtra: "replace_quantity — Twinning Staff",
+  ninjutsuOnly: "ability_cost_reduction — Silver-Fur Master",
+  notBySource: "enters — Kodama of the East Tree",
+  notEntering: "enter_counters_others — Giada, Font of Hope",
+  notExertedThisTurn: "exerted — Combat Celebrant",
+  notMoved: "return_chosen — Rise of the Witch-king",
+  notStarting: "begin_on_battlefield — Gemstone Caverns",
+  nthAtLeast: "cast — Arcbound Tracker",
+  oneOrMore: "player_dealt_damage — Master of Barbs",
+  onlyPlayers: "replace_quantity — Winding Constrictor",
+  opponents: "this_turn — Lictor",
+  opponentsOf: "opponents_may — Heartwood Storyteller",
+  orElse: "dig — Planar Genesis",
+  orPlaneswalker: "create_token — Adeline, Resplendent Cathar",
+  ownTurn: "cast, draw — The Council of Four",
+  paid: "lose_life — Indulgent Tormentor",
+  permanentTypes: "graveyard — Matzalantli, the Great Door // The Core",
+  removeAllCounters: "enters_with_counters — Thief of Blood",
+  repeat: "may_do — Cultivator Colossus",
+  restCounter: "reveal_choose — Karn, Scion of Urza",
+  sameLandType: "search — Myriad Landscape",
+  secret: "vote — Truth or Consequences",
+  setName: "continuous — Witness Protection",
+  sourceAttached: "trigger_extra — Wizard's Staff",
+  spentCommanderCounters: "add_mana — Opal Palace",
+  steal: "draw_replacement — Notion Thief",
+  targetsYou: "cast — Reparations",
+  theirTurn: "lose_life — Valgavoth, Harrower of Souls",
+  thenCounters: "as_enters — Banner of Kinship",
+  thisTurn: "skip_next — Moment of Silence",
+  toChosen: "replace_quantity — Sawhorn Nemesis",
+  toEnchantedPlayer: "replace_quantity — Curse of Bloodletting",
+  tokens: "token_one_of_each — Academy Manufactor",
+  triple: "modify — Tifa's Limit Break",
+  withCounter: "exile_instead — Dauthi Voidwalker",
+  withOther: "attacks — Merry, Esquire of Rohan",
+  withSelf: "attacked_with — Kytheon, Hero of Akros // Gideon, Battle-Forged",
+  xColor: "may_pay — Leyline Tyrant",
+  youMore: "opponent_has_more — Unified Will",
+};
+
+/** Each parameter name in these cards, on whatever kind of node, with the cards that use it. */
+export function parameterUse(cards: Iterable<CardDef>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const card of cards) {
+    for (const fields of nodeFields(card).values()) for (const f of fields) (out.get(f) ?? out.set(f, new Set()).get(f)!).add(card.name);
+  }
+  return out;
+}
+
+/**
+ * The pool against the debt list: `fresh` — parameters one card alone uses that aren't listed (not allowed); `stale` —
+ * listed ones that no longer are such (to be taken off the list).
+ */
+export function oneCardParameters(cards: Iterable<CardDef>): { names: number; loners: string[]; fresh: { name: string; card: string }[]; stale: string[] } {
+  const use = parameterUse(cards);
+  const loners = [...use].filter(([, by]) => by.size === 1).map(([name]) => name).sort();
+  return {
+    names: use.size,
+    loners,
+    fresh: loners.filter((name) => !(name in ONE_CARD_PARAMETERS)).map((name) => ({ name, card: [...use.get(name)!][0]! })),
+    stale: Object.keys(ONE_CARD_PARAMETERS).filter((name) => use.get(name)?.size !== 1),
+  };
+}
+
 /** The parameters each kind of node carries in a card's abilities and keywords: type → the fields used. */
 export function nodeFields(card: CardDef): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();

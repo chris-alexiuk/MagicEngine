@@ -14,7 +14,7 @@ export const SCHEMA_VERSION = 2 as const;
 export { SUBTYPES } from './subtypes.js';
 export * from './qualities.js';
 export { isTokenFace, linkTokenArt, tokenArtFinder, tokenTextKey } from './token-art.js';
-export { NODE_FIELDS, nodeFields, undeclaredFields } from './node-fields.js';
+export { NODE_FIELDS, ONE_CARD_PARAMETERS, nodeFields, oneCardParameters, parameterUse, undeclaredFields } from './node-fields.js';
 import { qualitiesRead } from './qualities.js';
 
 export type Color = 'W' | 'U' | 'B' | 'R' | 'G';
