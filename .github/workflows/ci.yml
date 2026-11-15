@@ -18,6 +18,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: The grammar's pattern count is the one on record
+        # How many of the grammar's patterns serve one card alone may fall and may not rise. A change to the patterns
+        # comes with packages/compiler/instruments.json written again (`pnpm grammar:update`, on the full card pool),
+        # and that refuses a higher count unless it is taken on knowingly. Here: that the file is this grammar's.
+        run: pnpm grammar:check
       - name: Check rule citations against the Comprehensive Rules
         run: pnpm rules:check
       - name: Build the web app against the sample card DB

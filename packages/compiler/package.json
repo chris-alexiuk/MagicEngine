@@ -12,7 +12,9 @@
     "compile": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit -p .",
     "test": "vitest run",
-    "reparse": "tsx scripts/reparse.ts"
+    "reparse": "tsx scripts/reparse.ts",
+    "patterns": "tsx scripts/patterns.ts",
+    "mutate": "tsx scripts/mutate.ts"
   },
   "dependencies": {
     "@mtg/schema": "workspace:*"

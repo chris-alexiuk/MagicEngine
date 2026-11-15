@@ -129,12 +129,26 @@ older pool it looks only at the cards that weren't in it (a set being previewed)
 mechanic usually blocks a tenth to a third of its unread cards on its own. For the sentence a line stops at, the
 diagnostics in `packages/compiler/scripts` (`culprit-diag`, `fragments`, `trigger-diag`, `quotes-diag`).
 
-Two instruments say how the grammar itself is doing, beyond the cards it reads:
+## The grammar's instruments
 
-- `tsx scripts/patterns.ts <pool>` (in `packages/compiler`): for every pattern in the grammar, the number of cards it
-  ever matches. A pattern for one card is that card's text spelled out; the count is the grammar's debt.
+Two instruments say how the grammar itself is doing, beyond the cards it reads. Both are in `packages/compiler`, and
+both are held to `packages/compiler/instruments.json`:
+
+- `tsx scripts/patterns.ts <pool>`: for every pattern in the grammar, the number of cards it ever matches. A pattern
+  for one card is that card's text spelled out; the count is the grammar's debt, and a ratchet: it may fall and may
+  not rise.
 - `tsx scripts/mutate.ts <pool>`: takes lines the grammar reads, changes one thing that shouldn't matter (a number, a
-  color, a type, how long an effect lasts) and counts how many still read.
+  color, a type, how long an effect lasts) and counts how many still read. No kind of change may read more than 1.5
+  points worse than on record.
+
+After a change to the grammar's patterns, `pnpm grammar:update` writes the file again; commit it with the change. It
+wants the full card pool in `apps/web/public` (`pnpm cards:build`, or `cards.json.gz` from the `reports` branch) and
+takes two minutes. It refuses a higher count of one-card patterns and lists the new ones: fold them into a reader other
+cards use. Taking the debt on knowingly is `tsx scripts/patterns.ts <pool> --update --allow-more`
+(`mutate.ts … --update --allow-worse` for a score); the file's diff then shows it.
+
+CI holds both: the test workflow fails if the patterns aren't the ones the file was written for (`pnpm grammar:check`,
+no pool needed), and the data workflow runs the wording test against the file's scores (`pnpm grammar:wording`).
 
 ## Checking the grades
 

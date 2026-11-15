@@ -18,6 +18,8 @@ on:
       - docs/rules/SOURCE.txt
       - packages/rules/src/**
       - packages/compiler/src/**
+      - packages/compiler/scripts/**
+      - packages/compiler/instruments.json
       - packages/schema/src/**
       - packages/engine/src/**
       - packages/engine/scripts/**
@@ -101,6 +103,18 @@ jobs:
         run: |
           set -o pipefail
           pnpm cards:reparse --as-is 2>&1 | tee /tmp/reparse.log
+      - name: The grammar's wording test
+        # Lines the grammar reads, with one thing changed that shouldn't matter to it (a number, a color, a type, how
+        # long an effect lasts): no kind of change may read more than 1.5 points worse than on record
+        # (packages/compiler/instruments.json, written by `pnpm grammar:update`) — a shared reader made narrower. Half
+        # a minute. Its verdict comes with the card checks', after everything is published.
+        run: |
+          set -o pipefail
+          status=0
+          pnpm grammar:wording 2>&1 | tee /tmp/instruments.log || status=$?
+          echo "$status" > /tmp/instruments.status
+          { echo; echo "### The grammar's wording test"; echo; echo '```'; grep -vE '^> |^$' /tmp/instruments.log | tail -24; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
       - name: Play the cards in the sandbox, and correct the grades by it
         # A card with a certain problem isn't fully automatic, however much of it was read. Fails (after everything is
         # published, below) if a card left the pool, if a card got a certain problem it didn't have, or if more cards
@@ -162,9 +176,11 @@ jobs:
           [ -f /tmp/cards-build.log ] && tail -c 200000 /tmp/cards-build.log > /tmp/reports/build.log
           [ -f /tmp/reparse.log ] && cp /tmp/reparse.log /tmp/reports/reparse.log
           [ -f /tmp/fuzz.log ] && cp /tmp/fuzz.log /tmp/reports/fuzz.log
+          [ -f /tmp/instruments.log ] && cp /tmp/instruments.log /tmp/reports/instruments.log
           # The card checks give their verdict in the last step, after this one: say it here too.
           status="${{ job.status }}"
           [ "$(cat /tmp/checks.status 2>/dev/null || echo 0)" != 0 ] && status="failure (card checks: see changes.md and checks.log)"
+          [ "$(cat /tmp/instruments.status 2>/dev/null || echo 0)" != 0 ] && status="failure (the grammar's wording test: see instruments.log)"
           echo "$status" > /tmp/reports/status.txt
           cd /tmp/reports
           git init -q -b reports
@@ -175,8 +191,13 @@ jobs:
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" reports
       - name: Card checks verdict
         run: |
-          status="$(cat /tmp/checks.status 2>/dev/null || echo 1)"
-          if [ "$status" != 0 ]; then
+          failed=0
+          if [ "$(cat /tmp/checks.status 2>/dev/null || echo 1)" != 0 ]; then
             echo "::error::The card checks failed: see the summary of this run (or changes.md and checks.log on the reports branch)."
-            exit 1
+            failed=1
           fi
+          if [ "$(cat /tmp/instruments.status 2>/dev/null || echo 1)" != 0 ]; then
+            echo "::error::The grammar's wording test failed: see the summary of this run (or instruments.log on the reports branch)."
+            failed=1
+          fi
+          exit "$failed"
