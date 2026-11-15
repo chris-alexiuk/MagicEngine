@@ -355,7 +355,6 @@ describe('an action the rules don\'t have yet, from its reminder text: assimilat
     g = cast(g, 'Queen');
     g = act(g, { type: 'pass', player: 'alice' });
     g = act(g, { type: 'pass', player: 'bob' });
-    if (g.pending?.kind === 'targets') g = act(g, { type: 'choose', player: 'alice', answer: { kind: 'targets', targets: [[{ kind: 'object', object: knight }]] } } as Action);
     g = settle(g);
     const o = g.objects[knight]!;
     const c = chars(g, o);
