@@ -1863,6 +1863,23 @@ describe('audit B — batch 7 (phasing)', () => {
     expect(g.players.bob!.life).toBe(14);
   });
 
+  it('CR 514.2: damage marked on a phased-out permanent is removed in the cleanup step all the same', () => {
+    let g = setup();
+    const golem = give(g, 'alice', 'Crystal Golem', 'battlefield');
+    g.objects[golem]!.damage = 2;
+    g = toStep(g, 'end', 'alice');
+    g = settle(g);
+    expect(g.objects[golem]!.phasedOut).toBeTruthy();
+    expect(g.objects[golem]!.damage).toBe(2);
+    // Alice's cleanup step: gone, though the Golem isn't there to be seen.
+    g = toStep(g, 'upkeep', 'bob');
+    expect(g.objects[golem]!.phasedOut).toBeTruthy();
+    expect(g.objects[golem]!.damage).toBe(0);
+    g = toStep(g, 'upkeep', 'alice');
+    expect(g.zones.battlefield).toContain(golem);
+    expect(g.objects[golem]!.damage).toBe(0);
+  });
+
   it("Crystal Golem: an opponent's Golem (Hijack-ed) phases out at the thief's end step and returns to its owner's side", () => {
     let g = setup();
     const golem = give(g, 'bob', 'Crystal Golem', 'battlefield');

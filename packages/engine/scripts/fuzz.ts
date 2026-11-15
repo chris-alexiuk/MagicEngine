@@ -12,7 +12,7 @@
  * Failures reported:
  *   - crash:     the engine threw something other than a rules error
  *   - rejected:  legalActions() offered an action that apply() then refused
- *   - invariant: the state broke a structural invariant after an action
+ *   - invariant: after an action the state is structurally broken, or breaks a rule (lib/rule-checks.ts: "CR 704.5f: …")
  *   - unlisted:  apply() accepts an action legalActions() didn't offer (looked for in one state in --probe N; default 40, 0 for never)
  * Exit code 1 if anything failed. With --report-unlisted, unlisted actions are printed all the same but don't fail the
  * run: the weekly and per-push games in CI turn up old gaps by chance, which is a list of things to fix, not an alarm
@@ -26,6 +26,7 @@ import { reparseDB } from '@mtg/compiler';
 import type { CardDB, CardDef, Color } from '@mtg/schema';
 import { apply, createGame, defaultChoiceAtX, legalActions, type Action, type GameState } from '../src/index.js';
 import { checkInvariants, createBot } from './lib/bot.js';
+import { checkRules } from './lib/rule-checks.js';
 import { unlistedActions } from './lib/unlisted.js';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
@@ -363,8 +364,10 @@ for (let game = 0; game < GAMES; game++) {
       if (e.type === 'created') stats.tokens++;
     }
     if (r.state.pending?.kind === 'manual_resolution') stats.manual++;
+    const before = g;
     g = r.state;
-    const bad = checkInvariants(g);
+    // What is structurally wrong, or which rule the state breaks (lib/rule-checks.ts).
+    const bad = checkInvariants(g) ?? checkRules(g, before);
     if (bad) {
       failures.push({ game, kind: 'invariant', detail: bad, action: label });
       break;

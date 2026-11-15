@@ -706,9 +706,11 @@ function startCleanup(g: GameState, events: GameEvent[]): void {
 }
 
 export function finishCleanup(g: GameState, events: GameEvent[]): void {
-  // CR 514.2: damage wears off and "until end of turn" effects end (regeneration shields too, CR 701.19a).
-  for (const id of g.zones.battlefield) {
-    const o = g.objects[id]!;
+  // CR 514.2: damage wears off and "until end of turn" effects end (regeneration shields too, CR 701.19a) — "including
+  // phased-out permanents": one that phased out damaged comes back without the damage.
+  for (const id of [...g.zones.battlefield, ...(g.phasedOut ?? [])]) {
+    const o = g.objects[id];
+    if (!o) continue;
     // Ancient Adamantoise: "Damage isn't removed from this creature during cleanup steps."
     if (!o.damage || !hasRule(g, o, 'damage_not_removed')) o.damage = 0;
     delete o.regenShields;

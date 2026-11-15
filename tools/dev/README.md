@@ -53,7 +53,8 @@ git fetch origin reports && git show FETCH_HEAD:cards.json.gz > /tmp/pool.json.g
 7. **Fuzz.** `pool.py focus POOL /tmp/new.json.gz /tmp/focus.txt` then
    `tools/dev/fuzz-all.sh /tmp/new.json.gz SEED /tmp/focus.txt` — the pool you just reparsed, played
    as it is. Three runs: two-player games, four-player Commander games, and three-player Commander
-   games with decks built from the focus cards. Zero crashes, refused moves, invariants and
+   games with decks built from the focus cards. Zero crashes, refused moves, invariants (a state
+   that is structurally broken, or that breaks a rule stated in `packages/engine/scripts/lib/rule-checks.ts`) and
    unlisted moves (something the engine accepts that it didn't list); the script exits non-zero
    otherwise, and says so if a run died without a summary. An unlisted move is either a legal move
    no table offers (fix the list's enumeration or its default choice) or an illegal one the engine
@@ -118,6 +119,22 @@ The shared parts to reach for first, and the one function that reads each:
 
 One name for one idea: "for the first time each turn" is `firstEachTurn`, "one or more" is `batch`, combat or noncombat
 damage is `combat: true` / `combat: false`.
+
+## When a set drops
+
+`tools/dev/pool.py set <cards.json.gz> <code>[,<code>…] [<older pool>]` is the set's intake: how many of its cards read
+in full with nobody having looked at them, and what blocks the rest — keyword lines the grammar doesn't know, words it
+has never read (a new mechanic), phrases that recur in the unread lines, and lines made only of words it knows. With an
+older pool it looks only at the cards that weren't in it (a set being previewed). Work a cause, not a card: a set's own
+mechanic usually blocks a tenth to a third of its unread cards on its own. For the sentence a line stops at, the
+diagnostics in `packages/compiler/scripts` (`culprit-diag`, `fragments`, `trigger-diag`, `quotes-diag`).
+
+Two instruments say how the grammar itself is doing, beyond the cards it reads:
+
+- `tsx scripts/patterns.ts <pool>` (in `packages/compiler`): for every pattern in the grammar, the number of cards it
+  ever matches. A pattern for one card is that card's text spelled out; the count is the grammar's debt.
+- `tsx scripts/mutate.ts <pool>`: takes lines the grammar reads, changes one thing that shouldn't matter (a number, a
+  color, a type, how long an effect lasts) and counts how many still read.
 
 ## Checking the grades
 

@@ -13,6 +13,8 @@ result with the previous one; these subcommands are that comparison. See tools/d
   pool.py focus OLD NEW OUT [NAME…]     a --focus regex for the fuzzer: every card new or changed in NEW
   pool.py sample FILE N SEED [LO HI]    N random full cards with non-trivial text (JSON, for a grading audit)
   pool.py templates FILE [N]            the most common openings of unread lines
+  pool.py set FILE CODE[,CODE…] [OLD]   a set's intake: how its cards fare and what blocks the ones that don't read
+                                        (OLD: an older pool — only the cards that weren't in it)
 """
 import collections
 import gzip
@@ -170,6 +172,102 @@ def templates(path, show=30):
         print(n, "|", k, "|", example[k])
 
 
+WORD = re.compile(r"[a-z][a-z'\-]*")
+
+
+def intake(path, codes, older=None, show=14):
+    """How a set's cards fare with nobody having looked at them, and what blocks the ones that don't read.
+
+    For every unread line: is it a keyword line the grammar doesn't know ("Beam me up {3}{G}"), does it use a word the
+    grammar has never read anywhere in the pool (a new mechanic or term), or only words it knows, in an arrangement it
+    doesn't (wording)? The words and the phrases that block the most cards come first: fix a cause, not a card.
+    """
+    cards = load(path)["cards"]
+
+    def strip_names(text, card):
+        for f in card["faces"]:
+            n = f["name"]
+            for part in sorted({n, n.split(",")[0], n.split(" // ")[0]}, key=len, reverse=True):
+                text = text.replace(part, "~")
+        return text
+
+    def words(text):
+        return set(WORD.findall(re.sub(r"\([^)]*\)", "", text).lower()))
+
+    def texts(n):
+        if isinstance(n, list):
+            for v in n:
+                yield from texts(v)
+        elif isinstance(n, dict):
+            if isinstance(n.get("text"), str) and n.get("kind"):
+                yield n["text"]
+            for v in n.values():
+                yield from texts(v)
+
+    # Every word in a line the grammar read, on any card.
+    vocab = set()
+    for c in cards:
+        for f in c["faces"]:
+            for t in texts(f.get("abilities", [])):
+                vocab |= words(strip_names(t, c))
+            for k in f.get("keywords", []):
+                vocab |= words(k.get("text") or k.get("id", "").replace("_", " "))
+    old = {c["name"] for c in load(older)["cards"]} if older else None
+    sel = [c for c in cards if c["set"] in codes and (old is None or c["name"] not in old)]
+    g = collections.Counter(level(c) for c in sel)
+    n = max(1, len(sel))
+    print(f"{'+'.join(sorted(codes))}{' (cards not in the older pool)' if older else ''}: {len(sel)} cards — fully automatic {g['full']} ({100 * g['full'] / n:.0f}%), partly {g['partial']}, by hand {g['manual']}")
+    kinds = collections.Counter()
+    novel, phrases, keywords, wording = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(set), []
+    total = 0
+    for c in sel:
+        if level(c) == "full":
+            continue
+        for u in unread(c):
+            total += 1
+            line = re.sub(r" ?\([^)]*\)", "", strip_names(u, c)).strip()
+            if re.match(r"^[A-Z][\w' -]{1,30}(?: \{[^}]+\})+$|^[A-Z][\w' -]{1,30}—[^.:]+$", line) or not re.search(r"[.:,]", line):
+                kinds["a keyword line the grammar doesn't know"] += 1
+                keywords[re.sub(r"\{[^}]+\}|\d+", "N", line)].add(c["name"])
+                continue
+            oov = sorted(w for w in words(line) if w not in vocab and len(w) > 2)
+            if oov:
+                kinds["a word the grammar has never read"] += 1
+                for w in oov:
+                    novel[w].add(c["name"])
+            else:
+                kinds["known words, unread arrangement"] += 1
+                wording.append((c.get("rank") or 99999, c["name"], u))
+            ws = re.findall(r"[a-z~'][a-z'~-]*", re.sub(r"\{[^}]+\}|\d+", "N", line).lower())
+            for k in (2, 3):
+                for i in range(len(ws) - k + 1):
+                    phrases[" ".join(ws[i : i + k])].add(c["name"])
+    print(f"{len(sel) - g['full']} cards don't read in full: {total} unread lines")
+    for k, v in kinds.most_common():
+        print(f"  {v:4d} ({100 * v / max(1, total):.0f}%)  {k}")
+    if keywords:
+        print("keyword lines:")
+        for k, cs in sorted(keywords.items(), key=lambda kv: -len(kv[1]))[:show]:
+            print(f"  {len(cs):3d}  {k}")
+    print("new words, by the cards they block:")
+    for w, cs in sorted(novel.items(), key=lambda kv: -len(kv[1]))[:show]:
+        print(f"  {len(cs):3d}  {w}   (e.g. {sorted(cs)[0]})")
+    # Phrases that recur in this set's unread lines and are rare in the pool's read text: its own mechanics and turns of phrase.
+    common = {"the", "a", "an", "of", "to", "you", "your", "it", "and", "or", "that", "this", "at", "if", "in", "on", "with", "for", "is", "are", "then", "each", "its", "may", "up", "from", "have", "has", "they", "their", "target", "creature", "card", "cards", "creatures", "control", "until", "end", "turn", "put", "into", "when", "whenever", "beginning", "next", "n", "~", "counter", "counters", "battlefield", "library", "graveyard", "hand", "enters", "draw"}
+    print("phrases that recur in the unread lines:")
+    shown = 0
+    for ph, cs in sorted(phrases.items(), key=lambda kv: -len(kv[1])):
+        if shown >= show or len(cs) < 3:
+            break
+        if all(w in common for w in ph.split()):
+            continue
+        print(f"  {len(cs):3d}  {ph}")
+        shown += 1
+    print("known words, unread arrangement — the most played first:")
+    for _, name, u in sorted(wording)[:show]:
+        print(f"  {name}: {u[:160]}")
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
@@ -193,6 +291,8 @@ def main(argv):
         sample(a[0], int(a[1]), int(a[2]), int(a[3]) if len(a) > 3 else None, int(a[4]) if len(a) > 4 else None)
     elif cmd == "templates":
         templates(a[0], int(a[1]) if len(a) > 1 else 30)
+    elif cmd == "set":
+        intake(a[0], set(a[1].split(",")), a[2] if len(a) > 2 else None)
     else:
         print(__doc__)
         return 2

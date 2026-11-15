@@ -663,12 +663,27 @@ export interface Resolution {
 }
 
 /** A target prompt: the printed phrase and who or what can be chosen. */
+/**
+ * How the targets chosen for one "target" must be related to each other (CR 115.3: an instance of "target" is checked
+ * as a whole): "controlled by different players", "that each have a different mana value", "that share a creature
+ * type" / "a card type", "with total mana value N or less" (the number it comes to).
+ */
+export interface TargetsRelation {
+  differentControllers?: true;
+  distinctManaValues?: true;
+  shareCreatureType?: true;
+  shareCardType?: true;
+  maxTotalMV?: number;
+}
+
 export interface TargetPrompt {
   text: string;
   count: number;
   upTo: boolean;
   /** With `upTo`: the fewest that may be chosen. */
   min?: number;
+  /** The targets chosen must be related like this: not every set of the candidates is a legal choice (relatedPick finds one). */
+  related?: TargetsRelation;
   /** "from a single graveyard": every chosen object has the same owner. */
   sameOwner?: true;
   /** "For each opponent, … target … that player controls": each chosen object belongs to a different player. */

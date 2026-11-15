@@ -2,7 +2,7 @@ import type { EffectNode, KeywordInstance, ObjectFilter, TargetSpec } from '@mtg
 import type { EffectContext } from './registry.js';
 import { amountOf } from './resolve.js';
 import { chars, creatureTypesOf, filterZones, hasHexproofFrom, hasKeyword, hasProtectionFrom, matchesFilter } from './characteristics.js';
-import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TriggerInfo } from './types.js';
+import { RulesError, type GameObject, type GameState, type PlayerId, type StackEntry, type Target, type TargetPrompt, type TargetRef, type TargetsRelation, type TriggerInfo } from './types.js';
 import { playerProtectedFrom, playerRule } from './player-rules.js';
 import { faceOf, livePlayers, manaValueOf, nameOf, zoneList } from './zones.js';
 
@@ -399,6 +399,8 @@ function targetPromptsNow(g: GameState, controller: PlayerId, specs: TargetSpec[
       ...(min ? { min } : {}),
       ...(spec.sameOwner ? { sameOwner: true as const } : {}),
       ...(spec.perPlayer ? { perPlayer: true as const } : {}),
+      // What a client has to know to choose a legal set: the engine refuses one that isn't related as the text says.
+      ...(related(spec) ? { related: relationOf(spec) } : {}),
       ...((controlledByTargetIndex(spec.filter) ?? ownedByTargetIndex(spec.filter)) !== undefined ? { controlledByTarget: (controlledByTargetIndex(spec.filter) ?? ownedByTargetIndex(spec.filter))! } : {}),
       ...((spec.filter?.attachedToRef as { ref?: string } | undefined)?.ref === 'target' ? { attachedToTarget: (spec.filter!.attachedToRef as { index?: number }).index ?? 0 } : {}),
       candidates,
@@ -518,11 +520,23 @@ function defaultTargetsInto(g: GameState, controller: PlayerId, specs: TargetSpe
   return out;
 }
 
+/** The part of a spec that says how its targets must be related — or the same said on a prompt, with X worked out. */
+type Related = Pick<TargetSpec, 'distinctManaValues' | 'differentControllers' | 'shareCreatureType' | 'shareCardType' | 'maxTotalMV'> | TargetsRelation;
+
 /** Whether a spec's targets must be related to each other (CR 115.3: each instance of "target" is checked as a whole). */
-const related = (spec: TargetSpec) => Boolean(spec.distinctManaValues || spec.differentControllers || spec.shareCreatureType || spec.shareCardType || spec.maxTotalMV !== undefined);
+const related = (spec: Related) => Boolean(spec.distinctManaValues || spec.differentControllers || spec.shareCreatureType || spec.shareCardType || spec.maxTotalMV !== undefined);
+
+/** How a spec's targets must be related, as a prompt says it (X is the X it is being chosen with). */
+const relationOf = (spec: TargetSpec): TargetsRelation => ({
+  ...(spec.differentControllers ? { differentControllers: true as const } : {}),
+  ...(spec.distinctManaValues ? { distinctManaValues: true as const } : {}),
+  ...(spec.shareCreatureType ? { shareCreatureType: true as const } : {}),
+  ...(spec.shareCardType ? { shareCardType: true as const } : {}),
+  ...(spec.maxTotalMV !== undefined ? { maxTotalMV: spec.maxTotalMV === 'X' ? (targetX ?? 0) : spec.maxTotalMV } : {}),
+});
 
 /** Run Away Together, Secret Tunnel, Agadeem's Awakening: whether these targets are related as the spec says. */
-export function targetsRelated(g: GameState, spec: TargetSpec, list: Target[]): boolean {
+export function targetsRelated(g: GameState, spec: Related, list: Target[]): boolean {
   const objs = list.map((t) => (t.kind === 'object' ? g.objects[t.object] : undefined));
   if (objs.some((o) => !o)) return !related(spec);
   const os = objs as GameObject[];
@@ -541,8 +555,8 @@ export function targetsRelated(g: GameState, spec: TargetSpec, list: Target[]): 
   return true;
 }
 
-/** The largest related set of these candidates, up to `n` (greedy, by type for "share a … type"). */
-export function relatedPick(g: GameState, spec: TargetSpec, candidates: Target[], n: number): Target[] {
+/** The largest related set of these candidates, up to `n` (greedy, by type for "share a … type") — for a spec, or for what a prompt says (`TargetPrompt.related`). */
+export function relatedPick(g: GameState, spec: Related, candidates: Target[], n: number): Target[] {
   if (!related(spec)) return candidates.slice(0, n);
   const greedy = (pool: Target[]) => {
     const out: Target[] = [];

@@ -43,6 +43,7 @@ import { CREATURE_TYPES } from '../../src/creature-types.js';
 import { createTokens } from '../../src/permanents.js';
 import { createObject } from '../../src/zones.js';
 import { checkInvariants, createBot } from './bot.js';
+import { checkRules } from './rule-checks.js';
 
 // ---------------------------------------------------------------------------
 // The cards the board is made of
@@ -689,7 +690,8 @@ function play(board: Board, start: GameState, self: string, action: Action, labe
   let agreed = 0;
   let byHand = false;
   for (let step = 0; ; step++) {
-    const bad = checkInvariants(g);
+    // What is structurally wrong — or a rule the state breaks (rule-checks.ts).
+    const bad = checkInvariants(g) ?? checkRules(g);
     if (bad) return fail('broken state', `broken state: ${named(bad, labels([g], self))}`);
     if (g.over) break;
     if (step > 150) return fail('never settles', 'never settles: 150 choices and passes later it is still going');

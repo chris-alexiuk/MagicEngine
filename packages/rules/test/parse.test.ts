@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseComprehensiveRules } from '../src/parse.js';
-import { buildTrace, compareRuleIds, findCitations, traceMarkdown } from '../src/trace.js';
+import { buildTrace, compareRuleIds, diffRules, findCitations, findRuleChecks, pinned, pinProblems, traceMarkdown } from '../src/trace.js';
 
 // A miniature file in the real format: CRLF line endings, a BOM, a contents
 // list that repeats the headings, wrapped examples, glossary and credits.
@@ -138,3 +138,42 @@ describe('trace', () => {
     ]);
   });
 });
+
+describe('rules that change under the code citing them', () => {
+  const doc = parseComprehensiveRules(SAMPLE);
+  const report = buildTrace(doc, [...findCitations('// CR 100.1a\n// CR 101.1', 'engine.ts', 'code'), ...findRuleChecks("  rule: '100.1a',\n  says: 'x',", 'rule-checks.ts')]);
+
+  it('a rule stated as a property counts as a citation of its own kind', () => {
+    expect(report.rows.find((r) => r.rule === '100.1a')!.checks.map((c) => [c.kind, c.line])).toEqual([['check', 1]]);
+    expect(traceMarkdown(report, doc)).toContain('1 stated as a property');
+  });
+
+  it('a cited rule is pinned as it reads when first cited, and a pin is kept until someone says it was looked at', () => {
+    const pins = pinned(doc, { rules: {} }, report);
+    expect(Object.keys(pins.rules)).toEqual(['100.1a', '101.1']);
+    expect(pinProblems(doc, pins, report)).toEqual([]);
+    // The rules change: the pin still says what the code was written against.
+    const next = structuredClone(doc);
+    next.rules['100.1a']!.text = `${doc.rules['100.1a']!.text} Except on Tuesdays.`;
+    const problems = pinProblems(next, pins, report);
+    expect(problems.map((p) => [p.rule, p.kind])).toEqual([['100.1a', 'changed']]);
+    expect(problems[0]!.cited.map((c) => c.file)).toEqual(['engine.ts', 'rule-checks.ts']);
+    // The trace alone doesn't move a pin; pinning does, for all changed rules or the ones named.
+    expect(pinProblems(next, pinned(next, pins, report), report)).toHaveLength(1);
+    expect(pinProblems(next, pinned(next, pins, report, true, new Set(['101.1'])), report)).toHaveLength(1);
+    expect(pinProblems(next, pinned(next, pins, report, true), report)).toEqual([]);
+  });
+
+  it('a rule cited before it was ever pinned is reported, not passed', () => {
+    expect(pinProblems(doc, { rules: { '100.1a': doc.rules['100.1a']!.text } }, report).map((p) => [p.rule, p.kind])).toEqual([['101.1', 'unpinned']]);
+  });
+
+  it('two versions of the rules: what was added, removed and reworded', () => {
+    const next = structuredClone(doc);
+    next.rules['100.1a']!.text = 'Reworded.';
+    next.rules['100.9'] = { ...doc.rules['100.1a']!, id: '100.9', text: 'A new rule.' } as never;
+    delete next.rules['101.1'];
+    expect(diffRules(doc, next)).toEqual({ added: ['100.9'], removed: ['101.1'], changed: ['100.1a'] });
+  });
+});
+

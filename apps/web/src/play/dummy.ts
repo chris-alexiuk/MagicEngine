@@ -1,4 +1,4 @@
-import { apply, blockDeclarationProblem, type ChoiceAnswer, type GameState, type PendingChoice, type PlayerId, type Target, type TargetPrompt } from '@mtg/engine';
+import { apply, blockDeclarationProblem, relatedPick, type ChoiceAnswer, type GameState, type PendingChoice, type PlayerId, type Target, type TargetPrompt } from '@mtg/engine';
 
 /**
  * The practice dummy in a solo playtest: a seat that never acts. It keeps its opening hand, passes priority, and
@@ -6,7 +6,12 @@ import { apply, blockDeclarationProblem, type ChoiceAnswer, type GameState, type
  * answer is applied through the engine like anyone else's, and checked with apply() first.
  */
 
-const firstTargets = (prompts: readonly TargetPrompt[]): Target[][] => prompts.map((pr) => pr.candidates.slice(0, pr.upTo ? (pr.min ?? 0) : pr.count));
+/** The first targets that will do: where they must be related ("controlled by different players"), the first set that is. */
+const firstTargets = (g: GameState, prompts: readonly TargetPrompt[]): Target[][] =>
+  prompts.map((pr) => {
+    const n = pr.upTo ? (pr.min ?? 0) : pr.count;
+    return pr.related ? relatedPick(g, pr.related, pr.candidates, n) : pr.candidates.slice(0, n);
+  });
 
 function candidates(g: GameState, p: PendingChoice): ChoiceAnswer[] {
   const me = p.player;
@@ -48,9 +53,9 @@ function candidates(g: GameState, p: PendingChoice): ChoiceAnswer[] {
       if (p.modes) {
         const i = p.modes.options.findIndex((o, k) => !p.modes!.used?.includes(k) && o.prompts.every((pr) => pr.candidates.length >= (pr.upTo ? (pr.min ?? 0) : pr.count)));
         const modes = i < 0 ? [] : Array.from({ length: Math.max(1, p.modes.min) }, () => i);
-        return [{ kind: 'trigger_targets', modes, targets: [...(i < 0 ? [] : firstTargets(p.modes.options[i]!.prompts)), ...firstTargets(p.prompts)] }];
+        return [{ kind: 'trigger_targets', modes, targets: [...(i < 0 ? [] : firstTargets(g, p.modes.options[i]!.prompts)), ...firstTargets(g, p.prompts)] }];
       }
-      return [{ kind: 'trigger_targets', targets: firstTargets(p.prompts) }];
+      return [{ kind: 'trigger_targets', targets: firstTargets(g, p.prompts) }];
     }
     case 'scry':
       return [{ kind: 'scry', top: [...p.objects], bottom: [] }];
@@ -63,7 +68,7 @@ function candidates(g: GameState, p: PendingChoice): ChoiceAnswer[] {
     case 'cast_free':
       return [{ kind: 'cast_free', cast: false }];
     case 'copy_targets':
-      return [{ kind: 'copy_targets' }, { kind: 'copy_targets', targets: firstTargets(p.prompts) }];
+      return [{ kind: 'copy_targets' }, { kind: 'copy_targets', targets: firstTargets(g, p.prompts) }];
     case 'pay':
       return [{ kind: 'pay', pay: false }];
     case 'search':

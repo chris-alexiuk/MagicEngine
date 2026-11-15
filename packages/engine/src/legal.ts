@@ -566,6 +566,28 @@ function defaultProgramChoice(g: GameState, player: PlayerId, source: GameObject
 }
 
 /**
+ * The sets of modes a default choice is looked for among (CR 700.2a): every way to choose `count` of them. Modes next
+ * to each other come first, as they are printed, then the other sets in order — "Choose two —" where only the first and
+ * the third mode have something to target is a legal cast (CR 700.2b rules out a mode, not the spell). Where the same
+ * mode may be chosen more than once (CR 700.2d): each mode, `count` times.
+ */
+function modeSetsOf(options: number, count: number, repeat: boolean): number[][] {
+  if (repeat) return Array.from({ length: options }, (_, i) => Array.from({ length: count }, () => i));
+  const runs = Array.from({ length: Math.max(0, options - count + 1) }, (_, i) => Array.from({ length: count }, (_, k) => i + k));
+  const others: number[][] = [];
+  const choose = (from: number, chosen: number[]): void => {
+    if (others.length >= 200) return;
+    if (chosen.length === count) {
+      if (chosen.some((m, k) => k > 0 && m !== chosen[k - 1]! + 1)) others.push(chosen);
+      return;
+    }
+    for (let i = from; i < options; i++) choose(i + 1, [...chosen, i]);
+  };
+  choose(0, []);
+  return [...runs, ...others];
+}
+
+/**
  * The default choices of modes and targets, best first: for each set of modes that could be chosen, the first legal
  * targets. Mostly the first is the one; a later one is for when the first can't be paid for (spree: each mode has a cost).
  */
@@ -577,11 +599,7 @@ function defaultProgramChoices(g: GameState, player: PlayerId, source: GameObjec
   // Pyrrhic Strike: "choose both instead" once its additional cost is paid.
   const bonus = modal?.modes?.bonus;
   const least = modal ? (bonus?.exact && holds?.(bonus.condition) ? Math.max(modal.modes!.max, bonus.max) : modal.modes!.min) : 0;
-  const modeSets: (number[] | undefined)[] = modal
-    ? modal.modes!.options
-        .map((_, i) => Array.from({ length: Math.max(1, least) }, (_, k) => (modal.modes!.repeat ? i : i + k)))
-        .filter((m) => m.every((i) => i < modal.modes!.options.length && !used.includes(i)))
-    : [undefined];
+  const modeSets: (number[] | undefined)[] = modal ? modeSetsOf(modal.modes!.options.length, Math.max(1, least), Boolean(modal.modes!.repeat)).filter((m) => m.every((i) => !used.includes(i))) : [undefined];
   // Modes the engine runs come first; one it can't read is still a legal choice.
   const manual = (modes: number[] | undefined) => (modes ?? []).some((i) => modal!.modes!.options[i]!.manual);
   modeSets.sort((a, b) => Number(manual(a)) - Number(manual(b)));

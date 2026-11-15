@@ -13,6 +13,8 @@
     "rules:parse": "pnpm --filter @mtg/rules cli parse docs/rules/MagicCompRules.txt docs/rules/rules.json",
     "rules:trace": "pnpm --filter @mtg/rules cli trace",
     "rules:check": "pnpm --filter @mtg/rules cli trace --check",
+    "rules:pin": "pnpm --filter @mtg/rules cli pin",
+    "rules:diff": "pnpm --filter @mtg/rules cli diff",
     "rules:subtypes": "pnpm --filter @mtg/rules cli subtypes",
     "rules:keywords": "pnpm --filter @mtg/rules cli keywords",
     "cards:reparse": "pnpm --filter @mtg/compiler reparse -- ../../apps/web/public/cards.json.gz",

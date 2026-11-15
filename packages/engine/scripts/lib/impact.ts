@@ -869,7 +869,7 @@ function listOf(toks: Tok[], open: number): Record<string, string> | undefined {
 const WATCHED: { dir: string; only?: string[]; out: string }[] = [
   { dir: 'packages/engine/src', out: 'src' },
   { dir: 'packages/schema/src', out: 'schema' },
-  { dir: 'packages/engine/scripts/lib', only: ['sandbox.ts', 'bot.ts'], out: 'scripts/lib' },
+  { dir: 'packages/engine/scripts/lib', only: ['sandbox.ts', 'bot.ts', 'rule-checks.ts'], out: 'scripts/lib' },
 ];
 /** The tables a plugin hands to the registry, each looked up by name while a card is played (src/registry.ts). */
 export const REGISTRY = ['effects', 'triggers', 'enterReplacements', 'statics'] as const;

@@ -120,12 +120,22 @@ export function createBot(opts: BotOptions) {
 
   /** A prompt's targets: per-player prompts get one for each player who has a candidate (sometimes fewer, if allowed). */
   function samplePrompt(pr: TargetPrompt): Target[] {
-    if (!pr.perPlayer) return sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner);
+    if (!pr.perPlayer) return together(pr, sample(pr.candidates, pr.count, pr.upTo, pr.min, pr.sameOwner));
     const whose = (t: Target) => (t.kind === 'object' ? (current?.objects[t.object]?.zone === 'battlefield' ? current.objects[t.object]!.controller : current?.objects[t.object]?.owner) : undefined);
     const groups = new Map<string | undefined, Target[]>();
     for (const t of pr.candidates) groups.set(whose(t), [...(groups.get(whose(t)) ?? []), t]);
     const picks = [...groups.values()].map((ts) => one(ts));
     return picks.filter((_, i) => i < (pr.min ?? 0) || coin(0.8, true));
+  }
+
+  /**
+   * Targets that must be related to each other, as the prompt says ("controlled by different players", "with total mana
+   * value 3 or less"): the related ones among those picked, or — too few — the first related set there is.
+   */
+  function together(pr: TargetPrompt, picked: Target[]): Target[] {
+    if (!pr.related || !current) return picked;
+    const pick = relatedPick(current, pr.related, picked, picked.length);
+    return pick.length >= (pr.upTo ? (pr.min ?? 0) : pr.count) ? pick : relatedPick(current, pr.related, pr.candidates, pr.count);
   }
 
   /** Re-picks targets at random for a cast/activate action that came with defaults. */
