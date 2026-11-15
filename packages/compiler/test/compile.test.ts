@@ -165,7 +165,7 @@ describe('the card language rule: no parameter for a single card', () => {
   it('the list only gets shorter', () => {
     const names = Object.keys(ONE_CARD_PARAMETERS);
     // Lower this number with each parameter folded away. It does not go up.
-    expect(names.length).toBeLessThanOrEqual(91);
+    expect(names.length).toBeLessThanOrEqual(89);
     const declared = new Set(Object.values(NODE_FIELDS).flat());
     expect(names.filter((n) => !declared.has(n))).toEqual([]);
   });

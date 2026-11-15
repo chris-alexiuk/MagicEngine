@@ -1846,10 +1846,10 @@ describe('slice 160', () => {
     expect(parse('When this creature enters, up to one target player puts all the cards from their graveyard on the bottom of their library in a random order.', 'Creature — Elemental Incarnation', 'N').abilities[0]).toMatchObject({ targets: [{ what: 'player', upTo: true }], effects: [{ type: 'move', position: 'bottom_random' }] });
   });
   it('reads static prevention on permanents only', () => {
-    expect(parse('Prevent all combat damage that would be dealt to attacking creatures you control.', 'Artifact', 'D').abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'prevent_damage', damage: 'combat', to: { combat: 'attacking', controller: 'you' } } });
-    expect(parse('Prevent all combat damage that would be dealt to and dealt by this creature.', 'Creature — Wall', 'F').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', toSelf: true, bySelf: true } });
-    expect(parse('Prevent all noncombat damage that would be dealt to you and other permanents you control.', 'Legendary Planeswalker', 'W').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', damage: 'noncombat', toYou: true, to: { other: true } } });
-    expect(parse('Prevent all damage that would be dealt to ~ during your turn.', 'Legendary Planeswalker — Gideon', 'G').abilities[0]).toMatchObject({ effect: { toSelf: true, condition: { type: 'your_turn' } } });
+    expect(parse('Prevent all combat damage that would be dealt to attacking creatures you control.', 'Artifact', 'D').abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'prevent_damage', damage: { combat: true, objects: { combat: 'attacking', controller: 'you' } } } });
+    expect(parse('Prevent all combat damage that would be dealt to and dealt by this creature.', 'Creature — Wall', 'F').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', damage: { combat: true, anyOf: [{ by: { isSource: true } }, { objects: { isSource: true } }] } } });
+    expect(parse('Prevent all noncombat damage that would be dealt to you and other permanents you control.', 'Legendary Planeswalker', 'W').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', damage: { combat: false, players: 'you', objects: { other: true } } } });
+    expect(parse('Prevent all damage that would be dealt to ~ during your turn.', 'Legendary Planeswalker — Gideon', 'G').abilities[0]).toMatchObject({ effect: { damage: { objects: { isSource: true } }, condition: { type: 'your_turn' } } });
     expect(parse('Prevent all combat damage that would be dealt to you.', 'Instant', 'I').abilities[0]).not.toMatchObject({ kind: 'static' });
   });
   it('reads hideaway, playing the exiled card, and its conditions', () => {
@@ -2041,7 +2041,7 @@ describe('slice 168', () => {
     expect(parse('Prevent all damage that would be dealt this turn by creatures your opponents control.', 'Instant', 'O').abilities[0]).toMatchObject({ effects: [{ type: 'prevent', amount: 'all', by: { ref: 'all', filter: { controller: 'opponent' } } }] });
     expect(parse("Take an extra turn after this one. At the beginning of that turn's end step, you lose the game.", 'Instant', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'extra_turn' }, { type: 'delayed', step: 'end', laterTurn: true }] });
     expect(parse("Destroy all creatures with power greater than target creature's power.", 'Sorcery', 'F').abilities[0]).toMatchObject({ effects: [{ type: 'destroy', what: { ref: 'all', filter: { power: { op: 'gt', n: { kind: 'stat', stat: 'power', of: { ref: 'target', index: 0 } } } } } }] });
-    expect(parse('If a creature you control would deal damage to a permanent or player, it deals double that damage instead.', 'Enchantment', 'G').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'damage', op: 'double', filter: { types: ['Creature'], controller: 'you' } } });
+    expect(parse('If a creature you control would deal damage to a permanent or player, it deals double that damage instead.', 'Enchantment', 'G').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'damage', op: 'double', damage: { by: { types: ['Creature'], controller: 'you' } } } });
   });
   it('reads Dark Depths, The Water Crystal, karoos, joined spell lines and "becomes blocked by a creature"', () => {
     expect(parse('When ~ has no ice counters on it, sacrifice it. If you do, create Marit Lage, a legendary 20/20 black Avatar creature token with flying and indestructible.', 'Legendary Land', 'D').abilities[0]).toMatchObject({ trigger: { type: 'state' }, effects: [{ type: 'may_do', then: [{ type: 'create_token', token: { name: 'Marit Lage', supertypes: ['Legendary'] } }] }] });
@@ -2265,7 +2265,7 @@ describe('slice 181', () => {
   it('reads another payer, Kardur and Gisela', () => {
     expect(parse("At the beginning of the upkeep of enchanted creature's controller, that player may pay {1}{B}. If the player does, untap that creature.", 'Enchantment — Aura').abilities[0]).toMatchObject({ effects: [{ type: 'may_pay', payer: { ref: 'trigger_player' }, effects: [{ type: 'untap', what: { ref: 'attached' } }] }] });
     expect(parse('When ~ enters, until your next turn, creatures your opponents control attack each combat if able and attack a player other than you if able.', 'Legendary Creature — Demon', 'Kardur').abilities[0]).toMatchObject({ effects: [{ type: 'goad', quiet: true }] });
-    expect(parse('If a source would deal damage to you or a permanent you control, prevent half that damage, rounded up.', 'Legendary Creature — Angel').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', half: 'up', toYou: true } });
+    expect(parse('If a source would deal damage to you or a permanent you control, prevent half that damage, rounded up.', 'Legendary Creature — Angel').abilities[0]).toMatchObject({ effect: { type: 'prevent_damage', half: 'up', damage: { players: 'you', objects: { controller: 'you' } } } });
   });
 });
 
@@ -2351,7 +2351,7 @@ describe('slice 187', () => {
     expect(parse('This creature enters with a +1/+1 counter on it for each Zombie card in your graveyard.', 'Creature').abilities[0]).toMatchObject({ effect: { type: 'enters_with_counters', perEach: { kind: 'cards', zone: 'graveyard' } } });
     expect(parse("Creatures you don't control get -1/-1 for each slime counter on them.", 'Creature').abilities[0]).toMatchObject({ effect: { power: { kind: 'counters', of: { ref: 'affected' }, counter: 'slime' } } });
     expect(parse('Enchanted creature gets +2/+2 for each other enchantment on the battlefield.', 'Enchantment — Aura').abilities[0]).toMatchObject({ effect: { power: { filter: { other: true } } } });
-    expect(parse("Combat damage can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', combat: true } });
+    expect(parse("Combat damage can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', damage: { combat: true } } });
     expect(parse('Draw three cards. Then discard two cards unless you discard an artifact card.', 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'draw' }, { type: 'unless_does', action: [{ type: 'discard', filter: { types: ['Artifact'] } }] }] });
     expect(parse("Whenever one or more Goblins you control attack, create a 1/1 red Goblin creature token that's tapped and attacking.", 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'you_attack', filter: { subtypes: ['Goblin'] } } });
     expect(parse('Whenever your commander enters or attacks, put a page counter on this artifact.', 'Artifact').abilities[0]).toMatchObject({ trigger: { type: 'either', of: [{ subject: { filter: { commander: true, owner: 'you' } } }, { type: 'attacks' }] } });
@@ -2547,7 +2547,7 @@ describe('slice 197 (more)', () => {
 
 describe('slice 198', () => {
   it('reads granted prevention, borrowed artifacts, extra combats and plays of a moved card', () => {
-    expect(parse('Equipped creature has "Prevent all damage that would be dealt to this creature."', 'Artifact — Equipment').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'ability', abilities: [{ effect: { type: 'prevent_damage', toSelf: true } }] }] } });
+    expect(parse('Equipped creature has "Prevent all damage that would be dealt to this creature."', 'Artifact — Equipment').abilities[0]).toMatchObject({ effect: { keywords: [{ id: 'ability', abilities: [{ effect: { type: 'prevent_damage', damage: { objects: { isSource: true } } } }] }] } });
     expect(parse('Whenever an opponent taps an artifact for mana, gain control of that artifact until the end of your next turn.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'tapped_for_mana', subject: { filter: { types: ['Artifact'], controller: 'opponent' } } }, effects: [{ type: 'gain_control', until: 'end_of_your_next_turn' }] });
     expect(parse('After this main phase, there are two additional combat phases.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'extra_combat' }, { type: 'extra_combat' }] });
     expect(parse('At the beginning of each combat this turn, untap all creatures that attacked this turn.', 'Sorcery').abilities[0]).toMatchObject({ effects: [{ type: 'turn_trigger', ability: { trigger: { type: 'phase', step: 'beginning_of_combat' } } }] });
@@ -2598,7 +2598,7 @@ describe('slice 200', () => {
     expect(parse('Whenever a creature you control becomes the target of a spell, target opponent gets a poison counter.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'becomes_target', subject: { ref: 'all' }, targetedBy: 'spell' } });
     expect(parse('When this creature dies, you gain life and draw cards equal to its power.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'gain_life' }, { type: 'draw' }] });
     expect(parse('When this creature dies, each opponent gets a number of rad counters equal to its power.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'get_counters', counter: 'rad', amount: { kind: 'stat' } }] });
-    expect(parse('Whenever one or more creatures you control deal combat damage to one or more players, proliferate.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', anyPlayers: true } });
+    expect(parse('Whenever one or more creatures you control deal combat damage to one or more players, proliferate.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'combat_damage_batch', to: 'any' } });
     expect(parse('Whenever a creature you control with power 2 or less attacks, this enchantment deals 1 damage to the player or planeswalker that creature is attacking.', 'Enchantment').abilities[0]).toMatchObject({ effects: [{ type: 'deal_damage', to: { ref: 'attacked_by' } }] });
     expect(parse('At the beginning of each end step, create X 1/1 white Spirit creature tokens with flying, where X is the number of tokens you created this turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'create_token', amount: { kind: 'tokens_created_this_turn' } }] });
   });
@@ -2673,7 +2673,7 @@ describe('slice 203', () => {
     expect(parse('{T}: Add one mana of any color. Activate only if this land entered this turn.', 'Land').abilities[0]).toMatchObject({ activateIf: { type: 'is', filter: { enteredThisTurn: true } } });
     expect(parse("Creatures without flying or islandwalk can't attack.", 'Creature').abilities[0]).toMatchObject({ effect: { affected: { filter: { notKeywords: ['flying', 'landwalk:island'] } } } });
     expect(parse('If a player would gain life, that player gains no life instead.', 'Enchantment').abilities[0]).toMatchObject({ effect: { type: 'player_rule', rule: 'cant_gain_life', who: 'each' } });
-    expect(parse("Combat damage that would be dealt by creatures you control can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', combat: true, from: { controller: 'you' } } });
+    expect(parse("Combat damage that would be dealt by creatures you control can't be prevented.", 'Creature').abilities[0]).toMatchObject({ effect: { type: 'unpreventable', damage: { combat: true, by: { controller: 'you' } } } });
     expect(parse('This creature enters with X +1/+1 counters on it, where X is the greatest power among other creatures you control.', 'Creature').abilities[0]).toMatchObject({ effect: { perEach: { kind: 'greatest', filter: { other: true } } } });
     expect(parse('10,000 Needles — Whenever this creature attacks, it gets +9999/+0 until end of turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'modify', power: 9999 }] });
   });
@@ -2709,5 +2709,37 @@ describe('keywords: one place builds them, and none that would do nothing', () =
   it('"loses flying", "can\'t have hexproof": the keywords are named, not built', () => {
     expect(one('Target creature loses flying until end of turn.')).toMatchObject({ effects: [{ type: 'modify', loseKeywords: ['flying'] }] });
     expect(one("Creatures your opponents control lose hexproof and can't have hexproof or shroud.", 'Enchantment')).toMatchObject({ effect: { loseKeywords: ['hexproof'], cantHave: ['hexproof', 'shroud'] } });
+  });
+});
+
+describe('which damage: one description for prevention, redirection, "double that damage" and "can\'t be prevented"', () => {
+  const damage = (text: string, typeLine = 'Enchantment') => (one(text, typeLine) as { effect: { damage?: unknown } }).effect.damage;
+
+  it('the source, who it would be dealt to, and whether it is combat damage', () => {
+    expect(damage('Prevent all damage that would be dealt to you by sources you don\'t control.')).toEqual({ by: { controller: 'not_you' }, players: 'you' });
+    expect(damage('Prevent all damage that would be dealt by enchanted creature.', 'Enchantment — Aura')).toEqual({ by: { sourceAttachedTo: true } });
+    expect(damage('Prevent all damage that this creature would deal to snow creatures.', 'Creature — Goblin')).toMatchObject({ by: { isSource: true }, objects: { supertypes: ['Snow'] } });
+    expect(damage('If a source you control would deal damage to an opponent, prevent that damage and each opponent mills that many cards.', 'Creature — Horror')).toEqual({ by: { controller: 'you' }, players: 'opponents' });
+  });
+
+  it('"dealt to and dealt by …": either', () => {
+    expect(damage('Prevent all combat damage that would be dealt to and dealt by enchanted creature.', 'Enchantment — Aura')).toEqual({ combat: true, anyOf: [{ by: { sourceAttachedTo: true } }, { objects: { sourceAttachedTo: true } }] });
+    expect(damage('Prevent all combat damage that would be dealt to and dealt by creatures you control.')).toMatchObject({ combat: true, anyOf: [{ by: { controller: 'you' } }, { objects: { controller: 'you' } }] });
+  });
+
+  it('"it deals double that damage instead": the same description', () => {
+    expect(damage('If a red source you control would deal damage to an opponent or a permanent an opponent controls, it deals that much damage plus 2 instead.')).toEqual({ by: { colors: ['R'], controller: 'you' }, players: 'opponents', objects: 'theirs' });
+    expect(damage('If a source would deal damage to an opponent, it deals double that damage to that player instead.', 'Creature — Devil')).toEqual({ players: 'opponents' });
+    expect(damage('If a source would deal damage to enchanted player, it deals double that damage to that player instead.', 'Enchantment — Aura Curse')).toEqual({ players: 'enchanted' });
+    expect(damage('If equipped creature would deal combat damage to a permanent or player, it deals double that damage instead.', 'Artifact — Equipment')).toEqual({ by: { sourceAttachedTo: true }, combat: true });
+    expect(damage('If this creature would deal combat damage to a player, it deals double that damage to that player instead.', 'Creature — Dinosaur')).toEqual({ by: { isSource: true }, players: 'each', combat: true });
+    // Any source, anyone: nothing to say.
+    expect(damage('If a source would deal damage to a permanent or player, it deals double that damage to that permanent or player instead.')).toBeUndefined();
+  });
+
+  it('"is dealt to … instead": the damage that goes elsewhere', () => {
+    expect(one('All damage that would be dealt to you is dealt to enchanted creature instead.', 'Enchantment — Aura')).toMatchObject({ effect: { type: 'redirect_damage', damage: { players: 'you' }, to: 'attached' } });
+    expect(damage('All damage that would be dealt to you and other permanents you control is dealt to this creature instead.', 'Creature — Giant')).toEqual({ players: 'you', objects: { controller: 'you', other: true } });
+    expect(damage('As long as this creature is untapped, all combat damage that would be dealt to you by unblocked creatures is dealt to this creature instead.', 'Creature — Human')).toEqual({ players: 'you', combat: true, by: { combat: 'attacking', blockedState: 'unblocked' } });
   });
 });

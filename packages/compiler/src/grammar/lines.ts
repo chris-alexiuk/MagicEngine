@@ -10,6 +10,7 @@ import type {
   AsEntersNode,
   Color,
   ContinuousEffectNode,
+  DamageFilter,
   Cost,
   CostModifierNode,
   QuantityReplacementNode,
@@ -1492,7 +1493,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     b.eventAmount = true;
     b.named['that opponent'] = { ref: 'trigger_player' };
     b.named['that player'] = { ref: 'trigger_player' };
-    return { trigger: { type: 'combat_damage_batch', filter: pf.filter, toYou: true }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
+    return { trigger: { type: 'combat_damage_batch', filter: pf.filter, to: 'you' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   }
   const batchHits =
     /^one or more (.+?) deal combat damage to (a player|an opponent|one of your opponents|one or more players)$/.exec(t) ??
@@ -1503,7 +1504,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const anyPlayers = batchHits[2] === 'one or more players';
     if (!anyPlayers) b.eventAmount = true;
     return {
-      trigger: { type: 'combat_damage_batch', filter: pf.filter, ...(batchHits[2] !== 'a player' && !anyPlayers ? { opponent: true } : {}), ...(anyPlayers ? { anyPlayers: true } : {}) },
+      // To whom: "an opponent"; "one or more players" (one trigger for them all); "a player" otherwise (each of them).
+      trigger: { type: 'combat_damage_batch', filter: pf.filter, ...(anyPlayers ? { to: 'any' } : batchHits[2] !== 'a player' ? { to: 'opponent' } : {}) },
       it: { ref: 'self' },
       player: anyPlayers ? null : { ref: 'trigger_player' },
     };
@@ -2777,13 +2779,15 @@ function parseRedirect(body: string, b: Binder): RedirectDamageNode | null {
   if ((toAttached || m[4] === 'its controller' || /^(?:enchanted|equipped)/.test(m[2]!)) && !attachment) return null;
   if (m[4] === 'its controller' && !/^(?:enchanted|equipped)/.test(m[2]!)) return null;
   if (m[4] === '~' && !/\bCreature\b/.test(b.env.typeLine)) return null;
-  const node: RedirectDamageNode = { type: 'redirect_damage', to: m[4] === '~' ? 'self' : toAttached ? 'attached' : 'attached_controller' };
-  if (/^you\b/.test(m[2]!)) node.fromYou = true;
-  if (/permanents you control$/.test(m[2]!)) node.fromObjects = { controller: 'you', ...(/other permanents/.test(m[2]!) ? { other: true } : {}) };
-  if (/^(?:enchanted|equipped) creature$/.test(m[2]!)) node.fromAttached = true;
-  if (m[1]) node.combat = true;
-  if (m[3]) node.unblocked = true;
-  return node;
+  // Which damage: who it would be dealt to, by what, in combat or not.
+  const damage: DamageFilter = {};
+  if (/^you\b/.test(m[2]!)) damage.players = 'you';
+  if (/permanents you control$/.test(m[2]!)) damage.objects = { controller: 'you', ...(/other permanents/.test(m[2]!) ? { other: true } : {}) };
+  if (/^(?:enchanted|equipped) creature$/.test(m[2]!)) damage.objects = { sourceAttachedTo: true };
+  if (m[1]) damage.combat = true;
+  // "by unblocked creatures": attacking, and not blocked (CR 509.1h).
+  if (m[3]) damage.by = { combat: 'attacking', blockedState: 'unblocked' };
+  return { type: 'redirect_damage', damage, to: m[4] === '~' ? 'self' : toAttached ? 'attached' : 'attached_controller' };
 }
 
 /** Rules changes for players: hand size (CR 402.2), extra land plays (CR 305.2), skipping a step (CR 614.10). */
@@ -4177,7 +4181,7 @@ export const quantityReplacementRule: GrammarRule = {
     if (attachedDmg) {
       const word = attachedDmg[3] === 'double' || attachedDmg[3] === 'triple' ? attachedDmg[3] : attachedDmg[1]!.toLowerCase();
       const combatOnly = attachedDmg[3] === 'double' || attachedDmg[3] === 'triple' ? Boolean(attachedDmg[2]) : Boolean(attachedDmg[3]);
-      return make({ event: 'damage', fromAttached: true, op: word as 'double' | 'triple', ...(combatOnly ? { combatOnly: true as const } : {}) });
+      return make({ event: 'damage', op: word as 'double' | 'triple', damage: { by: { sourceAttachedTo: true }, ...(combatOnly ? { combat: true } : {}) } });
     }
     // Gratuitous Violence: "If a creature you control would deal damage …"
     // Gisela, Blade of Goldnight: "… that source deals double that damage to that player or permanent instead."
@@ -4198,29 +4202,29 @@ export const quantityReplacementRule: GrammarRule = {
       }
       if (damage[1] === 'another') filter.other = true;
       if (damage[3]) filter.controller = 'you';
-      return make({
-        event: 'damage',
-        filter,
-        ...op,
-        ...(damage[4] ? { noncombat: true as const } : {}),
-        ...(damage[5]!.startsWith('an opponent') ? { toOpponents: true as const } : {}),
-        // Fiendish Duo: "If a source would deal damage to an opponent" — the player, not their permanents.
-        ...(damage[5] === 'an opponent' ? { toPlayersOnly: true as const } : {}),
-        // Sawhorn Nemesis: "… to the chosen player or a permanent they control"
-        ...(damage[5]!.startsWith('the chosen player') ? { toChosen: true as const } : {}),
-      });
+      const to = damage[5]!;
+      const which: DamageFilter = {
+        ...(Object.keys(filter).length ? { by: filter } : {}),
+        ...(damage[4] ? { combat: false } : {}),
+        // "an opponent or a permanent an opponent controls"; Sawhorn Nemesis: "the chosen player or a permanent they
+        // control"; Fiendish Duo: "an opponent" — the player, not their permanents.
+        ...(to.startsWith('an opponent') ? { players: 'opponents' as const } : to.startsWith('the chosen player') ? { players: 'chosen' as const } : {}),
+        ...(to === 'an opponent or a permanent an opponent controls' || to.startsWith('the chosen player') ? { objects: 'theirs' as const } : {}),
+      };
+      // (Any source, anyone: nothing to say about which damage.)
+      return make({ event: 'damage', ...op, ...(Object.keys(which).length ? { damage: which } : {}) });
     }
     // Charging Tuskodon: "If this creature would deal combat damage to a player, it deals double that damage to that player
     // instead."
     const selfToPlayer = /^If (?:~|this creature) would deal (combat )?damage to a player, it deals (double|triple) that damage to that player instead\.$/.exec(line);
-    if (selfToPlayer) return make({ event: 'damage', filter: { isSource: true }, op: selfToPlayer[2] as 'double' | 'triple', toPlayersOnly: true, ...(selfToPlayer[1] ? { combatOnly: true as const } : {}) });
+    if (selfToPlayer) return make({ event: 'damage', op: selfToPlayer[2] as 'double' | 'triple', damage: { by: { isSource: true }, players: 'each', ...(selfToPlayer[1] ? { combat: true } : {}) } });
     // Goldnight Castigator: "If a source would deal damage to you, it deals double that damage to you instead." / "… to this
     // creature …".
     const toYouOrSelf = /^If a source would deal damage to (you|~), it deals (double|triple) that damage to \1 instead\.$/.exec(line);
-    if (toYouOrSelf) return make({ event: 'damage', op: toYouOrSelf[2] as 'double' | 'triple', ...(toYouOrSelf[1] === 'you' ? { toYou: true as const } : { toSelf: true as const }) });
+    if (toYouOrSelf) return make({ event: 'damage', op: toYouOrSelf[2] as 'double' | 'triple', damage: toYouOrSelf[1] === 'you' ? { players: 'you' } : { objects: { isSource: true } } });
     // Curse of Bloodletting: "If a source would deal damage to enchanted player, it deals double that damage to that player instead."
     const curse = /^If a source would deal damage to enchanted player, it deals (double|triple) that damage to that player instead\.$/.exec(line);
-    if (curse && /\bAura\b/.test(env.typeLine)) return make({ event: 'damage', toEnchantedPlayer: true, op: curse[1] as 'double' | 'triple' });
+    if (curse && /\bAura\b/.test(env.typeLine)) return make({ event: 'damage', op: curse[1] as 'double' | 'triple', damage: { players: 'enchanted' } });
     // Uncivil Unrest: "If a creature you control with a +1/+1 counter on it would deal damage to a permanent or player, it
     // deals double that damage instead." — any description of the source.
     const described = /^If (a|an|another) (.+?) would deal (noncombat )?damage to (a permanent or player|any target), it deals (double|triple) that damage instead\.$/.exec(line);
@@ -4229,7 +4233,7 @@ export const quantityReplacementRule: GrammarRule = {
       const pf = parseFilter(described[2]!, b);
       if (!op || !pf || pf.plural || pf.filter.zone) return null;
       if (described[1] === 'another') pf.filter.other = true;
-      return make({ event: 'damage', filter: pf.filter, ...op, ...(described[3] ? { noncombat: true as const } : {}) });
+      return make({ event: 'damage', ...op, damage: { by: pf.filter, ...(described[3] ? { combat: false } : {}) } });
     }
     return null;
   },
@@ -4262,7 +4266,8 @@ export const staticPreventionRule: GrammarRule = {
     // damage, rounded up."
     const half = /^If a source would deal damage to (you or a permanent you control|you|a permanent you control), prevent half that damage, rounded up\.$/.exec(line);
     if (half) {
-      const node: StaticPreventionNode = { type: 'prevent_damage', half: 'up', ...(half[1]!.startsWith('you') ? { toYou: true as const } : {}), ...(half[1]!.includes('permanent') ? { to: { controller: 'you' } } : {}) };
+      const damage: DamageFilter = { ...(half[1]!.startsWith('you') ? { players: 'you' as const } : {}), ...(half[1]!.includes('permanent') ? { objects: { controller: 'you' as const } } : {}) };
+      const node: StaticPreventionNode = { type: 'prevent_damage', damage, half: 'up' };
       return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
     // Orbs of Warding: "If a creature would deal damage to you, prevent 1 of that damage."; Sphere of Law: "If a red source
@@ -4278,17 +4283,22 @@ export const staticPreventionRule: GrammarRule = {
         some[2] === 'a source an opponent controls' ? { controller: 'opponent' } : colorOf ? { colors: [COLOR_WORDS[colorOf[1]!]!] } : some[2] === 'a creature' ? { types: ['Creature'] } : some[2] === 'an artifact' ? { types: ['Artifact'] } : undefined;
       const to = some[4]!;
       const kind = /^an? ([A-Z][a-z]+) creature you control$/.exec(to);
+      const objects: ObjectFilter | undefined =
+        to === 'you or a permanent you control'
+          ? { controller: 'you' }
+          : to === 'you or a creature you control'
+            ? { controller: 'you', types: ['Creature'] }
+            : to === 'a planeswalker you control'
+              ? { controller: 'you', types: ['Planeswalker'] }
+              : kind
+                ? { controller: 'you', types: ['Creature'], subtypes: [kind[1]!] }
+                : /^(?:equipped|enchanted) creature$/.test(to)
+                  ? { sourceAttachedTo: true }
+                  : undefined;
       const node: StaticPreventionNode = {
         type: 'prevent_damage',
+        damage: { ...(from ? { by: from } : {}), ...(to.startsWith('you') ? { players: 'you' as const } : {}), ...(objects ? { objects } : {}), ...(some[3] ? { combat: true } : {}) },
         amount: Number(some[5]),
-        ...(to.startsWith('you') ? { toYou: true as const } : {}),
-        ...(to === 'you or a permanent you control' ? { to: { controller: 'you' } } : {}),
-        ...(to === 'you or a creature you control' ? { to: { controller: 'you', types: ['Creature'] } } : {}),
-        ...(to === 'a planeswalker you control' ? { to: { controller: 'you', types: ['Planeswalker'] } } : {}),
-        ...(kind ? { to: { controller: 'you', types: ['Creature'], subtypes: [kind[1]!] } } : {}),
-        ...(/^(?:equipped|enchanted) creature$/.test(to) ? { toAttached: true as const } : {}),
-        ...(from ? { from } : {}),
-        ...(some[3] ? { damage: 'combat' as const } : {}),
         ...(condition ? { condition } : {}),
       };
       if (kind && !isSubtype(kind[1]!)) return null;
@@ -4323,13 +4333,14 @@ export const staticPreventionRule: GrammarRule = {
         condition = c;
         head = head.slice(0, whileAt.index);
       }
-      const node: StaticPreventionNode = { type: 'prevent_damage', ...(condition ? { condition } : {}) };
+      const damage: DamageFilter = {};
+      const node: StaticPreventionNode = { type: 'prevent_damage', damage, ...(condition ? { condition } : {}) };
       let who: string | undefined;
       let h: RegExpExecArray | null;
       // Purity: "If noncombat damage would be dealt to you, prevent that damage."
       if ((h = /^(noncombat |combat )?damage would be dealt to (.+)$/.exec(head))) {
         who = h[2];
-        if (h[1]) node.damage = h[1].trim() as 'combat' | 'noncombat';
+        if (h[1]) damage.combat = h[1].trim() === 'combat';
       } else if ((h = /^(.+?) would be dealt damage$/.exec(head))) who = h[1];
       else if ((h = /^a source would deal (\w+) or less damage to (.+)$/.exec(head))) {
         // Callous Giant: "If a source would deal 3 or less damage to this creature".
@@ -4339,27 +4350,29 @@ export const staticPreventionRule: GrammarRule = {
         node.eachSource = true;
         who = h[2];
       } else if ((h = /^a source( you control)? would deal damage to (.+)$/.exec(head))) {
-        if (h[1]) node.from = { controller: 'you' };
+        if (h[1]) damage.by = { controller: 'you' };
         node.eachSource = true;
         who = h[2];
       } else if ((h = /^a creature would deal (combat )?damage to (.+)$/.exec(head))) {
-        node.from = { types: ['Creature'] };
+        damage.by = { types: ['Creature'] };
         node.eachSource = true;
-        if (h[1]) node.damage = 'combat';
+        if (h[1]) damage.combat = true;
         who = h[2];
       }
       if (!who) return null;
-      if (who === 'you') node.toYou = true;
-      else if (who === 'an opponent') node.toOpponents = true;
-      else if (/^(?:~|this creature|this permanent|him|her)$/.test(who)) node.toSelf = true;
+      if (who === 'you') damage.players = 'you';
+      // The Mindskinner: "damage to an opponent" — a player, not their permanents.
+      else if (who === 'an opponent') damage.players = 'opponents';
+      else if (/^(?:~|this creature|this permanent|him|her)$/.test(who)) damage.objects = { isSource: true };
       else if (/^(?:equipped|enchanted) creature$/.test(who)) {
-        node.toAttached = true;
+        // Panther Habit: "If equipped creature would be dealt damage" — what this is attached to.
+        damage.objects = { sourceAttachedTo: true };
         b.it = { ref: 'trigger_object' };
       } else if (/^(?:another|other) /.test(who) && / you control$/.test(who)) {
         // Temple Altisaur: "another Dinosaur you control" — each other one.
         const pf = parseFilter(who.replace(/^(?:another|other) /, ''), b);
         if (!pf || pf.filter.zone || pf.filter.controller !== 'you') return null;
-        node.to = { ...pf.filter, other: true };
+        damage.objects = { ...pf.filter, other: true };
       } else return null;
       if (pm[2]) {
         const follow = pm[2]
@@ -4381,17 +4394,17 @@ export const staticPreventionRule: GrammarRule = {
       const pf = parseFilter(vigor[1]!.replace(/^(?:a|an|another) /, ''), new Binder(env));
       if (!pf || pf.filter.zone || !(pf.filter.types ?? []).includes('Creature')) return null;
       if (other) pf.filter.other = true;
-      const node: StaticPreventionNode = { type: 'prevent_damage', to: pf.filter, then: [{ type: 'add_counters', what: { ref: 'trigger_object' }, counter: '+1/+1', amount: { kind: 'event' } }] };
+      const node: StaticPreventionNode = { type: 'prevent_damage', damage: { objects: pf.filter }, then: [{ type: 'add_counters', what: { ref: 'trigger_object' }, counter: '+1/+1', amount: { kind: 'event' } }] };
       return { kind: 'static', text: original, effect: node } as StaticAbility;
     }
     // CR 615.12: Frenzied Baloth: "Combat damage can't be prevented."; "Damage can't be prevented."
     const cant = /^(Combat damage|Damage) can't be prevented\.$/.exec(line);
-    if (cant) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(cant[1] === 'Combat damage' ? { combat: true } : {}) } } as StaticAbility;
+    if (cant) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(cant[1] === 'Combat damage' ? { damage: { combat: true } } : {}) } } as StaticAbility;
     // Questing Beast: "Combat damage that would be dealt by creatures you control can't be prevented."
     const by = /^(Combat damage|Damage) that would be dealt by (.+?) can't be prevented\.$/.exec(line);
     if (by && env) {
       const pf = parseFilter(by[2]!, new Binder(env));
-      if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', ...(by[1] === 'Combat damage' ? { combat: true } : {}), from: pf.filter } } as StaticAbility;
+      if (pf?.plural && !pf.filter.zone) return { kind: 'static', text: original, effect: { type: 'unpreventable', damage: { by: pf.filter, ...(by[1] === 'Combat damage' ? { combat: true } : {}) } } } as StaticAbility;
     }
     // Energy Field: "Prevent all damage that would be dealt to you by sources you don't control."
     // Wall of Vapor: "Prevent all damage that would be dealt to this creature by creatures it's blocking."; Armored Transport:
@@ -4403,7 +4416,7 @@ export const staticPreventionRule: GrammarRule = {
       const sources = /^(.+?) sources$/.exec(bySelf[2]!);
       const pf = parseFilter(sources ? `${sources[1]} permanents` : bySelf[2]!, new Binder(env!));
       if (pf?.plural && !pf.filter.zone && !pf.filter.controller) {
-        const node: StaticPreventionNode = { type: 'prevent_damage', toSelf: true, from: pf.filter, ...(bySelf[1] ? { damage: 'combat' as const } : {}) };
+        const node: StaticPreventionNode = { type: 'prevent_damage', damage: { by: pf.filter, objects: { isSource: true }, ...(bySelf[1] ? { combat: true } : {}) } };
         return { kind: 'static', text: original, effect: node };
       }
     }
@@ -4412,59 +4425,68 @@ export const staticPreventionRule: GrammarRule = {
     if (selfTo) {
       const pf = parseFilter(selfTo[2]!, new Binder(env));
       if (!pf || !pf.plural || pf.filter.zone) return null;
-      return { kind: 'static', text: original, effect: { type: 'prevent_damage', bySelf: true, bySelfTo: pf.filter, ...(selfTo[1] ? { damage: selfTo[1].trim() as 'combat' | 'noncombat' } : {}) } as StaticPreventionNode };
+      return { kind: 'static', text: original, effect: { type: 'prevent_damage', damage: { by: { isSource: true }, objects: pf.filter, ...(selfTo[1] ? { combat: selfTo[1].trim() === 'combat' } : {}) } } as StaticPreventionNode };
     }
     const m = /^Prevent all (combat |noncombat )?damage that would be dealt (to and dealt by|to|by) (.+?)(?: by (sources you don't control|sources your opponents control|sources you control|creatures(?: it's blocking| blocking it)?))?( during your turn)?\.$/.exec(line);
     if (!m) return null;
     const b = new Binder(env);
-    const node: StaticPreventionNode = { type: 'prevent_damage' };
+    const damage: DamageFilter = {};
+    const node: StaticPreventionNode = { type: 'prevent_damage', damage };
     if (m[4]) {
       if (m[2] !== 'to') return null;
       // Uncle Istvan: "Prevent all damage that would be dealt to this creature by creatures."
       if (m[4] === 'creatures') {
         if (!/^(?:~|this creature)$/.test(m[3]!)) return null;
-        node.from = { types: ['Creature'] };
+        damage.by = { types: ['Creature'] };
       } else if (/^creatures /.test(m[4])) {
         const pf = /^(?:~|this creature)$/.test(m[3]!) ? parseFilter(m[4], b) : null;
         if (!pf?.plural || !pf.filter.combatWithSource) return null;
-        node.from = pf.filter;
-      } else node.from = m[4] === "sources you don't control" ? { controller: 'not_you' } : m[4] === 'sources you control' ? { controller: 'you' } : { controller: 'opponent' };
+        damage.by = pf.filter;
+      } else damage.by = m[4] === "sources you don't control" ? { controller: 'not_you' } : m[4] === 'sources you control' ? { controller: 'you' } : { controller: 'opponent' };
     }
-    if (m[1]) node.damage = m[1].trim() as 'combat' | 'noncombat';
+    if (m[1]) damage.combat = m[1].trim() === 'combat';
     if (m[5]) node.condition = { type: 'your_turn', value: true };
     const self = (t: string) => t === '~' || /^this (?:creature|permanent|artifact|enchantment|land)$/.test(t);
+    // "dealt to and dealt by …": damage it would be dealt, and damage it would deal — either.
+    const either = (it: ObjectFilter): DamageFilter[] => [{ by: it }, { objects: it }];
     // Defang: "Prevent all damage that would be dealt by enchanted creature."; Ghostly Possession: "… to and dealt by
     // enchanted creature"; General's Kabuto: "… to equipped creature".
     if (/^(?:enchanted|equipped) creature$/.test(m[3]!)) {
-      if (m[2] !== 'by') node.toAttached = true;
-      if (m[2] !== 'to') node.byAttached = true;
+      const it: ObjectFilter = { sourceAttachedTo: true };
+      if (m[2] === 'to') damage.objects = it;
+      else if (m[2] === 'by') damage.by = it;
+      else damage.anyOf = either(it);
       return { kind: 'static', text: original, effect: node };
     }
     // Statecraft: "Prevent all combat damage that would be dealt to and dealt by creatures you control."
     if (m[2] !== 'to' && !self(m[3]!)) {
       const pf = parseFilter(m[3]!, b);
       if (!pf || !pf.plural || pf.filter.zone) return null;
-      node.by = pf.filter;
-      if (m[2] === 'to and dealt by') node.to = pf.filter;
+      if (m[2] === 'by') damage.by = pf.filter;
+      else damage.anyOf = either(pf.filter);
       return { kind: 'static', text: original, effect: node };
     }
     if (m[2] === 'by') return null;
-    if (m[2] === 'to and dealt by') {
-      node.toSelf = true;
-      node.bySelf = true;
-    } else {
+    if (m[2] === 'to and dealt by') damage.anyOf = either({ isSource: true });
+    else {
       // "you and other permanents you control", "you and creatures you control", "attacking creatures you control"
+      const objects: ObjectFilter[] = [];
+      let described = false;
       for (const part of m[3]!.split(/,? and /)) {
-        if (part === 'you') node.toYou = true;
-        else if (self(part)) node.toSelf = true;
+        if (part === 'you') damage.players = 'you';
+        else if (self(part)) objects.push({ isSource: true });
         else {
           // Temple Altisaur: "another Dinosaur you control" — each other one.
           const other = /^(?:an)?other /.test(part);
-          const pf = node.to ? null : parseFilter(part.replace(/^(?:an)?other /, ''), b);
+          const pf = described ? null : parseFilter(part.replace(/^(?:an)?other /, ''), b);
           if (!pf || (!pf.plural && !/^another /.test(part))) return null;
-          node.to = { ...pf.filter, ...(other ? { other: true as const } : {}) };
+          described = true;
+          objects.push({ ...pf.filter, ...(other ? { other: true as const } : {}) });
         }
       }
+      if (objects.length) damage.objects = objects.length === 1 ? objects[0]! : { anyOf: objects };
+      // (Damage to no one in particular is not something this reads.)
+      if (!damage.players && !damage.objects) return null;
     }
     return { kind: 'static', text: original, effect: node };
   },

@@ -976,36 +976,44 @@ export interface ManaSpend {
 }
 
 /**
- * CR 603.2d: "If an artifact or creature entering causes a triggered ability of a permanent you control to trigger, that
- * ability triggers an additional time." (Panharmonicon); "If a triggered ability of a Shaman or another Wizard you
- * control triggers, …" (Harmonic Prodigy). With `none`: "Creatures entering don't cause abilities to trigger." (Torpor Orb)
+ * Which damage a static ability is about (CR 615.1a, 614.1a, 614.1b): dealt by which sources, to whom, in combat or
+ * not. Every part given has to fit; a part left out fits anything. With neither `players` nor `objects` any recipient
+ * fits; with either, only a recipient the one for its kind names. Read from the point of view of the permanent with
+ * the ability: "you" is its controller.
  */
+export interface DamageFilter {
+  /**
+   * The source ("a red source you control", "creatures blocking it"). `{ isSource: true }`: the permanent with the
+   * ability ("damage this creature would deal"); `{ sourceAttachedTo: true }`: what it is attached to ("dealt by
+   * enchanted creature").
+   */
+  by?: ObjectFilter;
+  /**
+   * The players it would be dealt to: the ability's controller, their opponents, any player; the player its Aura
+   * enchants (Curse of Bloodletting); the player chosen as it entered (Sawhorn Nemesis).
+   */
+  players?: 'you' | 'opponents' | 'each' | 'enchanted' | 'chosen';
+  /**
+   * The permanents it would be dealt to (`{ isSource: true }`, `{ sourceAttachedTo: true }` as for `by`). 'theirs':
+   * the ones the players above control ("an opponent or a permanent an opponent controls").
+   */
+  objects?: ObjectFilter | 'theirs';
+  /** Combat damage only (true), or only damage that isn't combat damage (false). */
+  combat?: boolean;
+  /** "dealt to and dealt by enchanted creature": damage that fits any of these, besides what else is said here. */
+  anyOf?: DamageFilter[];
+}
+
 /**
  * CR 615.1a: a static prevention effect — "Prevent all combat damage that would be dealt to attacking creatures you
- * control." (Dolmen Gate), "… to you" (Glacial Chasm), "… to and dealt by this creature" (Fog Bank). Damage that
- * matches any of the listed recipients or sources is prevented.
+ * control." (Dolmen Gate), "… to you" (Glacial Chasm), "… to and dealt by this creature" (Fog Bank).
  */
 export interface StaticPreventionNode extends EffectNode {
   type: 'prevent_damage';
+  /** The damage it prevents. */
+  damage: DamageFilter;
   /** Vigor: "Put a +1/+1 counter on that creature for each 1 damage prevented this way." — right after (CR 615.5). */
   then?: EffectNode[];
-  /** Only combat damage, or only noncombat damage. */
-  damage?: 'combat' | 'noncombat';
-  toYou?: true;
-  toSelf?: true;
-  /** Permanents (matched with the source's controller as "you"). */
-  to?: ObjectFilter;
-  bySelf?: true;
-  /** Statecraft: "dealt to and dealt by creatures you control" — damage from such a source (either side suffices). */
-  by?: ObjectFilter;
-  /** Defang: "damage that would be dealt by enchanted creature" — what the holder is attached to. */
-  byAttached?: true;
-  /** The Mindskinner: "damage to an opponent" — a player, not their permanents. */
-  toOpponents?: true;
-  /** Panther Habit: "If equipped creature would be dealt damage" — what this is attached to. */
-  toAttached?: true;
-  /** "If a source you control would deal damage", "If a creature would deal combat damage" (CR 615.1a). */
-  from?: ObjectFilter;
   /** Nine Lives: "If a source would deal damage to you, prevent that damage and …" — the additional effect for each source. */
   eachSource?: true;
   /** "during your turn" (CR 611.3a: checked continuously). */
@@ -1016,12 +1024,15 @@ export interface StaticPreventionNode extends EffectNode {
   amount?: number;
   /** Callous Giant: "If a source would deal 3 or less damage to this creature" — only that small an amount. */
   atMost?: number;
-  /** Goblin Furrier: "Prevent all damage that this creature would deal to snow creatures" — only to those. */
-  bySelfTo?: ObjectFilter;
   /** Temple Altisaur: "prevent all but 1 of that damage" — that much is still dealt. */
   allBut?: number;
 }
 
+/**
+ * CR 603.2d: "If an artifact or creature entering causes a triggered ability of a permanent you control to trigger, that
+ * ability triggers an additional time." (Panharmonicon); "If a triggered ability of a Shaman or another Wizard you
+ * control triggers, …" (Harmonic Prodigy). With `none`: "Creatures entering don't cause abilities to trigger." (Torpor Orb)
+ */
 export interface TriggerExtraNode extends EffectNode {
   type: 'trigger_extra';
   /** The event that must have caused it to trigger, and the object involved ("an artifact or creature entering"). */
@@ -1400,16 +1411,10 @@ export interface CostModifierNode extends EffectNode {
  */
 export interface RedirectDamageNode extends EffectNode {
   type: 'redirect_damage';
-  /** Damage to the source's controller. */
-  fromYou?: true;
-  /** Damage to these permanents (from the source's point of view). */
-  fromObjects?: ObjectFilter;
-  /** Damage to what the source is attached to. */
-  fromAttached?: true;
+  /** The damage that is dealt elsewhere: "to you", "to you and other permanents you control", "to you by unblocked creatures". */
+  damage: DamageFilter;
   /** Where it goes: the source, what it's attached to, or the controller of what it's attached to. */
   to: 'self' | 'attached' | 'attached_controller';
-  combat?: true;
-  unblocked?: true;
   condition?: ConditionNode;
 }
 
@@ -1473,8 +1478,10 @@ export interface QuantityReplacementNode extends EffectNode {
   tokenFilter?: ObjectFilter;
   /** gain_life: who gains; tokens: under whose control; counters: who puts them (from the source controller's view). */
   who?: 'you' | 'opponents' | 'each';
-  /** counters: what they're put on; damage: the source. */
+  /** counters: what they're put on. */
   filter?: ObjectFilter;
+  /** damage: which damage — its source, who it would be dealt to, in combat or not. */
+  damage?: DamageFilter;
   /** counters: which kind (any if absent). */
   counter?: string;
   /** counters: also counters put on players — 'you': on the putter themself (Lae'zel: "or on yourself"); 'any': any player
@@ -1484,21 +1491,6 @@ export interface QuantityReplacementNode extends EffectNode {
   onlyPlayers?: true;
   /** counters: "If an effect would put one or more counters …" (Doubling Season) — not counters put on as a cost. */
   effectOnly?: true;
-  /** damage: only to opponents and their permanents; only noncombat damage. */
-  toOpponents?: true;
-  /** Sawhorn Nemesis: "to the chosen player or a permanent they control" (chosen as the source entered). */
-  toChosen?: true;
-  /** Curse of Bloodletting: only damage to the player this Aura enchants. */
-  toEnchantedPlayer?: true;
-  /** Goldnight Castigator: damage dealt to you, or to this permanent. */
-  toYou?: true;
-  toSelf?: true;
-  /** Fiendish Duo: "would deal damage to an opponent" — players only, not their permanents. */
-  toPlayersOnly?: true;
-  noncombat?: true;
-  /** The Sound of Drums, Mjölnir: damage the enchanted or equipped creature would deal; `combatOnly`: combat damage. */
-  fromAttached?: true;
-  combatOnly?: true;
 }
 
 /** Rules changes for players (CR 402.2, CR 305.2, CR 614.10): "You have no maximum hand size." */

@@ -58,8 +58,10 @@ export function parseQuotedAbility(item: string, b: Binder, printed: boolean): K
 export function grantableStatic(a: AbilityNode): boolean {
   // Caduceus, Staff of Hermes: has "Prevent all damage that would be dealt to this creature." (CR 615.1a)
   if (a.kind === 'static' && !a.gate && a.effect.type === 'prevent_damage') {
-    const e = a.effect as unknown as Record<string, unknown>;
-    return Boolean(e.toSelf) && Object.keys(e).every((k) => ['type', 'toSelf', 'damage'].includes(k));
+    // All damage to it, or all combat damage: nothing about its source, nothing besides.
+    const e = a.effect as unknown as { damage?: Record<string, unknown> };
+    const d = e.damage ?? {};
+    return JSON.stringify(d.objects) === '{"isSource":true}' && Object.keys(d).every((k) => k === 'objects' || k === 'combat') && Object.keys(e).every((k) => k === 'type' || k === 'damage');
   }
   // Can't Stay Away: gains "If this creature would die, exile it instead." (CR 614.1a)
   if (a.kind === 'static' && !a.gate && a.effect.type === 'exile_instead') {

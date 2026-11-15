@@ -1,6 +1,7 @@
 import { isRingBearer } from './ring.js';
-import type { AttackTaxNode, ObjectFilter, StaticAbility } from '@mtg/schema';
+import type { AttackTaxNode, DamageFilter, ObjectFilter, StaticAbility } from '@mtg/schema';
 import { abilitiesOf, canUseTapAbilities, chars, hasKeyword, hasProtectionFrom, hasRule, hasType, matchesFilter, objectAbilities, power, staticConditionHolds, toughness } from './characteristics.js';
+import { fitsDamage, type DamageAbout } from './damage-filter.js';
 import { payDuringResolution } from './payment.js';
 import { planAutoTap } from './autotap.js';
 import { parseManaCost } from './mana.js';
@@ -944,17 +945,15 @@ export function damageBeforeExcess(g: GameState, source: GameObject, o: GameObje
   return caps.length ? Math.min(...caps) : Infinity;
 }
 
-/** CR 615.12: a static ability saying damage (or combat damage) can't be prevented. */
-function staticUnpreventable(g: GameState, combat: boolean, source: GameObject): boolean {
+/** CR 615.12: a static ability saying damage (or combat damage, or damage from such sources) can't be prevented. */
+function staticUnpreventable(g: GameState, about: DamageAbout): boolean {
   // Banefire: "If X is 5 or more, … the damage can't be prevented." — the spell's own damage.
-  if (source.zone === 'stack' && hasRule(g, source, 'damage_unpreventable')) return true;
+  if (about.source.zone === 'stack' && hasRule(g, about.source, 'damage_unpreventable')) return true;
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;
     for (const a of objectAbilities(g, o)) {
-      if (a.kind !== 'static' || a.effect.type !== 'unpreventable' || (!combat && a.effect.combat)) continue;
-      // Questing Beast: "… dealt by creatures you control …" — only from those sources.
-      if (a.effect.from && !matchesFilter(g, source, a.effect.from as ObjectFilter, { controller: o.controller, source: o })) continue;
-      return true;
+      // Questing Beast: "Combat damage that would be dealt by creatures you control can't be prevented."
+      if (a.kind === 'static' && a.effect.type === 'unpreventable' && fitsDamage(g, a.effect.damage as DamageFilter | undefined, o, about)) return true;
     }
   }
   return false;
@@ -976,7 +975,7 @@ export function dealDamage(
 ): number {
   if (amount <= 0) return 0;
   // CR 615.12: "Damage can't be prevented this turn."; Frenzied Baloth: "Combat damage can't be prevented." (a static).
-  const unpreventable = cantBePrevented || g.unpreventableTurn === g.turn || staticUnpreventable(g, combat, source);
+  const unpreventable = cantBePrevented || g.unpreventableTurn === g.turn || staticUnpreventable(g, { source, to, combat });
   // What the replacement and prevention effects on it make of the damage (CR 614, 615, 616.1): who is dealt it, how
   // much is left. Each is a rule in instead-damage.ts; none is known here.
   const asked: Damage = { kind: 'damage', source, to, amount, combat, unpreventable, spent: 0, also: [] };

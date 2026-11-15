@@ -1,5 +1,6 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
 import { hasRule, matchesFilter, objectAbilities } from './characteristics.js';
+import { fitsDamage } from './damage-filter.js';
 import { replaced, type Amount, type Life, type Replacement, type Rules } from './instead.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
 import { abilitySources } from './zones.js';
@@ -167,27 +168,10 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
       if (s.onPlayer !== undefined) return e.players === 'any' || (e.players === 'you' && s.onPlayer === you);
       if (!s.object || e.onlyPlayers) return false;
       return !e.filter || matchesFilter(g, s.object, e.filter, { controller: you, source });
-    case 'damage': {
-      if (!s.source || (e.noncombat && s.combat) || (e.combatOnly && !s.combat)) return false;
-      // The Sound of Drums: the creature this Aura or Equipment is attached to.
-      if (e.fromAttached && !(source.attachedTo && source.attachedTo.id === s.source.id && source.attachedTo.zcc === s.source.zcc)) return false;
-      if (e.filter && !matchesFilter(g, s.source, e.filter, { controller: you, source, anyZone: true })) return false;
-      if (e.toOpponents) {
-        const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
-        if (!p || p === you) return false;
-      }
-      if (e.toPlayersOnly && s.to?.kind !== 'player') return false;
-      // Curse of Bloodletting: "If a source would deal damage to enchanted player, …"
-      if (e.toEnchantedPlayer && !(s.to?.kind === 'player' && s.to.player === source.attachedToPlayer)) return false;
-      // Goldnight Castigator: "If a source would deal damage to you" / "… to this creature".
-      if (e.toYou && !(s.to?.kind === 'player' && s.to.player === you)) return false;
-      if (e.toSelf && !(s.to?.kind === 'permanent' && s.to.object === source.id)) return false;
-      if (e.toChosen) {
-        const p = s.to?.kind === 'player' ? s.to.player : s.to ? g.objects[s.to.object]?.controller : undefined;
-        if (!p || p !== source.chosen?.player) return false;
-      }
-      return true;
-    }
+    case 'damage':
+      // Which damage: its source, who it would be dealt to, in combat or not (The Sound of Drums, Torbran, Fiendish Duo,
+      // Curse of Bloodletting, Goldnight Castigator, Sawhorn Nemesis).
+      return Boolean(s.source && s.to) && fitsDamage(g, e.damage, source, { source: s.source!, to: s.to!, combat: Boolean(s.combat) });
     default:
       return false;
   }

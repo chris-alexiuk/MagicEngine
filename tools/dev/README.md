@@ -74,7 +74,7 @@ asked, or the order best for them is taken).
 | a card changes zones | `instead-moves.ts` (`elsewhere(move, zone, position, also)`) | `moveObject`, `moveTogether` |
 | a player draws | `instead-draws.ts` | `drawCard` |
 | a permanent enters | `instead-enters.ts`; a card's own: a handler in the plugin's `enterReplacements` | `onEnterBattlefield` |
-| damage is dealt | `instead-damage.ts` | `dealDamage` |
+| damage is dealt | `instead-damage.ts`; which damage an ability is about: `DamageFilter`, read by `fitsDamage` | `dealDamage` |
 | a permanent is destroyed | `instead-destroy.ts` | `destroy`, `destroyTogether` |
 | tokens are created | `instead-tokens.ts` | `createTokens`, `createTokenCopies` |
 | life is gained or lost | `LIFE_RULES` in `quantities.ts` | `applyLifeGain`, `lifeLoss` |

@@ -5984,20 +5984,21 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'damage' || !e.combat || e.to.kind !== 'player' || check.sourceLeft) return [];
     const to = e.to.player;
-    if (t.opponent && to === check.controller) return [];
+    // `to`: "an opponent"; "you" (Norn's Decree); 'any' — "one or more players", all of them at once; else each player.
+    if (t.to === 'opponent' && to === check.controller) return [];
     const matches = (x: GameEvent) => {
       // Contaminant Grafter: "to one or more players" — damage to any player.
-      if (x.type !== 'damage' || !x.combat || x.to.kind !== 'player' || (!t.anyPlayers && x.to.player !== to)) return false;
+      if (x.type !== 'damage' || !x.combat || x.to.kind !== 'player' || (t.to !== 'any' && x.to.player !== to)) return false;
       const src = check.g.objects[x.source];
       return Boolean(src && matchesFilter(check.g, src, t.filter as ObjectFilter, { controller: check.controller, source: check.source, anyZone: true }));
     };
     // Norn's Decree: "Whenever one or more creatures an opponent controls deal combat damage to you, that opponent …" —
     // once for each player whose creatures did (in practice the attacking player).
-    if (t.toYou && to !== check.controller) return [];
+    if (t.to === 'you' && to !== check.controller) return [];
     const batch = (check.batch ?? [e]).filter(matches);
     if (batch[0] !== e) return [];
-    if (t.anyPlayers) return [{}];
-    if (t.toYou) {
+    if (t.to === 'any') return [{}];
+    if (t.to === 'you') {
       const by = new Map<PlayerId, number>();
       for (const x of batch) {
         if (x.type !== 'damage') continue;

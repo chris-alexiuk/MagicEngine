@@ -18,8 +18,9 @@
  * shield used up, "put a +1/+1 counter on that creature for each 1 damage prevented this way" (CR 615.5) — is done once
  * the damage is settled, in the order the effects applied, the follow-ups last.
  */
-import type { EffectNode, ObjectFilter, RedirectDamageNode, StaticPreventionNode } from '@mtg/schema';
+import type { EffectNode, RedirectDamageNode, StaticPreventionNode } from '@mtg/schema';
 import { chars, hasProtectionFrom, hasType, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
+import { fitsDamage } from './damage-filter.js';
 import type { Also, Damage, Replacement, Rules } from './instead.js';
 import { says } from './instead-moves.js';
 import { removeShield } from './permanents.js';
@@ -101,15 +102,8 @@ export const DAMAGE_RULES: Rules<Damage> = {
       objectAbilities(g, holder).forEach((a, i) => {
         if (a.kind !== 'static' || a.effect.type !== 'redirect_damage') return;
         const e = a.effect as RedirectDamageNode;
-        if (e.combat && !combat) return;
-        if (e.unblocked && !(combat && g.combat?.attackers[source.id] && !g.combat.attackers[source.id]!.blocked)) return;
-        if (!staticConditionHolds(g, e, holder)) return;
+        if (!staticConditionHolds(g, e, holder) || !fitsDamage(g, e.damage, holder, { source, to, combat })) return;
         const attached = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? g.objects[holder.attachedTo.id] : undefined;
-        const hit =
-          (e.fromYou && to.kind === 'player' && to.player === holder.controller) ||
-          (e.fromAttached && to.kind === 'permanent' && attached?.id === to.object) ||
-          (e.fromObjects && to.kind === 'permanent' && g.objects[to.object] && matchesFilter(g, g.objects[to.object]!, e.fromObjects, { controller: holder.controller, source: holder }));
-        if (!hit) return;
         const there = e.to === 'self' ? holder : attached;
         if (!there || there.zone !== 'battlefield') return;
         const candidate: DamageRecipient = e.to === 'attached_controller' ? { kind: 'player', player: there.controller } : { kind: 'permanent', object: there.id };
@@ -132,6 +126,7 @@ export const DAMAGE_RULES: Rules<Damage> = {
     if (h.unpreventable || h.amount <= 0) return [];
     const out: Replacement<Damage>[] = [];
     const { source, to, combat, amount } = h;
+    const about = { source, to, combat };
     // Caduceus, Staff of Hermes: equipped creature has "Prevent all damage that would be dealt to this creature." — a
     // granted ability of the creature itself.
     const recipient = to.kind === 'permanent' ? g.objects[to.object] : undefined;
@@ -140,9 +135,7 @@ export const DAMAGE_RULES: Rules<Damage> = {
         if (k.id !== 'ability') return;
         (k.abilities ?? []).forEach((a, ai) => {
           if (a.kind !== 'static' || a.effect.type !== 'prevent_damage') return;
-          const e = a.effect as StaticPreventionNode;
-          if (!e.toSelf || (e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) return;
-          if (e.from && !matchesFilter(g, source, e.from, { controller: recipient.controller, source: recipient, anyZone: true })) return;
+          if (!fitsDamage(g, (a.effect as StaticPreventionNode).damage, recipient, about)) return;
           out.push({ key: `prevent:own:${recipient.id}:${ki}:${ai}`, label: says(g, recipient, a.text), apply: (d) => less(d, 0) });
         });
       });
@@ -152,32 +145,15 @@ export const DAMAGE_RULES: Rules<Damage> = {
       objectAbilities(g, holder).forEach((a, i) => {
         if (a.kind !== 'static' || a.effect.type !== 'prevent_damage') return;
         const e = a.effect as StaticPreventionNode;
-        if ((e.damage === 'combat' && !combat) || (e.damage === 'noncombat' && combat)) return;
         // Simultaneous combat damage is one event: Undergrowth Champion's "while it has a +1/+1 counter on it" was true for
         // all of it, though the first counter removed made it false (CR 510.2, 615.5).
         const batch = `${holder.id}:${recipientKey(to)}`;
         const batched = Boolean(e.then && !e.eachSource);
         if (!staticConditionHolds(g, e, holder) && !(batched && together?.has(batch))) return;
-        // The Mindskinner: "If a source you control would deal damage …"; Ironscale Hydra: "If a creature would deal …".
-        if (e.from && !matchesFilter(g, source, e.from, { controller: holder.controller, source: holder, anyZone: true })) return;
         // Callous Giant: "3 or less damage".
         if (e.atMost !== undefined && amount > e.atMost) return;
-        let hit = false;
-        // Defang: "Prevent all damage that would be dealt by enchanted creature."
-        const attachedHost = holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
-        // Goblin Furrier: "… that this creature would deal to snow creatures" — only to those.
-        if (e.bySelf && source.id === holder.id) hit = !e.bySelfTo || (to.kind === 'permanent' && Boolean(g.objects[to.object]) && matchesFilter(g, g.objects[to.object]!, e.bySelfTo, { controller: holder.controller, source: holder }));
-        else if (e.byAttached && attachedHost !== undefined && source.id === attachedHost) hit = true;
-        // Statecraft: "… dealt to and dealt by creatures you control".
-        else if (e.by && matchesFilter(g, source, e.by, { controller: holder.controller, source: holder })) hit = true;
-        else if (to.kind === 'player') hit = Boolean((e.toYou && to.player === holder.controller) || (e.toOpponents && to.player !== holder.controller));
-        else {
-          const o = g.objects[to.object];
-          // Panther Habit: "If equipped creature would be dealt damage".
-          const host = e.toAttached && holder.attachedTo && g.objects[holder.attachedTo.id]?.zcc === holder.attachedTo.zcc ? holder.attachedTo.id : undefined;
-          hit = Boolean(o && ((e.toSelf && o.id === holder.id) || (host !== undefined && o.id === host) || (e.to && matchesFilter(g, o, e.to as ObjectFilter, { controller: holder.controller, source: holder }))));
-        }
-        if (!hit) return;
+        // Which damage it is about: its source, who it would be dealt to, in combat or not.
+        if (!fitsDamage(g, e.damage, holder, about)) return;
         const key = `prevent:${holder.id}:${holder.zcc}:${i}`;
         const label = says(g, holder, a.text);
         // Temple Altisaur: "prevent all but 1 of that damage".
