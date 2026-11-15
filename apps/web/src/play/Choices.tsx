@@ -101,7 +101,9 @@ export function ModePicker({
   feasible?: (modes: number[]) => boolean;
 }) {
   const [modes, setModes] = useState<number[]>(() => (initial && (!feasible || feasible(initial)) ? initial : []));
-  const blocked = useMemo(() => new Set(menu.options.map((_, i) => i).filter((i) => feasible && !feasible([i]))), [menu, feasible]);
+  // A mode with nothing legal to target can't be chosen (CR 700.2a). The menu says so mode by mode: asking whether one
+  // mode alone is a legal choice says no for every mode of "Choose two —".
+  const blocked = useMemo(() => new Set(menu.options.map((o, i) => (o.noTargets ? i : -1)).filter((i) => i >= 0)), [menu]);
   // CR 700.2i: pawprint modes add up to no more than the budget.
   const weight = (i: number) => menu.options[i]?.weight ?? 1;
   const spent = modes.reduce((n, m) => n + weight(m), 0);
@@ -1206,7 +1208,13 @@ function TriggerPanel({ g, view, p, setPick, answer }: { g: GameState; view: Pla
       <div>
         {head}
         <ModePicker
-          menu={{ min: p.modes.min, max: p.modes.max, repeat: Boolean(p.modes.repeat), used: p.modes.used ?? [], options: p.modes.options.map((o) => ({ text: o.text, manual: false })) }}
+          menu={{
+            min: p.modes.min,
+            max: p.modes.max,
+            repeat: Boolean(p.modes.repeat),
+            used: p.modes.used ?? [],
+            options: p.modes.options.map((o) => ({ text: o.text, manual: false, ...(o.prompts.every((pr) => pr.candidates.length >= promptRange(pr)[0]) ? {} : { noTargets: true as const }) })),
+          }}
           feasible={(m) => m.every((i) => (p.modes?.options[i]?.prompts ?? []).every((pr) => pr.candidates.length >= promptRange(pr)[0]))}
           onDone={setModes}
         />

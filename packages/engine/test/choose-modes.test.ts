@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Action, GameState } from '../src/index.js';
-import { legalActions } from '../src/index.js';
+import { choiceModes, legalActions } from '../src/index.js';
 import { act, give, makeCard, passRound, start, toStep } from './helpers.js';
 
 /**
@@ -62,6 +62,19 @@ describe('CR 700.2: the modes a listed cast offers', () => {
     expect(listed(g, spell)?.modes).toEqual([1, 3, 4]);
     give(g, 'bob', 'Trinket', 'battlefield');
     expect(listed(g, spell)?.modes).toEqual([0, 1, 3]);
+  });
+
+  it('the mode menu says which modes can\'t be chosen, mode by mode (CR 700.2a)', () => {
+    const g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    const spell = give(g, 'alice', 'Command', 'hand');
+    const blocked = () => choiceModes(g, listed(g, spell)!)!.options.map((o) => Boolean(o.noTargets));
+    expect(choiceModes(g, listed(g, spell)!)).toMatchObject({ min: 2, max: 2 });
+    // No creature card in her graveyard, no artifact: the first and third are out; the other two can be chosen.
+    expect(blocked()).toEqual([true, false, true, false]);
+    give(g, 'bob', 'Trinket', 'battlefield');
+    expect(blocked()).toEqual([true, false, false, false]);
+    give(g, 'alice', 'Grizzly Bears', 'graveyard');
+    expect(blocked()).toEqual([false, false, false, false]);
   });
 
   it('a mode that can\'t be chosen rules out that mode, not the spell — and with too few modes left, the spell', () => {

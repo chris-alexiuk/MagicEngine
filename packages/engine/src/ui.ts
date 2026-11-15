@@ -13,7 +13,7 @@ import { helperKeywords } from './helpers-cost.js';
 import { auraTargetSpec } from './permanents.js';
 import { chosenFor, costAsks, costWeight, type CostAsk } from './payment.js';
 import { activatedAbilities, flatten, spellPrograms, usedModes } from './program.js';
-import { targetingAs, targetPrompts, withTargetKicks } from './targets.js';
+import { canChooseTargets, targetingAs, targetPrompts, withTargetKicks } from './targets.js';
 import { RulesError, type Action, type CostChoices, type GameObject, type GameState, type ObjectId, type TargetPrompt } from './types.js';
 import { nameOf, zoneList } from './zones.js';
 
@@ -32,7 +32,8 @@ export interface ModeMenu {
   used: number[];
   /** CR 700.2i: "Choose up to five {P} worth of modes" — the most pawprints the chosen modes may add up to. */
   budget?: number;
-  options: { text: string; manual: boolean; cost?: string; /** Its pawprints ({P}). */ weight?: number }[];
+  /** `noTargets`: the mode can't be chosen now — there is nothing legal for one of its targets (CR 700.2a). */
+  options: { text: string; manual: boolean; cost?: string; /** Its pawprints ({P}). */ weight?: number; noTargets?: true }[];
 }
 
 interface Reading {
@@ -89,6 +90,17 @@ export function choiceModes(g: GameState, a: Choosing): ModeMenu | null {
   const max = bonus ? Math.max(m.max, m.bonus!.max) : m.max;
   const min = bonus && m.bonus!.exact ? max : m.min;
   const used = 'text' in modal ? usedModes(g, { id: r.source.id, zcc: r.source.zcc }, modal as Program & { text: string }) : [];
+  // CR 700.2a: a mode that would be illegal can't be chosen. Said mode by mode: "Choose two —" can't be asked about
+  // one mode on its own any other way.
+  const reading = r;
+  const noTargets = (targets: TargetSpec[] | undefined): boolean => {
+    if (!targets?.length) return false;
+    try {
+      return !targetingAs(reading.ability, () => withTargetKicks(reading.kicks, () => canChooseTargets(g, a.player, targets, reading.source, a.x ?? 0)));
+    } catch {
+      return false;
+    }
+  };
   return {
     min,
     max,
@@ -96,7 +108,13 @@ export function choiceModes(g: GameState, a: Choosing): ModeMenu | null {
     used,
     ...(m.budget !== undefined ? { budget: m.budget } : {}),
     // The compiler's "~" is the card itself: a player reads its name.
-    options: m.options.map((opt) => ({ text: opt.text.replace(/~/g, nameOf(g, r.source)), manual: Boolean(opt.manual), ...(opt.cost ? { cost: opt.cost } : {}), ...(opt.weight ? { weight: opt.weight } : {}) })),
+    options: m.options.map((opt) => ({
+      text: opt.text.replace(/~/g, nameOf(g, reading.source)),
+      manual: Boolean(opt.manual),
+      ...(opt.cost ? { cost: opt.cost } : {}),
+      ...(opt.weight ? { weight: opt.weight } : {}),
+      ...(noTargets(opt.targets) ? { noTargets: true as const } : {}),
+    })),
   };
 }
 

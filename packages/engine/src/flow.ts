@@ -706,8 +706,24 @@ function startCleanup(g: GameState, events: GameEvent[]): void {
 }
 
 export function finishCleanup(g: GameState, events: GameEvent[]): void {
-  // CR 514.2: damage wears off and "until end of turn" effects end (regeneration shields too, CR 701.19a) — "including
-  // phased-out permanents": one that phased out damaged comes back without the damage.
+  turnEffectsEnd(g, events);
+  // CR 514.3a: if state-based actions happen now, or abilities trigger (Necromancy: "at the beginning of the next cleanup
+  // step"), players get priority and another cleanup step follows.
+  const acted = checkStateBasedActions(g, events) || g.triggers.length > 0;
+  if (g.over || g.pending) return;
+  if (acted) {
+    g.extraCleanup = true;
+    givePriority(g, g.active);
+    return;
+  }
+  endStep(g, events);
+}
+
+/**
+ * CR 514.2: damage wears off and "until end of turn" and "this turn" effects end (regeneration shields too,
+ * CR 701.19a) — "including phased-out permanents": one that phased out damaged comes back without the damage.
+ */
+function turnEffectsEnd(g: GameState, events: GameEvent[]): void {
   for (const id of [...g.zones.battlefield, ...(g.phasedOut ?? [])]) {
     const o = g.objects[id];
     if (!o) continue;
@@ -726,16 +742,6 @@ export function finishCleanup(g: GameState, events: GameEvent[]): void {
   // CR 514.2: "this turn" prevention ends; "until your next turn" lasts on.
   g.prevention = g.prevention.filter((p) => p.untilTurnOf !== undefined);
   applyControlEffects(g, events);
-  // CR 514.3a: if state-based actions happen now, or abilities trigger (Necromancy: "at the beginning of the next cleanup
-  // step"), players get priority and another cleanup step follows.
-  const acted = checkStateBasedActions(g, events) || g.triggers.length > 0;
-  if (g.over || g.pending) return;
-  if (acted) {
-    g.extraCleanup = true;
-    givePriority(g, g.active);
-    return;
-  }
-  endStep(g, events);
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,6 +1064,12 @@ export function playerLoses(g: GameState, player: PlayerId, reason: string, even
   // their turn ends and the next player's turn begins.
   if (g.active === player && g.started) {
     g.stack = [];
+    // The turn ends with them: nothing is attacking or blocking any more (CR 511.3), and what its cleanup step would
+    // have done is done (CR 514.2) — an "until end of turn" effect doesn't last into the next player's turn.
+    g.combat = null;
+    delete g.inExtra;
+    delete g.extraPhases;
+    turnEffectsEnd(g, events);
     for (const p of Object.values(g.players)) {
       p.pool = emptyPool();
       delete p.restricted;
