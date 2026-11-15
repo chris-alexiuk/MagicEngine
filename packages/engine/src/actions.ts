@@ -12,7 +12,7 @@ import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
-import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities } from './characteristics.js';
+import { grantedKeywordOff, hasKeyword, matchesFilter, objectAbilities, power, printedAbilities, staticConditionHolds } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import {
   checkStateBasedActions,
@@ -596,7 +596,7 @@ export function castOptionsFor(g: GameState, player: PlayerId, o: GameObject, fa
       const src = g.objects[id]!;
       if (src.controller !== player) continue;
       const grant = objectAbilities(g, src).find(
-        (a) => a.kind === 'static' && a.effect.type === 'grant_retrace' && (!a.effect.yourTurn || g.active === player) && matchesFilter(g, o, (a.effect.filter ?? {}) as ObjectFilter, { controller: player, source: src, anyZone: true }),
+        (a) => a.kind === 'static' && a.effect.type === 'grant_retrace' && staticConditionHolds(g, a.effect as { condition?: ConditionNode }, src) && matchesFilter(g, o, (a.effect.filter ?? {}) as ObjectFilter, { controller: player, source: src, anyZone: true }),
       );
       if (!grant) continue;
       base.push({ type: 'cast_option', id: 'retrace', kind: 'alternative', zone: 'graveyard', withManaCost: true, cost: { other: [{ type: 'discard', amount: 1, filter: { types: ['Land'] } }] } });
@@ -1345,7 +1345,7 @@ export function applyPowerUp(g: GameState, o: GameObject, ability: ActivatedAbil
   const r = ability.costReduction;
   if (r) {
     const ctx = { g, controller: player, source: o, events: [], targets, x: 0, memo: {} };
-    const applies = (!r.condition || evalCondition(r.condition, ctx)) && (!r.yourTurn || g.active === player);
+    const applies = !r.condition || evalCondition(r.condition, ctx);
     const n = applies ? r.amount * (r.per ? Math.max(0, amountOf(ctx, r.per)) : 1) : 0;
     if (n > 0) mana.generic = r.more ? mana.generic + n : Math.max(0, mana.generic - n);
     // Kami of Jealous Thirst: "costs {4}{B} less" — the colored part too (CR 601.2f).

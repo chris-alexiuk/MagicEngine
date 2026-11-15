@@ -243,7 +243,7 @@ export interface ActivatedAbility extends AbilityBase, Program {
   payOnly?: 'chosen';
   /** Crypt Rats: "Spend only black mana on X." — the X paid in that color (CR 107.3). */
   xColor?: 'W' | 'U' | 'B' | 'R' | 'G';
-  costReduction?: { amount: number; per?: AmountExpr; condition?: ConditionNode; yourTurn?: true; /** Loreseeker's Stone: "costs {1} more". */ more?: true; /** Kami of Jealous Thirst: "costs {4}{B} less" — colored mana too. */ mana?: string };
+  costReduction?: { amount: number; per?: AmountExpr; /** "… if you control a Wizard", "… during your turn". */ condition?: ConditionNode; /** Loreseeker's Stone: "costs {1} more". */ more?: true; /** Kami of Jealous Thirst: "costs {4}{B} less" — colored mana too. */ mana?: string };
   /** "Activate no more than twice each turn." */
   maxPerTurn?: number;
   /** CR 702.142a: a boast ability (Birgi's "boast twice" raises its limit). */
@@ -1463,10 +1463,8 @@ export interface QuantityReplacementNode extends EffectNode {
   event: 'gain_life' | 'tokens' | 'counters' | 'damage' | 'mill' | 'lose_life' | 'proliferate' | 'copies';
   /** copies: "You may choose new targets for the additional copy." */
   newTargetsForExtra?: true;
-  /** gain_life: Phial of Galadriel — "If you would gain life while you have 5 or less life, …". */
-  lifeAtMost?: number;
-  /** Bloodletter of Aclazotz: only during its controller's turn. */
-  yourTurn?: true;
+  /** When it applies: "… while you have 5 or less life" (Phial of Galadriel), "… during your turn" (Bloodletter of Aclazotz). */
+  condition?: ConditionNode;
   /** 'extra' (tokens): "those tokens plus an additional Food token are created instead" (Peregrin Took, Xorn); 'half':
    * "half that many …, rounded down" (Vorinclex, Monstrous Raider). */
   /** 'swap' (tokens): Divine Visitation — "that many 4/4 white Angel creature tokens … are created instead" (`extra.token`). */

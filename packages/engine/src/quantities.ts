@@ -1,5 +1,5 @@
 import type { QuantityReplacementNode, StaticAbility } from '@mtg/schema';
-import { hasRule, matchesFilter, objectAbilities } from './characteristics.js';
+import { hasRule, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import { fitsDamage } from './damage-filter.js';
 import { replaced, type Amount, type Life, type Replacement, type Rules } from './instead.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PlayerId } from './types.js';
@@ -60,7 +60,8 @@ export function amountEffects(g: GameState, event: QuantityReplacementNode['even
     for (const [i, a] of objectAbilities(g, source).entries()) {
       if (a.kind !== 'static' || (a as StaticAbility).effect.type !== 'replace_quantity') continue;
       const e = (a as StaticAbility).effect as QuantityReplacementNode;
-      if (e.event !== event || e.op === 'extra' || e.op === 'swap' || !applies(g, e, source, subject)) continue;
+      // "… while you have 5 or less life" (Phial of Galadriel), "… during your turn" (Bloodletter of Aclazotz): its condition.
+      if (e.event !== event || e.op === 'extra' || e.op === 'swap' || !applies(g, e, source, subject) || !staticConditionHolds(g, e, source)) continue;
       found.push({ key: `${id}:${source.zcc}:${i}`, label: a.text, change: (n) => changedBy(e, n) });
     }
   }
@@ -152,14 +153,11 @@ function applies(g: GameState, e: QuantityReplacementNode, source: GameObject, s
   const who = (p: PlayerId | undefined) => !e.who || e.who === 'each' || (e.who === 'you' ? p === you : p !== undefined && p !== you);
   switch (e.event) {
     case 'gain_life':
-      // Phial of Galadriel: "… while you have 5 or less life".
-      return who(s.player) && (e.lifeAtMost === undefined || (s.player !== undefined && (g.players[s.player]?.life ?? 0) <= e.lifeAtMost));
+    case 'lose_life':
     case 'mill':
     case 'copies':
     case 'proliferate':
       return who(s.player);
-    case 'lose_life':
-      return who(s.player) && (!e.yourTurn || g.active === you);
     case 'counters':
       if (!who(s.player)) return false;
       if (e.counter && e.counter !== s.counter) return false;

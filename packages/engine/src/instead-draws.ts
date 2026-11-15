@@ -29,7 +29,7 @@ export const DRAW_RULES: Rules<Draw> = {
 
   /**
    * Thought Reflection: "If you would draw a card, draw two cards instead."; Alhammarret's Archive: "… except the first
-   * one you draw in each of your draw steps"; Phial of Galadriel: "… while you have no cards in hand".
+   * one you draw in each of your draw steps"; Phial of Galadriel: "… while you have no cards in hand" (its condition).
    */
   doubled(g, h) {
     if (h.wins) return [];
@@ -38,7 +38,6 @@ export const DRAW_RULES: Rules<Draw> = {
       const e = s.node;
       if (e.emptyWin || e.steal || s.source.controller !== h.player) continue;
       if (e.exceptFirst && h.first) continue;
-      if (e.emptyHand && (g.zones.hand[h.player]?.length ?? 0) > 0) continue;
       out.push({ key: s.key, label: says(g, s.source, s.text), apply: (d) => ({ ...d, n: d.n * 2 }) });
     }
     return out;

@@ -5856,9 +5856,8 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     const e = check.event;
     if (e.type !== 'life' || e.delta >= 0 || check.sourceLeft) return [];
     if (t.who === 'you' ? e.player !== check.controller : t.who !== 'any' && e.player === check.controller) return [];
-    // Valgavoth: "for the first time during each of their turns" — the first loss this turn, on that player's turn.
+    // "for the first time each turn" — that player's first loss this turn.
     if (t.first && !e.firstLoss) return [];
-    if (t.theirTurn && check.g.active !== e.player) return [];
     return [{ player: e.player, amount: -e.delta }];
   },
   // Baral: "Whenever a spell or ability you control counters a spell" (CR 701.6a).
@@ -5924,10 +5923,6 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'any' ? false : t.who === 'opponent' ? e.player === check.controller : e.player !== (t.who === 'enchanted' ? check.source.attachedToPlayer : check.controller)) return [];
     // "Whenever you draw your second card each turn"
     if (t.nth && e.nth !== t.nth) return [];
-    // The Council of Four: "Whenever a player draws their second card during their turn".
-    if (t.ownTurn && check.g.active !== e.player) return [];
-    // The Watcher in the Water: "Whenever you draw a card during an opponent's turn".
-    if (t.opponentsTurn && check.g.active === check.controller) return [];
     // Orcish Bowmasters: "except the first one they draw in each of their draw steps"
     if (t.exceptFirstInDrawStep && e.firstInDrawStep) return [];
     return [{ player: e.player }];
@@ -6337,10 +6332,6 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
       if (src.zone !== 'battlefield' || !chars(check.g, src).types.includes('Creature')) return [];
       if ((e.manaSpent ?? 0) <= Math.min(power(check.g, src), toughness(check.g, src))) return [];
     }
-    // "… during an opponent's turn"
-    if (t.opponentsTurn && check.g.active === e.player) return [];
-    // The Council of Four: "Whenever a player casts their second spell during their turn".
-    if (t.ownTurn && check.g.active !== e.player) return [];
     // Boromir: "if no mana was spent to cast it"
     if (t.noManaSpent && (e.manaSpent ?? 0) > 0) return [];
     // "… from your hand", "… from exile", "… from anywhere other than your hand"

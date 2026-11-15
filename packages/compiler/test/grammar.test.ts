@@ -975,7 +975,7 @@ describe('trigger batch (slice 39)', () => {
       ['When you cycle this card, draw a card.', { type: 'activate', keyword: 'cycling', self: true }],
       ['Whenever a player cycles a card, you gain 1 life.', { type: 'activate', who: 'any', keyword: 'cycling' }],
       ['Whenever you cast your second spell each turn, draw a card.', { type: 'cast', nth: 2 }],
-      ["Whenever you cast your first spell during each opponent's turn, draw a card.", { type: 'cast', nth: 1, opponentsTurn: true }],
+      ["Whenever you cast your first spell during each opponent's turn, draw a card.", { type: 'cast', nth: 1, while: { type: 'your_turn', value: false } }],
       ['Whenever you cast or copy an instant or sorcery spell, scry 1.', { type: 'cast', orCopy: true }],
       ['Whenever you cast a spell from anywhere other than your hand, draw a card.', { type: 'cast', notFrom: 'hand' }],
       ['Whenever one or more creatures you control deal combat damage to a player, draw a card.', { type: 'combat_damage_batch' }],
@@ -1990,7 +1990,7 @@ describe('slice 165', () => {
   it('reads modified, even mana values, granted retrace, Emry, Urza and Nesting Grounds', () => {
     expect(parse('Modified creatures you control have trample.', 'Legendary Creature — Spirit', 'K').abilities[0]).toMatchObject({ effect: { affected: { filter: { modified: true, controller: 'you' } }, keywords: [{ id: 'trample' }] } });
     expect(parse("Your opponents can't block with creatures with even mana values.", 'Creature — Eldrazi', 'V').abilities[0]).toMatchObject({ effect: { affected: { filter: { manaValueParity: 'even', controller: 'opponent' } }, rules: ['cant_block'] } });
-    expect(parse('During your turn, nonland permanent cards in your graveyard have retrace.', 'Legendary Creature — Wolf', 'S').abilities[0]).toMatchObject({ effect: { type: 'grant_retrace', yourTurn: true, filter: { notTypes: ['Land'] } } });
+    expect(parse('During your turn, nonland permanent cards in your graveyard have retrace.', 'Legendary Creature — Wolf', 'S').abilities[0]).toMatchObject({ effect: { type: 'grant_retrace', condition: { type: 'your_turn', value: true }, filter: { notTypes: ['Land'] } } });
     expect(parse('{T}: Choose target artifact card in your graveyard. You may cast that card this turn.', 'Legendary Creature — Merfolk Wizard', 'E').abilities[0]).toMatchObject({ effects: [{ type: 'grant_play', what: { ref: 'target', index: 0 }, mode: 'cast' }] });
     expect(parse('{5}: Shuffle your library, then exile the top card. Until end of turn, you may play that card without paying its mana cost.', 'Legendary Artifact Creature — Human Artificer', 'U').abilities[0]).toMatchObject({ effects: [{ type: 'shuffle' }, { type: 'exile_top', play: { mode: 'play', until: 'eot', free: true } }] });
     expect(parse('{1}, {T}: Move a counter from target permanent you control onto a second target permanent.', 'Land', 'N').abilities[0]).toMatchObject({ effects: [{ type: 'move_counters', counter: 'any' }] });
@@ -2105,7 +2105,7 @@ describe('slice 170 (targets chosen as it is cast; each creature deals damage)',
     expect(parse('Each player chooses from among the permanents they control an artifact, a creature, an enchantment, and a land, then sacrifices the rest.', 'Sorcery', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'keep_choose', slots: [{ types: ['Artifact'] }, {}, {}, { types: ['Land'] }] }] });
     expect(parse('Each player chooses six lands they control, then sacrifices the rest.', 'Sorcery', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'keep_choose', pool: { types: ['Land'] }, count: 6 }] });
     expect(parse('When the twelfth hour counter is put on ~, draw seven cards.', 'Artifact', 'M').abilities[0]).toMatchObject({ trigger: { type: 'counters_put', counter: 'hour', reaches: 12 } });
-    expect(parse('If an opponent would lose life during your turn, they lose twice that much life instead.', 'Creature — Vampire Demon', 'B').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'lose_life', op: 'double', yourTurn: true } });
+    expect(parse('If an opponent would lose life during your turn, they lose twice that much life instead.', 'Creature — Vampire Demon', 'B').abilities[0]).toMatchObject({ effect: { type: 'replace_quantity', event: 'lose_life', op: 'double', condition: { type: 'your_turn', value: true } } });
     expect(parse('Draw a card. If this spell was cast from a graveyard, draw two cards instead.', 'Sorcery', 'P').abilities[0]).toMatchObject({ effects: [{ type: 'if', cond: { type: 'cast_by_you', from: 'graveyard' } }] });
     expect(parse('As ~ enters, choose artifact, creature, enchantment, instant, or sorcery.', 'Artifact', 'K').abilities[0]).toMatchObject({ effect: { type: 'as_enters', choice: 'card_type', options: ['Artifact', 'Creature', 'Enchantment', 'Instant', 'Sorcery'] } });
   });
@@ -2582,7 +2582,7 @@ describe('slice 199 (more)', () => {
     expect(parse("Counter target spell. If that spell is countered this way, put it on top of its owner's library instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'library_top' }] });
     expect(parse("Counter target spell. If that spell is countered this way, put it into its owner's hand instead of into that player's graveyard.", 'Instant').abilities[0]).toMatchObject({ effects: [{ type: 'counter', to: 'hand' }] });
     expect(parse('Commander creatures you own have "Whenever this creature attacks a player, if no opponent has more life than that player, you create two Treasure tokens."', 'Enchantment').abilities[0]).toMatchObject({ effect: { affected: { filter: { commander: true, owner: 'you' } }, keywords: [{ id: 'ability', abilities: [{ trigger: { type: 'attacks', defender: 'player' }, condition: { type: 'life', mostAmongOpponents: true } }] }] } });
-    expect(parse('Whenever an opponent loses life for the first time during each of their turns, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'lose_life', first: true, theirTurn: true } });
+    expect(parse('Whenever an opponent loses life for the first time during each of their turns, draw a card.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'lose_life', first: true, while: { type: 'your_turn', value: true, who: { ref: 'trigger_player' } } } });
     expect(parse('Whenever you discard one or more cards, this creature deals that much damage to each opponent.', 'Creature').abilities[0]).toMatchObject({ trigger: { type: 'discard', batch: true }, effects: [{ type: 'deal_damage', amount: { kind: 'event' } }] });
     expect(parse("This creature can't attack a player it has already attacked this turn.", 'Creature').abilities[0]).toMatchObject({ effect: { rules: ['cant_attack_same_player'] } });
   });
@@ -2741,5 +2741,41 @@ describe('which damage: one description for prevention, redirection, "double tha
     expect(one('All damage that would be dealt to you is dealt to enchanted creature instead.', 'Enchantment — Aura')).toMatchObject({ effect: { type: 'redirect_damage', damage: { players: 'you' }, to: 'attached' } });
     expect(damage('All damage that would be dealt to you and other permanents you control is dealt to this creature instead.', 'Creature — Giant')).toEqual({ players: 'you', objects: { controller: 'you', other: true } });
     expect(damage('As long as this creature is untapped, all combat damage that would be dealt to you by unblocked creatures is dealt to this creature instead.', 'Creature — Human')).toEqual({ players: 'you', combat: true, by: { combat: 'attacking', blockedState: 'unblocked' } });
+  });
+});
+
+describe('when it applies is a condition: no flag for "during your turn" or "while you have …"', () => {
+  const trigger = (text: string) => (one(text, 'Creature — Faerie') as { trigger: Record<string, unknown> }).trigger;
+  const effect = (text: string, typeLine = 'Artifact') => (one(text, typeLine) as { effect: Record<string, unknown> }).effect;
+  const yours = { type: 'your_turn', value: true };
+  const notYours = { type: 'your_turn', value: false };
+  const theirs = { type: 'your_turn', value: true, who: { ref: 'trigger_player' } };
+
+  it('a trigger "during your turn", "during an opponent\'s turn", "during their turn": part of its event, on any kind of trigger', () => {
+    expect(trigger("Whenever you cast a spell during an opponent's turn, draw a card.")).toEqual({ type: 'cast', who: 'you', filter: {}, while: notYours });
+    expect(trigger("Whenever you draw a card during an opponent's turn, you gain 1 life.")).toEqual({ type: 'draw', who: 'you', while: notYours });
+    expect(trigger('Whenever you gain life during your turn, draw a card.')).toEqual({ type: 'gain_life', who: 'you', while: yours });
+    expect(trigger('Whenever a player draws their second card during their turn, you draw a card.')).toEqual({ type: 'draw', who: 'any', nth: 2, while: theirs });
+    expect(trigger('Whenever a player casts their second spell during their turn, you draw a card.')).toEqual({ type: 'cast', who: 'any', filter: {}, nth: 2, while: theirs });
+    // No card needed a flag for these: the same words on other triggers.
+    expect(trigger('Whenever an opponent casts a spell during their turn, you draw a card.')).toEqual({ type: 'cast', who: 'opponent', filter: {}, while: theirs });
+    expect(trigger("Whenever you discard a card during an opponent's turn, draw a card.")).toMatchObject({ type: 'discard', while: notYours });
+  });
+
+  it('a replacement effect "while …" or "during your turn": the static ability\'s condition', () => {
+    expect(effect('If you would gain life while you have 5 or less life, you gain twice that much life instead.')).toEqual({ type: 'replace_quantity', event: 'gain_life', who: 'you', op: 'double', condition: { type: 'life', op: 'le', n: 5 } });
+    expect(effect('If you would draw a card while you have no cards in hand, draw two cards instead.')).toEqual({ type: 'draw_replacement', condition: { type: 'hand', op: 'le', n: 0 } });
+    expect(effect('If an opponent would lose life during your turn, they lose twice that much life instead.')).toEqual({ type: 'replace_quantity', event: 'lose_life', who: 'opponents', op: 'double', condition: yours });
+    // Any condition the grammar reads will do.
+    expect(effect('If you would gain life while you control a Cleric, you gain twice that much life instead.')).toMatchObject({ event: 'gain_life', op: 'double', condition: { type: 'count', filter: { subtypes: ['Cleric'] }, min: 1 } });
+    // One it can't read leaves the line unread (not read without it).
+    expect(parse('If you would gain life while the moon is full, you gain twice that much life instead.', 'Artifact').unparsed).toHaveLength(1);
+    // "except the first one …" is about the draw itself, not a condition.
+    expect(effect('If you would draw a card except the first one you draw in each of your draw steps, draw two cards instead.')).toEqual({ type: 'draw_replacement', exceptFirst: true });
+  });
+
+  it('granted retrace and an activation cost "during your turn"', () => {
+    expect(effect('During your turn, nonland permanent cards in your graveyard have retrace.', 'Legendary Creature — Treefolk')).toMatchObject({ type: 'grant_retrace', condition: yours });
+    expect((one('{2}, {T}: Draw a card. This ability costs {1} less to activate during your turn.', 'Artifact') as { costReduction?: unknown }).costReduction).toEqual({ amount: 1, condition: yours });
   });
 });

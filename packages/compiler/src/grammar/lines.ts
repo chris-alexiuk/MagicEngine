@@ -672,7 +672,7 @@ export const activatedRule: GrammarRule = {
         if (reduce[1] === 'X') reduce[1] = '1';
         const condition = reduce[3] ? parseCondition(reduce[3], rb) : undefined;
         if ((reduce[2] && !per) || (reduce[3] && !condition) || node.costReduction) return null;
-        node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : {}), ...(reduce[4] ? { yourTurn: true as const } : {}), ...(more ? { more: true as const } : {}) };
+        node.costReduction = { amount: Number(reduce[1]), ...(per ? { per } : {}), ...(condition ? { condition } : reduce[4] ? { condition: { type: 'your_turn', value: true } } : {}), ...(more ? { more: true as const } : {}) };
         effectText = effectText.slice(0, reduce.index) + (effectText.endsWith('.') && !effectText.slice(0, reduce.index).endsWith('.') ? '.' : '');
         changed = true;
       }
@@ -919,6 +919,13 @@ const STEP_WORDS: Record<string, string> = {
   'postcombat main phase': 'main2',
 };
 
+/**
+ * When a trigger's event has to happen: "… during your turn" (true), "… during an opponent's turn" (false) — the
+ * controller's; 'theirs': "… during their turn" — the turn of the player the event is about. Part of the trigger
+ * event (`while`), like any other condition on it.
+ */
+const duringTurn = (yours: boolean, whose: 'yours' | 'theirs' = 'yours'): ConditionNode => ({ type: 'your_turn', value: yours, ...(whose === 'theirs' ? { who: { ref: 'trigger_player' } } : {}) });
+
 function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | null {
   // CR 903.3: Tome of Legends: "Whenever your commander enters or attacks" — a commander you own.
   const t = text.trim().replace(/^your commander (?=enters|attacks|dies|deals|becomes|blocks)/, 'a commander you own ');
@@ -926,10 +933,15 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   // part of the trigger event, checked as it attacks (not again as the ability resolves).
   // ("while saddled" is the attack trigger's own `saddled`, below.)
   // Jenova, Ancient Calamity: "Whenever a Mutant you control dies during your turn" — only as it happens on your turn.
-  const yourTurn = word === 'Whenever' ? /^(.+) during your turn$/.exec(t) : null;
-  if (yourTurn) {
-    const base = parseTrigger(word, yourTurn[1]!, b);
-    if (base && base.trigger.type !== 'phase' && !base.trigger.while) return { ...base, trigger: { ...base.trigger, while: { type: 'your_turn', value: true } } };
+  // Brineborn Cutthroat: "Whenever you cast a spell during an opponent's turn"; The Watcher in the Water: "Whenever you draw
+  // a card during an opponent's turn". "… during their turn": the turn of the player the event is about.
+  const during = word === 'Whenever' ? /^(.+) during (your turn|an opponent's turn|their turn)$/.exec(t) : null;
+  if (during) {
+    const base = parseTrigger(word, during[1]!, b);
+    const theirs = during[2] === 'their turn';
+    if (base && base.trigger.type !== 'phase' && !base.trigger.while && (!theirs || base.player?.ref === 'trigger_player')) {
+      return { ...base, trigger: { ...base.trigger, while: theirs ? duringTurn(true, 'theirs') : duringTurn(during[2] === 'your turn') } };
+    }
   }
   // Wax-Wane Witness: "Whenever you gain or lose life during your turn" — either event, each time.
   if (t === 'you gain or lose life') return { trigger: { type: 'either', of: [{ type: 'gain_life', who: 'you' }, { type: 'lose_life', who: 'you' }] }, it: { ref: 'self' }, player: { ref: 'you' } };
@@ -1297,7 +1309,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const theirTurn = /their turn/.test(loses[2] ?? '');
     if (theirTurn && loses[1] === 'you') return null;
     return {
-      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : loses[1] === 'a player' ? 'any' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { theirTurn: true } : {}) },
+      trigger: { type: 'lose_life', who: loses[1] === 'you' ? 'you' : loses[1] === 'a player' ? 'any' : 'opponent', ...(first ? { first: true } : {}), ...(theirTurn ? { while: duringTurn(true, 'theirs') } : {}) },
       it: { ref: 'self' },
       player: { ref: 'trigger_player' },
     };
@@ -2140,7 +2152,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (life) {
     b.eventAmount = true;
     const yours = / during each of your turns$/.test(t);
-    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}), ...(yours ? { while: { type: 'your_turn', value: true } } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
+    return { trigger: { type: 'gain_life', who: 'you', ...(life[2] ? { first: true } : {}), ...(yours ? { while: duringTurn(true) } : {}) }, it: { ref: 'self' }, player: { ref: 'you' } };
   }
   // Kavu Predator, Punishing Fire: "Whenever an opponent gains life" — that player, and how much.
   if (t === 'an opponent gains life') {
@@ -2153,7 +2165,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   const nth = /^(you|an opponent|a player) draws? (?:your|their) (first|second|third|fourth|fifth) card (each turn|in a turn|during their turn)$/.exec(t);
   if (nth) {
     const who = nth[1] === 'you' ? 'you' : nth[1] === 'a player' ? 'any' : 'opponent';
-    return { trigger: { type: 'draw', who, nth: ['first', 'second', 'third', 'fourth', 'fifth'].indexOf(nth[2]!) + 1, ...(nth[3] === 'during their turn' ? { ownTurn: true } : {}) }, it: { ref: 'self' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
+    return { trigger: { type: 'draw', who, nth: ['first', 'second', 'third', 'fourth', 'fifth'].indexOf(nth[2]!) + 1, ...(nth[3] === 'during their turn' ? { while: duringTurn(true, 'theirs') } : {}) }, it: { ref: 'self' }, player: who === 'you' ? { ref: 'you' } : { ref: 'trigger_player' } };
   }
   if (t === 'an opponent draws a card') return { trigger: { type: 'draw', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // Spiteful Visions, Kami of the Crescent Moon: "Whenever a player draws a card"
@@ -2164,11 +2176,10 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     const opp = exceptFirst[1] !== 'you draw';
     return { trigger: { type: 'draw', who: opp ? 'opponent' : 'you', exceptFirstInDrawStep: true }, it: { ref: 'self' }, player: opp ? { ref: 'trigger_player' } : { ref: 'you' } };
   }
-  // The Watcher in the Water: "Whenever you draw a card during an opponent's turn".
-  const draw = /^(you draw|enchanted (?:player|opponent) draws) a card( during an opponent's turn)?$/.exec(t);
+  const draw = /^(you draw|enchanted (?:player|opponent) draws) a card$/.exec(t);
   if (draw) {
     const cursed = draw[1] !== 'you draw';
-    return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you', ...(draw[2] ? { opponentsTurn: true } : {}) }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
+    return { trigger: { type: 'draw', who: cursed ? 'enchanted' : 'you' }, it: { ref: 'self' }, player: cursed ? { ref: 'enchanted_player' } : { ref: 'you' } };
   }
 
   // CR 602.2: "Whenever you activate an ability that isn't a mana ability", "Whenever an opponent activates a
@@ -2311,7 +2322,8 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (nthSpell) {
     const who = nthSpell[1] === 'you' ? 'you' : nthSpell[1] === 'an opponent' ? 'opponent' : 'any';
     const nth = ['first', 'second', 'third'].indexOf(nthSpell[2]!) + 1;
-    const when = nthSpell[3] === 'each turn' ? {} : nthSpell[3] === 'during their turn' ? { ownTurn: true } : { opponentsTurn: true };
+    // "during their turn": the caster's own; "during each opponent's turn": not the caster's.
+    const when = nthSpell[3] === 'each turn' ? {} : { while: nthSpell[3] === 'during their turn' ? duringTurn(true, 'theirs') : duringTurn(false, who === 'you' ? 'yours' : 'theirs') };
     return {
       trigger: { type: 'cast', who, filter: {}, nth, ...when },
       it: { ref: 'trigger_object' },
@@ -2364,10 +2376,6 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
       if (pf) extra.targets = pf.filter;
       if (targets[1]) extra.targetsYou = true;
       what = what.slice(0, targets.index);
-    }
-    if (/ during an opponent's turn$/.test(what)) {
-      what = what.replace(/ during an opponent's turn$/, '');
-      extra.opponentsTurn = true;
     }
     if (/or cop/.test(cast[2]!)) extra.orCopy = true;
     // Questing Druid: "a spell that's white, blue, black, or red".
@@ -4040,17 +4048,27 @@ export const quantityReplacementRule: GrammarRule = {
     }
     // Tekuthal, Inquiry Dominus: "If you would proliferate, proliferate twice instead."
     if (/^If you would proliferate, proliferate twice instead\.$/.test(line)) return make({ event: 'proliferate', who: 'you', op: 'double' });
+    // When it applies, where the card says: "… while you have 5 or less life", "… during your turn" — a condition like any
+    // other static ability's (the engine checks it as the event would happen).
+    const when = (words: string | undefined): { condition?: ConditionNode } | null => {
+      if (!words) return {};
+      if (words === 'during your turn') return { condition: { type: 'your_turn', value: true } };
+      const condition = parseCondition(words.replace(/^while /, ''), b.clone());
+      return condition ? { condition } : null;
+    };
     // Bloodletter of Aclazotz: "If an opponent would lose life during your turn, they lose twice that much life instead."
-    const lose = /^If (an opponent|a player) would lose life( during your turn)?, (?:they|that player) loses? (.+?) instead\.$/.exec(line);
+    const lose = /^If (an opponent|a player) would lose life(?: (during your turn|while .+?))?, (?:they|that player) loses? (.+?) instead\.$/.exec(line);
     if (lose) {
       const op = quantityOp(lose[3]!);
-      return op && /\blife\b/.test(lose[3]!) ? make({ event: 'lose_life', who: lose[1] === 'a player' ? 'each' : 'opponents', ...op, ...(lose[2] ? { yourTurn: true } : {}) }) : null;
+      const cond = when(lose[2]);
+      return op && cond && /\blife\b/.test(lose[3]!) ? make({ event: 'lose_life', who: lose[1] === 'a player' ? 'each' : 'opponents', ...op, ...cond }) : null;
     }
     // Phial of Galadriel: "If you would gain life while you have 5 or less life, you gain twice that much life instead."
-    const life = /^If you would gain life(?: while you have (\d+) or less life)?, you gain (.+?) instead\.$/.exec(line);
+    const life = /^If you would gain life(?: (during your turn|while .+?))?, you gain (.+?) instead\.$/.exec(line);
     if (life) {
       const op = quantityOp(life[2]!);
-      return op && /\blife\b/.test(life[2]!) ? make({ event: 'gain_life', who: 'you', ...op, ...(life[1] ? { lifeAtMost: Number(life[1]) } : {}) }) : null;
+      const cond = when(life[1]);
+      return op && cond && /\blife\b/.test(life[2]!) ? make({ event: 'gain_life', who: 'you', ...op, ...cond }) : null;
     }
     // Peregrin Took, Xorn, Chatterfang: "… those tokens plus an additional Food token are created instead."
     const plusToken =
@@ -4081,8 +4099,11 @@ export const quantityReplacementRule: GrammarRule = {
     // Teferi's Ageless Insight: "If you would draw a card except the first one you draw in each of your draw steps, draw
     // two cards instead."; Thought Reflection: "If you would draw a card, draw two cards instead."
     // Phial of Galadriel: "If you would draw a card while you have no cards in hand, draw two cards instead."
-    const drawTwo = /^If you would draw a card( except the first one you draw in each of your draw steps| while you have no cards in hand)?, draw two cards instead\.$/.exec(line);
-    if (drawTwo) return { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1] ? (drawTwo[1].startsWith(' while') ? { emptyHand: true } : { exceptFirst: true }) : {}) } };
+    const drawTwo = /^If you would draw a card(?: (except the first one you draw in each of your draw steps|while .+?))?, draw two cards instead\.$/.exec(line);
+    if (drawTwo) {
+      const cond = drawTwo[1]?.startsWith('while ') ? when(drawTwo[1]) : {};
+      return cond ? { kind: 'static', text: original, effect: { type: 'draw_replacement', ...(drawTwo[1]?.startsWith('except') ? { exceptFirst: true } : {}), ...cond } } : null;
+    }
     // Notion Thief: "If an opponent would draw a card except the first one they draw in each of their draw steps, instead that
     // player skips that draw and you draw a card."
     if (/^If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card\.$/.test(line)) {
@@ -5442,7 +5463,7 @@ export const grantedRetraceRule: GrammarRule = {
     const pf = parseFilter(`${m[2]} in your graveyard`, new Binder(env));
     if (!pf) return null;
     const { zone: _z, owner: _o, ...filter } = pf.filter;
-    return { kind: 'static', text: original, effect: { type: 'grant_retrace', filter, ...(m[1] ? { yourTurn: true } : {}) } } as StaticAbility;
+    return { kind: 'static', text: original, effect: { type: 'grant_retrace', filter, ...(m[1] ? { condition: { type: 'your_turn', value: true } } : {}) } } as StaticAbility;
   },
 };
 

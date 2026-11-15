@@ -3,8 +3,8 @@
  * (zones.ts) puts every move to them through instead.ts. A rule finds the effects of its sort that apply to the move
  * as it stands and says what each makes of it; which goes first when several apply is not its business.
  */
-import type { ExileInsteadNode, ObjectFilter } from '@mtg/schema';
-import { abilitiesOf, chars, matchesFilter, objectAbilities } from './characteristics.js';
+import type { ConditionNode, ExileInsteadNode, ObjectFilter } from '@mtg/schema';
+import { abilitiesOf, chars, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { Also, Move, Replacement, Rules } from './instead.js';
 import { createTokens } from './permanents.js';
 import { applyLifeGain } from './quantities.js';
@@ -32,12 +32,15 @@ const hasMadness = (g: GameState, o: GameObject): boolean => faceOf(g, o).keywor
 /** What a rule's effect is called when a player chooses between several: the card, and its words. */
 export const says = (g: GameState, source: GameObject, text: string): string => `${nameOf(g, source)}: ${text.length > 260 ? `${text.slice(0, 257)}…` : text}`;
 
-/** Each static ability with this tag among everything whose abilities work now, with its place (for a key of its own). */
+/**
+ * Each static ability with this tag among everything whose abilities work now — and whose condition, if it has one, holds
+ * ("… while you have no cards in hand") — with its place (for a key of its own).
+ */
 export function* statics(g: GameState, tag: string): Generator<{ source: GameObject; node: Record<string, unknown>; text: string; key: string }> {
   for (const id of abilitySources(g)) {
     const source = g.objects[id]!;
     for (const [i, a] of objectAbilities(g, source).entries()) {
-      if (a.kind === 'static' && a.effect.type === tag) yield { source, node: a.effect, text: a.text, key: `${tag}:${source.id}:${source.zcc}:${i}` };
+      if (a.kind === 'static' && a.effect.type === tag && staticConditionHolds(g, a.effect as { condition?: ConditionNode }, source)) yield { source, node: a.effect, text: a.text, key: `${tag}:${source.id}:${source.zcc}:${i}` };
     }
   }
 }
