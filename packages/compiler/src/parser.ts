@@ -438,11 +438,7 @@ export class ParserRegistry {
       // Thrumming Stone: "Spells you cast have ripple 4."
       const spellGrant = /^(?:The first spell you cast( from exile)? each turn has|((?:Instant and sorcery )?)Spells you cast(?: with mana value (\d+) or greater)? have) (cascade|storm|ripple \d+)\.$/i.exec(kind ? fromHand.replace(/^\w+ spells/, 'Spells') : fromHand);
       if (spellGrant) {
-        const kws = this.keywords.parseLine(spellGrant[4]!);
-        if (kws?.length === 1) {
-          const abilities = this.expandKeyword(kws[0]!, env);
-          if (abilities) kws[0]!.abilities = abilities;
-        }
+        const kws = this.keywordsOf(spellGrant[4]!, env);
         if (kws?.length === 1 && keywordSupported(kws[0]!) && (!kind || kindFilter)) {
           if (twice) kws.push(structuredClone(kws[0]!));
           const filter: ObjectFilter = { controller: 'you', zone: 'stack', ...(spellGrant[2] ? { types: ['Instant', 'Sorcery'] } : {}), ...(kindFilter ? (({ zone: _z, ...f }) => f)(kindFilter.filter) : {}), ...(fromHand !== grantLine ? { castFromZone: 'hand' as const } : {}), ...(spellGrant[3] ? { manaValue: { op: 'ge', n: Number(spellGrant[3]) } } : {}), ...(/^The first/i.test(line) ? { firstCastThisTurn: spellGrant[1] ? { fromZone: 'exile' as const } : {} } : {}) };
@@ -488,14 +484,13 @@ export class ParserRegistry {
       // Avenger of the Fallen: "Mobilize X, where X is the number of creature cards in your graveyard." (counted as it attacks)
       const ownMobilizeX = /^Mobilize X, where X is (.+)\.$/.exec(line);
       if (ownMobilizeX) {
-        const kw = this.keywords.parseLine('Mobilize 1');
-        const abilities = kw?.length === 1 ? this.expandKeyword(kw[0]!, env) : null;
+        const kw = this.keywordsOf('Mobilize 1', env);
+        const abilities = kw?.length === 1 ? kw[0]!.abilities : null;
         const n = parseCount(ownMobilizeX[1]!, new Binder(env as GrammarEnv));
         const make = abilities?.[0]?.kind === 'triggered' ? (abilities[0] as { effects: EffectNode[] }).effects.find((e) => e.type === 'create_token') : undefined;
         if (kw?.length === 1 && make && n) {
           make.amount = n;
           delete kw[0]!.n;
-          kw[0]!.abilities = abilities!;
           result.keywords.push(kw[0]!);
         } else result.unparsed.push(line);
         continue;
@@ -533,12 +528,8 @@ export class ParserRegistry {
       const wordBullet = wordOptions ? /^• ([A-Z][A-Za-z]+) — (.+)$/.exec(line) : null;
       if (wordBullet && wordOptions!.includes(wordBullet[1]!)) {
         const wordGate: ConditionNode = { type: 'chosen_word', word: wordBullet[1]! };
-        const inner = this.keywords.parseLine(wordBullet[2]!);
+        const inner = this.keywordsOf(wordBullet[2]!, env);
         if (inner) {
-          for (const kw of inner) {
-            const abilities = this.expandKeyword(kw, env);
-            if (abilities) kw.abilities = abilities;
-          }
           if (!inner.every(keywordSupported)) result.manualKeywords.push(line);
           else result.abilities.push({ kind: 'static', text: line, gate: wordGate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: inner } });
           continue;
@@ -580,12 +571,8 @@ export class ParserRegistry {
         // vigilance" then "Whenever you sacrifice a land, …").
         if (stationSymbol) gate = speedGate;
         const rest = maxSpeed ? maxSpeed[1]! : stationSymbol![2]!;
-        const inner = this.keywords.parseLine(rest);
+        const inner = this.keywordsOf(rest, env);
         if (inner) {
-          for (const kw of inner) {
-            const abilities = this.expandKeyword(kw, env);
-            if (abilities) kw.abilities = abilities;
-          }
           if (!inner.every(keywordSupported)) result.manualKeywords.push(line);
           else result.abilities.push({ kind: 'static', text: line, gate: speedGate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: inner } });
           continue;
@@ -618,30 +605,14 @@ export class ParserRegistry {
       }
       // A flavor word before a keyword line ("Diana — Equip {2}", CR 207.2c-style): just the keyword.
       const flavored = /^[A-Z][A-Za-z'’ ]{0,30} — (.+)$/.exec(line);
-      const kws = this.keywords.parseLine(line) ?? (flavored && !/^Choose\b/.test(line) ? this.keywords.parseLine(flavored[1]!) : null);
+      const kws = this.keywordsOf(line, env) ?? (flavored && !/^Choose\b/.test(line) ? this.keywordsOf(flavored[1]!, env) : null);
       if (kws && gate) {
         // A keyword at a level: "it has [abilities]" while the level holds (granted, layer 6).
-        for (const kw of kws) {
-          const abilities = this.expandKeyword(kw, env);
-          if (abilities) kw.abilities = abilities;
-        }
         if (!kws.every(keywordSupported)) result.manualKeywords.push(line);
         else result.abilities.push({ kind: 'static', text: line, gate, effect: { type: 'continuous', affected: { ref: 'self' }, keywords: kws } });
         continue;
       }
       if (kws) {
-        for (const kw of kws) {
-          // CR 702.5a / CR 303.4a: what an Aura can enchant is also what the Aura spell targets.
-          if (kw.id === 'enchant' && kw.text) {
-            if (kw.text === 'player' || kw.text === 'opponent') kw.player = kw.text === 'player' ? 'any' : 'opponent';
-            else {
-              const pf = parseFilter(kw.text, new Binder(env as GrammarEnv));
-              if (pf && !pf.plural) kw.filter = pf.filter;
-            }
-          }
-          const abilities = this.expandKeyword(kw, env);
-          if (abilities) kw.abilities = abilities;
-        }
         result.keywords.push(...kws);
         if (!kws.every(keywordSupported)) {
           result.manualKeywords.push(line);
@@ -1099,10 +1070,35 @@ export class ParserRegistry {
   }
 
   /**
+   * The keyword instances a line of keywords stands for ("Flying, prowess", "Equip {2}", "Enchant creature you
+   * control"), each complete — the one place a keyword instance is built from text. A keyword the engine applies itself
+   * is its id and parameters; one it knows only through its definition in CR 702 (prowess, cycling, equip) carries that
+   * definition's abilities; an Aura's "Enchant …" says what it can be attached to. Null if the line isn't keywords.
+   * (Whether the engine can run each is `keywordSupported`: one it can't is a line players resolve.)
+   */
+  keywordsOf(line: string, env: ParseContext): KeywordInstance[] | null {
+    const kws = this.keywords.parseLine(line);
+    if (!kws) return null;
+    for (const kw of kws) {
+      // CR 702.5a / CR 303.4a: what an Aura can enchant is also what the Aura spell targets.
+      if (kw.id === 'enchant' && kw.text) {
+        if (kw.text === 'player' || kw.text === 'opponent') kw.player = kw.text === 'player' ? 'any' : 'opponent';
+        else {
+          const pf = parseFilter(kw.text, new Binder(env as GrammarEnv));
+          if (pf && !pf.plural) kw.filter = pf.filter;
+        }
+      }
+      const abilities = this.expandKeyword(kw, env);
+      if (abilities) kw.abilities = abilities;
+    }
+    return kws;
+  }
+
+  /**
    * A keyword's abilities, compiled from its definition in CR 702 (e.g. prowess, 702.108a)
    * with the same grammar as card text. Null when any part of the definition doesn't parse.
    */
-  expandKeyword(kw: KeywordInstance, env: ParseContext): AbilityNode[] | null {
+  private expandKeyword(kw: KeywordInstance, env: ParseContext): AbilityNode[] | null {
     // The CR names some keywords with their connecting word ("Affinity for [text]", CR 702.41a).
     // Awaken's second sentence is conditional as a whole; it's compiled with the spell instead (see parse()).
     if (kw.id === 'awaken') return null;

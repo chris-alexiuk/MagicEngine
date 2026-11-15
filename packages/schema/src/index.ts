@@ -1722,24 +1722,38 @@ export function keywordSupported(kw: KeywordInstance): boolean {
   return true;
 }
 
-/** Modes of a face's modal abilities that players resolve by hand, as "• text" lines. */
+/**
+ * What of a face's compiled abilities the engine wouldn't carry out, though the line was read — each counts as a line
+ * players resolve by hand (the card isn't fully automatic):
+ *   - a mode of a modal ability that wasn't compiled ("• text");
+ *   - a token it makes with text that wasn't compiled (CR 111.4), or a keyword the engine can't run;
+ *   - a keyword it gives something, or that a copy it makes has, that the engine can't run — whichever part of the
+ *     grammar built it: a bare `{ id: 'banding' }` would sit in the card's data and do nothing.
+ */
 export function manualModes(face: FaceDef): string[] {
   const modes = face.abilities.flatMap((a) => (a.kind === 'static' ? [] : (a.modes?.options ?? []).filter((m) => m.manual).map((m) => `• ${m.text}`)));
-  // A token the card makes with text that wasn't compiled (CR 111.4): those abilities of the token wouldn't work.
   const tokens: string[] = [];
+  const idle: string[] = [];
   const walk = (v: unknown): void => {
     if (!v || typeof v !== 'object') return;
     if (Array.isArray(v)) return v.forEach(walk);
     for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
       // (A keyword on it that the engine can't run counts too: Errand of Duty's Knight "with banding".)
-      const token = k === 'token' && x && typeof x === 'object' ? (x as { name?: string; unparsed?: string[]; manualKeywords?: string[] }) : null;
-      if (token) for (const u of [...(token.unparsed ?? []), ...(token.manualKeywords ?? [])]) tokens.push(`${token.name ?? 'Token'}: ${u}`);
-      else walk(x);
+      const token = k === 'token' && x && typeof x === 'object' ? (x as { name?: string; unparsed?: string[]; manualKeywords?: string[]; abilities?: unknown }) : null;
+      if (token) {
+        for (const u of [...(token.unparsed ?? []), ...(token.manualKeywords ?? [])]) tokens.push(`${token.name ?? 'Token'}: ${u}`);
+        walk(token.abilities);
+        continue;
+      }
+      if ((k === 'keywords' || k === 'keywordsIfLacking') && Array.isArray(x)) {
+        for (const kw of x) if (kw && typeof kw === 'object' && typeof (kw as KeywordInstance).id === 'string' && !keywordSupported(kw as KeywordInstance)) idle.push(`Keyword: ${(kw as KeywordInstance).id.replace(/_/g, ' ')}`);
+      }
+      walk(x);
     }
   };
   walk(face.abilities);
   walk(face.keywords);
-  return [...modes, ...tokens];
+  return [...modes, ...tokens, ...idle];
 }
 
 /** A face's abilities, including those its keywords stand for. */

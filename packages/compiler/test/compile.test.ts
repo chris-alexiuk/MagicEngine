@@ -147,6 +147,32 @@ describe('grades', () => {
   });
 });
 
+describe('a keyword the engine cannot run, wherever a card gives it', () => {
+  const face = (abilities: unknown[]) => ({ name: 'T', manaCost: '', typeLine: 'Enchantment', supertypes: [], types: ['Enchantment'], subtypes: [], oracle: 'x', colors: [], keywords: [], abilities, unparsed: [] }) as never;
+  const grant = (keywords: unknown[]) => [{ kind: 'static', text: 'x', effect: { type: 'continuous', affected: { ref: 'all', filter: {} }, keywords } }];
+
+  it('is not on a fully automatic card: the grade counts it as unread', () => {
+    expect(manualModes(face(grant([{ id: 'flying' }])))).toEqual([]);
+    expect(automationOf([face(grant([{ id: 'flying' }]))])).toBe('full');
+    // Whatever built it: a bare instance of a keyword the engine knows only by its definition, without the definition.
+    expect(manualModes(face(grant([{ id: 'flying' }, { id: 'prowess' }])))).toEqual(['Keyword: prowess']);
+    expect(automationOf([face(grant([{ id: 'banding' }]))])).toBe('partial');
+    // With its abilities, it runs.
+    expect(manualModes(face(grant([{ id: 'prowess', abilities: [{ kind: 'triggered', text: 'Prowess', trigger: { type: 'cast' }, effects: [] }] }])))).toEqual([]);
+  });
+
+  it('nor in what a copy or a token it makes has', () => {
+    const copy = [{ kind: 'spell', text: 'x', effects: [{ type: 'create_token', amount: 1, copyOf: { ref: 'target' }, except: { keywords: [{ id: 'banding' }] } }] }];
+    expect(manualModes(face(copy))).toEqual(['Keyword: banding']);
+    const token = [{ kind: 'spell', text: 'x', effects: [{ type: 'create_token', amount: 1, token: { name: 'Knight', unparsed: [], keywords: [], abilities: grant([{ id: 'banding' }]) } }] }];
+    expect(manualModes(face(token))).toEqual(['Keyword: banding']);
+  });
+
+  it('no card in the pool has one', () => {
+    for (const c of db.cards) if (c.automation === 'full') expect(c.faces.flatMap((f) => manualModes(f)), c.name).toEqual([]);
+  });
+});
+
 describe('coverage report', () => {
   const report = buildCoverage(db);
 

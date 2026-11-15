@@ -6,7 +6,7 @@ import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { parseCopyExcept } from './copies.js';
 import { parseCondition } from './conditions.js';
-import { parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
+import { keywordIds, parseFilter, parseKeywordList, parseObjectRef, parsePlayerRef, parseRecipients } from './nouns.js';
 import { quotedLivePT } from './quoted.js';
 import { addTokenText, parseTokenPhrase } from './tokens.js';
 import { COLOR_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
@@ -5326,7 +5326,7 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   // CR 114.1: "You get an emblem with "…"" (planeswalkers' ultimates).
   const emblem = /^[Yy]ou get an emblem with (.+)$/.exec(s);
   if (emblem) {
-    const kws = parseKeywordList(emblem[1]!, b, true);
+    const kws = parseKeywordList(emblem[1]!, b, 'printed');
     if (!kws || kws.some((k) => k.id !== 'ability')) return null;
     return [{ type: 'emblem', abilities: kws.flatMap((k) => k.abilities ?? []), text: kws.map((k) => k.text).join('\n') }];
   }
@@ -7105,7 +7105,7 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
       }
       const rest = items.filter((_, i) => !live[i]);
       if (rest.length) {
-        const kws = parseKeywordList(rest.join(' and '), b, false, true);
+        const kws = parseKeywordList(rest.join(' and '), b, 'granted');
         if (!kws) return null;
         node.keywords = kws;
       }
@@ -7338,7 +7338,7 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
         node.power = pt.power;
         node.toughness = pt.toughness;
       } else {
-        const kws = parseKeywordList(pm[2]!, b, false, true);
+        const kws = parseKeywordList(pm[2]!, b, 'granted');
         if (!kws || node.keywords) return null;
         node.keywords = kws;
       }
@@ -7369,11 +7369,10 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   const loseHave = /^(.+?) loses? ([a-z ,]+?) and can't have(?: or gain)? ([a-z ,]+?) until end of turn$/.exec(c);
   if (loseHave) {
     const r = attempt(b, (b) => {
-      const kws = parseKeywordList(loseHave[2]!, b);
-      const banned = parseKeywordList(loseHave[3]!.replace(/ or /g, ' and '), b);
-      const plain = (k: { text?: string; cost?: string; n?: number }[] | null) => k && !k.some((x) => x.text || x.cost || x.n !== undefined);
-      const what = plain(kws) && plain(banned) ? parseObjectRef(loseHave[1]!, b) : null;
-      return what && kws && banned ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), cantHave: banned.map((k) => k.id), until: 'eot' }] : null;
+      const lost = keywordIds(loseHave[2]!, b);
+      const banned = keywordIds(loseHave[3]!.replace(/ or /g, ' and '), b);
+      const what = lost && banned ? parseObjectRef(loseHave[1]!, b) : null;
+      return what && lost && banned ? [{ type: 'modify', what: what.ref, loseKeywords: lost, cantHave: banned, until: 'eot' }] : null;
     });
     if (r) return r;
   }
@@ -7390,16 +7389,16 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   // Elder Land Wurm: "When this creature blocks, it loses defender." — "it" being this creature.
   const loseForGood = /^~ loses ([a-z ]+)$/.exec(c) ?? (b.it?.ref === 'self' || (!b.it && b.itIsSource) ? /^[Ii]t loses ([a-z ]+)$/.exec(c) : null);
   if (loseForGood && !/^all abilities$/.test(loseForGood[1]!)) {
-    const kws = parseKeywordList(loseForGood[1]!, b);
-    if (kws && !kws.some((k) => k.text || k.cost || k.n !== undefined)) return [{ type: 'modify', what: { ref: 'self' }, loseKeywords: kws.map((k) => k.id), until: 'game' }];
+    const lost = keywordIds(loseForGood[1]!, b);
+    if (lost) return [{ type: 'modify', what: { ref: 'self' }, loseKeywords: lost, until: 'game' }];
   }
   // Mu Yanling, Sky Dancer: "Until your next turn, up to one target creature gets -2/-0 and loses flying."
   const lose = /^(.+?) loses? ([a-z ,]+?) (until end of turn|until your next turn)$/.exec(c);
   if (lose && !/^all abilities$/.test(lose[2]!)) {
     const r = attempt(b, (b) => {
-      const kws = parseKeywordList(lose[2]!, b);
-      const what = kws && !kws.some((k) => k.text || k.cost || k.n !== undefined) ? parseObjectRef(lose[1]!, b) : null;
-      return what && kws ? [{ type: 'modify', what: what.ref, loseKeywords: kws.map((k) => k.id), until: lose[3] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
+      const lost = keywordIds(lose[2]!, b);
+      const what = lost ? parseObjectRef(lose[1]!, b) : null;
+      return what && lost ? [{ type: 'modify', what: what.ref, loseKeywords: lost, until: lose[3] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
     });
     if (r) return r;
   }

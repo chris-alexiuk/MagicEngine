@@ -91,6 +91,11 @@ moves. Test a new rule alone and with another effect on the same thing (`test/in
 player could try and asks the reading. For a change to the list itself,
 `packages/engine/scripts/difflegal.ts` compares it with another checkout's over random games.
 
+**A keyword something is to have is built by `parseKeywordList(text, b, 'granted' | 'printed')`** (grammar) or
+`keywordsOf` (a keyword line), never as a bare `{ id }`: a keyword the engine knows only by its CR definition
+does nothing without that definition's abilities. Keywords that are only named — lost, banned, filtered by —
+are `keywordIds`.
+
 A new parameter on a node (`reparse` says "parameters outside NODE_FIELDS") has to be declared in
 `packages/schema/src/node-fields.ts`. Before declaring one that a single card uses, ask whether a filter, an
 amount or a condition already says it: those work for every kind of node at once.

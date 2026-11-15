@@ -43,7 +43,7 @@ import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept, parseCopyExceptLoosely } from './copies.js';
 import { parseCastBan, parseEffectText, parseManaSpend, splitSentences } from './effects.js';
-import { parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
+import { keywordIds, parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 
 /** The grammar rules need the keyword registry; the parser passes it in the context. */
@@ -3405,9 +3405,9 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     // (Not Arrest's "can't have its abilities activated" — a rule flag.)
     const cantHave = /^can't have(?: or gain)? (?!(?:its|their) )(?![a-z ,]*\bcounters\b)([a-z ,]+)$/.exec(part);
     if (cantHave && !effect.cantHave) {
-      const kws = parseKeywordList(cantHave[1]!.replace(/ or /g, ' and '), b);
-      if (!kws || kws.some((k) => k.text || k.cost || k.n !== undefined)) return null;
-      effect.cantHave = kws.map((k) => k.id);
+      const banned = keywordIds(cantHave[1]!.replace(/ or /g, ' and '), b);
+      if (!banned) return null;
+      effect.cantHave = banned;
       continue;
     }
     const get = /^gets? (\S+(?: for each .+)?)$/.exec(part);
@@ -3464,9 +3464,9 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     // Layer 6: "Creatures your opponents control lose trample" (keywords only).
     const loseKw = /^loses? ([a-z ,]+)$/.exec(part);
     if (loseKw && !effect.loseKeywords) {
-      const kws = parseKeywordList(loseKw[1]!, b);
-      if (!kws || kws.some((k) => k.text || k.cost || k.n !== undefined)) return null;
-      effect.loseKeywords = kws.map((k) => k.id);
+      const lost = keywordIds(loseKw[1]!, b);
+      if (!lost) return null;
+      effect.loseKeywords = lost;
       continue;
     }
     // Layer 7b: "has base power and toughness 1/1"
@@ -3513,7 +3513,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
     if (artifactCreature && !effect.setTypes && effect.setPower === undefined && /\bArtifact\b/.test(b.env.typeLine) && !/\bCreature\b/.test(b.env.typeLine)) {
       const subtypes = artifactCreature[3]!.trim() ? artifactCreature[3]!.trim().split(' ') : [];
       if (subtypes.some((w) => subtypeOf(w) !== w)) return null;
-      const kws = artifactCreature[4] ? parseKeywordList(artifactCreature[4], b) : [];
+      const kws = artifactCreature[4] ? parseKeywordList(artifactCreature[4], b, 'granted') : [];
       if (!kws) return null;
       effect.setTypes = { types: ['Artifact', 'Creature'], subtypes };
       effect.setPower = Number(artifactCreature[1]);
@@ -3616,7 +3616,7 @@ function parseContinuous(body: string, b: Binder): ContinuousEffectNode | null {
         effect.toughness = scaled[0]!.toughness as Amount;
       }
     } else if (has && !effect.keywords) {
-      const kws = parseKeywordList(has[1]!, b, false, true);
+      const kws = parseKeywordList(has[1]!, b, 'granted');
       if (!kws) return null;
       effect.keywords = kws;
     } else return null;

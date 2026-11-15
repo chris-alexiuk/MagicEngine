@@ -1,6 +1,6 @@
 import type { Amount, Color, FaceDef } from '@mtg/schema';
 import type { Binder } from './binder.js';
-import { parseKeywordList } from './nouns.js';
+import { namesKeywords } from './nouns.js';
 import { isQuoted, quotedText } from './quoted.js';
 import { COLOR_WORDS, parseAmount, subtypeOf, TYPE_NOUNS } from './words.js';
 
@@ -164,7 +164,7 @@ function withText(text: string, b: Binder): { text: string; quoted: string[] } |
   // period of its own; as a line of the token's text it ends with one.
   const quoted = items.filter(isQuoted).map((i) => quotedText(i, b)).map((t) => (t && !/[.:!]['’"]?$/.test(t) ? `${t}.` : t));
   if (quoted.some((t) => t === null)) return null;
-  if (words.length && !parseKeywordList(words.join(', '), b)) return null;
+  if (words.length && !namesKeywords(words.join(', '), b)) return null;
   const lines = [...(words.length ? [words.join(', ').replace(/^\w/, (c) => c.toUpperCase())] : []), ...(quoted as string[])];
   return { text: lines.join('\n'), quoted: quoted as string[] };
 }

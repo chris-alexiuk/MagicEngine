@@ -50,7 +50,7 @@ function withSelfQuotes<T>(b: Binder, name: string, f: () => T): T {
 
 /** "… with trample", "… with crew 3" — keywords the copy has. */
 function withKeywords(text: string, out: CopyExcept, b: Binder): boolean {
-  const kws = parseKeywordList(text, b, true);
+  const kws = parseKeywordList(text, b, 'printed');
   if (!kws?.length) return false;
   (out.keywords ??= []).push(...kws);
   return true;
@@ -256,7 +256,7 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     // Hulkling: "he has flying and this ability".
     const hasAndThis = /^it has (.+) and this ability$/.exec(p);
     if (hasAndThis) {
-      const kws = parseKeywordList(hasAndThis[1]!, b, true);
+      const kws = parseKeywordList(hasAndThis[1]!, b, 'printed');
       if (!kws?.length) return null;
       (out.keywords ??= []).push(...kws);
       out.keepThisAbility = true;
@@ -266,7 +266,7 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     // copies has one of its own.
     const hasUnless = /^it has (.+) if that (?:creature|permanent) doesn't have ([a-z]+)$/.exec(p);
     if (hasUnless) {
-      const kws = parseKeywordList(hasUnless[1]!, b, true);
+      const kws = parseKeywordList(hasUnless[1]!, b, 'printed');
       if (kws?.length !== 1 || kws[0]!.id !== hasUnless[2]) return null;
       (out.keywordsIfLacking ??= []).push(kws[0]!);
       continue;
@@ -275,7 +275,7 @@ export function parseCopyExcept(text: string, b: Binder): CopyExcept | null {
     if (has) {
       // Sakashima the Impostor: "except its name is Sakashima the Impostor, …, and it has "{2}{U}{U}: Return Sakashima the
       // Impostor to its owner's hand …"" — named after this card, the copy's quoted ability means the copy itself.
-      const kws = out.name && out.name === b.env.cardName ? withSelfQuotes(b, out.name, () => parseKeywordList(has[1]!, b, true)) : parseKeywordList(has[1]!, b, true);
+      const kws = out.name && out.name === b.env.cardName ? withSelfQuotes(b, out.name, () => parseKeywordList(has[1]!, b, 'printed')) : parseKeywordList(has[1]!, b, 'printed');
       if (!kws?.length) return null;
       (out.keywords ??= []).push(...kws);
       continue;

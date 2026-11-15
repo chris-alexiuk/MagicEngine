@@ -2678,3 +2678,36 @@ describe('slice 203', () => {
     expect(parse('10,000 Needles — Whenever this creature attacks, it gets +9999/+0 until end of turn.', 'Creature').abilities[0]).toMatchObject({ effects: [{ type: 'modify', power: 9999 }] });
   });
 });
+
+describe('keywords: one place builds them, and none that would do nothing', () => {
+  const kws = (a: unknown) => ((a as { effect: { keywords?: { id: string; abilities?: unknown[] }[] } }).effect.keywords ?? []).map((k) => [k.id, Boolean(k.abilities?.length)]);
+
+  it("a card's own keyword line: one the engine knows by its CR definition carries that definition's abilities", () => {
+    const r = parse('Flying, prowess', 'Creature — Bird');
+    expect(r.unparsed).toEqual([]);
+    expect(r.keywords.map((k) => [k.id, Boolean(k.abilities?.length)])).toEqual([
+      ['flying', false],
+      ['prowess', true],
+    ]);
+  });
+
+  it('a keyword an effect gives is built the same way', () => {
+    expect(kws(one('Creatures you control have flying and prowess.', 'Enchantment'))).toEqual([
+      ['flying', false],
+      ['prowess', true],
+    ]);
+  });
+
+  it('"is a 2/3 Gargoyle artifact creature with …": the keyword works, or the line is left unread', () => {
+    const line = (kw: string) => `During turns other than yours, this artifact is a 2/3 Gargoyle artifact creature with ${kw}.`;
+    expect(kws(one(line('flying'), 'Artifact'))).toEqual([['flying', false]]);
+    expect(kws(one(line('prowess'), 'Artifact'))).toEqual([['prowess', true]]);
+    // Banding: the engine can't run it. Not a keyword in the card's data that does nothing.
+    expect(parse(line('banding'), 'Artifact').unparsed).toEqual([line('banding')]);
+  });
+
+  it('"loses flying", "can\'t have hexproof": the keywords are named, not built', () => {
+    expect(one('Target creature loses flying until end of turn.')).toMatchObject({ effects: [{ type: 'modify', loseKeywords: ['flying'] }] });
+    expect(one("Creatures your opponents control lose hexproof and can't have hexproof or shroud.", 'Enchantment')).toMatchObject({ effect: { loseKeywords: ['hexproof'], cantHave: ['hexproof', 'shroud'] } });
+  });
+});

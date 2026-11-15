@@ -419,43 +419,65 @@ function keywordList(f: ObjectFilter, key: 'keywords' | 'notKeywords', text: str
   // Henrika Domnathi: "with flying, deathtouch, and/or lifelink" — any of them. "with flying and first strike" would need
   // both, which the filter can't say.
   if (/ and (?!\/or)/.test(text.replace(/and\/or/g, 'or')) && key === 'keywords') return false;
-  const kws = parseKeywordList(text.replace(/,? and\/or /g, ', or '), b);
+  const kws = namedKeywords(text.replace(/,? and\/or /g, ', or '), b);
   // Stormtide Leviathan: "without flying or islandwalk" — a landwalk is its kind ("landwalk:island").
   if (!kws || f[key] || kws.some((k) => (k.text && k.id !== 'landwalk') || k.cost || k.n !== undefined)) return false;
   f[key] = kws.map((k) => (k.id === 'landwalk' ? `landwalk:${k.text!.toLowerCase()}` : k.id));
   return true;
 }
 
-/**
- * "flying and first strike", "trample, haste", 'haste and "{T}: Add {G}."' → keyword instances;
- * null if any item isn't a keyword. Quoted abilities are `printed` on a token or copy, or granted.
- */
-export function parseKeywordList(text: string, b: Binder, printed = false, grant = false): KeywordInstance[] | null {
+/** "flying and first strike", "trample, haste" → the items of a list of keywords (and quoted abilities). */
+function keywordItems(text: string): string[] {
   // Swords: "protection from black and from green" is two protections (CR 702.16).
   text = text.replace(/\bprotection from (\w+) and from (\w+)\b/g, 'protection from $1, protection from $2');
   // Giver of Runes: "protection from colorless or from the color of your choice" is one protection, chosen.
   text = text.replace(/\bprotection from (colorless|artifacts) or from the color of your choice\b/g, 'protection from $1\u0002the color of your choice');
-  const items = text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean).map((i) => i.replace('\u0002', ' or from '));
+  return text.split(/,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+/).filter(Boolean).map((i) => i.replace('\u0002', ' or from '));
+}
+
+/**
+ * The keywords a list names — which keywords they are, not instances that do anything: for "loses flying", "can't have
+ * hexproof", "creatures with flying or reach". Null if an item isn't a keyword. (A keyword something is to HAVE is
+ * built by `parseKeywordList`.)
+ */
+function namedKeywords(text: string, b: Binder): KeywordInstance[] | null {
   const out: KeywordInstance[] = [];
-  for (const item of items) {
-    let kw = isQuoted(item) ? parseQuotedAbility(item, b, printed) : b.env.keywords.parseChunk(item, true);
+  for (const item of keywordItems(text)) {
+    const kw = isQuoted(item) ? null : b.env.keywords.parseChunk(item, true);
     if (!kw) return null;
-    // Granted: a keyword the engine knows only through its CR definition (prowess, riot, exalted…) carries that
-    // definition's abilities; one it can't apply at all (banding) leaves the line unread.
-    if (grant && !isQuoted(item) && !keywordSupported(kw)) {
-      const r = b.env.parseAbilities?.(capitalise(item), '\u0001', 'Creature');
-      const exp = r && !r.unparsed.length && !r.manualKeywords.length && r.keywords.length === 1 && !r.abilities.length ? r.keywords[0]! : null;
-      const usable = (a: import('@mtg/schema').AbilityNode) => a.kind === 'triggered' || a.kind === 'activated' || grantableStatic(a) || (a.kind === 'static' && a.effect.type === 'as_enters');
-      if (!exp || exp.id !== kw.id || !keywordSupported(exp) || !(exp.abilities ?? []).every(usable)) return null;
-      kw = exp;
-    }
-    // Printed on a copy or a token ('except it has vanishing 3', 'a Vehicle artifact with crew 3', "haste and
-    // dethrone"): the abilities a card with that keyword printed on it has — a bare keyword the engine knows only by
-    // its definition would do nothing. One it can't run at all leaves the line unread.
-    if (printed && !grant && !isQuoted(item) && !keywordSupported(kw)) {
+    out.push(kw);
+  }
+  return out.length ? out : null;
+}
+
+/** "loses hexproof and shroud", "can't have flying": the ids of the keywords named — null if one takes a parameter or isn't a keyword. */
+export function keywordIds(text: string, b: Binder): string[] | null {
+  const kws = namedKeywords(text, b);
+  return kws && !kws.some((k) => k.text || k.cost || k.n !== undefined) ? kws.map((k) => k.id) : null;
+}
+
+/** Whether every item of the list is a keyword (a token's "with flying and haste", before its text is compiled). */
+export const namesKeywords = (text: string, b: Binder): boolean => namedKeywords(text, b) !== null;
+
+/**
+ * The keyword instances something is to have — "flying and first strike", "trample, haste", 'haste and "{T}: Add
+ * {G}."' — each one that works: a keyword the engine applies itself as it is, one it knows only through its
+ * definition in CR 702 (prowess, riot, exalted) carrying that definition's abilities, built as a card's own keyword
+ * line is (parser.ts `keywordsOf`). Null if an item isn't a keyword, or is one the engine couldn't run.
+ *   'printed'  on a token or a copy ('except it has vanishing 3', 'a Vehicle artifact with crew 3'): as printed on a card.
+ *   'granted'  by an effect ("gains prowess", "have riot"): its abilities must be ones an object can be given.
+ */
+export function parseKeywordList(text: string, b: Binder, use: 'printed' | 'granted'): KeywordInstance[] | null {
+  const out: KeywordInstance[] = [];
+  for (const item of keywordItems(text)) {
+    let kw = isQuoted(item) ? parseQuotedAbility(item, b, use === 'printed') : b.env.keywords.parseChunk(item, true);
+    if (!kw) return null;
+    if (!isQuoted(item) && !keywordSupported(kw)) {
       const r = b.env.parseAbilities?.(capitalise(item), '\u0001', 'Creature');
       const exp = r && !r.unparsed.length && !r.manualKeywords.length && r.keywords.length === 1 && !r.abilities.length ? r.keywords[0]! : null;
       if (!exp || exp.id !== kw.id || !keywordSupported(exp)) return null;
+      const usable = (a: import('@mtg/schema').AbilityNode) => a.kind === 'triggered' || a.kind === 'activated' || grantableStatic(a) || (a.kind === 'static' && a.effect.type === 'as_enters');
+      if (use === 'granted' && !(exp.abilities ?? []).every(usable)) return null;
       kw = exp;
     }
     out.push(kw);
