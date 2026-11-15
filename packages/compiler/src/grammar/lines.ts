@@ -36,7 +36,7 @@ import type {
   TriggeredAbility,
   TargetsFilter,
 } from '@mtg/schema';
-import { qualitiesRead, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
+import { CONDITIONAL_STATICS, qualitiesRead, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import type { GrammarRule } from '../parser.js';
 import { combinationColors, parseManaProduction } from '../rules/mana.js';
 import { attempt, Binder, type GrammarEnv } from './binder.js';
@@ -44,7 +44,7 @@ import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
 import { parseCombatRule } from './combat.js';
 import { conditionSubject, parseCondition } from './conditions.js';
 import { parseCopyCandidates, parseCopyExcept, parseCopyExceptLoosely } from './copies.js';
-import { parseCastBan, parseEffectText, parseManaSpend, splitSentences } from './effects.js';
+import { modifiersOn, parseCastBan, parseEffectText, parseManaSpend, readingModifiers, splitSentences } from './effects.js';
 import { keywordIds, parseFilter, parseKeywordList, parseObjectRef } from './nouns.js';
 import { COLOR_WORDS, isSubtype, NUMBER_WORDS, parseAmount, parsePT, subtypeOf, TYPE_NOUNS } from './words.js';
 import { DESIGNATION_RULE } from '../designations.js';
@@ -155,13 +155,20 @@ function parseProgramText(text: string, b: Binder): Program | null {
     if (bullets.length < 2 || !bullets.every((l) => l.startsWith('• '))) return null;
     const options: ModeChoice['options'] = [];
     for (const bullet of bullets) {
-      const mb = b.clone();
-      mb.targets = [];
       // A mode's name ("• Sell Contraband — Create a Treasure token.") has no rules meaning.
-      const effects = mb.unsupported ? null : parseEffectText(bullet.slice(2).replace(/^[A-Z][\w' ,!-]{1,40} — (?=[A-Z])/, ''), mb);
+      const text = bullet.slice(2).replace(/^[A-Z][\w' ,!-]{1,40} — (?=[A-Z])/, '');
+      const reads = (shared: boolean) => {
+        const mb = b.clone();
+        mb.targets = [];
+        const effects = mb.unsupported ? null : readingModifiers(shared, () => parseEffectText(text, mb));
+        return effects && !mb.unsupported ? { effects, targets: mb.targets } : null;
+      };
+      // Each mode is first read as written; only one nothing reads that way gets the shared readers of what modifies an
+      // effect (as a whole line does, parser.ts `parseBlock`).
+      const mode = reads(modifiersOn()) ?? (modifiersOn() ? null : reads(true));
       // A mode the grammar can't read stays manual; the others still run (CR 700.2).
-      if (!effects || mb.unsupported) options.push({ text: bullet.slice(2), effects: [], manual: true });
-      else options.push({ text: bullet.slice(2), ...(mb.targets.length ? { targets: mb.targets } : {}), effects });
+      if (!mode) options.push({ text: bullet.slice(2), effects: [], manual: true });
+      else options.push({ text: bullet.slice(2), ...(mode.targets.length ? { targets: mode.targets } : {}), effects: mode.effects });
     }
     if (options.every((o) => o.manual)) return null;
     const { min, max } = modeCount(modal[1]!, options.length);
@@ -2479,9 +2486,10 @@ export const triggeredRule: GrammarRule = {
           // planeswalker you control (CR 506.2); that can't change before it resolves.
           trig.trigger = { ...trig.trigger, defender: 'you' };
           effectText = iff[2]!;
-        } else if (iff && /^(?:~|this card|this creature) is in your graveyard$/.test(iff[1]!) && (trig.trigger.type === 'phase' || trig.trigger.type === 'you_attack')) {
+        } else if (iff && /^(?:~|this card|this creature) is in your graveyard$/.test(iff[1]!)) {
           // Master of Death: "At the beginning of your upkeep, if this card is in your graveyard, you may pay 1 life. If you do,
-          // return it to your hand." — it triggers from the graveyard (CR 603.4: and only while it's still there).
+          // return it to your hand." — it triggers from the graveyard (CR 603.4: and only while it's still there), whatever
+          // it triggers on: Bridge from Below, "Whenever a nontoken creature is put into your graveyard from the battlefield, …".
           condition = { type: 'is', of: { ref: 'self' }, filter: { zone: 'graveyard' } } as ConditionNode;
           b.selfZone = 'graveyard';
           b.it = { ref: 'self' };
@@ -2668,8 +2676,7 @@ export const continuousRule: GrammarRule = {
     // Topiary Stomper: "This creature can't attack or block unless you control seven or more lands." (CR 611.3a)
     // ("… unless defending player controls an Island" is checked per attack, elsewhere.)
     const unless = /^(~ can't (?:attack|block|attack or block)) unless (?!defending player)(.+)$/.exec(rest);
-    // Technodrome: "… unless its power is 6 or greater" — this creature's.
-    const unlessCond = unless ? attempt(b, (b) => parseCondition(unless[2]!.replace(/^its (power|toughness) /, "~'s $1 "), b)) : null;
+    const unlessCond = unless ? attempt(b, (b) => parseCondition(unless[2]!, b)) : null;
     if (unless && unlessCond) {
       conds.push({ type: 'not', cond: unlessCond });
       rest = unless[1]!;
@@ -3790,7 +3797,7 @@ export const costModifierRule: GrammarRule = {
     // Geyser Drake: "During turns other than yours, spells you cast cost {1} less to cast."; "During your turn, …".
     const duringTurn = /^During (turns other than yours|your turn), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast\.)$/.exec(line);
     if (duringTurn) line = `As long as it's ${duringTurn[1] === 'your turn' ? '' : 'not '}your turn, ${duringTurn[2]}`;
-    const whileCond = /^(?!This spell |~ )(.+? cost \{[^}]+\} (?:less|more) to cast) as long as (.+)\.$/.exec(line) ?? /^As long as ([^,]+), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast)\.$/.exec(line)?.map((x, i, m) => (i === 1 ? m[2]! : i === 2 ? m[1]! : x));
+    const whileCond = /^As long as ([^,]+), ((?!this spell |~ ).+ cost \{[^}]+\} (?:less|more) to cast)\.$/.exec(line)?.map((x, i, m) => (i === 1 ? m[2]! : i === 2 ? m[1]! : x));
     if (whileCond) {
       const rest = `${whileCond[1]!.replace(/^\w/, (c) => c.toUpperCase())}.`;
       const inner = costModifierRule.parse(rest, rest, ctx) as StaticAbility | null;
@@ -4095,7 +4102,7 @@ export const quantityReplacementRule: GrammarRule = {
     // tokens with flying and vigilance are created instead." (CR 614.1a)
     const swapToken = /^If one or more (creature) tokens would be created under your control, that many (.+?) tokens (.*?)are created instead\.$/.exec(line);
     if (swapToken) {
-      const made = parseEffectText(`Create a ${swapToken[2]} token${swapToken[3] ? ` ${swapToken[3].trim()}` : ''}.`.replace(/ a ([AEIOU0-9]\b|8)/, ' an $1'), new Binder(env));
+      const made = parseEffectText(`Create a ${swapToken[2]} token${swapToken[3] ? ` ${swapToken[3].trim()}` : ''}.`, new Binder(env));
       const token = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.amount === 1 && !made[0]!.tapped ? (made[0]!.token as FaceDef | undefined) : undefined;
       if (!token || !token.types.includes('Creature')) return null;
       return make({ event: 'tokens', who: 'you', op: 'swap', extra: { token }, tokenFilter: { types: ['Creature'] } });
@@ -5369,8 +5376,6 @@ export const topPermissionRule: GrammarRule = {
       const two = /^(\w+) spells and (\w+) spells$/.exec(phrase);
       if (two) phrase = `${two[1]} or ${two[2]} spells`;
       phrase = phrase.replace(/^(\w+) and (\w+) spells/, '$1 or $2 spells');
-      // Nalia de'Arnise: "Cleric, Rogue, Warrior, and Wizard spells" — any of them.
-      phrase = phrase.replace(/^((?:[A-Z]\w+, )+[A-Z]\w+,) and ([A-Z]\w+ spells)$/, '$1 or $2');
       if (phrase === 'spells') effect.spells = {};
       else {
         const first = phrase.split(' ')[0]!.replace(/,$/, '');
@@ -5592,7 +5597,7 @@ export const triggerExtraRule: GrammarRule = {
         .replace(/^another /, () => ((other = true), 'a '))
         .replace(/^(an? \w+) or another (\w+)/, (_m, a: string, w: string) => ((other = true), `${a} or ${w}`))
         .replace(/^(\w+s) and (\w+s)$/, '$1 or $2');
-      const pf = parseFilter(t.replace(/^a ([aeiouAEIOU])/, 'an $1'), b);
+      const pf = parseFilter(t, b);
       if (!pf || pf.plural !== plural || pf.filter.zone) return null;
       return { ...pf.filter, ...(other ? { other: true } : {}) };
     };
@@ -5631,6 +5636,46 @@ export const triggerExtraRule: GrammarRule = {
       if (!filter) return null;
       const cause: Cause = { event: none[2] ? 'enters_or_dies' : 'enters', ...(Object.keys(filter).length ? { filter } : {}) };
       return make({ cause, none: true, ...(none[3] ? { source: { controller: 'opponent' }, permanent: true } : {}) });
+    }
+    return null;
+  },
+};
+
+/**
+ * A condition on a static ability, read once for every static ability that can have one (CR 611.3a: it holds only while
+ * the condition does): "As long as [condition], …", "… as long as [condition]", "… if [condition]", "… unless
+ * [condition]". The rules above each read the wordings their own cards use. A line none of them reads is read here:
+ * the ability without its condition, by whichever rule reads that, and the condition given to it — only for the kinds
+ * of static ability the engine checks a condition for (CONDITIONAL_STATICS). Last in the list: it never takes a line
+ * from another rule.
+ */
+export const conditionalStaticRule: GrammarRule = {
+  id: 'conditional_static',
+  parse(line, original, ctx) {
+    const env = envOf(ctx);
+    if (!modifiersOn() || !env || !line.endsWith('.') || line.includes('\n')) return null;
+    const t = line.slice(0, -1);
+    const splits: { rest: string; cond: string; not?: true }[] = [];
+    const front = /^As long as (.+?), (.+)$/.exec(t);
+    if (front) splits.push({ cond: front[1]!, rest: front[2]!.replace(/^\w/, (c) => c.toUpperCase()) });
+    for (const [word, not] of [[' as long as ', false], [' unless ', true], [' if ', false]] as const) {
+      for (const m of t.matchAll(new RegExp(word, 'g'))) splits.push({ rest: t.slice(0, m.index), cond: t.slice(m.index! + word.length), ...(not ? { not: true as const } : {}) });
+    }
+    for (const s of splits) {
+      let inner: AbilityNode | null = null;
+      for (const rule of GRAMMAR_RULES) {
+        if (rule === conditionalStaticRule) continue;
+        inner = rule.parse(`${s.rest}.`, original, ctx);
+        if (inner) break;
+      }
+      if (!inner || inner.kind !== 'static' || inner.gate || !CONDITIONAL_STATICS.includes(inner.effect.type) || inner.effect.condition) continue;
+      // "… if it has a sleep counter on it": what the ability is about.
+      const b = new Binder(env);
+      const about = (inner.effect as { affected?: Ref }).affected;
+      if (about && (about.ref === 'self' || about.ref === 'attached')) b.it = about;
+      const cond = parseCondition(s.cond, b);
+      if (!cond || b.targets.length) continue;
+      return { ...inner, text: original, effect: { ...inner.effect, condition: s.not ? { type: 'not', cond } : cond } } as StaticAbility;
     }
     return null;
   },
@@ -5688,6 +5733,7 @@ export const GRAMMAR_RULES: GrammarRule[] = [
   triggeredRule,
   activatedRule,
   spellRule,
+  conditionalStaticRule,
 ];
 
 export { splitSentences };

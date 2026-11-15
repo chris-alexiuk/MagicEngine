@@ -13,6 +13,7 @@ export const SCHEMA_VERSION = 2 as const;
 
 export { SUBTYPES } from './subtypes.js';
 export * from './qualities.js';
+export { CONDITIONAL_STATICS, COUNTED_FIELDS, COUNTER_LASTING, DOABLE, DURATIONS, LASTING_EFFECTS, type Duration } from './durations.js';
 export { isTokenFace, linkTokenArt, tokenArtFinder, tokenTextKey } from './token-art.js';
 export { NODE_FIELDS, ONE_CARD_PARAMETERS, nodeFields, oneCardParameters, parameterUse, undeclaredFields } from './node-fields.js';
 import { qualitiesRead } from './qualities.js';

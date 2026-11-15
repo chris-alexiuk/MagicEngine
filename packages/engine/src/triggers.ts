@@ -634,7 +634,7 @@ function collectExileKeywords(g: GameState, batch: GameEvent[]): void {
 /** CR 603.7: "this turn" triggered abilities created by resolved spells and abilities. */
 function collectTurnTriggers(g: GameState, batch: GameEvent[]): void {
   if (!g.turnTriggers?.length) return;
-  if (g.turnTriggers.some((t) => t.turn !== g.turn)) g.turnTriggers = g.turnTriggers.filter((t) => t.turn === g.turn);
+  if (g.turnTriggers.some((t) => t.turn < g.turn)) g.turnTriggers = g.turnTriggers.filter((t) => t.turn >= g.turn);
   for (const event of batch) {
     for (const t of g.turnTriggers ?? []) {
       const source = g.objects[t.source.id];

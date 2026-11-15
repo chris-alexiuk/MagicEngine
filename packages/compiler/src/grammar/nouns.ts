@@ -365,11 +365,6 @@ const SUFFIXES: [RegExp, (f: ObjectFilter, m: RegExpExecArray, b: Binder) => boo
     const st = subtypeOf(m[1]!);
     return Boolean(st && !f.anyOf && ((f.anyOf = [{ token: true }, { subtypes: [st] }]), true));
   }],
-  // On Wings of Gold: "Creatures you control that are Zombies and/or tokens".
-  [/ that are ([A-Z][\w-]*s) and\/or tokens$/, (f, m) => {
-    const st = subtypeOf(m[1]!);
-    return Boolean(st && !f.anyOf && ((f.anyOf = [{ subtypes: [st] }, { token: true }]), true));
-  }],
   // What a thing is, as a list of single words: "permanents that are artifacts, Sagas, and/or legendary" (storied,
   // CR 702.195a) — anything that is any of them. The wordings above, each with its own reading, come first.
   [/ that (?:are|is) ((?:an? )?[\w-]+(?:, (?:an? )?[\w-]+)*),? and\/or ((?:an? )?[\w-]+)$/, (f, m) => {
@@ -932,12 +927,6 @@ export function parseObjectRef(text: string, b: Binder, mode: RefMode = 'effect'
     // CR 607.2a: "the exiled card", "all cards exiled with ~" — linked to the ability that exiled them.
     const exiled = /^(?:the exiled (card|cards)|(?:all |each |the )?(cards?) exiled with (?:~|it))$/i.exec(t);
     if (exiled) return set(b, { ref: { ref: 'exiled_with' }, plural: /s$/.test(exiled[1] ?? exiled[2]!) || /^(?:all|each) /i.test(t), targeted: false });
-    // Gisa, Glorious Resurrector: "all creature cards exiled with Gisa" — of those, the ones of that type.
-    const exiledKind = /^(all|each) (artifact|creature|enchantment|land|instant|sorcery|planeswalker|nonland|noncreature) cards exiled with ~$/i.exec(t);
-    if (exiledKind) {
-      const pf = parseFilter(`${exiledKind[2]} cards`, b);
-      if (pf && !pf.filter.zone) return set(b, { ref: { ref: 'all', filter: { ...pf.filter, zone: 'exile', exiledWithSource: true } }, plural: true, targeted: false });
-    }
     // Lethal Scheme: "Each creature that convoked this spell connives."; Venerated Loxodon: "each creature that convoked it".
     if (/^(?:each|all) creatures? that convoked (?:~|it|this spell)$/i.test(t)) return set(b, { ref: { ref: 'convoked' }, plural: true, targeted: false });
     // "return ~ from your graveyard to your hand": the ability functions from the graveyard (CR 113.6m).

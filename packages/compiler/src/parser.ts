@@ -1,4 +1,4 @@
-import { parseEffectText } from './grammar/effects.js';
+import { parseEffectText, readingModifiers } from './grammar/effects.js';
 import type { AbilityNode, AsEntersNode, CastOptionNode, ConditionNode, EffectNode, KeywordInstance, ObjectFilter, SpellAbility } from '@mtg/schema';
 import { keywordSupported, shortName, stripReminder, SUBTYPES } from '@mtg/schema';
 import { Binder, type GrammarEnv } from './grammar/binder.js';
@@ -1015,8 +1015,6 @@ export class ParserRegistry {
     const masked = block.map((l) => setAsideQuotes(l, quotes));
     const normalised = masked
       .map((l, n) => normaliseSelf(n === 0 ? stripAbilityWord(l) : l, env).replace(/[‘’]/g, "'"))
-      // Saw in Half: "… half that creature's toughness. Round up each time." — the rounding belongs to the exception.
-      .map((l) => l.replace(/(half that creature's toughness)\. Round up each time\./, '$1, rounded up.'))
       // Elenda, Saint of Dusk: "~ gets an additional +5/+5 as long as …" — more of the same, added on.
       .map((l) => l.replace(/\b(gets?) an additional ([+-]\d+\/[+-]\d+)/g, '$1 $2'))
       // Death's Approach: "Enchanted creature gets -X/-X, where X is the number of creature cards in its controller's
@@ -1070,11 +1068,16 @@ export class ParserRegistry {
       .map((l) => l.replace(/^(When (?:this creature|~) dies, return it to the battlefield under its owner's control at the beginning of the next end step) and you skip your next draw step\.$/, '$1. You skip your next draw step.'))
       .join('\n');
     const ctx = quotes.length ? { ...env, quotes } : env;
-    for (const rule of this.rules) {
-      const node = rule.parse(normalised, original, ctx);
-      if (node && !exiledCostMissing(node)) return node;
-    }
-    return null;
+    const read = (): AbilityNode | null => {
+      for (const rule of this.rules) {
+        const node = rule.parse(normalised, original, ctx);
+        if (node && !exiledCostMissing(node)) return node;
+      }
+      return null;
+    };
+    // As written first, by the readers that each know their own cards' wordings; a line none of them reads is read
+    // again with the shared readers of what modifies an effect or a static ability (how long, "if", "unless").
+    return readingModifiers(false, read) ?? readingModifiers(true, read);
   }
 
   /**

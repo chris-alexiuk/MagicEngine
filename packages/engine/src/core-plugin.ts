@@ -22,6 +22,7 @@ import { copyAbility, copySpell } from './spell-copies.js';
 import { becomePrepared, unprepare } from './prepare.js';
 import { dayNightCard, setDayNight } from './day-night.js';
 import { giveDesignation } from './designations.js';
+import { lastTurnFor, lastTurnOf, lasting, neverStarts } from './duration.js';
 import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetingAs, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
@@ -107,18 +108,6 @@ function sourceName(ctx: EffectContext): string {
   return ctx.source ? nameOf(ctx.g, ctx.source) : 'an ability';
 }
 
-/** The last turn a "this turn" / "until the end of your next turn" permission lasts through. */
-function lastTurnOf(g: GameState, player: PlayerId, until: 'eot' | 'next_turn'): number {
-  if (until === 'eot') return g.turn;
-  // The player's next turn: count turns in order from the next one (extra turns aside).
-  let turn = g.turn + 1;
-  let p = nextPlayer(g, g.active);
-  for (let i = 0; i < g.order.length && p !== player; i++) {
-    p = nextPlayer(g, p);
-    turn++;
-  }
-  return turn;
-}
 
 /**
  * Opposition Agent: an opponent's permanent that controls this player while they search (`chooser`) and has what they
@@ -862,7 +851,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
   // "you gain protection from everything until your next turn" (The One Ring), "your life total can't change" (CR 119.8).
   player_effect(node, ctx) {
     const g = ctx.g;
-    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'game' ? Number.MAX_SAFE_INTEGER : g.turn;
+    const lastTurn = lastTurnFor(node.until, g, ctx.controller);
     const players = refPlayers(ctx, ref(node, 'who'));
     const filter = node.filter ? { filter: node.filter as ObjectFilter } : {};
     // Inspired Idea: "Your maximum hand size is reduced by three for the rest of the game" — in timestamp order (CR 613.7).
@@ -878,7 +867,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const players = refPlayers(ctx, ref(node, 'who'));
     if (!players.length) return true;
     // "until your next turn" ends as it begins; "until the end of your next turn" (Single Combat) with it.
-    const lastTurn = node.until === 'your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') - 1 : node.until === 'end_of_your_next_turn' ? lastTurnOf(g, ctx.controller, 'next_turn') : g.turn;
+    const lastTurn = lastTurnFor(node.until, g, ctx.controller);
     g.castBans = [
       ...(g.castBans ?? []).filter((b) => b.lastTurn >= g.turn),
       { players, controller: ctx.controller, lastTurn, ...(node.filter ? { filter: node.filter as ObjectFilter } : {}), ...(node.fromZones ? { fromZones: node.fromZones as string[] } : {}), ...(node.activate === 'non_mana' ? { activateNonMana: true as const } : {}) },
@@ -984,6 +973,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     const live = rulesOnly && what.ref === 'all' && what.filter && !JSON.stringify(what.filter).includes('"ref"') && !JSON.stringify(what.filter).includes('chosen') ? (what.filter as ObjectFilter) : undefined;
     if (!objects.length && !live) return true;
     const g = ctx.g;
+    // CR 611.2b: a "for as long as" that has already ended, and the effect does nothing.
+    if (neverStarts(node, ctx.controller, ctx.source, ctx.sourceZcc)) return true;
     const chosen = ctx.resolution?.chosen ?? {};
     // CR 702.16a: "gains protection from the color of your choice" — chosen now; "from the chosen color" — as chosen
     // before (by this spell, or as its source entered: Floating Shield remembers it as it's sacrificed).
@@ -1024,8 +1015,7 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
           id: `e${g.nextId++}`, timestamp: ++g.clock,
           source: ctx.source ? { id: ctx.source.id, zcc: ctx.source.zcc } : { id: '', zcc: 0 },
           controller: ctx.controller, objects: [{ id: o.id, zcc: o.zcc }], power: p, toughness: t,
-          until: node.until === 'game' ? 'game' : 'eot',
-          ...(node.until === 'eoc' ? { endOfCombat: true as const } : {}),
+          ...lasting(node, g, ctx.controller, ctx.source, 'eot'),
         });
       }
       return true;
@@ -1062,16 +1052,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       // Druid Class: 'becomes a creature with … "This creature's power and toughness are each equal to …"' — counted as it goes.
       ...(node.livePower !== undefined ? { livePT: { power: node.livePower as Amount, toughness: (node.liveToughness ?? node.livePower) as Amount } } : {}),
       ...(node.switchPT ? { switchPT: true as const } : {}),
-      // CR 611.2a: lasts as long as stated — "until end of turn" ends in the cleanup step (CR 514.2); otherwise indefinitely.
-      until: node.until === 'game' || node.until === 'source_tapped' || node.until === 'your_next_turn' || node.until === 'source_controlled' || node.until === 'source_present' ? 'game' : 'eot',
-      ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
-      ...(node.until === 'eoc' ? { endOfCombat: true as const } : {}),
-      // Aegis Angel: "for as long as you control this creature" (CR 611.2b).
-      ...(node.until === 'source_controlled' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc, player: ctx.controller } } : {}),
-      // Skilled Animator: "for as long as this creature remains on the battlefield".
-      ...(node.until === 'source_present' && ctx.source ? { whilePresent: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
-      ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
-      ...(typeof node.whileCounter === 'string' ? { whileCounter: node.whileCounter } : {}),
+      // CR 611.2a: it lasts as long as stated (duration.ts).
+      ...lasting(node, g, ctx.controller, ctx.source, 'eot'),
     });
     return true;
   },
@@ -1315,7 +1297,10 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       source: { id: src.id, zcc: src.zcc },
       sourceName: sourceName(ctx),
       ability,
-      turn: ctx.g.turn,
+      // CR 611.2a: for the turn — or "until your next turn", "until the end of your next turn" (duration.ts).
+      // ("Until your next turn" ends as that turn begins, whenever that is.)
+      turn: node.until === 'your_next_turn' ? Number.MAX_SAFE_INTEGER : lastTurnFor(node.until, ctx.g, ctx.controller),
+      ...(node.until === 'your_next_turn' ? { untilTurnOf: ctx.controller } : {}),
       ...(bind ? { targets: ctx.targets.map((list) => [...list]) } : {}),
     });
     return true;
@@ -3984,6 +3969,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
     if (!node.ask) return { expand: [...structuredClone(effects), again] };
     const answer = answerOf(ctx, 'may');
     if (!answer) return { ask: { kind: 'may', player: ctx.controller, text: 'Repeat the process?', sourceName: sourceName(ctx) } };
+    // Kindle the Carnage: "… damage equal to that card's mana value …" — each time, the card discarded that time.
+    if (answer.yes && ctx.resolution) delete ctx.resolution.lkiThisWay;
     return answer.yes ? { expand: [...structuredClone(effects), again] } : true;
   },
 
@@ -4884,13 +4871,9 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       }
     }
     if (!to) return true;
-    // CR 611.2b: "for as long as ~ remains on the battlefield" — if it already left (or you no longer control it), the
-    // effect does nothing.
-    const whilePresent = node.until === 'source_present' || node.until === 'source_controlled' ? ctx.source : undefined;
-    if (node.until === 'source_present' || node.until === 'source_controlled') {
-      const s = ctx.source;
-      if (!s || s.zone !== 'battlefield' || (ctx.sourceZcc !== undefined && s.zcc !== ctx.sourceZcc) || (node.until === 'source_controlled' && s.controller !== ctx.controller)) return true;
-    }
+    // CR 611.2b: "for as long as ~ remains on the battlefield" — if it already left (or you no longer control it, or it
+    // untapped), the effect does nothing.
+    if (neverStarts(node, ctx.controller, ctx.source, ctx.sourceZcc)) return true;
     g.effects.push({
       id: `e${g.nextId++}`,
       timestamp: ++g.clock,
@@ -4898,11 +4881,8 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       controller: ctx.controller,
       objects: objects.map((o) => ({ id: o.id, zcc: o.zcc })),
       control: to,
-      ...(whilePresent ? { whilePresent: { id: whilePresent.id, zcc: whilePresent.zcc, ...(node.until === 'source_controlled' ? { player: ctx.controller } : {}) } } : {}),
-      until: node.until === 'eot' ? 'eot' : 'game',
-      ...(node.until === 'source_tapped' && ctx.source ? { whileTapped: { id: ctx.source.id, zcc: ctx.source.zcc } } : {}),
-      // Treasure Nabber: "until the end of your next turn" — it ends with that turn's cleanup (CR 514.2).
-      ...(node.until === 'end_of_your_next_turn' ? { throughTurn: lastTurnOf(g, ctx.controller, 'next_turn') } : {}),
+      // CR 611.2a: for as long as stated; with no duration, for good (duration.ts).
+      ...lasting(node, g, ctx.controller, ctx.source, 'game'),
     });
     applyControlEffects(g, ctx.events);
     return true;
@@ -5265,6 +5245,12 @@ function processCandidates(ctx: EffectContext): ObjectId[] {
 
 function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.controller): boolean {
   const g = ctx.g;
+  // Blood Spatter Analysis: "sacrifice it if it has five or more bloodstain counters on it. When you do, …" — what is
+  // done only if a condition holds isn't done when it doesn't (CR 603.12).
+  if (e.type === 'if') {
+    const branch = ((evalCondition(e.cond as ConditionNode, ctx) ? e.effects : e.else) as EffectNode[] | undefined) ?? [];
+    return branch.length > 0 && branch.every((x) => feasible(x, ctx, chooser));
+  }
   // Ruin Processor: "you may put a card an opponent owns from exile into that player's graveyard. If you do, …" — that many.
   if (e.type === 'process') return processCandidates({ ...ctx, controller: chooser }).length >= amountOf(ctx, e.amount ?? 1);
   // Gravestorm: "target opponent may exile a card from their graveyard" — what each of them would do, as themselves.
@@ -5290,6 +5276,8 @@ function feasible(e: EffectNode, ctx: EffectContext, chooser: PlayerId = ctx.con
     return e.all ? hand.length > 0 : hand.length >= amountOf(ctx, e.amount);
   }
   if (e.type === 'sacrifice') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && o.controller === chooser);
+  // Energy Tap: "Tap target untapped creature you control. If you do, …" — only one that's there and untapped (CR 701.26a).
+  if (e.type === 'tap') return refObjects(ctx, ref(e, 'what')).some((o) => o.zone === 'battlefield' && !o.tapped);
   if (e.type === 'choose_one' && e.feasibleOnly) return (e.options as EffectNode[][]).some((o) => o.every((x) => feasible(x, ctx, chooser)));
   // Counterbalance: "you may reveal the top card of your library. If you do, …" — only with a card there.
   if (e.type === 'reveal_top_card') return zoneList(g, 'library', chooser).length > 0;

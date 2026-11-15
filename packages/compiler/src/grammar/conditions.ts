@@ -263,8 +263,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   // Fading Hope: "If its mana value was 3 or less".
   const targetMV = /^(?:that (?:spell|permanent|creature|card)'s mana value was|that (?:spell|permanent|creature|card) had mana value|it had mana value|its mana value was) (\d+) or (less|greater)$/.exec(t);
   if (targetMV && b.it?.ref === 'target') return { type: 'amount', amount: { kind: 'stat', stat: 'mana_value', of: b.it }, op: targetMV[2] === 'less' ? 'le' : 'ge', n: Number(targetMV[1]) };
-  // Glorious Gale: "Counter target creature spell. If it was a legendary spell, the Ring tempts you."
-  if (/^(?:it|that spell) was a legendary spell$/.test(t) && b.it?.ref === 'target') return { type: 'is', of: b.it, filter: { supertypes: ['Legendary'] } };
   // Jace's Defeat: "Counter target blue spell. If it was a Jace planeswalker spell, scry 2." — the card it was.
   const wasSpell = /^(?:it|that spell) was an? (.+? spell)$/.exec(t);
   if (wasSpell && b.it?.ref === 'target') {
@@ -366,8 +364,6 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (/^you (?:don't|do not) control a Ring-bearer$/.test(t)) return { type: 'ring_bearer', any: true, not: true };
   if (/^you control a Ring-bearer$/.test(t)) return { type: 'ring_bearer', any: true };
   if (t === 'you chose a creature other than ~ as your Ring-bearer') return { type: 'chose_other_ring_bearer' };
-  // CR 702.171b (saddle): "if it's saddled", "~ is saddled"
-  if (/^(?:it(?:'s| is)|~ is) saddled$/.test(t)) return { type: 'saddled' };
   // CR 702.54a (bloodthirst): "if an opponent was dealt damage this turn"
   // Bloodcrazed Goblin: "unless an opponent has been dealt damage this turn".
   if (/^an opponent (?:was|has been) dealt damage this turn$/.test(t)) return { type: 'this_turn', event: 'opponent_damaged' };
@@ -478,7 +474,7 @@ function parseOne(t: string, b: Binder): ConditionNode | null {
   if (attachedTo) return { type: 'is', of: { ref: 'attached' }, filter: attachedTo[2] === 'permanent' ? {} : { types: [capitalise(attachedTo[2]!)] } };
   // Brass Knuckles: "Equipped creature has double strike as long as two or more Equipment are attached to it."
   const manyAttached = /^(two|three|four) or more (Equipment|Auras) are attached to it$/.exec(t);
-  if (manyAttached && (b.it?.ref === 'attached' || (!b.it && /\b(?:Equipment|Aura)\b/.test(b.env.typeLine)))) {
+  if (manyAttached && b.it?.ref === 'attached') {
     return { type: 'amount', amount: { kind: 'count', filter: { subtypes: [manyAttached[2] === 'Auras' ? 'Aura' : 'Equipment'], attachedTo: 'attached' } }, op: 'ge', n: parseAmount(manyAttached[1]!) as number };
   }
   // Balan, Wandering Knight: "~ has double strike as long as two or more Equipment are attached to it."

@@ -1097,7 +1097,8 @@ export interface GameState {
    * CR 603.7: "Whenever that creature deals combat damage to a player this turn, …" — triggered abilities a resolved spell
    * or ability created for the rest of the turn. `targets`: the creator's targets, which the ability refers to.
    */
-  turnTriggers?: { id: string; controller: PlayerId; source: ObjectRef; sourceName: string; ability: TriggeredAbility; turn: number; targets?: TargetRef[][] }[];
+  /** Triggered abilities made for a while (CR 603.7): through turn `turn` — or until `untilTurnOf`'s next turn begins. */
+  turnTriggers?: { id: string; controller: PlayerId; source: ObjectRef; sourceName: string; ability: TriggeredAbility; turn: number; untilTurnOf?: PlayerId; targets?: TargetRef[][] }[];
   config: GameConfig;
   /** Definitions of every card in this game, so a game is self-contained and replayable. */
   cards: Record<string, CardDef>;

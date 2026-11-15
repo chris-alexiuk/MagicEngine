@@ -498,6 +498,7 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   // "until your next turn" effects end as that turn begins.
   if (g.effects.some((e) => e.untilTurnOf === player)) g.effects = g.effects.filter((e) => e.untilTurnOf !== player);
   if (g.prevention.some((p) => p.untilTurnOf === player)) g.prevention = g.prevention.filter((p) => p.untilTurnOf !== player);
+  if (g.turnTriggers?.some((t) => t.untilTurnOf === player)) g.turnTriggers = g.turnTriggers.filter((t) => t.untilTurnOf !== player);
   // CR 701.15a: goad lasts until the goading player's next turn.
   for (const id of g.zones.battlefield) {
     const o = g.objects[id]!;

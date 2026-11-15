@@ -1,5 +1,5 @@
 import type { AddManaEffect, AmountExpr, ConditionNode, EffectNode, FaceDef, ManaSpend, ObjectFilter, Ref, RuleFlag, TargetSpec } from '@mtg/schema';
-import { SUBTYPES } from '@mtg/schema';
+import { COUNTED_FIELDS, COUNTER_LASTING, DOABLE, LASTING_EFFECTS, SUBTYPES, type Duration } from '@mtg/schema';
 import { parseManaProduction } from '../rules/mana.js';
 import { attempt, bindTargetsX, type Binder } from './binder.js';
 import { bindX, parseCount, parseForEach, scaleBy } from './amounts.js';
@@ -453,8 +453,6 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
   // creatures you control gain flying until end of turn if {U} was spent to cast this spell."
   text = text.replace(/^([A-Z][^,.]+?) if (\{[WUBRG]\}) was spent to cast (?:this spell|~), and ([a-z][^,.]+?) if (\{[WUBRG]\}) was spent to cast (?:this spell|~)\.$/, (_m, a: string, c1: string, bb: string, c2: string) =>
     `If ${c1} was spent to cast this spell, ${a.replace(/^(?!~)\w/, (c) => c.toLowerCase())}. If ${c2} was spent to cast this spell, ${bb}.`);
-  // Nightcreep: "Until end of turn, all creatures become black and all lands become Swamps." — both for that long.
-  text = text.replace(/^Until end of turn, (all [^,.]+? become [^,.]+?) and (all [^,.]+? become [^,.]+?)\.$/, '$1 until end of turn. $2 until end of turn.');
   // Witch's Vengeance: "Creatures of the creature type of your choice get -3/-3 until end of turn." — the type is chosen as it
   // resolves (not a target's, which would be chosen as it's cast).
   text = text.replace(/(^|\. )([^.]*?)\b((?:all )?)([Cc])reatures of the creature type of your choice\b([^.]*\.)/g, (m, pre: string, a: string, all: string, c0: string, c: string) =>
@@ -943,8 +941,12 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
     // Teachings of the Archaics: "If …, draw two cards. Draw three cards instead if …" — the guarded effect, replaced inside
     // its own condition.
     let prevIf: (EffectNode & { effects: EffectNode[] }) | null = null;
+    // Where in `out` the sentence being read starts: what the sentence before it added lies between `mark` and there.
+    let mark = 0;
     for (let i = 0; i < sentences.length; i++) {
       let s = sentences[i]!;
+      const before = out.slice(mark);
+      mark = out.length;
       // Temur Battle Rage: "… Ferocious — That creature also gains trample …" — an ability word in mid-text has no rules
       // meaning (CR 207.2c); "also" only says it's in addition.
       if (i > 0) s = s.replace(/^(?!Choose\b)[A-Z][A-Za-z']+(?: [A-Za-z']+){0,2} — (?=[A-Z])/, '');
@@ -1030,7 +1032,9 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         ? [s, undefined, `${whenIt[1]} ${whenIt[2]}`, ' this turn', whenIt[3]!]
         : whenThe && theIndex >= 0 && b.targets.filter((t) => t.filter?.controller === b.targets[theIndex]!.filter?.controller).length === 1
           ? [s, undefined, `TARGETREF${theIndex} dies`, ' this turn', whenThe[2]!]
-          : b.env.parseAbilities ? /^(Until end of turn, )?[Ww]henever (.+?)( this turn)?, (.+)$/.exec(s) : null;
+          : b.env.parseAbilities ? /^(Until end of turn, )?[Ww]henever (.+?)( this turn)?, (.+)$/.exec(s) ?? (modifiers ? /^(Until your next turn, |Until the end of your next turn, )[Ww]henever (.+?)(), (.+)$/.exec(s) : null) : null;
+      // Tamiyo, Inquisitive Student: "Until your next turn, whenever a creature attacks you …" — the ability lasts that long.
+      const trigUntil = turnTrig?.[1] && turnTrig[1] !== 'Until end of turn, ' ? durationSaid(turnTrig[1].slice(0, -2))?.until : undefined;
       if (turnTrig && (turnTrig[1] || turnTrig[3]) && !/\bthis turn\b/.test(turnTrig[2]!)) {
         // Dalkovan Encampment: "… create two … tokens that are tapped and attacking. Sacrifice them at the beginning of the
         // next end step." — what follows may belong to the ability; only a last sentence is read this way.
@@ -1053,7 +1057,7 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         // Song of Blood: "… for each creature card put into your graveyard this way" — what this spell did, which the later
         // trigger can't see.
         if (/ this way\b/.test(effect)) return null;
-        out.push({ type: 'turn_trigger', ability });
+        out.push({ type: 'turn_trigger', ability, ...(trigUntil ? { until: trigUntil } : {}) });
         previous = [];
         continue;
       }
@@ -1130,9 +1134,6 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         lastNode.cant = then;
         continue;
       }
-      // Victimize: "Sacrifice a creature. If you do, return the chosen cards …" — not optional, but what follows
-      // happens only if it was done (CR 608.2c).
-      const ifDone = sentences[i + 1] && !/^(?:You may|Pay) /.test(s) ? /^If you do, (.+)$/.exec(sentences[i + 1]!) : null;
       // Self-Inflicted Wound: "Target opponent sacrifices a green or white creature of their choice. If that player does, they
       // lose 2 life." — only if they could.
       const sacDone = sentences[i + 1] && / sacrifices /.test(s) ? /^If (?:that player|they) does?, (?:they|that player) (\w+?)s? (.+)$/.exec(sentences[i + 1]!) : null;
@@ -1172,27 +1173,6 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
       // CR 608.2b doesn't apply: "This ability still resolves if its target becomes illegal." (Gilded Drake)
       if (s === 'This ability still resolves if its target becomes illegal' && b.targets.length) {
         for (const spec of b.targets) spec.stillResolves = true;
-        continue;
-      }
-      // Volatile Stormdrake: "Exchange control of this creature and target creature …. If you do, …" (CR 701.12a).
-      // Liliana, Heretical Healer: "exile ~, then return her to the battlefield transformed …. If you do, create …" — only
-      // if she was still there to exile.
-      // Shadow of the Goblin: "discard a card. If you do, draw a card." — only with a card to discard.
-      // Dawn of a New Age: "remove a hope counter from this enchantment. If you do, draw a card." — only with one there.
-      // Clockwork Hydra: "remove a +1/+1 counter from it. If you do, it deals 1 damage to any target." — itself.
-      // Woeleecher: "Remove a -1/-1 counter from target creature. If you do, you gain 2 life." — only with one there.
-      const fromIt = /^Remove (?:a|an|one|two|three) \S+ counters? from it$/.test(s) && (b.it?.ref === 'self' || (b.it?.ref === 'trigger_object' && b.itIsSource));
-      // Charnel Troll: "exile a creature card from your graveyard. If you do, put a +1/+1 counter on this creature. Otherwise,
-      // sacrifice it." — only with one there to exile.
-      if (ifDone && (fromIt || /^(?:Sacrifice|Exchange control of|Discard a card$|Remove (?:a|an|one|two|three) \S+ counters? from (?:~|target (?:creature|permanent))$|Exile (?:a|an|one|two) [a-z ]*cards? from your graveyard$)/.test(s) || /^[Ee]xile ~, then return (?:it|him|her) to the battlefield transformed /.test(s))) {
-        const first = parseSentence(s, b);
-        const then = first ? parseSentence(capitalise(ifDone[1]!), b) : null;
-        if (!first || !then) return null;
-        const otherwise = sentences[i + 2] ? /^Otherwise, (.+)$/.exec(sentences[i + 2]!) : null;
-        const no = otherwise ? parseSentence(capitalise(otherwise[1]!), b) : null;
-        if (otherwise && !no) return null;
-        out.push({ type: 'may_do', effects: first, then, ...(no ? { else: no } : {}), mandatory: true });
-        i += otherwise ? 2 : 1;
         continue;
       }
       // CR 603.12: "[Do something]. When you do, [effect]." — the rest of the text is a reflexive triggered ability
@@ -1476,6 +1456,28 @@ export function parseEffectText(text: string, b: Binder): EffectNode[] | null {
         if (!inner) return null;
         out.push({ type: 'if', cond: { type: 'amount', amount: { kind: 'moved_this_way', how: 'returned' }, op: 'ge', n: 1 }, effects: inner });
         continue;
+      }
+      // "[Do this]. If you do, [that]. (Otherwise, [the other].)" — whatever this is, so long as the engine can tell that
+      // it was done (schema DOABLE): that happens only then (CR 608.2c). Victimize: "Sacrifice a creature. If you do,
+      // return the chosen cards …"; Energy Tap: "Tap target untapped creature you control. If you do, add …"; Charnel
+      // Troll: "exile a creature card from your graveyard. If you do, put a +1/+1 counter on this creature. Otherwise,
+      // sacrifice it."; Charitable Levy: "Then if there are three or more collection counters on it, sacrifice it. If
+      // you do, …".
+      const ifDone = before.length > 0 && before.every(doable) ? /^If you do, (.+)$/.exec(s) : null;
+      if (ifDone) {
+        const otherwise = sentences[i + 1] ? /^Otherwise, (.+)$/.exec(sentences[i + 1]!) : null;
+        const r = attempt(b, (b) => {
+          const then = parseEffectText(`${capitalise(ifDone[1]!)}.`, b);
+          const no = then && otherwise ? parseEffectText(`${capitalise(otherwise[1]!)}.`, b) : null;
+          return then && (!otherwise || no) ? { then, no } : null;
+        });
+        if (r) {
+          const first = out.splice(out.length - before.length);
+          out.push({ type: 'may_do', effects: first, then: r.then, ...(r.no ? { else: r.no } : {}), mandatory: true });
+          if (otherwise) i++;
+          mark = out.length - 1;
+          continue;
+        }
       }
       // Urgoros, the Empty One: "that player discards a card at random. If the player can't, you draw a card." — when nothing
       // was discarded.
@@ -3046,7 +3048,193 @@ function parseCounted(s: string, b: Binder, parseInner: InnerParse = parseSenten
   return null;
 }
 
+/**
+ * Whether the shared readers of what modifies an effect are on. A line is first read as written, by the readers that
+ * each know the wordings their own cards use; only a line nothing reads that way is read again with these on (parser.ts
+ * `parseBlock`). So they never change how a card that already read is read — and a wording they read needs no reader
+ * of its own.
+ */
+let modifiers = false;
+
+/** Runs `fn` with the shared modifier readers on or off (and puts back what they were). */
+export function readingModifiers<T>(on: boolean, fn: () => T): T {
+  const was = modifiers;
+  modifiers = on;
+  try {
+    return fn();
+  } finally {
+    modifiers = was;
+  }
+}
+
+/** Whether the shared modifier readers are on (the static rules have one too: lines.ts `conditionalStaticRule`). */
+export const modifiersOn = (): boolean => modifiers;
+
+/**
+ * One sentence of effect text. What modifies an effect is read here once, for whatever the effect is: a sentence that
+ * nothing reads as written is read without that part — or with it in the words every reader knows — and what it makes
+ * is given what the part said. `parseLasting`: how long it lasts. `parseConditional`: "… if [condition]", "… unless
+ * [condition]".
+ */
 function parseSentence(s: string, b: Binder): EffectNode[] | null {
+  if (!modifiers) return parseSentenceAsWritten(s, b);
+  const before = b.clone();
+  const read = parseSentenceAsWritten(s, b);
+  if (read) return read;
+  for (const modifier of [parseLasting, parseSomeNumber, parseConditional]) {
+    // (What a failed reading left behind isn't carried over.)
+    const fresh = before.clone();
+    const modified = modifier(s, fresh);
+    if (modified) {
+      b.adopt(fresh);
+      return modified;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether the engine can tell that this instruction was done (schema DOABLE) — one thing named by the text, or what is
+ * done only if a condition holds.
+ */
+function doable(e: EffectNode): boolean {
+  if (e.type === 'if') return !e.else && (e.effects as EffectNode[]).every(doable);
+  if (!DOABLE.includes(e.type)) return false;
+  // (All of a kind — "exile all creatures" — is done whatever is there; a move is judged for the thing the text names.)
+  const what = String((e.what as Ref | undefined)?.ref);
+  return e.type === 'move' ? ['self', 'target', 'trigger_object'].includes(what) : what !== 'all';
+}
+
+/** A number no card uses, standing where "X" stood while a sentence is read. */
+const SOME_NUMBER = 987;
+
+/**
+ * A counted amount, for every effect that takes a number: "X" in a sentence whose reader only knows numbers. The
+ * sentence is read with a number where X stands, and each parameter that got that number is given X — which is the X
+ * the spell was cast with, or what ", where X is …" says (bound by the sentence loop as for any other X). Only the
+ * parameters the engine works out as the effect is applied (COUNTED_FIELDS): X anywhere else, in a filter or a count
+ * of targets, isn't read this way.
+ */
+function parseSomeNumber(s: string, b: Binder): EffectNode[] | null {
+  const x = /(?<![{+\-/\w])X(?![}/\w])/g;
+  if (!x.test(s) || s.includes(String(SOME_NUMBER))) return null;
+  const effects = parseSentenceAsWritten(s.replace(x, String(SOME_NUMBER)), b);
+  if (!effects) return null;
+  let given = 0;
+  const give = (n: unknown, inEffect: boolean): boolean => {
+    if (Array.isArray(n)) return n.every((v) => give(v, inEffect));
+    if (n === SOME_NUMBER) return false;
+    if (!n || typeof n !== 'object') return typeof n !== 'string' || !n.includes(String(SOME_NUMBER));
+    const node = n as Record<string, unknown>;
+    const counted = inEffect && typeof node.type === 'string' ? (COUNTED_FIELDS[node.type] ?? []) : [];
+    for (const [k, v] of Object.entries(node)) {
+      if (v === SOME_NUMBER && counted.includes(k)) {
+        node[k] = 'X';
+        given++;
+      } else if (!give(v, k === 'effects' || k === 'then' || k === 'else')) return false;
+    }
+    return true;
+  };
+  return give(effects, true) && given > 0 ? effects : null;
+}
+
+/**
+ * A condition on an effect, for every effect: "[effect] if [condition]" is the effect if the condition holds as it
+ * resolves; "[effect] unless [condition]", if it doesn't. ("… unless [a player] pays …" and "… unless you [do
+ * something]" are no conditions, and aren't read here.)
+ */
+function parseConditional(s: string, b: Binder): EffectNode[] | null {
+  for (const [word, not] of [[' unless ', true], [' if ', false]] as const) {
+    const at = s.lastIndexOf(word);
+    if (at <= 0) continue;
+    const r = attempt(b, (b) => {
+      const effects = parseSentence(s.slice(0, at), b);
+      const cond = effects ? parseCondition(s.slice(at + word.length), b) : null;
+      // ("Unless" as the readers below write it: nothing if the condition holds, the effect otherwise.)
+      return effects && cond ? [(not ? { type: 'if', cond, effects: [], else: effects } : { type: 'if', cond, effects }) as EffectNode] : null;
+    });
+    if (r) return r;
+  }
+  return null;
+}
+
+/** What a sentence says of how long its effect lasts: a duration, or "for as long as it has a [kind] counter on it". */
+type Said = { until: Duration; whileCounter?: string };
+
+/** The words for how long an effect lasts, besides "until end of turn" (schema durations.ts). */
+const DURATION_WORDS: [RegExp, (m: RegExpExecArray) => Said][] = [
+  [/^until your next turn$/i, () => ({ until: 'your_next_turn' })],
+  [/^until the end of your next turn$/i, () => ({ until: 'end_of_your_next_turn' })],
+  [/^until end of combat$/i, () => ({ until: 'eoc' })],
+  [/^for as long as (?:~|this (?:creature|artifact|enchantment|permanent|land|Vehicle|Equipment)) remains tapped$/i, () => ({ until: 'source_tapped' })],
+  [/^for as long as you control (?:~|this (?:creature|artifact|enchantment|permanent|land|Vehicle|Equipment))$/i, () => ({ until: 'source_controlled' })],
+  // Rubinia Soulsinger: "for as long as you control Rubinia Soulsinger and Rubinia Soulsinger remains tapped".
+  [/^for as long as you control (~|this (?:creature|artifact|enchantment|permanent|land|Vehicle|Equipment)) and \1 remains tapped$/i, () => ({ until: 'source_controlled_tapped' })],
+  // Gaea's Liege: "until this creature leaves the battlefield" — the same as for as long as it remains there.
+  [/^(?:for as long as (?:~|this (?:creature|artifact|enchantment|permanent|land|Vehicle|Equipment)) remains on the battlefield|until (?:~|this (?:creature|artifact|enchantment|permanent|land|Vehicle|Equipment)) leaves the battlefield)$/i, () => ({ until: 'source_present' })],
+  // Shield Broker: "for as long as it has a shield counter on it" — what the effect is about, while it has one.
+  [/^for as long as (?:it|that (?:creature|land|permanent|artifact)) has an? (\S+) counter on it$/i, (m) => ({ until: 'game', whileCounter: m[1]! })],
+];
+
+/** The duration the words name ("until your next turn", "for as long as …"), if they name one. */
+function durationSaid(words: string): Said | null {
+  for (const [re, said] of DURATION_WORDS) {
+    const m = re.exec(words);
+    if (m) return said(m);
+  }
+  return null;
+}
+
+/**
+ * How long an effect lasts, for every effect that lasts (CR 611.2a–b). The readers below each know "until end of
+ * turn"; any other duration is read here: the sentence is read as if it said "until end of turn", and the effect it
+ * makes — one of the kinds the engine ends by its duration (LASTING_EFFECTS) — is given the duration it did say.
+ * "Gain control of target creature until your next turn", "Target land becomes a Swamp until end of combat"; Murk
+ * Dwellers: "it gets +2/+0 until end of combat" (CR 511.3); Skilled Animator: "… becomes an artifact creature with base
+ * power and toughness 5/5 for as long as this creature remains on the battlefield"; Aegis Angel: "another target
+ * permanent gains indestructible for as long as you control this creature".
+ */
+function parseLasting(s: string, b: Binder): EffectNode[] | null {
+  if (/\buntil end of turn\b/i.test(s)) return null;
+  const tail = DURATION_TAIL.exec(s);
+  const head = tail ? null : /^(Until your next turn|Until the end of your next turn|Until end of combat|For as long as [^,]+), (.+)$/.exec(s);
+  const words = tail?.[1] ?? head?.[1];
+  const said = words ? durationSaid(words) : null;
+  if (!said) return null;
+  // (An instant or sorcery is no permanent for an effect to hang on.)
+  if (said.until.startsWith('source_') && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
+  // "… until end of turn", or as some sentences say the same: "… can't block this turn".
+  const effects = !tail
+    ? parseSentenceAsWritten(`Until end of turn, ${head![2]}`, b)
+    : (attempt(b, (b) => parseSentenceAsWritten(`${s.slice(0, tail.index)} until end of turn`, b)) ?? parseSentenceAsWritten(`${s.slice(0, tail.index)} this turn`, b));
+  return effects && lastsAsSaid(effects, said) ? effects : null;
+}
+
+/** A duration at the end of a sentence or clause, besides "until end of turn". */
+const DURATION_TAIL = / (until your next turn|until the end of your next turn|until end of combat|until [^,.]+ leaves the battlefield|for as long as [^,.]+)$/i;
+
+/**
+ * Gives the effects read with "until end of turn" the duration the text did say: every effect in them that lasts the
+ * turn is the one the words were about, and none may be of a kind that can't last so (false then, or if there is none).
+ */
+function lastsAsSaid(effects: EffectNode[], said: Said): boolean {
+  let given = 0;
+  const give = (n: unknown): boolean => {
+    if (Array.isArray(n)) return n.every(give);
+    if (!n || typeof n !== 'object') return true;
+    const node = n as EffectNode;
+    if (typeof node.type === 'string' && node.until === 'eot') {
+      if (!LASTING_EFFECTS[node.type]?.includes(said.until) || (said.whileCounter !== undefined && !COUNTER_LASTING.includes(node.type))) return false;
+      node.until = said.until;
+      if (said.whileCounter !== undefined) node.whileCounter = said.whileCounter;
+      given++;
+    }
+    return Object.values(node).every(give);
+  };
+  return give(effects) && given > 0;
+}
+
+function parseSentenceAsWritten(s: string, b: Binder): EffectNode[] | null {
   // Stunted Growth: "Target player chooses three cards from their hand and puts them on top of their library in any order."
   const choosesPuts = /^(.+?) chooses (a card|two cards|three cards) from (?:their|his or her) hand and puts (?:it|them) on top of (?:their|his or her) library(?: in any order)?$/.exec(s);
   if (choosesPuts) {
@@ -3550,8 +3738,8 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
   if (/^You may cast spells this turn as though they had flash$/.test(s)) return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash' }];
   // Blossoming Calm: "You gain hexproof until your next turn."; Everybody Lives!: "Players gain hexproof until end of turn.";
   // Gilded Light: "You gain shroud until end of turn." (CR 702.11c, 702.18)
-  const playerWard = /^(You|Players|Each player) gains? (hexproof|shroud) until (end of turn|your next turn)$/.exec(s);
-  if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: playerWard[3] === 'end of turn' ? 'eot' : 'your_next_turn' }];
+  const playerWard = /^(You|Players|Each player) gains? (hexproof|shroud) until end of turn$/.exec(s);
+  if (playerWard) return [{ type: 'player_effect', who: playerWard[1] === 'You' ? { ref: 'you' } : { ref: 'players', who: 'each' }, rule: playerWard[2], until: 'eot' }];
   // Roiling Vortex: "Your opponents can't gain life this turn."; Skullcrack: "Players can't gain life this turn." (CR 119.7)
   // Screaming Nemesis: "… they can't gain life for the rest of the game."
   // Stigma Lasher: "Whenever this creature deals damage to a player, that player can't gain life for the rest of the game."
@@ -3611,26 +3799,11 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const { zone: _z, ...filter } = pf.filter;
     return [{ type: 'player_effect', who: { ref: 'you' }, rule: 'flash', until: when === 'your next turn' ? 'your_next_turn' : 'eot', filter }];
   }
-  // CR 511.3: Murk Dwellers: "it gets +2/+0 until end of combat" — like "until end of turn", ending sooner.
-  const untilEoc = / until end of combat$/.exec(s.replace(/\.$/, ''));
-  if (untilEoc) {
-    const base = s.replace(/\.$/, '').slice(0, untilEoc.index);
-    const inner = attempt(b, (b) => parseSentence(`${base} until end of turn`, b));
-    if (inner && inner.every((x) => x.type === 'modify' && x.until === 'eot')) return inner.map((x) => ({ ...x, until: 'eoc' }));
-  }
   // Yuan Shao's Infantry: "this creature can't be blocked this combat" — ends with the combat (CR 511.3).
   const thisCombat = /^(.+? can't be blocked) this combat$/.exec(s.replace(/\.$/, ''));
   if (thisCombat) {
     const inner = attempt(b, (b) => parseSentence(`${thisCombat[1]} this turn`, b));
     if (inner && inner.every((x) => x.type === 'modify' && x.until === 'eot')) return inner.map((x) => ({ ...x, until: 'eoc' }));
-  }
-  // CR 611.2b: "Target creature gets +2/+2 for as long as ~ remains tapped", "Gain control of target creature for as long as ~ remains tapped".
-  const whileTapped = / for as long as ~ remains tapped$/.exec(s.replace(/\.$/, ''));
-  if (whileTapped) {
-    const base = s.replace(/\.$/, '').slice(0, whileTapped.index);
-    const durable = (r: EffectNode[] | null) => (r && r.every((x) => x.type === 'modify' || x.type === 'gain_control') ? r : null);
-    const inner = attempt(b, (b) => durable(parseSentence(`${base} until end of turn`, b))) ?? attempt(b, (b) => durable(parseSentence(base, b)));
-    if (inner) return inner.map((x) => ({ ...x, until: 'source_tapped' }));
   }
   // Palantír of Orthanc: "you mill X cards, where X is the number of influence counters on ~, and that player loses
   // life equal to …" — X belongs to the first instruction; the second follows it.
@@ -5358,34 +5531,21 @@ function parseSentence(s: string, b: Binder): EffectNode[] | null {
     const what = parseObjectRef(kardur[1]!, b);
     if (what) return [{ type: 'goad', what: what.ref, quiet: true }];
   }
-  // Fear of Falling: "target creature defending player controls gets -2/-0 and loses flying until your next turn" — both.
-  const getsLosesNext = /^(.+?) (gets? [+-]\w+\/[+-]\w+) and (loses? [a-z ,]+) until your next turn$/.exec(s);
-  if (getsLosesNext) {
-    const r = attempt(b, (b) => parseSentence(`${getsLosesNext[1]} ${getsLosesNext[2]} until your next turn and ${getsLosesNext[3]} until your next turn`, b));
-    if (r) return r;
-  }
   const until = /^Until end of turn, (.+?) (gets?|gains?|has|have|can't|becomes?|loses?|assigns?|can attack) (.+)$/.exec(s);
   if (until) {
     const r = attempt(b, (b) => parseSentence(`${until[1]} ${until[2]} ${until[3]} until end of turn`, b));
     if (r) return r;
     // Doorman: "Until end of turn, target creature can't be blocked by …" — as "… this turn".
-    return until[2] === "can't" ? parseSentence(`${until[1]} can't ${until[3]} this turn`, b) : null;
-  }
-  // Taunt from the Rampart: "Until your next turn, those creatures can't block."
-  const untilNext = /^Until your next turn, ([^,]+?) (gets?|gains?|has|have|can't) (.+)$/.exec(s);
-  if (untilNext && !/\b(?:becomes?|is|are)\b/.test(untilNext[1]!)) {
-    // Dovin Baan: "Until your next turn, up to one target creature gets -3/-0 and its activated abilities can't be activated."
-    // — both last until then.
-    const andIts = / and (its|their) activated abilities can't be activated$/.exec(untilNext[3]!);
-    // Mu Yanling: "… gets -2/-0 and loses flying." — both until then.
-    const andLoses = !andIts ? / and (loses? [a-z ,]+)$/.exec(untilNext[3]!) : null;
-    const rest = andIts
-      ? `${untilNext[3]!.slice(0, andIts.index)} until your next turn and ${andIts[1]} activated abilities can't be activated`
-      : andLoses
-        ? `${untilNext[3]!.slice(0, andLoses.index)} until your next turn and ${andLoses[1]}`
-        : untilNext[3]!;
-    const r = attempt(b, (b) => parseSentence(`${untilNext[1]} ${untilNext[2]} ${rest} until your next turn`, b));
-    if (r) return r;
+    const thisTurn = until[2] === "can't" ? attempt(b, (b) => parseSentence(`${until[1]} can't ${until[3]} this turn`, b)) : null;
+    if (thisTurn) return thisTurn;
+    // Dovin Baan: "…, up to one target creature gets -3/-0 and its activated abilities can't be activated."; Mu Yanling:
+    // "… gets -2/-0 and loses flying." — both parts for that long.
+    const andIts = / and (its|their) activated abilities can't be activated$/.exec(until[3]!);
+    const andLoses = !andIts ? / and (loses? [a-z ,]+)$/.exec(until[3]!) : null;
+    const and = andIts ?? andLoses;
+    if (!and) return null;
+    const first = `${until[1]} ${until[2]} ${until[3]!.slice(0, and.index)} ${until[2] === "can't" ? 'this turn' : 'until end of turn'}`;
+    return parseSentence(`${first} and ${andIts ? `${andIts[1]} activated abilities can't be activated` : andLoses![1]} until end of turn`, b);
   }
 
 
@@ -5593,13 +5753,11 @@ const VERBS: Record<string, VerbHandler> = {
     // Treasure Nabber: "… until the end of your next turn".
     // Sower of Temptation: "… for as long as this creature remains on the battlefield"; Roil Elemental: "… for as long as
     // you control this creature" (CR 611.2b).
-    const control = /^control of (.+?)( until end of turn| until the end of your next turn| for as long as (?:~|this \w+) remains on the battlefield| for as long as you control (?:~|this \w+))?$/.exec(args);
+    const control = /^control of (.+?)( until end of turn)?$/.exec(args);
     if (control) {
       if (!imperative) return null;
       const what = parseObjectRef(control[1]!, b);
-      const until = control[2] === ' until end of turn' ? 'eot' : /remains on the battlefield$/.test(control[2] ?? '') ? 'source_present' : /you control/.test(control[2] ?? '') ? 'source_controlled' : control[2] ? 'end_of_your_next_turn' : null;
-      if (until?.startsWith('source_') && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine)) return null;
-      return what ? [{ type: 'gain_control', what: what.ref, ...(until ? { until } : {}) }] : null;
+      return what ? [{ type: 'gain_control', what: what.ref, ...(control[2] ? { until: 'eot' } : {}) }] : null;
     }
     // Heliod's Intervention: "Target player gains twice X life."
     if (args === 'twice X life') return [{ type: 'gain_life', amount: { kind: 'x', times: 2 }, who }];
@@ -6989,7 +7147,7 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   }
   const keepsColors = / in addition to its other colors and types(?= until end of turn$|$)/.exec(c);
   if (keepsColors) {
-    const rest = `${c.slice(0, keepsColors.index)}${c.slice(keepsColors.index + keepsColors[0].length).replace(/^( until end of turn)?$/, ' in addition to its other types$1')}`.replace(/(becomes? )an? ((?:[A-Za-z]+ )*?creature) with base power and toughness (\d+)\/(\d+)/, '$1a $3/$4 $2');
+    const rest = `${c.slice(0, keepsColors.index)}${c.slice(keepsColors.index + keepsColors[0].length).replace(/^( until end of turn)?$/, ' in addition to its other types$1')}`;
     const inner = attempt(b, (b) => parseBecomes(rest, b));
     const node = inner?.length === 1 && inner[0]!.type === 'modify' && inner[0]!.retainTypes ? inner[0]! : null;
     if (!node) return null;
@@ -7063,12 +7221,12 @@ function parseBecomes(c: string, b: Binder): EffectNode[] | null {
   // Layer 7b: "Target creature has base power and toughness 1/1 until end of turn", "… becomes a 0/1 until end of turn".
   // Biomass Mutation: "Creatures you control have base power and toughness X/X until end of turn."
   // Mass Diminish: "Until your next turn, creatures target player controls have base power and toughness 1/1."
-  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+|X)\/(\d+|X) (until end of turn|until your next turn)$/.exec(c);
+  const base = /^(.+?) (?:ha(?:s|ve) base power and toughness|becomes? an?) (\d+|X)\/(\d+|X) until end of turn$/.exec(c);
   if (base) {
     return attempt(b, (b) => {
       const what = parseObjectRef(base[1]!, b);
       const v = (x: string) => (x === 'X' ? 'X' : Number(x));
-      return what ? [{ type: 'modify', what: what.ref, setPower: v(base[2]!), setToughness: v(base[3]!), until: base[4] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
+      return what ? [{ type: 'modify', what: what.ref, setPower: v(base[2]!), setToughness: v(base[3]!), until: 'eot' }] : null;
     });
   }
   // Beorn's Hospitality: "… becomes a Bear creature in addition to its other types and gains "This creature's power and
@@ -7141,18 +7299,30 @@ function singlePlayer(text: string, b: Binder): Ref | null {
   return who && who.ref !== 'you' && who.ref !== 'players' ? who : null;
 }
 
+/**
+ * One clause of a sentence. As a sentence is (`parseSentence`), a clause nothing reads as written is read with the
+ * shared reader of how long it lasts: "… gets -2/-0 until your next turn and you draw a card".
+ */
 function parseClause(c: string, b: Binder, inherited: Ref | null): Clause | null {
-  // Skilled Animator: "target artifact you control becomes an artifact creature with base power and toughness 5/5 for as long
-  // as this creature remains on the battlefield" (CR 611.2b).
-  const whilePresent = / for as long as (?:~|this (?:creature|artifact|enchantment|permanent|land)) remains on the battlefield$/.exec(c);
-  if (whilePresent) {
-    const r = attempt(b, (b) => {
-      const inner = parseClause(c.slice(0, whilePresent.index), b, inherited);
-      const node = inner?.effects.length === 1 && inner.effects[0]!.type === 'modify' && inner.effects[0]!.until === 'game' ? inner.effects[0]! : null;
-      return inner && node ? { effects: [{ ...node, until: 'source_present' }], subject: inner.subject } : null;
-    });
-    if (r) return r;
+  if (!modifiers) return parseClauseAsWritten(c, b, inherited);
+  const before = b.clone();
+  const read = parseClauseAsWritten(c, b, inherited);
+  if (read) return read;
+  const tail = DURATION_TAIL.exec(c);
+  const said = tail ? durationSaid(tail[1]!) : null;
+  if (!tail || !said || /\buntil end of turn\b/i.test(c) || (said.until.startsWith('source_') && /\b(?:Instant|Sorcery)\b/.test(b.env.typeLine))) return null;
+  for (const turn of ['until end of turn', 'this turn']) {
+    const fresh = before.clone();
+    const clause = parseClauseAsWritten(`${c.slice(0, tail.index)} ${turn}`, fresh, inherited);
+    if (clause && lastsAsSaid(clause.effects, said)) {
+      b.adopt(fresh);
+      return clause;
+    }
   }
+  return null;
+}
+
+function parseClauseAsWritten(c: string, b: Binder, inherited: Ref | null): Clause | null {
   // Object-subject clauses first: damage, pumps, restrictions.
   const special = parseDamage(c, b) ?? parsePump(c, b) ?? parseBecomes(c, b) ?? parseLayerChange(c, b) ?? parseRestriction(c, b) ?? parseKeywordAction(c, b) ?? parseReplacement(c, b);
   if (special) return { effects: special, subject: null };
@@ -7381,13 +7551,6 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
   // Elspeth, Storm Slayer: "Those creatures gain flying until your next turn."
   // Walking Bulwark: "… gains haste, can attack as though it didn't have defender, and assigns combat damage equal to its
   // toughness rather than its power" — rule flags among the grants.
-  // Aegis Angel: "another target permanent gains indestructible for as long as you control this creature".
-  const whileYours = / for as long as you control (?:~|this (?:creature|artifact|enchantment|permanent))$/.exec(c);
-  if (whileYours) {
-    const inner = attempt(b, (b) => parsePump(c.slice(0, whileYours.index), b));
-    const node = inner?.length === 1 && inner[0]!.type === 'modify' && inner[0]!.until === 'game' ? inner[0]! : null;
-    if (node) return [{ ...node, until: 'source_controlled' }];
-  }
   // Amoeboid Changeling: "Target creature loses all creature types until end of turn." (layer 4, CR 205.1b)
   const loseAllTypes = /^(.+?) loses all creature types until end of turn$/.exec(c);
   if (loseAllTypes) {
@@ -7397,11 +7560,11 @@ function parsePump(c: string, b: Binder): EffectNode[] | null {
     });
   }
   const m =
-    /^(.+?) (?:gets?|gains?|has|have) (.+) until (?:end of turn|your next turn)$/.exec(c) ??
+    /^(.+?) (?:gets?|gains?|has|have) (.+) until end of turn$/.exec(c) ??
     /^(.+?) ((?:can attack as though (?:it|they) didn't have defender|assigns? combat damage equal to (?:its|their) toughness rather than (?:its|their) power)(?:,? and .+)?) until end of turn$/.exec(c) ??
     /^(.+?) (?:gains?) ((?!control\b).+)$/.exec(c);
   if (!m) return null;
-  const until = / until end of turn$/.test(c) ? 'eot' : / until your next turn$/.test(c) ? 'your_next_turn' : 'game';
+  const until = / until end of turn$/.test(c) ? 'eot' : 'game';
   return attempt(b, (b) => {
     // "Two target creatures each get +1/+1": "each" goes with a plural subject.
     const each = / each$/.test(m[1]!);
@@ -7490,12 +7653,12 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
     if (lost) return [{ type: 'modify', what: { ref: 'self' }, loseKeywords: lost, until: 'game' }];
   }
   // Mu Yanling, Sky Dancer: "Until your next turn, up to one target creature gets -2/-0 and loses flying."
-  const lose = /^(.+?) loses? ([a-z ,]+?) (until end of turn|until your next turn)$/.exec(c);
+  const lose = /^(.+?) loses? ([a-z ,]+?) until end of turn$/.exec(c);
   if (lose && !/^all abilities$/.test(lose[2]!)) {
     const r = attempt(b, (b) => {
       const lost = keywordIds(lose[2]!, b);
       const what = lost ? parseObjectRef(lose[1]!, b) : null;
-      return what && lost ? [{ type: 'modify', what: what.ref, loseKeywords: lost, until: lose[3] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
+      return what && lost ? [{ type: 'modify', what: what.ref, loseKeywords: lost, until: 'eot' }] : null;
     });
     if (r) return r;
   }
@@ -7548,10 +7711,10 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   // CR 602.5: "Its activated abilities can't be activated this turn" (Koma), "Target creature's activated abilities
   // can't be activated this turn" — mana abilities too.
   // Dovin Baan: "Until your next turn, … its activated abilities can't be activated."
-  const locked = /^(?:(.+?)'s|[Ii]ts) activated abilities can't be activated (this turn|until end of turn|until your next turn)$/.exec(c);
+  const locked = /^(?:(.+?)'s|[Ii]ts) activated abilities can't be activated (?:this turn|until end of turn)$/.exec(c);
   if (locked) {
     const what = parseObjectRef(locked[1] ?? 'it', b);
-    return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: locked[2] === 'until your next turn' ? 'your_next_turn' : 'eot' }] : null;
+    return what ? [{ type: 'modify', what: what.ref, rules: ['cant_activate'], until: 'eot' }] : null;
   }
   // Assault Formation: "Target creature with defender can attack this turn as though it didn't have defender." (CR 702.3b)
   const defenderOk = /^(.+?) can attack this turn as though (?:it|they) didn't have defender$/.exec(c);
@@ -7566,11 +7729,11 @@ function parseRestriction(c: string, b: Binder): EffectNode[] | null {
   }
   // Taunt from the Rampart: "Until your next turn, those creatures can't block."
   // Extraction Specialist: "That creature can't attack or block for as long as you control this creature."
-  const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) (this turn|until your next turn|for as long as you control (?:~|this (?:creature|artifact|enchantment|permanent)))$/.exec(c);
+  const m = /^(.+?) (can't (?:attack or block|attack|block|be blocked)) this turn$/.exec(c);
   if (!m) return null;
   return attempt(b, (b) => {
     const what = parseObjectRef(m[1]!, b);
-    return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: m[3] === 'this turn' ? 'eot' : m[3] === 'until your next turn' ? 'your_next_turn' : 'source_controlled' }] : null;
+    return what ? [{ type: 'modify', what: what.ref, rules: RESTRICTIONS[m[2]!]!, until: 'eot' }] : null;
   });
 }
 
