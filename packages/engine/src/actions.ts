@@ -8,7 +8,8 @@ import { abilitySources, livePlayers } from './zones.js';
 import { auraTargetSpec } from './permanents.js';
 import { helperChoices, helperKeywords, helpWith, payHelpers } from './helpers-cost.js';
 import { ensureFaceDownDefs, faceDownFace, FACE_DOWN_KEYWORDS } from './face-down.js';
-import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility, StaticAbility } from '@mtg/schema';
+import type { ActivatedAbility, Amount, ConditionNode, Cost, EffectNode, FaceDef, CastOptionNode, CostModifierNode, ObjectFilter, SpellAbility, StaticAbility, TargetsFilter } from '@mtg/schema';
+import { fitsTargets } from './targets-filter.js';
 import { amountOf } from './resolve.js';
 import { assignCombatDamage, declareAttackers, declareBlockers, promptNextBlocker } from './combat.js';
 import { canActivateTapAbilities, chars, hasRule, hasType, isPermanentCard, manaAbilities } from './characteristics.js';
@@ -859,7 +860,7 @@ export function castWay(g: GameState, a: CastArgs) {
   if (restricted) throw new RulesError(restricted);
   // CR 608.2g: casting as an effect resolves ignores timing.
   // Timely Ward: "You may cast this spell as though it had flash if it targets a commander." — checked once targets are chosen.
-  const flashIfTargets = castFace.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'flash_if' && (a.effect as unknown as { ifTargets?: ObjectFilter }).ifTargets ? [(a.effect as unknown as { ifTargets: ObjectFilter }).ifTargets] : []));
+  const flashIfTargets = castFace.abilities.flatMap((a) => (a.kind === 'static' && a.effect.type === 'flash_if' && (a.effect as unknown as { targets?: TargetsFilter }).targets ? [(a.effect as unknown as { targets: TargetsFilter }).targets] : []));
   let needFlashTarget = false;
   if (!instantSpeed && !during) {
     if (g.active !== player || (g.step !== 'main1' && g.step !== 'main2') || g.stack.length > 0) {
@@ -903,7 +904,7 @@ export function castTargets(g: GameState, a: CastArgs, way: ReturnType<typeof ca
         })()
       : [];
   if (needFlashTarget) {
-    const ok = targets.flat().some((t) => t.kind === 'object' && g.objects[t.id] && flashIfTargets.some((f) => matchesFilter(g, g.objects[t.id]!, f, { controller: player, source: o })));
+    const ok = flashIfTargets.some((f) => fitsTargets(g, f, targets, player, o));
     if (!ok) throw new RulesError(`${face.name} can be cast at instant speed only if it targets ${flashIfTargets.length ? 'what its ability says' : 'that'}.`);
   }
 

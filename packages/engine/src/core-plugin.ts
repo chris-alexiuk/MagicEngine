@@ -4,7 +4,8 @@ import { hasReadAhead } from './sagas.js';
 import { unlockHalf } from './rooms.js';
 import { phaseOut } from './phasing.js';
 import { completeDungeon, currentRoom, dungeonChoices, enterDungeon, moveToRoom } from './dungeons.js';
-import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, MeldNode, ObjectFilter, PlayerRule, QuantityReplacementNode, Ref, RuleFlag, TriggerNode, TriggeredAbility } from '@mtg/schema';
+import type { AbilityNode, AddManaEffect, Amount, AmountExpr, AsEntersNode, Color, CombatRules, ConditionNode, CopyExcept, EffectNode, FaceDef, KeywordInstance, MeldNode, ObjectFilter, PlayerRule, QuantityReplacementNode, Ref, RuleFlag, TriggerNode, TriggeredAbility, TargetsFilter } from '@mtg/schema';
+import { fitsTargets } from './targets-filter.js';
 import { CARD_TYPE_PLURALS, CORE_NODES, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import { queueAsEnters } from './as-enters.js';
 import { landsAllowed, playerRule } from './player-rules.js';
@@ -6349,27 +6350,13 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
     if (t.who === 'chosen' && e.player !== check.source.chosen?.player) return [];
     const spell = check.g.objects[e.object];
     if (!spell) return [];
-    // Heroic: "a spell that targets ~"
-    if (t.targetsSource) {
-      const entry = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object);
-      const src = check.source;
-      if (!entry || !entry.targets.some((list) => list.some((x) => x.kind === 'object' && x.id === src.id && x.zcc === src.zcc))) return [];
-    }
     // "Whenever you cast a kicked spell" (CR 702.33d)
     if (t.kicked && !spell.cast?.kicked) return [];
-    // "… a spell that targets a creature you control" — as it was cast (CR 601.2c).
-    // Reparations: "a spell that targets you or a creature you control".
-    if (t.targets || t.targetsYou) {
+    // What it targets, as it was cast (CR 601.2c) — heroic: "a spell that targets ~"; "… that targets a creature you
+    // control"; Reparations: "… that targets you or a creature you control".
+    if (t.targets) {
       const entry = check.g.stack.find((s) => s.kind === 'spell' && s.object === e.object);
-      const hit = entry?.targets.some((list) =>
-        list.some((x) => {
-          if (x.kind === 'player') return Boolean(t.targetsYou && x.player === check.controller);
-          if (x.kind !== 'object' || !t.targets) return false;
-          const o = check.g.objects[x.id];
-          return Boolean(o && o.zcc === x.zcc && matchesFilter(check.g, o, t.targets as ObjectFilter, { controller: check.controller, source: check.source }));
-        }),
-      );
-      if (!hit) return [];
+      if (!entry || !fitsTargets(check.g, t.targets as TargetsFilter, entry.targets, check.controller, check.source)) return [];
     }
     const filter = { ...(t.filter as ObjectFilter), zone: 'stack' as const };
     // Grandmother Goby: "counter that spell. Create … equal to the amount of mana spent to cast that spell" — remembered.

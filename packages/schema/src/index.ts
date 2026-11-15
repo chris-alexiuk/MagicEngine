@@ -981,6 +981,18 @@ export interface ManaSpend {
  * fits; with either, only a recipient the one for its kind names. Read from the point of view of the permanent with
  * the ability: "you" is its controller.
  */
+/**
+ * What a spell targets, where an ability names it so: "a spell that targets a creature you control" (a trigger on casting
+ * it), "… that target you or a permanent you control cost {2} more" (what it costs), "… as though it had flash if it
+ * targets a commander". One of its targets is such a one (CR 601.2c: as chosen while it is cast).
+ */
+export interface TargetsFilter {
+  /** An object like this; `{ isSource: true }`: the permanent with the ability (heroic). */
+  objects?: ObjectFilter;
+  /** The player with the ability. */
+  you?: true;
+}
+
 export interface DamageFilter {
   /**
    * The source ("a red source you control", "creatures blocking it"). `{ isSource: true }`: the permanent with the
@@ -1379,10 +1391,11 @@ export interface CostModifierNode extends EffectNode {
   generic?: number;
   change: 'less' | 'more';
   condition?: ConditionNode;
-  /** "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first). */
-  ifTargets?: ObjectFilter;
-  /** Monastery Siege: "… that target you or a permanent you control" — targeting this effect's controller counts too. */
-  ifTargetsYou?: true;
+  /**
+   * "This spell costs {2} less to cast if it targets a tapped creature" (CR 601.2f: targets come first); Monastery Siege:
+   * "Spells your opponents cast that target you or a permanent you control …".
+   */
+  targets?: TargetsFilter;
   /** Emet-Selch: only spells cast from these zones ("from your graveyard"); `notFromHand`: "from anywhere other than your hand". */
   castFrom?: ('graveyard' | 'exile')[];
   notFromHand?: true;

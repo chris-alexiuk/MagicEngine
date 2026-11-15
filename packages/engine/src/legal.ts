@@ -3,6 +3,7 @@ import { auraTargetSpec } from './permanents.js';
 import type { ActivatedAbility, AddManaEffect, EffectNode, FaceDef, Program } from '@mtg/schema';
 import { planAutoTap } from './autotap.js';
 import { isPermanentCard, manaAbilities, matchesFilter, withCharsCache, withStableChars } from './characteristics.js';
+import { fitsTarget } from './targets-filter.js';
 import { FACE_DOWN_KEYWORDS } from './face-down.js';
 import { anyColorChoices, branchNow, MANA_COLORS, manaOption, parseManaCost } from './mana.js';
 import { amountOf } from './resolve.js';
@@ -288,7 +289,7 @@ function cheaperTargets(g: GameState, a: CastArgs, way: CastWay, choice: Choice)
   const face = way.castFace;
   if (!targets?.length) return [];
   // (Or whether it can be cast now at all does: "You may cast this spell as though it had flash if it targets a permanent you control.")
-  const depends = way.needFlashTarget || face.abilities.some((x) => x.kind === 'static' && (x.effect.type === 'per_target_cost' || (x.effect.type === 'cost_modifier' && Boolean((x.effect as { ifTargets?: unknown }).ifTargets)))) || targetCostModifiersInPlay(g);
+  const depends = way.needFlashTarget || face.abilities.some((x) => x.kind === 'static' && (x.effect.type === 'per_target_cost' || (x.effect.type === 'cost_modifier' && Boolean((x.effect as { targets?: unknown }).targets)))) || targetCostModifiersInPlay(g);
   if (!depends) return [];
   let prompts;
   try {
@@ -309,7 +310,7 @@ function cheaperTargets(g: GameState, a: CastArgs, way: CastWay, choice: Choice)
     if (list.length !== 1) return;
     const others = pr.candidates.filter((c) => !same(c, list[0]!));
     // (The targets that let it be cast now first: there may be many others before them.)
-    const fits = (t: Target) => t.kind === 'object' && Boolean(g.objects[t.object]) && way.flashIfTargets.some((f) => matchesFilter(g, g.objects[t.object]!, f, { controller: a.player, source: way.o }));
+    const fits = (t: Target) => t.kind === 'object' && Boolean(g.objects[t.object]) && way.flashIfTargets.some((f) => fitsTarget(g, f, { kind: 'object', id: t.object, zcc: g.objects[t.object]!.zcc }, a.player, way.o));
     const ordered = way.needFlashTarget ? [...others.filter(fits), ...others.filter((c) => !fits(c))] : others;
     for (const t of ordered.slice(0, 12)) out.push(targets.map((l, j) => (j === i ? [t] : l)));
   });

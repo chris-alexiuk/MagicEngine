@@ -103,6 +103,22 @@ parameter that only one card in the pool uses fails the contract step (`reparse`
 there already were — `ONE_CARD_PARAMETERS` in the same file, a list that only gets shorter (a test pins its
 length). Fold one away and take it off the list.
 
+The shared parts to reach for first, and the one function that reads each:
+
+| It says | Part | Read by |
+|---|---|---|
+| which objects | `ObjectFilter` (`filter`, `subject`) | `matchesFilter` |
+| how many | `Amount` (`amount`) | `amountOf` |
+| when it applies | `ConditionNode`: `condition` on a static ability, `while` on a trigger ("during an opponent's turn") | `evalCondition`, `staticConditionHolds` |
+| which damage | `DamageFilter` (`damage`) | `fitsDamage` |
+| what a spell targets | `TargetsFilter` (`targets`) | `fitsTargets` |
+| what else a replacement or prevention effect does | `then`, a list of effects that ask nothing | `runThrough` |
+| the abilities of a keyword ("cycling abilities") | `keyword` | `abilityOfKeyword` |
+| where a card goes, with what counters | `to`, `position`, `counters`, as on `move` | the mover |
+
+One name for one idea: "for the first time each turn" is `firstEachTurn`, "one or more" is `batch`, combat or noncombat
+damage is `combat: true` / `combat: false`.
+
 ## Checking the grades
 
 A card is fully automatic when every line was read **and** the sandbox found no certain problem playing it

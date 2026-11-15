@@ -34,8 +34,8 @@ export function flashPermission(g: GameState, player: PlayerId, card: GameObject
       continue;
     }
     if (a.kind !== 'static' || a.effect.type !== 'flash_if') continue;
-    const e = a.effect as unknown as { condition?: ConditionNode; ifTargets?: unknown };
-    if (!e.ifTargets && e.condition && evalCondition(e.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} })) return true;
+    const e = a.effect as unknown as { condition?: ConditionNode; targets?: unknown };
+    if (!e.targets && e.condition && evalCondition(e.condition, { g, controller: player, source: card, events: [], targets: [], x: 0, memo: {} })) return true;
   }
   // Quicken: "The next sorcery spell you cast this turn can be cast as though it had flash."
   for (const n of g.nextSpell ?? []) {

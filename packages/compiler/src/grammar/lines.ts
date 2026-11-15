@@ -34,6 +34,7 @@ import type {
   StaticPreventionNode,
   TriggerNode,
   TriggeredAbility,
+  TargetsFilter,
 } from '@mtg/schema';
 import { qualitiesRead, readQuality, splitQualities, SUBTYPES } from '@mtg/schema';
 import type { GrammarRule } from '../parser.js';
@@ -2319,7 +2320,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
   if (t === 'an opponent becomes the monarch') return { trigger: { type: 'became_monarch', who: 'opponent' }, it: { ref: 'self' }, player: { ref: 'trigger_player' } };
   // Heroic: "Whenever you cast a spell that targets ~" (CR 601.2c: the targets are chosen as it's cast).
   const heroic = /^you cast a spell that targets ~$/.exec(t);
-  if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targetsSource: true }, it: { ref: 'self' }, player: { ref: 'you' } };
+  if (heroic) return { trigger: { type: 'cast', who: 'you', filter: {}, targets: { objects: { isSource: true } } }, it: { ref: 'self' }, player: { ref: 'you' } };
   // "Whenever you cast your second spell each turn", "… your first spell during each opponent's turn"
   const nthSpell = /^(you|an opponent|a player) casts? (?:your|their) (first|second|third) spell (each turn|during each opponent's turn|during each of your opponents' turns|during their turn)$/.exec(t);
   if (nthSpell) {
@@ -2376,8 +2377,7 @@ function parseTrigger(word: string, text: string, b: Binder): ParsedTrigger | nu
     if (targets) {
       const pf = targets[2] ? parseFilter(targets[2], b) : null;
       if (targets[2] && (!pf || pf.plural)) return null;
-      if (pf) extra.targets = pf.filter;
-      if (targets[1]) extra.targetsYou = true;
+      extra.targets = { ...(pf ? { objects: pf.filter } : {}), ...(targets[1] ? { you: true } : {}) } satisfies TargetsFilter;
       what = what.slice(0, targets.index);
     }
     if (/or cop/.test(cast[2]!)) extra.orCopy = true;
@@ -3866,7 +3866,7 @@ export const costModifierRule: GrammarRule = {
       if (targets) {
         const pf = parseFilter(targets[1]!, b);
         if (!pf || pf.plural || a.amount === 'X') return null;
-        node.ifTargets = pf.filter;
+        node.targets = { objects: pf.filter };
         return { kind: 'static', text: original, effect: node };
       }
       if (own[3]) {
@@ -3897,8 +3897,8 @@ export const costModifierRule: GrammarRule = {
       const pf = a && !thatTarget[4] ? parseFilter(thatTarget[3]!, b) : null;
       if (!a || (!thatTarget[4] && (!pf || pf.plural !== many))) return null;
       if (thatTarget[2] && thatTarget[1] === 'you') return null;
-      const ifTargets: ObjectFilter = thatTarget[4] ? { isSource: true } : pf!.filter;
-      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[6] as 'less' | 'more', ifTargets, ...(thatTarget[2] ? { ifTargetsYou: true } : {}), ...a } as CostModifierNode };
+      const targets: TargetsFilter = { objects: thatTarget[4] ? { isSource: true } : pf!.filter, ...(thatTarget[2] ? { you: true } : {}) };
+      return { kind: 'static', text: original, effect: { type: 'cost_modifier', who: thatTarget[1] === 'you' ? 'you' : 'opponents', change: thatTarget[6] as 'less' | 'more', targets, ...a } as CostModifierNode };
     }
     // Herald's Horn, Urza's Incubator: "Creature spells you cast of the chosen type cost {1} less to cast."
     // Goblin Anarchomancer: "Each spell you cast that's red or green costs {1} less to cast."
@@ -4984,7 +4984,7 @@ export const castOptionRule: GrammarRule = {
       const targets = /^it targets (?:a|an) (.+)$/.exec(flashIf[1]!);
       if (targets) {
         const pf = parseFilter(targets[1]!, b);
-        return pf && !pf.plural ? { kind: 'static', text: original, effect: { type: 'flash_if', ifTargets: pf.filter } as never } : null;
+        return pf && !pf.plural ? { kind: 'static', text: original, effect: { type: 'flash_if', targets: { objects: pf.filter } satisfies TargetsFilter } as never } : null;
       }
       const condition = parseCondition(flashIf[1]!, b);
       // Silver Scrutiny: "if X is 3 or less" — X isn't chosen yet when timing is checked here.

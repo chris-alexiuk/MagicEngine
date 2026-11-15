@@ -1,4 +1,4 @@
-import type { Color, CostModifierNode, FaceDef, ObjectFilter, StaticAbility } from '@mtg/schema';
+import type { Color, CostModifierNode, FaceDef, StaticAbility } from '@mtg/schema';
 import { matchesFilter, objectAbilities, printedAbilities } from './characteristics.js';
 import { evalCondition } from './conditions.js';
 import type { ManaCost } from './mana.js';
@@ -8,22 +8,13 @@ import type { GameObject, GameState, ManaColor, PlayerId } from './types.js';
 import type { TargetRef } from './types.js';
 import { faceOf, abilitySources } from './zones.js';
 import { faceDownKindOf } from './face-down.js';
+import { fitsTargets } from './targets-filter.js';
 
 /** Whether a permanent's cost change looks at a spell's targets (Icefall Regent, Killian) — then legal casts check them. */
 export function targetCostModifiersInPlay(g: GameState): boolean {
   return abilitySources(g).some((id) =>
-    objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as CostModifierNode).ifTargets || (a.effect as CostModifierNode).ifTargetsYou)),
+    objectAbilities(g, g.objects[id]!).some((a) => a.kind === 'static' && a.effect.type === 'cost_modifier' && Boolean((a.effect as CostModifierNode).targets)),
   );
-}
-
-/** "… if it targets a tapped creature": one of the chosen targets is like that. */
-function targetsMatch(g: GameState, targets: TargetRef[][] | undefined, filter: ObjectFilter, controller: PlayerId, source: GameObject): boolean {
-  return (targets ?? []).flat().some((t) => {
-    if (t.kind !== 'object') return false;
-    const o = g.objects[t.id];
-    // "that target a creature": a creature permanent, not a creature card elsewhere (a filter that names a zone checks that one).
-    return Boolean(o && o.zcc === t.zcc && matchesFilter(g, o, filter, { controller, source }));
-  });
 }
 
 /**
@@ -49,7 +40,8 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
     if (!e.self || e.perSacrificed || e.perExiled) continue;
     const ctx = ctxFor(player, spell);
     if (e.condition && !evalCondition(e.condition, ctx)) continue;
-    if (e.ifTargets && !targetsMatch(g, targets, e.ifTargets, player, spell)) continue;
+    // "… if it targets a tapped creature": one of the chosen targets is like that.
+    if (e.targets && !fitsTargets(g, e.targets, targets, player, spell)) continue;
     for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
     if (e.generic) changes.push({ n: e.generic, change: e.change });
   }
@@ -81,9 +73,9 @@ export function applyCostModifiers(g: GameState, player: PlayerId, spell: GameOb
         if (before.length !== (e.nthEachTurn ?? 1) - 1) continue;
       }
       if (e.condition && !evalCondition(e.condition, ctx)) continue;
-      // Killian: "Spells you cast that target a creature cost {2} less to cast."
-      const targetsYou = Boolean(e.ifTargetsYou && (targets ?? []).flat().some((t) => t.kind === 'player' && t.player === source.controller));
-      if (e.ifTargets && !targetsYou && !targetsMatch(g, targets, e.ifTargets, source.controller, source)) continue;
+      // Killian: "Spells you cast that target a creature cost {2} less to cast."; Monastery Siege: "… that target you or a
+      // permanent you control cost {2} more".
+      if (e.targets && !fitsTargets(g, e.targets, targets, source.controller, source)) continue;
       for (const color of e.colors ?? [e.color]) changes.push({ n: amountOf(ctx, e.amount), ...(color ? { color } : {}), change: e.change, ...(e.coloredOnly ? { coloredOnly: true } : {}) });
       if (e.generic) changes.push({ n: e.generic, change: e.change });
     }

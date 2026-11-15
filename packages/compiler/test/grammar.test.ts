@@ -685,7 +685,7 @@ describe('compound triggers, keyword actions, revealed hands (slice 19)', () => 
     expect(one('Whenever this creature enters or attacks, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'either', of: [{ type: 'enters' }, { type: 'attacks' }] } });
     expect(one('When this creature enters and whenever it attacks, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'either' } });
     expect(one('Whenever this creature becomes tapped, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'becomes_tapped', subject: { ref: 'self' } } });
-    expect(one('Whenever you cast a spell that targets this creature, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'cast', targetsSource: true } });
+    expect(one('Whenever you cast a spell that targets this creature, you gain 1 life.', 'Creature — Human')).toMatchObject({ trigger: { type: 'cast', targets: { objects: { isSource: true } } } });
   });
   it('bolster, support, endure, "back in any order", "of their choice", Thoughtseize', () => {
     expect(one('When this creature enters, bolster 2.', 'Creature — Human')).toMatchObject({ effects: [{ type: 'bolster', amount: 2 }] });
@@ -1018,7 +1018,7 @@ describe('trigger batch 2 (slice 40)', () => {
       ['Whenever you gain life for the first time each turn, draw a card.', 'Enchantment', { type: 'gain_life', firstEachTurn: true }],
       ['When this creature becomes monstrous, draw a card.', 'Creature — Human', { type: 'becomes_monstrous' }],
       ['When this creature exploits a creature, draw a card.', 'Creature — Human', { type: 'sacrificed', exploit: true }],
-      ['Whenever you cast a spell that targets a creature you control, draw a card.', 'Enchantment', { type: 'cast', targets: { types: ['Creature'], controller: 'you' } }],
+      ['Whenever you cast a spell that targets a creature you control, draw a card.', 'Enchantment', { type: 'cast', targets: { objects: { types: ['Creature'], controller: 'you' } } }],
       ['Whenever a nontoken creature is put into your graveyard from the battlefield, draw a card.', 'Enchantment', { type: 'dies', subject: { filter: { owner: 'you' } } }],
       ['Whenever a creature deals combat damage to one of your opponents, draw a card.', 'Enchantment', { type: 'deals_combat_damage', to: 'opponent' }],
     ];
@@ -1103,7 +1103,7 @@ describe('casting restrictions (slice 53)', () => {
     const blade = parse("Cast this spell only during the declare attackers step and only if you've been attacked this step.\nDestroy target attacking creature.", 'Instant', 'Blade');
     expect(blade.abilities[0]).toMatchObject({ kind: 'static', effect: { type: 'cast_restriction', during: 'declare_attackers', attacked: true } });
     const response = parse('This spell costs {2} less to cast if it targets a tapped creature.\nDestroy target creature.', 'Instant', 'Response');
-    expect(response.abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', self: true, ifTargets: { types: ['Creature'] } } });
+    expect(response.abilities[0]).toMatchObject({ effect: { type: 'cost_modifier', self: true, targets: { objects: { types: ['Creature'] } } } });
     expect(parse('You may cast this spell as though it had flash.', 'Creature — Elf', 'Elf').keywords).toEqual([{ id: 'flash' }]);
   });
 });
@@ -2837,5 +2837,28 @@ describe('where a card goes instead of the graveyard: the parts a move has, and 
   it('what else happens asks nobody anything: an effect with a target or a choice leaves the line unread', () => {
     expect(parse('If a creature an opponent controls would die, instead exile it and destroy target artifact.', 'Enchantment').unparsed).toHaveLength(1);
     expect(parse('If a creature an opponent controls would die, instead exile it and you may draw a card.', 'Enchantment').unparsed).toHaveLength(1);
+  });
+});
+
+describe('what a spell targets: one description for a trigger on casting it, what it costs, and flash', () => {
+  const trigger = (text: string) => (one(text, 'Creature — Human') as { trigger: Record<string, unknown> }).trigger;
+  const effect = (text: string, typeLine = 'Enchantment') => (one(text, typeLine) as { effect: Record<string, unknown> }).effect;
+
+  it('"that targets this creature", "… a creature you control", "… you or a creature you control", "… you"', () => {
+    expect(trigger('Whenever you cast a spell that targets this creature, put a +1/+1 counter on it.').targets).toEqual({ objects: { isSource: true } });
+    expect(trigger('Whenever you cast a spell that targets a creature you control, draw a card.').targets).toEqual({ objects: { types: ['Creature'], controller: 'you' } });
+    expect(trigger('Whenever an opponent casts a spell that targets you or a creature you control, you may draw a card.').targets).toEqual({ objects: { types: ['Creature'], controller: 'you' }, you: true });
+    expect(trigger('Whenever an opponent casts a spell that targets you, draw a card.').targets).toEqual({ you: true });
+  });
+
+  it('a cost: "Spells … that target …", "This spell costs less if it targets …"', () => {
+    expect(effect('Spells you cast that target a creature cost {2} less to cast.').targets).toEqual({ objects: { types: ['Creature'] } });
+    expect(effect('Spells your opponents cast that target this creature cost {2} more to cast.', 'Creature — Crab').targets).toEqual({ objects: { isSource: true } });
+    expect(effect('Spells your opponents cast that target you or a permanent you control cost {2} more to cast.').targets).toEqual({ objects: { controller: 'you' }, you: true });
+    expect(effect('This spell costs {2} less to cast if it targets a tapped creature.', 'Instant').targets).toEqual({ objects: { types: ['Creature'], tapped: true } });
+  });
+
+  it('"as though it had flash if it targets a commander"', () => {
+    expect(effect('You may cast this spell as though it had flash if it targets a commander.', 'Enchantment — Aura')).toMatchObject({ type: 'flash_if', targets: { objects: { commander: true } } });
   });
 });
