@@ -33,6 +33,7 @@ import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient,
 import { cantLose, cantWin, playerLoses } from './flow.js';
 import { battlefieldZcc, discardCard, drawCard, faceOf, livePlayers, manaValueOf, meldCards, meldPartners, moveObject, moveTogether, nameOf, nextPlayer, setTapped, zoneList, abilitySources, pairedPartner, type PlannedMove } from './zones.js';
 import { castableCard, castDuringResolution } from './actions.js';
+import { putIntoGraveyard, tokensCreated } from './history.js';
 
 /**
  * Handlers for the core AST nodes (schema CORE_NODES). Each effect reads its
@@ -5523,7 +5524,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
         return xo ? [refTo(xo)] : [];
       });
       // Akim: "for the first time each turn" — no token was created for you earlier this turn.
-      if (t.firstEachTurn && (check.g.turnLog.tokensCreated?.[check.controller] ?? 0) !== all.length) return [];
+      if (t.firstEachTurn && tokensCreated(check.g, check.controller) !== all.length) return [];
       return all[0] === e ? [{ amount: all.length, created }] : [];
     }
     return [{ object: refTo(o), player: o.controller }];
@@ -6271,7 +6272,7 @@ const triggers: Record<string, (t: TriggerNode, check: TriggerCheck) => TriggerI
         if (matching[0] !== e) return [];
         // Crawling Sensation: "for the first time each turn" — no such card went to that graveyard earlier this turn.
         if (t.firstEachTurn) {
-          const first = (check.g.turnLog.toGraveyard ?? []).find(
+          const first = putIntoGraveyard(check.g).find(
             (x) => (!filter.types || filter.types.some((ty) => x.types.includes(ty))) && (filter.token === undefined || x.token === filter.token) && (!filter.owner || (filter.owner === 'you' ? x.owner === check.controller : x.owner !== check.controller)),
           );
           if (first?.event !== e) return [];

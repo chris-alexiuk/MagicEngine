@@ -2,6 +2,7 @@ import { copyChoicePending } from './as-enters.js';
 import type { Amount, ConditionNode, KeywordInstance, TargetSpec, TriggeredAbility, TriggerExtraNode, TriggerNode } from '@mtg/schema';
 import { abilitiesOf, chars, matchesFilter, objectAbilities, printedAbilities, withCharsCache } from './characteristics.js';
 import { evalCondition, loggedUpTo, logTurnEvents } from './conditions.js';
+import { recordHistory } from './history.js';
 import type { EffectContext } from './registry.js';
 import { flatten, programRuns, recordModes, usedModes } from './program.js';
 import { matchTrigger } from './registry.js';
@@ -72,6 +73,7 @@ function collect(g: GameState, events: GameEvent[]): void {
   const fresh = g.heldEvents?.length ? [...g.heldEvents, ...events.slice(from)] : events.slice(from);
   delete g.heldEvents;
   logTurnEvents(g, fresh);
+  recordHistory(g, fresh);
   const batch = fresh.filter((e) => TRIGGER_EVENTS.has(e.type));
   if (!batch.length) return;
   collectDelayed(g, batch);

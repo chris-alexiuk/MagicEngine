@@ -5,6 +5,7 @@ import { amountOf, refObjects, refPlayers } from './resolve.js';
 import type { GameEvent, GameObject, GameState, LKIStats, ObjectId, PlayerId } from './types.js';
 import { faceOf, livePlayers, manaValueOf, meldPartners, nameOf, notePlusCounters, pairedPartner, zoneList } from './zones.js';
 import { isRingBearer } from './ring.js';
+import { cardExiled, creatureDied, crimes, descended, died, leftBattlefield, leftGraveyard, loyaltyActivated, nonlandLeft, putIntoGraveyard, returnedToHand, sacrificed, searchedOwn, tokensCreated } from './history.js';
 
 /** Condition tags the engine evaluates (schema CORE_NODES.conditions). */
 export const CONDITION_TYPES: readonly string[] = [
@@ -13,9 +14,11 @@ export const CONDITION_TYPES: readonly string[] = [
   'poison', 'different_powers', 'total_power', 'entered_this_turn', 'or', 'amount', 'combat_damage_by', 'discarded_this_turn', 'votes', 'opponent_has_more', 'attacked_with', 'was_type', 'was_attacking', 'had_keyword', 'sacrificed_this_turn', 'not', 'early_turn', 'distinct_names', 'unique_name', 'greatest_mv', 'first_combat', 'cast_in_main_phase', 'cast_off_sorcery_timing', 'chosen_word', 'most_of', 'lki_was', 'cast_named_before', 'same_name', 'ability_resolutions', 'attacking_you', 'left_graveyard', 'controlled_it', 'spent_colors', 'attack_power', 'activated_times', 'tribute_paid', 'meld_pair', 'most_common_color', 'controlled_at_cast', 'kicked_with',
 ];
 
-/** What happened this turn, for conditions like "if a creature died this turn". */
+/**
+ * What the game keeps count of during a turn: sums, marks on objects and "the first time this turn". (What moved, was
+ * made, was sacrificed or was done by a player is asked of the turn's history instead: history.ts.)
+ */
 export interface TurnLog {
-  creatureDied: boolean;
   attacked: PlayerId[];
   gainedLife: PlayerId[];
   lostLife: PlayerId[];
@@ -42,56 +45,26 @@ export interface TurnLog {
   drawStepDrew?: PlayerId[];
   /** Cards the active player has actually drawn in this turn's draw step (Orcish Bowmasters). */
   drawStepCards?: number;
-  /** What died this turn, as it last existed ("for each creature that died this turn"). */
-  died?: { controller: PlayerId; owner?: PlayerId; types: string[]; subtypes: string[]; token: boolean }[];
-  /** Kutzil's Flanker: the permanents that left the battlefield this turn, as they last existed. */
-  leftList?: { controller: PlayerId; types: string[] }[];
-  /** CR 700.11: how many times each player descended this turn. */
-  descended?: Record<PlayerId, number>;
   /** Players dealt damage this turn (CR 702.54a bloodthirst). */
   damagedPlayers: PlayerId[];
   /** Cards each player has drawn this turn. */
   drawn?: Record<PlayerId, number>;
   /** Which cards ("cards in your hand drawn this turn", Sylvan Library). */
   drawnIds?: Record<PlayerId, ObjectId[]>;
-  /** Players who created a token this turn. */
-  createdToken?: PlayerId[];
-  /** Thalisse: how many tokens each player created this turn. */
-  tokensCreated?: Partial<Record<PlayerId, number>>;
-  /** Players who controlled a permanent that left the battlefield this turn (revolt). */
-  left?: PlayerId[];
-  /** A nonland permanent left the battlefield this turn (void). */
-  nonlandLeft?: boolean;
-  /** Tale of Momo: players who controlled a creature that left the battlefield this turn. */
-  creatureLeft?: PlayerId[];
-  /** Gau, Feral Youth: "if a card left your graveyard this turn" — each card, by owner, with its card types. */
-  leftGraveyard?: { owner: PlayerId; types: string[] }[];
-  /** Ennis: "if one or more cards were put into exile this turn" (tokens aren't cards). */
-  cardExiled?: boolean;
   /** Permanents that entered the battlefield this turn, by controller (celebration). */
   entered?: Record<PlayerId, ObjectId[]>;
-  /** Elanor Gardner: what each player sacrificed this turn, as it last existed. */
-  sacrificedBy?: Record<PlayerId, { types: string[]; subtypes: string[] }[]>;
   /** What each of them was as it entered — for a token that has since left and ceased to exist (CR 704.5d). */
   enteredAs?: Record<ObjectId, { types: string[]; subtypes: string[]; supertypes: string[]; token?: true }>;
   /** CR 702.185c: a spell was warped this turn. */
   warped?: boolean;
   /** Who has targeted each object this turn (valiant: "for the first time each turn"). */
   targeted?: Record<ObjectId, PlayerId[]>;
-  /** CR 700.13: players who committed a crime this turn. */
-  crimes?: PlayerId[];
-  /** CR 701.23: players who searched their own library this turn (Archive Trap). */
-  searchedOwn?: PlayerId[];
-  /** Barrin: players who had a permanent put into their hand from the battlefield this turn. */
-  bouncedToHand?: PlayerId[];
   /** CR 700.14: mana each player has spent to cast spells this turn. */
   manaSpent?: Record<PlayerId, number>;
   /** The sources that dealt damage to each permanent this turn. */
   damagedBy?: Record<ObjectId, ObjectId[]>;
   /** Spear of Heliod: the sources (id:zcc) that dealt damage to each player this turn (combat damage marked "c:"). */
   playerDamagedBy?: Record<PlayerId, string[]>;
-  /** Each card or token put into a graveyard this turn, in order (with its card types then). */
-  toGraveyard?: { event: GameEvent; types: string[]; owner: PlayerId; token: boolean }[];
   /** Danny Pink: the first counters event this turn for each object, keyed "id:zcc". */
   firstCounters?: Record<string, GameEvent>;
   /** Fairgrounds Trumpeter: controllers of permanents +1/+1 counters were put on this turn. */
@@ -118,8 +91,6 @@ export interface TurnLog {
   attackedPlayers?: Record<ObjectId, { zcc: number; players: PlayerId[] }>;
   /** Cards discarded this turn, as the objects they became (mayhem). */
   discarded?: { id: ObjectId; zcc: number; player?: PlayerId }[];
-  /** Players who activated a loyalty ability this turn (The Chain Veil). */
-  loyaltyActivated?: PlayerId[];
   /** Sources that dealt combat damage to a player this turn, as they were then (prowl, freerunning). */
   combatDamagers?: { player: PlayerId; controller: PlayerId; types: string[]; subtypes: string[]; commander: boolean; legendary?: boolean; source?: ObjectId; zcc?: number }[];
   /** Damage of any kind dealt to players this turn, by source (Whirling Dervish). */
@@ -127,7 +98,7 @@ export interface TurnLog {
 }
 
 export function newTurnLog(): TurnLog {
-  return { creatureDied: false, attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [], drawn: {} };
+  return { attacked: [], gainedLife: [], lostLife: [], spellsCast: {}, noncreatureCast: [], damagedPlayers: [], drawn: {} };
 }
 
 /** Records the events of one batch in the turn log. */
@@ -138,43 +109,7 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
   const log = g.turnLog;
   for (const e of events) {
     switch (e.type) {
-      case 'sacrificed': {
-        const lk = g.lastKnown?.[e.object];
-        const o = g.objects[e.object];
-        const face = o ? g.cards[o.card]?.faces[o.face ?? 0] : undefined;
-        ((log.sacrificedBy ??= {})[e.player] ??= []).push({ types: [...(lk?.types ?? face?.types ?? [])], subtypes: [...(lk?.subtypes ?? face?.subtypes ?? [])] });
-        break;
-      }
-      case 'ability_activated':
-        if (e.loyalty && !(log.loyaltyActivated ??= []).includes(e.player)) log.loyaltyActivated.push(e.player);
-        break;
       case 'moved': {
-        const types = g.cards[e.card]?.faces[e.face]?.types ?? [];
-        // CR 700.11: "descended this turn" — a permanent card put into that player's graveyard from anywhere (tokens aren't cards).
-        if (e.to === 'graveyard' && !g.objects[e.object]?.token && ['Artifact', 'Battle', 'Creature', 'Enchantment', 'Land', 'Planeswalker'].some((t) => types.includes(t))) {
-          const owner = g.objects[e.object]?.owner;
-          if (owner) (log.descended ??= {})[owner] = (log.descended[owner] ?? 0) + 1;
-        }
-        // Crawling Sensation: "for the first time each turn" — each card put into a graveyard, in order.
-        if (e.to === 'graveyard' && g.objects[e.object]) (log.toGraveyard ??= []).push({ event: e, types: [...types], owner: g.objects[e.object]!.owner, token: Boolean(g.objects[e.object]!.token) });
-        if (e.from === 'battlefield' && e.to === 'graveyard' && !e.meldPart) {
-          // CR 700.4: it died — as it last existed on the battlefield.
-          const lk = g.lastKnown?.[e.object];
-          const was = lk?.types ?? types;
-          if (was.includes('Creature') || types.includes('Creature')) log.creatureDied = true;
-          (log.died ??= []).push({ controller: e.controller, owner: g.objects[e.object]?.owner, types: [...was], subtypes: [...(lk?.subtypes ?? [])], token: Boolean(g.objects[e.object]?.token) });
-        }
-        if (e.from === 'graveyard' && g.objects[e.object]) (log.leftGraveyard ??= []).push({ owner: g.objects[e.object]!.owner, types: [...types] });
-        if (e.to === 'exile' && !e.token) log.cardExiled = true;
-        if (e.from === 'battlefield' && e.to === 'hand' && !e.meldPart && g.objects[e.object] && !(log.bouncedToHand ??= []).includes(g.objects[e.object]!.owner)) log.bouncedToHand.push(g.objects[e.object]!.owner);
-        if (e.from === 'battlefield' && !e.meldPart) {
-          if (!(log.left ??= []).includes(e.controller)) log.left.push(e.controller);
-          if (!types.includes('Land')) log.nonlandLeft = true;
-          // As it last existed on the battlefield (CR 603.10a).
-          const lk = g.lastKnown?.[e.object];
-          if ((lk?.types ?? types).includes('Creature') && !(log.creatureLeft ??= []).includes(e.controller)) log.creatureLeft.push(e.controller);
-          (log.leftList ??= []).push({ controller: e.controller, types: [...(lk?.types ?? types)] });
-        }
         if (e.to === 'battlefield') {
           const o = g.objects[e.object];
           if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
@@ -186,9 +121,6 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
         const o = g.objects[e.object];
         if (o) ((log.entered ??= {})[o.controller] ??= []).push(o.id);
         if (o) recordEnteredAs(g, log, o);
-        // "if you created a token this turn" (Idol of Oblivion)
-        if (!(log.createdToken ??= []).includes(e.controller)) log.createdToken.push(e.controller);
-        (log.tokensCreated ??= {})[e.controller] = (log.tokensCreated[e.controller] ?? 0) + 1;
         break;
       }
       case 'became_target': {
@@ -256,12 +188,6 @@ export function logTurnEvents(g: GameState, events: GameEvent[]): void {
           const key = `${e.source}:${e.sourceZcc ?? g.objects[e.source]!.zcc}`;
           (log.dealtDamage ??= {})[key] = (log.dealtDamage[key] ?? 0) + e.amount;
         }
-        break;
-      case 'crime':
-        if (!(log.crimes ??= []).includes(e.player)) log.crimes.push(e.player);
-        break;
-      case 'searched':
-        if (e.owner === e.player && !(log.searchedOwn ??= []).includes(e.player)) log.searchedOwn.push(e.player);
         break;
       case 'discarded': {
         const o = g.objects[e.object];
@@ -468,7 +394,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     }
     case 'to_graveyard_this_turn': {
       // Case of the Gorgon's Kiss: "Three or more creature cards were put into graveyards from anywhere this turn."
-      const n = (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && (!cond.yours || r.owner === controller) && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
+      const n = putIntoGraveyard(g).filter((r) => !r.token && (!cond.yours || r.owner === controller) && (!cond.cardType || r.types.includes(cond.cardType as string))).length;
       return n >= Number(cond.n ?? 1);
     }
     case 'opponent_has_more': {
@@ -685,7 +611,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     case 'sacrificed_this_turn': {
       // Elanor Gardner: "if you sacrificed a Food this turn"; Havengul Laboratory: "three or more Clues".
       const f = (cond.filter ?? {}) as ObjectFilter;
-      const n = (g.turnLog.sacrificedBy?.[controller] ?? []).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
+      const n = sacrificed(g, controller).filter((s) => (!f.types || f.types.some((t) => s.types.includes(t))) && (!f.subtypes || f.subtypes.some((t) => s.subtypes.includes(t)))).length;
       return cmp(n, cond);
     }
     // Boomerang Basics: "If you controlled that permanent" — its controller as the spell began to resolve.
@@ -694,7 +620,7 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
     // Gau, Feral Youth: "if a card left your graveyard this turn"; Bonecache Overseer: "three or more cards".
     case 'left_graveyard': {
       const types = ((cond.filter ?? {}) as ObjectFilter).types;
-      const n = (g.turnLog.leftGraveyard ?? []).filter((l) => l.owner === controller && (!types || types.some((t) => l.types.includes(t)))).length;
+      const n = leftGraveyard(g).filter((l) => l.owner === controller && (!types || types.some((t) => l.types.includes(t)))).length;
       return cmp(n, cond);
     }
     case 'entered_this_turn':
@@ -781,9 +707,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
       // First Response: "if you lost life last turn" — the previous turn's log (none before the first turn).
       const log = cond.lastTurn ? g.lastTurnLog : g.turnLog;
       if (!log) return false;
+      // (What moved, was made or was done by a player is asked of the turn's history.)
+      const last = Boolean(cond.lastTurn);
       switch (cond.event) {
         case 'creature_died':
-          return log.creatureDied;
+          return creatureDied(g, last);
         case 'opponent_damaged': {
           // Antagonism: "unless one of their opponents was dealt damage this turn" — that player's opponents.
           const whose = cond.of ? (refPlayers(ctx, cond.of as Ref)[0] ?? controller) : controller;
@@ -806,11 +734,11 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
         case 'you_gained_life':
           return log.gainedLife.includes(controller);
         case 'you_activated_loyalty':
-          return Boolean(log.loyaltyActivated?.includes(controller));
+          return loyaltyActivated(g, last).includes(controller);
         case 'opponent_gained_life':
           return log.gainedLife.some((p) => p !== controller);
         case 'you_created_token':
-          return (log.createdToken ?? []).includes(controller);
+          return tokensCreated(g, controller, last) > 0;
         case 'opponent_cast':
           // "If an opponent cast a blue spell this turn" — any one opponent.
           return livePlayers(g).some(
@@ -855,18 +783,18 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           });
         case 'your_permanent_left':
           // Revolt: "if a permanent you controlled left the battlefield this turn"
-          return (log.left ?? []).includes(controller);
+          return leftBattlefield(g, last).some((w) => w.controller === controller);
         case 'nonland_left':
-          return Boolean(log.nonlandLeft);
+          return nonlandLeft(g, last);
         case 'your_creature_left':
           // Tale of Momo: "if a creature left the battlefield under your control this turn".
-          return (log.creatureLeft ?? []).includes(controller);
+          return leftBattlefield(g, last).some((w) => w.controller === controller && w.types.includes('Creature'));
         case 'warped':
           return Boolean(log.warped);
         case 'card_exiled':
-          return Boolean(log.cardExiled);
+          return cardExiled(g, last);
         case 'you_committed_crime':
-          return (log.crimes ?? []).includes(controller);
+          return crimes(g, last).includes(controller);
         // Wave of Rats: "When this creature dies, if it dealt combat damage to a player this turn" — this object, on the
         // battlefield just now (one zone change ago if it has left).
         case 'self_dealt_damage_to_opponent':
@@ -875,15 +803,15 @@ export function evalCondition(cond: ConditionNode, ctx: EffectContext): boolean 
           return Boolean(source && (log.combatDamagers ?? []).some((d) => d.source === source.id && (d.zcc === source.zcc || (source.zone !== 'battlefield' && d.zcc === source.zcc - 1))));
         // Barrin, Tolarian Archmage: "if a permanent was put into your hand from the battlefield this turn".
         case 'bounced_to_your_hand':
-          return (log.bouncedToHand ?? []).includes(controller);
+          return returnedToHand(g, last).includes(controller);
         case 'opponent_searched':
-          return (log.searchedOwn ?? []).some((p) => p !== controller);
+          return searchedOwn(g, last).some((p) => p !== controller);
         // CR 700.11
         case 'you_descended':
-          return (log.descended?.[controller] ?? 0) > 0;
+          return descended(g, controller, last) > 0;
         // Denethor: "if a creature died under your control this turn"
         case 'your_creature_died':
-          return (log.died ?? []).some((d) => d.controller === controller && d.types.includes('Creature'));
+          return died(g, last).some((d) => d.controller === controller && d.types.includes('Creature'));
         default:
           return false;
       }

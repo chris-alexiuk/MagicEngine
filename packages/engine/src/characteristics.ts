@@ -21,6 +21,7 @@ import type {
 } from '@mtg/schema';
 import { evalCondition } from './conditions.js';
 import { amountOf } from './resolve.js';
+import { putIntoGraveyard } from './history.js';
 import type { GameObject, GameState, LKIStats, ManaColor, PlayerId } from './types.js';
 import { abilitySources, battlefieldZcc, faceOf, manaValueOf, nameOf, pairedPartner } from './zones.js';
 
@@ -1056,7 +1057,9 @@ export function matchesFilter(
   if (f.goaded && !(o.goadedBy?.length || c.combat.some((r) => r.goaded))) return false;
   // Brought Back: "that were put there from the battlefield this turn" — its latest move this turn, and it's still there.
   if (f.putThereThisTurn) {
-    const last = [...(g.turnLog.toGraveyard ?? [])].reverse().find((r) => r.event.type === 'moved' && r.event.object === o.id);
+    const last = putIntoGraveyard(g)
+      .reverse()
+      .find((r) => r.event.type === 'moved' && r.event.object === o.id);
     const from = last && last.event.type === 'moved' ? last.event.from : undefined;
     if (o.zone !== 'graveyard' || !from || (f.putThereThisTurn !== 'anywhere' && from !== f.putThereThisTurn)) return false;
   }

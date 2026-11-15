@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chars, type AttackTarget, type ChoiceAnswer, type GameState } from '../src/index.js';
-import { act, give, illegal, makeCard, passRound, start, toStep } from './helpers.js';
+import { act, give, illegal, makeCard, passRound, sacrificedEarlier, start, toStep } from './helpers.js';
 
 // The November 2026 grading audit, sample B: 60 random "full" cards from outside the 5,000 most played, each played
 // through the engine with its real Oracle text. The cases it found wrong (a token returning from exile, exploring
@@ -1308,7 +1308,7 @@ describe('audit B — batch 3 (edge cases)', () => {
     let g = setup('bob');
     give(g, 'alice', 'Briarbridge Patrol', 'battlefield');
     const big = give(g, 'alice', 'Big Bear', 'hand');
-    g.turnLog.sacrificedBy = { alice: [0, 1, 2].map(() => ({ types: ['Artifact'], subtypes: ['Clue'] })) } as never;
+    for (let i = 0; i < 3; i++) sacrificedEarlier(g, 'alice', ['Artifact'], ['Clue']);
     g = toStep(g, 'end', 'bob');
     g = settle(g, (s) => (s.pending?.kind === 'may' ? { kind: 'may', yes: true } : s.pending?.kind === 'choose_objects' ? { kind: 'choose_objects', objects: [big] } : undefined));
     expect(g.objects[big]!.zone).toBe('battlefield');

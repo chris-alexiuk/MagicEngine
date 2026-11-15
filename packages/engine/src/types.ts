@@ -1,6 +1,7 @@
 import type { PlayerRule } from '@mtg/schema';
 import type { AbilityNode, Amount, AsEntersNode, ManaSpend, ObjectFilter, CardDef, Color, CombatRules, ConditionNode, EffectNode, KeywordInstance, RuleFlag, TargetSpec, TriggeredAbility } from '@mtg/schema';
 import type { TurnLog } from './conditions.js';
+import type { Happening } from './history.js';
 
 export type PlayerId = string;
 export type ObjectId = string;
@@ -1206,6 +1207,9 @@ export interface GameState {
   lastTurnSpells: Record<PlayerId, number>;
   /** The previous turn's log ("if you lost life last turn"). */
   lastTurnLog?: TurnLog;
+  /** What happened this turn and the turn before: each event a question can be about, with what it was about (history.ts). */
+  history?: Happening[];
+  lastHistory?: Happening[];
   winner: PlayerId | null;
   over: boolean;
   rng: number;

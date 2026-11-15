@@ -135,6 +135,12 @@ export function give(g: GameState, player: PlayerId, name: string, zone: Exclude
   return o.id;
 }
 
+/** Test-only setup: a permanent `player` sacrificed earlier this turn, as the turn's history has it. */
+export function sacrificedEarlier(g: GameState, player: PlayerId, types: string[], subtypes: string[] = []): void {
+  const id = `earlier-${(g.history ??= []).length}`;
+  g.history.push({ e: { type: 'sacrificed', object: id, player }, was: { id, controller: player, token: false, types, subtypes, supertypes: [], printed: types } });
+}
+
 /** Every player still in the game passes once, starting with whoever has priority. */
 export function passRound(g: GameState): GameState {
   const count = g.order.filter((p) => !g.players[p]!.lost).length;

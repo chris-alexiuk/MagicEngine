@@ -33,3 +33,5 @@ export type { EffectContext, EffectHandler, EffectResult, EnterReplacement, Mech
 export * from './types.js';
 export { learnCreatureTypes } from './creature-types.js';
 export { forgetCards } from './caches.js';
+export { happened, HAPPENINGS } from './history.js';
+export type { Happening, HappeningKind, Was } from './history.js';

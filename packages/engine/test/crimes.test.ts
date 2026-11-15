@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GameState } from '../src/index.js';
+import { crimes } from '../src/history.js';
 import { act, give, makeCard, start, toStep } from './helpers.js';
 
 const card = (name: string, type_line: string, oracle_text: string, extra: Record<string, unknown> = {}) =>
@@ -29,7 +30,7 @@ describe('crimes, expend, increment, "dealt damage by ~ this turn"', () => {
     expect(g.players.alice!.life).toBe(19);
     g = cast(g, 'Zap', { targets: [[{ kind: 'player', player: 'bob' }]] });
     expect(g.players.alice!.life).toBe(20);
-    expect(g.turnLog.crimes).toEqual(['alice']);
+    expect(crimes(g)).toEqual(['alice']);
   });
 
   it('CR 700.14: expend 4 — once the mana spent on spells this turn reaches 4', () => {

@@ -1,6 +1,7 @@
 import type { Amount, AmountExpr, EffectNode, ObjectFilter, Ref } from '@mtg/schema';
 import { chars, colorsAmong, creatureTypesOf, filterZones, hasType, matchesFilter, power, toughness } from './characteristics.js';
 import { enteredThisTurn, loggedUpTo } from './conditions.js';
+import { died, leftBattlefield, putIntoGraveyard, sacrificed, tokensCreated } from './history.js';
 import { runEffect, type EffectContext } from './registry.js';
 import { checkingOnResolution, isLegalTarget, targetingAs, withPriorTargets, withTargetX, withTriggerInfo } from './targets.js';
 import type { ChoiceAnswer, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, Resolution, StackEntry, TargetRef } from './types.js';
@@ -537,7 +538,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'sacrificed_this_turn':
       // The Balrog, Durin's Bane: "each permanent sacrificed this turn".
       // Sawblade Skinripper: "the permanents you sacrificed this turn" — yours only.
-      return (e.mine ? (g.turnLog.sacrificedBy?.[ctx.controller] ?? []) : Object.values(g.turnLog.sacrificedBy ?? {}).flat()).filter((s) => !e.types || e.types.some((t) => s.types.includes(t))).length;
+      return sacrificed(g, e.mine ? ctx.controller : undefined).filter((s) => !e.types || e.types.some((t) => s.types.includes(t))).length;
     case 'distinct_mana_values': {
       // Eris, Roar of the Storm: "each different mana value among instant and sorcery cards in your graveyard".
       const f = e.filter as ObjectFilter;
@@ -589,7 +590,7 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       if (e.who === 'opponents') return livePlayers(g).filter((p) => p !== ctx.controller).reduce((n, p) => n + (g.turnLog.drawn?.[p] ?? 0), 0);
       return g.turnLog.drawn?.[ctx.controller] ?? 0;
     case 'tokens_created_this_turn':
-      return g.turnLog.tokensCreated?.[ctx.controller] ?? 0;
+      return tokensCreated(g, ctx.controller);
     case 'tapped_this_way':
       return ctx.resolution?.tappedThisWay ?? 0;
     case 'damage_this_way':
@@ -618,14 +619,14 @@ function count(ctx: EffectContext, e: AmountExpr): number {
     case 'to_graveyard_this_turn': {
       // Fraying Sanity: "the number of cards put into their graveyard from anywhere this turn" (a token isn't a card).
       const [p] = refPlayers(ctx, e.player as Ref);
-      return p ? (g.turnLog.toGraveyard ?? []).filter((r) => !r.token && r.owner === p).length : 0;
+      return p ? putIntoGraveyard(g).filter((r) => !r.token && r.owner === p).length : 0;
     }
     // Kutzil's Flanker: "for each creature that left the battlefield under your control this turn".
     case 'left_this_turn':
-      return (g.turnLog.leftList ?? []).filter((d) => (e.types ?? ['Creature']).some((t) => d.types.includes(t)) && (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller))).length;
+      return leftBattlefield(g).filter((d) => (e.types ?? ['Creature']).some((t) => d.types.includes(t)) && (!e.controller || (e.controller === 'you' ? d.controller === ctx.controller : d.controller !== ctx.controller))).length;
     case 'died_this_turn':
       // "for each creature that died this turn" — creatures by default, as they last existed (CR 700.4).
-      return (g.turnLog.died ?? []).filter(
+      return died(g).filter(
         (d) =>
           (e.types ?? ['Creature']).some((t) => d.types.includes(t)) &&
           (!e.subtypes || e.subtypes.some((t) => d.subtypes.includes(t))) &&

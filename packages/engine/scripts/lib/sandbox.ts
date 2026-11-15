@@ -416,7 +416,7 @@ function labels(states: GameState[], self: string | undefined): (id: string) => 
 const named = (text: string, label: (id: string) => string): string => text.replace(/\bo\d+\b/g, (id) => label(id));
 
 /** Parts of the state that change with every action, or only repeat what the rest says. */
-const SKIP_STATE = new Set(['cards', 'players', 'objects', 'zones', 'priority', 'passed', 'clock', 'nextId', 'rng', 'stack', 'turnLog', 'lastTurnLog', 'lastKnown', 'resolving', 'triggers', 'heldEvents', 'castNames', 'lastTurnSpells']);
+const SKIP_STATE = new Set(['cards', 'players', 'objects', 'zones', 'priority', 'passed', 'clock', 'nextId', 'rng', 'stack', 'turnLog', 'lastTurnLog', 'history', 'lastHistory', 'lastKnown', 'resolving', 'triggers', 'heldEvents', 'castNames', 'lastTurnSpells']);
 const SKIP_OBJECT = new Set(['timestamp', 'zcc', 'arrived', 'counterStamps', 'sick', 'id', 'cast', 'baseController', 'x']);
 
 /**

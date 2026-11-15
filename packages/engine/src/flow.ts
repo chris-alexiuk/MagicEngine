@@ -8,6 +8,7 @@ import { emptyPool } from './mana.js';
 import { canAttach, canEnchantPlayer, destroyTogether } from './permanents.js';
 import { recheckTargets, runResolution, startResolution } from './resolve.js';
 import { evalCondition, newTurnLog } from './conditions.js';
+import { turnHistory } from './history.js';
 import { applyControlEffects } from './control.js';
 import { keptManaColors, legendRuleExempt, manaBecomes, maxHandSize, playerRule, untapLimits } from './player-rules.js';
 import { promptAsEnters } from './as-enters.js';
@@ -481,6 +482,7 @@ export function beginTurn(g: GameState, player: PlayerId, events: GameEvent[]): 
   // CR 731.2: how many spells the previous turn's active player cast, for day and night.
   const previousCasts = g.turn > 0 ? (g.turnLog.spellsCast[g.active] ?? 0) : undefined;
   g.turnLog = newTurnLog();
+  turnHistory(g);
   g.turn++;
   g.active = player;
   g.players[player]!.turnsBegun = (g.players[player]!.turnsBegun ?? 0) + 1;

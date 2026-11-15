@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chars, legalActions } from '../src/index.js';
 import type { GameState } from '../src/index.js';
-import { act, actWithEvents, give, illegal, makeCard, start, toStep } from './helpers.js';
+import { act, actWithEvents, give, illegal, makeCard, sacrificedEarlier, start, toStep } from './helpers.js';
 import { maxHandSize } from '../src/player-rules.js';
 import { moveObject } from '../src/zones.js';
 
@@ -3314,7 +3314,8 @@ describe('staples (slice 203): Fatal Push and friends', () => {
     it(`Fatal Push: a 3-mana creature ${revolt ? 'is' : "isn't"} destroyed ${revolt ? 'with' : 'without'} revolt`, () => {
       let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
       const three = give(g, 'bob', 'Ogre Three', 'battlefield');
-      if (revolt) g.turnLog.left = ['alice'];
+      // Revolt: a permanent she controlled left the battlefield earlier this turn.
+      if (revolt) g = act(g, { type: 'manual', player: 'alice', op: { kind: 'move', object: give(g, 'alice', 'Forest', 'battlefield'), to: 'graveyard' } });
       g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Push Lite', 'hand'), targets: [[{ kind: 'object', object: three }]] }));
       expect(g.objects[three]!.zone).toBe(ogre);
     });
@@ -7187,7 +7188,7 @@ describe('Sieges', () => {
   });
   it("The Balrog, Durin's Bane: {1} less for each permanent sacrificed this turn", () => {
     let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
-    g.turnLog.sacrificedBy = { bob: [0, 1, 2].map(() => ({ types: ['Creature'], subtypes: [] })) };
+    for (let i = 0; i < 3; i++) sacrificedEarlier(g, 'bob', ['Creature']);
     g.players.alice!.pool.C = 4;
     const b = give(g, 'alice', 'Balrog Lite', 'hand');
     g = settle(act(g, { type: 'cast', player: 'alice', object: b }));

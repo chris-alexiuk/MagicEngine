@@ -101,9 +101,10 @@ export function foresee(state: GameState, action: Action): ApplyResult {
  */
 function attempt(state: GameState, action: Action, answers: string[] | null): ApplyResult {
   // Card definitions never change during a game (new tokens only add entries), so they're
-  // shared between states rather than copied each action.
-  const { cards, ...rest } = state;
-  const g: GameState = { ...structuredClone(rest), cards: { ...cards } };
+  // shared between states rather than copied each action. So is what has happened (history.ts):
+  // an entry is never changed once recorded, and each state has its own list of them.
+  const { cards, history, lastHistory, ...rest } = state;
+  const g: GameState = { ...structuredClone(rest), cards: { ...cards }, ...(history ? { history: [...history] } : {}), ...(lastHistory ? { lastHistory } : {}) };
   const events: GameEvent[] = [];
   const run = (): void => {
     handle(g, action, events);
