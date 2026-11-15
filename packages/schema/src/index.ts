@@ -1440,16 +1440,19 @@ export interface ExileInsteadNode extends EffectNode {
   filter?: ObjectFilter;
   /** Only when dying (from the battlefield). */
   dies?: true;
-  /** Dauthi Voidwalker: "instead exile it with a void counter on it". */
-  withCounter?: string;
-  /** Nissa's Chosen: "put it on the bottom of its owner's library instead" — there, not exile. */
-  libraryBottom?: true;
-  /** Gravebane Zombie: "put it on top of its owner's library instead". */
-  libraryTop?: true;
-  /** The Darkness Crystal: "instead exile it and you gain 2 life". */
-  gainLife?: number;
-  /** Kalitas, Traitor of Ghet: "instead exile that card and create a 2/2 black Zombie creature token" — for the source's controller. */
-  createToken?: FaceDef;
+  /**
+   * Where it goes, if not exile, as a `move` says it: "put it on top of its owner's library instead" (Gravebane Zombie),
+   * "… on the bottom …" (Nissa's Chosen).
+   */
+  to?: 'library';
+  position?: 'top' | 'bottom';
+  /** "… with a void counter on it" (Dauthi Voidwalker) — as a `move` says it. */
+  counters?: Record<string, number>;
+  /**
+   * What else happens as it is exiled, done by the ability's controller: "… and you gain 2 life" (The Darkness Crystal),
+   * "… and create a 2/2 black Zombie creature token" (Kalitas, Traitor of Ghet). Effects that ask nothing (CR 614.6).
+   */
+  then?: EffectNode[];
 }
 
 /**

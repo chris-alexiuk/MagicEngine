@@ -1926,7 +1926,7 @@ describe('slice 162', () => {
     expect(parse('You may play lands and cast spells from the top of your library. If you cast a spell this way, pay life equal to its mana value rather than pay its mana cost.', 'Legendary Artifact', 'B').abilities[0]).toMatchObject({ effect: { type: 'top_permission', lands: true, spells: {}, lifeCost: true } });
     expect(parse('{T}, Sacrifice ten nonland permanents: Each opponent loses 10 life.', 'Legendary Artifact', 'B').abilities[0]).toMatchObject({ cost: { other: [{ type: 'sacrifice', amount: 10 }] } });
     expect(parse("Each nonland card in your graveyard has escape. The escape cost is equal to the card's mana cost plus exile three other cards from your graveyard.", 'Enchantment', 'U').abilities[0]).toMatchObject({ effect: { type: 'grant_escape', filter: { notTypes: ['Land'] }, exile: 3 } });
-    expect(parse("If a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.", 'Creature — Shade', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', owner: 'opponents', withCounter: 'void' } });
+    expect(parse("If a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.", 'Creature — Shade', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', owner: 'opponents', counters: { void: 1 } } });
     expect(parse('{T}, Sacrifice this creature: Choose an exiled card an opponent owns with a void counter on it. You may play it this turn without paying its mana cost.', 'Creature — Shade', 'D').abilities[0]).toMatchObject({ effects: [{ type: 'play_exiled', filter: { zone: 'exile', owner: 'opponent', counter: 'void' }, free: true }] });
     expect(parse('Spells your opponents cast that target this creature cost an additional 3 life to cast.', 'Creature — Dragon', 'T').abilities[0]).toMatchObject({ effect: { type: 'target_life_tax', life: 3 } });
   });
@@ -2138,7 +2138,7 @@ describe('slice 172', () => {
     expect(parse('If an opponent would draw a card except the first one they draw in each of their draw steps, instead that player skips that draw and you draw a card.', 'Creature — Human Rogue', 'N').abilities[0]).toMatchObject({ effect: { type: 'draw_replacement', steal: true, exceptFirst: true } });
   });
   it('reads exile-instead riders, the enchanted creature and the attackers', () => {
-    expect(parse('If a nontoken creature an opponent controls would die, instead exile it and you gain 2 life.', 'Legendary Artifact', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', dies: true, gainLife: 2 } });
+    expect(parse('If a nontoken creature an opponent controls would die, instead exile it and you gain 2 life.', 'Legendary Artifact', 'D').abilities[0]).toMatchObject({ effect: { type: 'exile_instead', dies: true, then: [{ type: 'gain_life', amount: 2 }] } });
     expect(parse("At the beginning of the upkeep of enchanted creature's controller, put a -1/-1 counter on that creature.", 'Enchantment — Aura', 'U').abilities[0]).toMatchObject({ effects: [{ type: 'add_counters', what: { ref: 'attached' } }] });
     expect(parse('Whenever you attack with eight or more creatures, those creatures get +4/+4 until end of turn.', 'Enchantment', 'C').abilities[0]).toMatchObject({ effects: [{ type: 'modify', what: { ref: 'all', filter: { combat: 'attacking' } } }] });
     // An enchantment is never "that creature".
@@ -2805,5 +2805,37 @@ describe('one name for one idea: "for the first time each turn", "one or more", 
     expect(effect('Cycling abilities you activate cost {2} less to activate.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'cycling', amount: 2 });
     expect(effect('Ninjutsu abilities you activate cost {1} less to activate.')).toEqual({ type: 'ability_cost_reduction', byYou: true, keyword: 'ninjutsu', amount: 1 });
     expect(trigger('Whenever you cycle another card, draw a card.')).toMatchObject({ type: 'activate', keyword: 'cycling', other: true });
+  });
+});
+
+describe('where a card goes instead of the graveyard: the parts a move has, and a list of what else happens', () => {
+  const effect = (text: string, typeLine = 'Creature — Zombie') => (one(text, typeLine) as { effect: Record<string, unknown> }).effect;
+
+  it('exile, or its owner\'s library on top or on the bottom', () => {
+    expect(effect('If this creature would die, exile it instead.')).toEqual({ type: 'exile_instead', dies: true, filter: { isSource: true } });
+    expect(effect("If this creature would die, put it on top of its owner's library instead.")).toEqual({ type: 'exile_instead', dies: true, filter: { isSource: true }, to: 'library', position: 'top' });
+    expect(effect("If this creature would die, put it on the bottom of its owner's library instead.")).toEqual({ type: 'exile_instead', dies: true, filter: { isSource: true }, to: 'library', position: 'bottom' });
+    expect(effect('If a card or token would be put into a graveyard from anywhere, exile it instead.', 'Enchantment')).toEqual({ type: 'exile_instead', owner: 'each' });
+  });
+
+  it('"with a void counter on it": counters, as a move says them', () => {
+    expect(effect("If a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it.")).toEqual({ type: 'exile_instead', owner: 'opponents', counters: { void: 1 } });
+  });
+
+  it('"… and you gain 2 life", "… and create a 2/2 black Zombie creature token": effects, read by the effect grammar', () => {
+    expect(effect('If a nontoken creature an opponent controls would die, instead exile it and you gain 2 life.', 'Legendary Artifact')).toMatchObject({
+      dies: true,
+      filter: { types: ['Creature'], token: false, controller: 'opponent' },
+      then: [{ type: 'gain_life', amount: 2, who: { ref: 'you' } }],
+    });
+    const kalitas = effect('If a nontoken creature an opponent controls would die, instead exile that card and create a 2/2 black Zombie creature token.', 'Legendary Creature — Vampire Warrior');
+    expect(kalitas).toMatchObject({ dies: true, then: [{ type: 'create_token', amount: 1, token: { name: 'Zombie Token', power: '2', toughness: '2' } }] });
+    // No card needed a flag for this one.
+    expect(effect('If a creature an opponent controls would die, instead exile it and you draw a card.', 'Enchantment')).toMatchObject({ dies: true, then: [{ type: 'draw', amount: 1 }] });
+  });
+
+  it('what else happens asks nobody anything: an effect with a target or a choice leaves the line unread', () => {
+    expect(parse('If a creature an opponent controls would die, instead exile it and destroy target artifact.', 'Enchantment').unparsed).toHaveLength(1);
+    expect(parse('If a creature an opponent controls would die, instead exile it and you may draw a card.', 'Enchantment').unparsed).toHaveLength(1);
   });
 });

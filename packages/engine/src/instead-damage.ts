@@ -26,7 +26,7 @@ import { says } from './instead-moves.js';
 import { removeShield } from './permanents.js';
 import { playerProtectedFrom } from './player-rules.js';
 import { amountEffects } from './quantities.js';
-import { runEffect, type EffectContext } from './registry.js';
+import { runThrough, type EffectContext } from './registry.js';
 import type { DamageRecipient, GameEvent, GameObject, GameState, PreventionFollowUp } from './types.js';
 import { abilitySources } from './zones.js';
 
@@ -75,12 +75,7 @@ function followUp(g: GameState, then: PreventionFollowUp, amount: number, source
       ...(to.kind === 'player' ? { player: to.player } : {}),
     },
   };
-  const list = [...then.effects];
-  while (list.length) {
-    const r = runEffect(structuredClone(list.shift()!), ctx);
-    if (typeof r === 'object' && 'expand' in r) list.unshift(...r.expand);
-    ctx.memo = {};
-  }
+  runThrough(then.effects, ctx);
 }
 
 /** The damage with some of it prevented: what is left, and the record of it. */

@@ -6,8 +6,7 @@
 import type { ConditionNode, ExileInsteadNode, ObjectFilter } from '@mtg/schema';
 import { abilitiesOf, chars, matchesFilter, objectAbilities, staticConditionHolds } from './characteristics.js';
 import type { Also, Move, Replacement, Rules } from './instead.js';
-import { createTokens } from './permanents.js';
-import { applyLifeGain } from './quantities.js';
+import { runThrough } from './registry.js';
 import { shuffleInPlace } from './rng.js';
 import type { GameObject, GameState, PlayerId, ZoneName } from './types.js';
 import { abilitySources, battlefieldZcc, faceOf, nameOf, zoneList } from './zones.js';
@@ -45,32 +44,30 @@ export function* statics(g: GameState, tag: string): Generator<{ source: GameObj
   }
 }
 
-/** CR 614.1a: what an "exile it instead" effect of another permanent (or one the object was given) makes of a move to a graveyard. */
+/**
+ * CR 614.1a: what an "exile it instead" effect of another permanent (or one the object was given) makes of a move to a
+ * graveyard. Where it goes, with what counters, and what else happens are the node's `to`, `counters` and `then`: none
+ * of them is known here by the card that says it.
+ */
 function exileInstead(g: GameState, h: Move, node: ExileInsteadNode, source: GameObject, key: string, text: string): Replacement<Move> {
   const label = says(g, source, text);
   // Nissa's Chosen: "put it on the bottom of its owner's library instead"; Gravebane Zombie: on top.
-  if (node.libraryBottom || node.libraryTop) return { key, label, apply: (m) => elsewhere(m, 'library', node.libraryTop ? 'top' : 'bottom') };
+  if (node.to === 'library') return { key, label, apply: (m) => elsewhere(m, 'library', node.position) };
   const you = source.controller;
   const also: Also[] = [];
   // Dauthi Voidwalker: "instead exile it with a void counter on it".
-  if (node.withCounter) {
-    const counter = node.withCounter;
-    also.push({ key: `counter:${counter}`, run: (_g, o) => void (o.counters[counter] = 1) });
-  }
-  // The Darkness Crystal: "… instead exile it and you gain 2 life." — exiled with it (CR 607.2a). Which permanent a card
-  // was exiled with is something only a permanent that says "exiled with" tells apart.
+  for (const [counter, n] of Object.entries(node.counters ?? {})) also.push({ key: `counter:${counter}:${n}`, run: (_g, o) => void (o.counters[counter] = n) });
+  // Exiled with it (CR 607.2a). Which permanent a card was exiled with is something only a permanent that says "exiled
+  // with" tells apart.
   const linked = JSON.stringify(faceOf(g, source)).includes('exiledWith');
   also.push({ key: linked ? `with:${source.id}` : '', run: (game, o) => void (o.exiledBy = { id: source.id, zcc: battlefieldZcc(game, source) }) });
-  if (node.gainLife) {
-    const n = node.gainLife;
-    also.push({ key: `life:${you}:${n}`, run: (game, _o, events) => void applyLifeGain(game, you, n, events) });
-  }
-  // Kalitas, Traitor of Ghet: "… and create a 2/2 black Zombie creature token" — its controller's.
-  if (node.createToken) {
-    const made = node.createToken;
+  // The Darkness Crystal: "… and you gain 2 life"; Kalitas, Traitor of Ghet: "… and create a 2/2 black Zombie creature
+  // token" — its controller's, as the card is exiled (CR 614.6: the modified event).
+  const then = node.then;
+  if (then?.length) {
     also.push({
-      key: `token:${you}:${made.name}`,
-      run: (game, _o, events) => void createTokens(game, you, made, 1, events),
+      key: `then:${you}:${JSON.stringify(then)}`,
+      run: (game, o, events) => runThrough(then, { g: game, controller: you, source, events, targets: [], x: 0, memo: {}, trigger: { object: { id: o.id, zcc: o.zcc } } }),
     });
   }
   return { key, label, apply: (m) => elsewhere(m, 'exile', undefined, also) };

@@ -151,6 +151,20 @@ export function runEffect(node: EffectNode, ctx: EffectContext): EffectResult {
   return handler ? handler(node, ctx) : false;
 }
 
+/**
+ * Effects done right as an event takes place, not on the stack: the rest of a replacement or prevention effect — "… and
+ * you gain 2 life", "put that many +1/+1 counters on it" (CR 614.6, 615.5). They ask nobody anything (the compiler reads
+ * only such effects there), so they run through.
+ */
+export function runThrough(effects: readonly EffectNode[], ctx: EffectContext): void {
+  const list = [...effects];
+  while (list.length) {
+    const r = runEffect(structuredClone(list.shift()!), ctx);
+    if (typeof r === 'object' && 'expand' in r) list.unshift(...r.expand);
+    ctx.memo = {};
+  }
+}
+
 export function matchTrigger(trigger: TriggerNode, check: TriggerCheck): TriggerInfo[] {
   const m = found('triggers', trigger.type, triggers.get(trigger.type));
   return m ? m(trigger, check) : [];

@@ -4402,10 +4402,8 @@ export const staticPreventionRule: GrammarRule = {
         const follow = pm[2]
           .replace(/^[Pp]ut an? ([+-]1\/[+-]1) counter on (this creature|~) for each 1 damage prevented this way$/, 'put that many $1 counters on $2')
           .replace(/^([a-z])/, (c) => c.toUpperCase());
-        const effects = parseEffectText(`${follow}.`, b);
-        // The additional effect never asks anything (the engine runs it right away, CR 615.5).
-        const quiet = new Set(['add_counters', 'remove_counters', 'mill', 'lose_life', 'gain_life', 'draw', 'get_counters']);
-        if (!effects?.length || b.targets.length || !effects.every((e) => quiet.has(e.type) && !(e as { upTo?: true }).upTo)) return null;
+        const effects = andThen(follow, b);
+        if (!effects) return null;
         node.then = effects;
       }
       return { kind: 'static', text: original, effect: node } as StaticAbility;
@@ -4516,6 +4514,34 @@ export const staticPreventionRule: GrammarRule = {
   },
 };
 
+/**
+ * The rest of a replacement or prevention effect — "… and you gain 2 life", "put that many +1/+1 counters on it" — which
+ * the engine does right as the event takes place (CR 614.6, 615.5), not on the stack: effects that never ask anyone
+ * anything, and target nothing.
+ */
+const QUIET_EFFECTS = new Set(['add_counters', 'remove_counters', 'mill', 'lose_life', 'gain_life', 'draw', 'get_counters', 'create_token']);
+function andThen(words: string, b: Binder): EffectNode[] | null {
+  const effects = parseEffectText(`${words.replace(/^[a-z]/, (c) => c.toUpperCase())}.`, b);
+  if (!effects?.length || b.targets.length || !effects.every((e) => QUIET_EFFECTS.has(e.type) && !(e as { upTo?: true }).upTo)) return null;
+  return effects;
+}
+
+/**
+ * Where a card goes instead of the graveyard (CR 614.1a): exile — "exile it instead", "instead exile it with a void counter
+ * on it", "instead exile it and you gain 2 life" — or its owner's library, on top or on the bottom. The parts are the ones
+ * a `move` has (to, position, counters), and what else happens is a list of effects.
+ */
+function goesInstead(words: string, b: Binder): Pick<ExileInsteadNode, 'to' | 'position' | 'counters' | 'then'> | null {
+  if (words === 'exile it instead') return {};
+  const library = /^put it on (top|the bottom) of its owner's library instead$/.exec(words);
+  if (library) return { to: 'library', position: library[1] === 'top' ? 'top' : 'bottom' };
+  const exile = /^instead exile (?:it|that card)(?: with an? (\S+) counter on it)?(?: and (.+))?$/.exec(words);
+  if (!exile || (!exile[1] && !exile[2])) return null;
+  const then = exile[2] ? andThen(exile[2], b) : undefined;
+  if (then === null) return null;
+  return { ...(exile[1] ? { counters: { [exile[1]]: 1 } } : {}), ...(then ? { then } : {}) };
+}
+
 /** CR 614.1a: "If a creature an opponent controls would die, exile it instead.", Rest in Peace. */
 export const exileInsteadRule: GrammarRule = {
   id: 'exile_instead',
@@ -4523,36 +4549,29 @@ export const exileInsteadRule: GrammarRule = {
     const env = envOf(ctx);
     if (!env) return null;
     const make = (node: Omit<ExileInsteadNode, 'type'>): StaticAbility => ({ kind: 'static', text: original, effect: { type: 'exile_instead', ...node } });
-    // Gloomshrieker: "If this creature would die, exile it instead." — this one.
-    if (/^If ~ would die, exile it instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true } });
-    // Nissa's Chosen: "If this creature would die, put it on the bottom of its owner's library instead."
-    if (/^If ~ would die, put it on the bottom of its owner's library instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true }, libraryBottom: true });
-    // Gravebane Zombie: "If this creature would die, put it on top of its owner's library instead."
-    if (/^If ~ would die, put it on top of its owner's library instead\.$/.test(line)) return make({ dies: true, filter: { isSource: true }, libraryTop: true });
-    const dies = /^If (?:a|an|another) (.+?) would die, exile it instead\.$/.exec(line) ?? /^If (?:a|an|another) (.+?) would die, instead exile it and you gain (\w+) life\.$/.exec(line);
-    if (dies) {
-      const pf = parseFilter(dies[1]!, new Binder(env));
-      if (!pf || pf.plural) return null;
-      if (/^another /.test(line.slice(3))) pf.filter.other = true;
-      const life = dies[2] ? parseAmount(dies[2]) : null;
-      if (dies[2] && typeof life !== 'number') return null;
-      return make({ dies: true, filter: pf.filter, ...(typeof life === 'number' ? { gainLife: life } : {}) });
-    }
+    const b = new Binder(env);
+    // Gloomshrieker: "If this creature would die, exile it instead." — this one. Nissa's Chosen: "… put it on the bottom of
+    // its owner's library instead."; Gravebane Zombie: "… on top of its owner's library instead."
     // Kalitas, Traitor of Ghet: "If a nontoken creature an opponent controls would die, instead exile that card and create a 2/2
-    // black Zombie creature token."
-    const kalitas = /^If (?:a|an) (.+?) would die, instead exile that card and create (an? .+? token)\.$/.exec(line);
-    if (kalitas) {
-      const pf = parseFilter(kalitas[1]!, new Binder(env));
-      const made = pf && !pf.plural ? parseEffectText(`Create ${kalitas[2]}.`, new Binder(env)) : null;
-      const node = made?.length === 1 && made[0]!.type === 'create_token' && made[0]!.amount === 1 && !made[0]!.tapped ? made[0]! : null;
-      if (pf && node?.token) return make({ dies: true, filter: pf.filter, createToken: node.token as FaceDef });
+    // black Zombie creature token."; The Darkness Crystal: "… instead exile it and you gain 2 life."
+    const dies = /^If (~|(?:a|an|another) .+?) would die, (.+)\.$/.exec(line);
+    if (dies) {
+      const goes = goesInstead(dies[2]!, b);
+      if (!goes) return null;
+      if (dies[1] === '~') return make({ dies: true, filter: { isSource: true }, ...goes });
+      const pf = parseFilter(dies[1]!.replace(/^(?:a|an|another) /, ''), b);
+      if (!pf || pf.plural) return null;
+      if (/^another /.test(dies[1]!)) pf.filter.other = true;
+      return make({ dies: true, filter: pf.filter, ...goes });
     }
-    const gy =
-      /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, exile it instead\.$/.exec(line) ??
-      /^If a (card) would be put into (your|a|an opponent's) graveyard from anywhere, instead exile it with an? (\S+) counter on it\.$/.exec(line);
+    // Rest in Peace: "If a card or token would be put into a graveyard from anywhere, exile it instead."; Dauthi Voidwalker:
+    // "If a card would be put into an opponent's graveyard from anywhere, instead exile it with a void counter on it."
+    const gy = /^If a (card|card or token|nontoken creature) would be put into (your|a|an opponent's) graveyard from anywhere, (.+)\.$/.exec(line);
     if (gy) {
+      const goes = goesInstead(gy[3]!, b);
+      if (!goes) return null;
       const owner = gy[2] === 'your' ? 'you' : gy[2] === 'a' ? 'each' : 'opponents';
-      return make({ owner, ...(gy[1] === 'nontoken creature' ? { filter: { types: ['Creature'], token: false } } : {}), ...(gy[3] ? { withCounter: gy[3] } : {}) });
+      return make({ owner, ...(gy[1] === 'nontoken creature' ? { filter: { types: ['Creature'], token: false } } : {}), ...goes });
     }
     return null;
   },
