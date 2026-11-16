@@ -113,10 +113,11 @@ function collect(g: GameState, events: GameEvent[]): void {
     const face = g.cards[o.card]?.faces[o.face];
     if (face?.abilities.some((a) => a.kind === 'triggered' && a.zone === 'command')) inGraveyards.push({ o, controller: o.owner, face: o.face, left: false });
   }
-  // CR 702.40a etc.: "When you cast this spell" — abilities that work while the spell is on the stack.
+  // CR 702.40a etc.: "When you cast this spell" — abilities that work while the spell is on the stack. A copy put onto
+  // the stack wasn't cast (CR 707.10); a copy that was cast (CR 707.12: Isochron Scepter, Mizzix's Mastery) was.
   const onStack: Candidate[] = g.stack.flatMap((s) => {
     const o = s.kind === 'spell' ? g.objects[s.object] : undefined;
-    return o && !o.spellCopy ? [{ o, controller: s.controller, face: o.face, left: false }] : [];
+    return o && (!o.spellCopy || (o.cast && !o.cast.copy)) ? [{ o, controller: s.controller, face: o.face, left: false }] : [];
   });
   const candidates = [...present, ...left.values(), ...inGraveyards, ...onStack];
   const extras = triggerExtras(g, [...left.values()]);

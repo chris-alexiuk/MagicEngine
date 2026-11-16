@@ -28,6 +28,8 @@ const CARDS = [
   } as never),
   makeCard({ name: 'Wheel', type_line: 'Artifact', mana_cost: '{4}', cmc: 4, oracle_text: '{T}: You gain 1 life.\nMorph {3} (You may cast this card face down as a 2/2 creature for {3}. Turn it face up any time for its morph cost.)' }),
   makeCard({ name: 'Mastery Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Exile target card that's an instant or sorcery from your graveyard. For each card exiled this way, copy it, and you may cast the copy without paying its mana cost. Exile this spell.\nOverload {1}" }),
+  makeCard({ name: 'Insight', type_line: 'Instant', mana_cost: '{U}', cmc: 1, oracle_text: 'When you cast this spell, draw a card.\nYou gain 1 life.' }),
+  makeCard({ name: 'Twincast Lite', type_line: 'Instant', mana_cost: '{U}', cmc: 1, oracle_text: 'Copy target instant or sorcery spell. You may choose new targets for the copy.' }),
   makeCard({ name: 'Law', type_line: 'Enchantment', mana_cost: '{2}{W}', cmc: 3, oracle_text: "Each player can't cast more than one spell each turn." }),
   makeCard({ name: 'Scepter', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Imprint — When this artifact enters, you may exile an instant card with mana value 2 or less from your hand.\n{2}, {T}: You may copy the exiled card. If you do, you may cast the copy without paying its mana cost.' }),
   makeCard({ name: 'Second', type_line: 'Enchantment', mana_cost: '{1}', cmc: 1, oracle_text: 'Whenever you cast your second spell each turn, you gain 1 life.' }),
@@ -203,6 +205,36 @@ describe('a copy that was cast is a spell cast (CR 707.12) — gone though it is
     const zap = give(g, 'bob', 'Zap', 'hand');
     g.players.bob!.pool.R = 1;
     expect(legalActions(act(g, { type: 'pass', player: 'alice' }), 'bob').some((a) => a.type === 'cast' && a.object === zap)).toBe(true);
+  });
+
+  it('its "When you cast this spell" triggers — and a copy that was only put onto the stack has none (CR 707.10)', () => {
+    let g = main();
+    const insight = give(g, 'alice', 'Insight', 'graveyard');
+    const hand = () => g.zones.hand.alice!.length;
+    g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Mastery Lite', 'hand'), targets: at(insight) }));
+    const before = hand();
+    g = settle(yes(g));
+    expect(hand() - before).toBe(1);
+    // Copied on the stack, the copy isn't cast: one card for the Insight she casts, none for its copy.
+    const mine = give(g, 'alice', 'Insight', 'hand');
+    const twin = give(g, 'alice', 'Twincast Lite', 'hand');
+    const start = hand();
+    g = act(g, { type: 'cast', player: 'alice', object: mine });
+    g = act(g, { type: 'cast', player: 'alice', object: twin, targets: at(mine) });
+    for (let i = 0; i < 12 && (g.stack.length || g.pending); i++) g = g.pending?.kind === 'copy_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'copy_targets' } }) : settle(g);
+    expect(hand() - start).toBe(-2 + 1);
+  });
+
+  it('storm on one counts the spells cast before it, the one cast just ahead of it in the same resolution too (CR 702.40a)', () => {
+    let g = main();
+    const [zap, shot] = [give(g, 'alice', 'Zap', 'graveyard'), give(g, 'alice', 'Grapeshot Lite', 'graveyard')];
+    const life = g.players.bob!.life;
+    g = overloaded(g, [zap, shot]);
+    g = yes(g, bob);
+    g = yes(g, bob);
+    for (let i = 0; i < 12 && (g.stack.length || g.pending); i++) g = g.pending?.kind === 'copy_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'copy_targets' } }) : settle(g);
+    // Mastery, then the Zap, were cast before the Grapeshot: two copies of it. 2 + 1 + 1 + 1.
+    expect(life - g.players.bob!.life).toBe(5);
   });
 });
 
