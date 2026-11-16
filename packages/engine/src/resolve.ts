@@ -629,7 +629,16 @@ function count(ctx: EffectContext, e: AmountExpr): number {
       const log = e.stat === 'lost' ? g.turnLog.lifeLost : e.stat === 'damage' ? g.turnLog.damageTaken : e.stat === 'noncombat_damage' ? g.turnLog.noncombatDamageTaken : g.turnLog.lifeGained;
       // Archfiend of Despair: "the life that player lost this turn".
       const players = e.player ? refPlayers(ctx, e.player) : e.who === 'you' ? [ctx.controller] : e.who === 'a_player' ? [...g.order] : g.order.filter((p) => p !== ctx.controller);
-      const each = players.map((p) => log?.[p] ?? 0);
+      // Counting what this resolution has just done too (CR 608.2h) — Essence Pulse: "You gain 2 life. Each creature gets
+      // -X/-X until end of turn, where X is the amount of life you gained this turn."
+      const fresh = ctx.events.slice(loggedUpTo.get(ctx.events) ?? 0);
+      const since = (p: PlayerId): number =>
+        fresh.reduce((n, ev) => {
+          if (e.stat === 'damage' || e.stat === 'noncombat_damage') return n + (ev.type === 'damage' && ev.to.kind === 'player' && ev.to.player === p && (e.stat === 'damage' || !ev.combat) ? ev.amount : 0);
+          if (ev.type !== 'life' || ev.player !== p) return n;
+          return n + (e.stat === 'lost' ? Math.max(0, -ev.delta) : Math.max(0, ev.delta));
+        }, 0);
+      const each = players.map((p) => (log?.[p] ?? 0) + since(p));
       return e.who === 'an_opponent' || e.who === 'a_player' ? Math.max(0, ...each) : each.reduce((n, v) => n + v, 0);
     }
     case 'discarded_this_way': {
