@@ -96,7 +96,11 @@ export function helperChoices(g: GameState, player: PlayerId, spell: GameObject,
     if (picks.length) out.convoke = picks;
   }
   if (keywords.includes('improvise')) {
-    const picks = untapped.filter((id) => hasType(g, g.objects[id]!, 'Artifact') && !hasType(g, g.objects[id]!, 'Creature')).slice(0, generic);
+    // Artifacts that aren't creatures first; artifact creatures (not already convoking) if it takes them — the cast is
+    // legal with them, so it is listed.
+    const artifacts = untapped.filter((id) => hasType(g, g.objects[id]!, 'Artifact') && !(out.convoke ?? []).includes(id));
+    const creature = (id: ObjectId) => hasType(g, g.objects[id]!, 'Creature');
+    const picks = [...artifacts.filter((id) => !creature(id)), ...artifacts.filter(creature)].slice(0, generic);
     generic -= picks.length;
     if (picks.length) out.improvise = picks;
   }

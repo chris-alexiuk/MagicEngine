@@ -34,6 +34,7 @@ const CARDS = [
   makeCard({ name: 'Increasing Vengeance', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Copy target instant or sorcery spell you control. If this spell was cast from a graveyard, copy that spell twice instead. You may choose new targets for the copies.' }),
   makeCard({ name: 'Shock', type_line: 'Instant', mana_cost: '{0}', oracle_text: 'Shock deals 2 damage to any target.' }),
   makeCard({ name: 'Relic', type_line: 'Artifact', mana_cost: '{0}', oracle_text: '' }),
+  makeCard({ name: 'Relic Golem', type_line: 'Artifact Creature — Golem', mana_cost: '{0}', power: '1', toughness: '1', oracle_text: '' }),
   makeCard({ name: 'Bear', type_line: 'Creature — Bear', mana_cost: '{1}{G}', cmc: 2, power: '2', toughness: '2', oracle_text: '' }),
   makeCard({ name: 'Ogre', type_line: 'Creature — Ogre', mana_cost: '{0}', power: '5', toughness: '5', oracle_text: '' }),
   makeCard({ name: 'Wall', type_line: 'Creature — Wall', mana_cost: '{0}', power: '0', toughness: '3', oracle_text: '' }),
@@ -191,6 +192,23 @@ describe('staples (slice 170: targets chosen knowing kicker, gift, addendum; eac
     g = settle(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Big Bolt', 'hand'), costs: { improvise: relics }, targets: [[{ kind: 'player', player: 'bob' }]] }));
     expect(g.players.bob!.life).toBe(life - 3);
     expect(relics.every((id) => g.objects[id]!.tapped)).toBe(true);
+  });
+
+  it('improvise: a cast that takes an artifact creature to pay for is offered (CR 702.126a: any untapped artifact you control)', () => {
+    let g = toStep(start({ extra: CARDS }), 'main1', 'alice');
+    give(g, 'alice', 'Inspiring Statuary', 'battlefield');
+    give(g, 'alice', 'Relic', 'battlefield');
+    // Summoning-sick, and it can still be tapped for improvise: that isn't its own {T}.
+    const golem = give(g, 'alice', 'Relic Golem', 'battlefield', { sick: true });
+    g.players.alice!.pool.R = 1;
+    const bolt = give(g, 'alice', 'Big Bolt', 'hand');
+    // {3}{R}: {R} floating, the Statuary, the Relic — and the Golem for the third.
+    const offered = legalActions(g, 'alice').filter((a) => a.type === 'cast' && a.object === bolt);
+    expect(offered.length).toBeGreaterThan(0);
+    const a = offered[0]!;
+    expect(a.type === 'cast' ? (a.costs?.improvise ?? []).includes(golem) : false).toBe(true);
+    g = settle(act(g, { ...a, targets: [[{ kind: 'player', player: 'bob' }]] } as never));
+    expect([g.players.bob!.life, g.objects[golem]!.tapped]).toEqual([17, true]);
   });
 
   it("Archdruid's Charm: a land onto the battlefield tapped, a creature into your hand", () => {
