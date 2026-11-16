@@ -1,6 +1,6 @@
 import { HAPPENED_FILTER, type Color, type HappeningKind, type KeywordInstance, type ObjectFilter } from '@mtg/schema';
 import { chars, creatureTypesOf, matchesFilter, type Characteristics, type FilterContext } from './characteristics.js';
-import type { AttackTarget, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, ZoneName } from './types.js';
+import type { AttackTarget, DamageRecipient, GameEvent, GameObject, GameState, ObjectId, PlayerId, StackEntry, ZoneName } from './types.js';
 import { manaValueOf } from './zones.js';
 
 /**
@@ -73,6 +73,11 @@ export interface SpellWas {
    * everyone saw. (What a face-down spell is, no one is told: CR 708.4.)
    */
   object?: GameObject;
+  /**
+   * Its place on the stack as it was cast — its targets, its X, its modes: with the object, what there is to copy of
+   * it once it has left the stack (CR 608.2h: "copy it" after it has been countered).
+   */
+  entry?: StackEntry & { kind: 'spell' };
 }
 
 /** One thing that happened: the event, and what it was about. */
@@ -180,6 +185,7 @@ function asCast(g: GameState, e: Extract<GameEvent, { type: 'cast' }>): { was: W
   // (Recorded with the spell already gone: only that a spell was cast, and by whom.)
   if (!o) return { was: { id: e.object, controller: e.player, token: false, types: [], subtypes: [], supertypes: [], printed: [] } };
   const c = chars(g, o);
+  const entry = o.faceDown ? undefined : g.stack.find((s): s is StackEntry & { kind: 'spell' } => s.kind === 'spell' && s.object === o.id);
   return {
     was: asItIs(g, o, c, e.player),
     spell: {
@@ -193,6 +199,7 @@ function asCast(g: GameState, e: Extract<GameEvent, { type: 'cast' }>): { was: W
       ...(o.cast?.from ? { from: o.cast.from } : {}),
       ...(o.cast?.paid?.includes('warp') ? { warped: true as const } : {}),
       ...(o.faceDown ? {} : { object: structuredClone(o) }),
+      ...(entry ? { entry: structuredClone(entry) } : {}),
     },
   };
 }

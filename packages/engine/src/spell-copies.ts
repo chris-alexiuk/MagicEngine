@@ -5,9 +5,11 @@ import type { GameEvent, GameObject, GameState, ObjectId, PlayerId, StackEntry }
  * the original's characteristics and the choices made for it (modes, X, kicker, targets), and its
  * controller is whoever copied it. It ceases to exist once it leaves the stack (CR 704.5e); a copy
  * of a permanent spell becomes a token as it resolves (CR 608.3f).
+ *
+ * `orig`: the spell as it last existed on the stack, with `entry` its place there, for one that has left the stack
+ * since (CR 608.2h: an ability that says "copy it" copies it even if it has been countered).
  */
-export function copySpell(g: GameState, entry: StackEntry & { kind: 'spell' }, controller: PlayerId, events: GameEvent[]): ObjectId {
-  const orig = g.objects[entry.object]!;
+export function copySpell(g: GameState, entry: StackEntry & { kind: 'spell' }, controller: PlayerId, events: GameEvent[], orig: GameObject = g.objects[entry.object]!): ObjectId {
   const id = `o${g.nextId++}`;
   const o: GameObject = {
     id,

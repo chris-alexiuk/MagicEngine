@@ -76,6 +76,18 @@ export function refEntries(ctx: EffectContext, ref: Ref): StackEntry[] {
   }
 }
 
+/**
+ * A spell a reference means that has left the stack since it was cast — countered, say, before the ability that copies
+ * it resolved: the spell as it was cast, from the turn's history (CR 608.2h: last known information).
+ */
+export function lastKnownSpell(ctx: EffectContext, ref: Ref): { entry: StackEntry & { kind: 'spell' }; object: GameObject } | null {
+  const all = casts(ctx.g);
+  const about = ref.ref === 'trigger_object' && !ctx.trigger?.entry ? ctx.trigger?.object : undefined;
+  const at = ref.ref === 'self' && ctx.source ? ownCast(all, ctx.source, ctx.sourceZcc ?? ctx.source.zcc) : about ? all.findIndex((c) => c.id === about.id && c.zcc === about.zcc) : -1;
+  const s = at < 0 ? undefined : all[at]!.spell;
+  return s?.object && s.entry ? { entry: s.entry, object: s.object } : null;
+}
+
 /** The objects a reference means right now (CR 608.2h). */
 export function refObjects(ctx: EffectContext, ref: Ref): GameObject[] {
   const { g } = ctx;

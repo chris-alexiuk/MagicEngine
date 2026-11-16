@@ -27,7 +27,7 @@ import { ensureFaceDownDefs } from './face-down.js';
 import { chooseTargets, targetingAs, targetPrompts } from './targets.js';
 import { announceTargets } from './triggers.js';
 import { installPlugin, matchTrigger, runEffect, type EffectContext, type EffectResult, type MechanicPlugin, type TriggerCheck } from './registry.js';
-import { amountOf, apnap, bindFilter, movedThisWay, PERMANENT_CARD_TYPES, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
+import { amountOf, apnap, bindFilter, lastKnownSpell, movedThisWay, PERMANENT_CARD_TYPES, refEntries, refObjects, refPlayers, refRecipients } from './resolve.js';
 import { nextRandom, shuffleInPlace } from './rng.js';
 import { RulesError, type AttackTarget, type ChoiceAnswer, type DamageRecipient, type GameEvent, type GameObject, type GameState, type ManaColor, type ObjectId, type ObjectRef, type PlayerId, type StackEntry, type Target, type TargetRef, type TriggerInfo } from './types.js';
 import { cantLose, cantWin, playerLoses } from './flow.js';
@@ -3752,13 +3752,19 @@ const effects: Record<string, (node: EffectNode, ctx: EffectContext) => EffectRe
       const n = amountOf(ctx, node.amount ?? 1);
       const made: string[] = [];
       const extra: string[] = [];
-      for (const entry of refEntries(ctx, ref(node, 'what'))) {
+      const what = ref(node, 'what');
+      const there = refEntries(ctx, what);
+      // CR 608.2h: a spell that has left the stack since — countered before this resolved — is copied as it was cast
+      // (storm; Thousand-Year Storm's ruling: "copies are created even if the spell … has been countered").
+      const gone = there.length ? null : lastKnownSpell(ctx, what);
+      for (const entry of gone ? [gone.entry] : there) {
         // Twinning Staff: "instead copy it that many times plus an additional time" (CR 614.1a) — spells only.
         const times = entry.kind === 'spell' && n > 0 ? replaceQuantity(g, 'copies', n, { player: ctx.controller }) : n;
+        const orig = entry.kind === 'spell' ? (gone?.object ?? g.objects[entry.object]) : undefined;
         for (let i = 0; i < times; i++) {
-          const id = entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events) : copyAbility(g, entry, ctx.controller, ctx.events);
+          const id = entry.kind === 'spell' ? copySpell(g, entry, ctx.controller, ctx.events, orig) : copyAbility(g, entry, ctx.controller, ctx.events);
           // Storm of Saruman: "except the copy isn't legendary" (CR 707.9b).
-          if (entry.kind === 'spell' && node.except && g.objects[id] && g.objects[entry.object]) g.objects[id]!.copyOf = withExceptions(g, copiable(g.objects[entry.object]!), node.except as CopyExcept);
+          if (entry.kind === 'spell' && node.except && g.objects[id] && orig) g.objects[id]!.copyOf = withExceptions(g, copiable(orig), node.except as CopyExcept);
           made.push(id);
           if (i >= n) extra.push(id);
         }

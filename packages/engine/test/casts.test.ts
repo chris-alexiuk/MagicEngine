@@ -30,6 +30,8 @@ const CARDS = [
   makeCard({ name: 'Mastery Lite', type_line: 'Sorcery', mana_cost: '{0}', oracle_text: "Exile target card that's an instant or sorcery from your graveyard. For each card exiled this way, copy it, and you may cast the copy without paying its mana cost. Exile this spell.\nOverload {1}" }),
   makeCard({ name: 'Insight', type_line: 'Instant', mana_cost: '{U}', cmc: 1, oracle_text: 'When you cast this spell, draw a card.\nYou gain 1 life.' }),
   makeCard({ name: 'Twincast Lite', type_line: 'Instant', mana_cost: '{U}', cmc: 1, oracle_text: 'Copy target instant or sorcery spell. You may choose new targets for the copy.' }),
+  makeCard({ name: 'Cancel', type_line: 'Instant', mana_cost: '{U}', cmc: 1, oracle_text: 'Counter target spell.' }),
+  makeCard({ name: 'Thousand', type_line: 'Enchantment', mana_cost: '{1}', cmc: 1, oracle_text: "Whenever you cast an instant or sorcery spell, copy it for each other instant and sorcery spell you've cast before it this turn. You may choose new targets for the copies." }),
   makeCard({ name: 'Law', type_line: 'Enchantment', mana_cost: '{2}{W}', cmc: 3, oracle_text: "Each player can't cast more than one spell each turn." }),
   makeCard({ name: 'Scepter', type_line: 'Artifact', mana_cost: '{0}', oracle_text: 'Imprint — When this artifact enters, you may exile an instant card with mana value 2 or less from your hand.\n{2}, {T}: You may copy the exiled card. If you do, you may cast the copy without paying its mana cost.' }),
   makeCard({ name: 'Second', type_line: 'Enchantment', mana_cost: '{1}', cmc: 1, oracle_text: 'Whenever you cast your second spell each turn, you gain 1 life.' }),
@@ -249,6 +251,46 @@ describe('"each spell cast before it this turn": the turn\'s casts ahead of its 
     for (let i = 0; i < 12 && (g.stack.length || g.pending); i++) g = g.pending?.kind === 'copy_targets' ? act(g, { type: 'choose', player: 'alice', answer: { kind: 'copy_targets' } }) : settle(g);
     // Two Zaps (4), the Grapeshot (1) and its one copy (1).
     expect(life - g.players.bob!.life).toBe(6);
+  });
+});
+
+describe('"copy it", of a spell that has been countered since: it is copied as it was cast (CR 608.2h)', () => {
+  /** Everything on the stack resolves; a copy keeps the targets it has. */
+  const resolveAll = (g: GameState): GameState => {
+    for (let i = 0; i < 20 && (g.stack.length || g.pending); i++) g = g.pending?.kind === 'copy_targets' ? act(g, { type: 'choose', player: g.pending.player, answer: { kind: 'copy_targets' } }) : settle(g);
+    return g;
+  };
+
+  it('storm: the spell is countered in response to the storm trigger, and the copies are made all the same', () => {
+    let g = main();
+    const life = g.players.bob!.life;
+    g = cast(g, 'Zap', { targets: bob });
+    const shot = give(g, 'alice', 'Grapeshot Lite', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: shot, targets: bob });
+    expect(g.stack.length).toBe(2);
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Cancel', 'hand'), targets: at(shot) });
+    g = act(act(g, { type: 'pass', player: 'bob' }), { type: 'pass', player: 'alice' });
+    // The Grapeshot is countered; its storm trigger is still on the stack.
+    expect([g.objects[shot]!.zone, g.stack.length]).toEqual(['graveyard', 1]);
+    g = resolveAll(g);
+    // The Zap (2), and one copy of the Grapeshot (1) for the one spell cast before it — the Cancel came after.
+    expect(life - g.players.bob!.life).toBe(3);
+  });
+
+  it('"Whenever you cast an instant or sorcery spell, copy it for each other …": the same', () => {
+    let g = main();
+    give(g, 'alice', 'Thousand', 'battlefield');
+    const life = g.players.bob!.life;
+    g = resolveAll(act(g, { type: 'cast', player: 'alice', object: give(g, 'alice', 'Zap', 'hand'), targets: bob }));
+    expect(life - g.players.bob!.life).toBe(2);
+    const zap = give(g, 'alice', 'Zap', 'hand');
+    g = act(g, { type: 'cast', player: 'alice', object: zap, targets: bob });
+    g = act(g, { type: 'pass', player: 'alice' });
+    g = act(g, { type: 'cast', player: 'bob', object: give(g, 'bob', 'Cancel', 'hand'), targets: at(zap) });
+    g = resolveAll(g);
+    // The second Zap never resolved; its one copy did.
+    expect([g.objects[zap]!.zone, life - g.players.bob!.life]).toEqual(['graveyard', 4]);
   });
 });
 
